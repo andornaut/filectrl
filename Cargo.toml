@@ -1,0 +1,22 @@
+# https://doc.rust-lang.org/cargo/reference/manifest.html
+[package]
+name = "filectrl"
+version = "0.1.0"
+edition = "2021"
+authors = ["andornaut"]
+description = """
+FileCTRL is a Text User Interface (TUI) file manager for Linux and macOS.
+"""
+license = "MIT"
+repository = "https://github.com/andornaut/filectrl"
+readme = "README.md"
+
+[dependencies]
+ratatui = { version = "0.21.0", features = ["all-widgets"] }
+
+[profile.release]
+codegen-units = 1 # Reduce number of codegen units to increase optimizations.
+lto = true        # Enable Link Time Optimization
+opt-level = 'z'   # Optimize for size.
+panic = 'abort'   # Abort on panic
+strip = true      # Symbols from Binary
