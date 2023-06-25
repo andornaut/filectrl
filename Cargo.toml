@@ -12,7 +12,15 @@ repository = "https://github.com/andornaut/filectrl"
 readme = "README.md"
 
 [dependencies]
+anyhow = "1.0.71"
+chrono = { version = "0.4.26", default-features = false, features = ["clock", "time"] }
+crossterm = "0.26.1"
 ratatui = { version = "0.21.0", features = ["all-widgets"] }
+
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false # Disable features which are enabled by default
+features = ["precommit-hook", "run-cargo-check"]
 
 [profile.release]
 codegen-units = 1 # Reduce number of codegen units to increase optimizations.
