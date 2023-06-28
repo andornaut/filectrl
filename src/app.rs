@@ -7,7 +7,7 @@ use crate::{
     },
     component::root::Root,
     file_system::FileSystem,
-    view::render,
+    view::Renderable,
 };
 use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
@@ -42,23 +42,23 @@ impl App {
             }
 
             if !commands.is_empty() {
-                self.broadcast_commands(&commands)?;
-                render(terminal, &mut self.root)?;
+                self.broadcast_commands(commands)?;
+                self.render(terminal)?;
             }
             thread::sleep(min_duration);
         }
     }
 
-    fn broadcast_commands(&mut self, commands: &[Command]) -> Result<()> {
+    fn broadcast_commands(&mut self, commands: Vec<Command>) -> Result<()> {
         let commands: Vec<Command> = commands
-            .iter()
+            .into_iter()
             .flat_map(|command| self.broadcast_command(command))
             .collect();
         must_not_have_unhandled_commands(&commands)
     }
 
-    fn broadcast_command(&mut self, command: &Command) -> Vec<Command> {
-        let mut commands: Vec<Command> = vec![command.clone()];
+    fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
+        let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
             commands = commands
                 .iter()
@@ -70,6 +70,14 @@ impl App {
             }
         }
         commands
+    }
+
+    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        terminal.draw(|frame| {
+            let window = frame.size();
+            self.root.render(frame, window);
+        })?;
+        Ok(())
     }
 }
 
@@ -93,12 +101,15 @@ fn must_not_have_unhandled_commands(commands: &[Command]) -> Result<()> {
 }
 
 fn recursively_handle_command(handler: &mut dyn CommandHandler, command: &Command) -> Vec<Command> {
-    let mut commands = handler.handle_command(command);
-    commands.extend(
-        handler
-            .children()
-            .into_iter()
-            .flat_map(|child| recursively_handle_command(child, command)),
-    );
+    let mut commands = Vec::new();
+    if let Some(c) = handler.handle_command(command) {
+        commands.push(c);
+    }
+
+    let child_commands = handler
+        .children()
+        .into_iter()
+        .flat_map(|child| recursively_handle_command(child, command));
+    commands.extend(child_commands);
     commands
 }

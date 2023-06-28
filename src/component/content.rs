@@ -32,12 +32,12 @@ impl Content {
 }
 
 impl CommandHandler for Content {
-    fn handle_command(&mut self, command: &Command) -> Vec<Command> {
+    fn handle_command(&mut self, command: &Command) -> Option<Command> {
         if let Command::UpdateCurrentDir(directory, children) = command {
             self.directory = directory.clone();
             self.children = children.clone();
         }
-        vec![]
+        None
     }
 }
 

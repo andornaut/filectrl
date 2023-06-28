@@ -23,11 +23,11 @@ impl Header {
 impl<B: Backend> Component<B> for Header {}
 
 impl CommandHandler for Header {
-    fn handle_command(&mut self, command: &Command) -> Vec<Command> {
+    fn handle_command(&mut self, command: &Command) -> Option<Command> {
         if let Command::UpdateCurrentDir(directory, _) = command {
             self.directory = directory.clone();
         }
-        vec![]
+        None
     }
 }
 

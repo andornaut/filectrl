@@ -10,13 +10,13 @@ use std::{
 pub struct FileSystem {}
 
 impl FileSystem {
-    pub fn cd_to_cwd(&mut self) -> Result<Command> {
+    pub fn cd_to_cwd(&self) -> Result<Command> {
         let directory = env::current_dir()?;
         let directory = Path::try_from(directory)?;
         self.cd(&directory)
     }
 
-    fn cd(&mut self, directory: &Path) -> Result<Command> {
+    fn cd(&self, directory: &Path) -> Result<Command> {
         let directory = directory.clone();
         let entries = fs::read_dir(&directory.path)?;
         let (children, errors): (Vec<_>, Vec<_>) = entries
@@ -32,15 +32,14 @@ impl FileSystem {
 }
 
 impl CommandHandler for FileSystem {
-    fn handle_command(&mut self, command: &Command) -> Vec<Command> {
-        let next_command = match command {
+    fn handle_command(&mut self, command: &Command) -> Option<Command> {
+        match command {
             Command::_ChangeDir(directory) => {
-                // TODO Propate errors
-                self.cd(directory).unwrap()
+                // TODO Propate errors by returning a Result here, and adding an error message Command in App
+                Some(self.cd(directory).unwrap())
             }
-            _ => Command::Continue,
-        };
-        vec![next_command]
+            _ => None,
+        }
     }
 }
 
@@ -56,9 +55,9 @@ pub struct Path {
 }
 
 impl Path {
-    pub fn _breadcrumbs(self) -> Vec<Self> {
+    pub fn _breadcrumbs(&self) -> Vec<Self> {
         // Predicate: the path exists, otherwise this will panic
-        PathBuf::from(self.path)
+        PathBuf::from(&self.path)
             .ancestors()
             .into_iter()
             .map(|e| Path::try_from(PathBuf::from(e)).unwrap())
