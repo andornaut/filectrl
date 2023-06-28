@@ -8,7 +8,7 @@ use std::io::{stdout, Result, Stdout};
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 
-pub fn start_terminal() -> Result<CrosstermTerminal> {
+pub fn open_terminal() -> Result<CrosstermTerminal> {
     enable_raw_mode()?;
 
     let mut terminal = create_terminal()?;
@@ -17,7 +17,7 @@ pub fn start_terminal() -> Result<CrosstermTerminal> {
     Ok(terminal)
 }
 
-pub fn stop_terminal(terminal: &mut CrosstermTerminal) -> Result<()> {
+pub fn close_terminal(terminal: &mut CrosstermTerminal) -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,

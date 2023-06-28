@@ -13,8 +13,8 @@ pub trait CommandHandler {
         vec![]
     }
 
-    fn handle_command(&mut self, _command: &Command) -> Vec<Command> {
-        vec![]
+    fn handle_command(&mut self, _command: &Command) -> Option<Command> {
+        None
     }
 }
 
@@ -68,7 +68,7 @@ pub fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
         if command.is_err() {
             break;
         }
-        let command = command.expect("Can receive a command from the input thread");
+        let command = command.expect("Can receive a command from the rx channel");
         commands.push(command);
     }
     commands
