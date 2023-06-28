@@ -1,12 +1,10 @@
+use crate::file_system::Path;
 use crossterm::event::read;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread,
 };
-
-use crate::file_system::Path;
 
 pub trait CommandHandler {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
@@ -21,7 +19,6 @@ pub trait CommandHandler {
 #[derive(Clone, Debug)]
 pub enum Command {
     // App commands
-    Continue,
     Quit,
     Resize(u16, u16), // w,h
 
@@ -31,32 +28,23 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn is_actionable(&self) -> bool {
-        if let Command::Continue = self {
-            return false;
-        }
-        true
-    }
-}
-
-impl From<Event> for Command {
-    fn from(event: Event) -> Self {
+    pub fn maybe_from(event: Event) -> Option<Self> {
         match event {
             Event::Key(key) => {
                 let KeyEvent {
                     code, modifiers, ..
                 } = key;
                 if let (KeyCode::Char('c'), KeyModifiers::CONTROL) = (code, modifiers) {
-                    return Self::Quit;
+                    return Some(Self::Quit);
                 }
                 match code {
-                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => Self::Quit,
-                    _ => Self::Continue,
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => Some(Self::Quit),
+                    _ => None,
                 }
             }
-            Event::Mouse(_) => Self::Continue,
-            Event::Resize(w, h) => Self::Resize(w, h),
-            _ => Self::Continue,
+            Event::Mouse(_) => None,
+            Event::Resize(w, h) => Some(Self::Resize(w, h)),
+            _ => None,
         }
     }
 }
@@ -64,8 +52,10 @@ impl From<Event> for Command {
 pub fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     let mut commands = Vec::new();
     loop {
+        // Non-blocking
         let command = rx.try_recv();
         if command.is_err() {
+            // Return when there are no more commands in the channel
             break;
         }
         let command = command.expect("Can receive a command from the rx channel");
@@ -76,12 +66,11 @@ pub fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
 
 pub fn spawn_command_sender(tx: Sender<Command>) {
     thread::spawn(move || loop {
-        // Blocking read
+        // Non-blocking read
+        // Ref. https://docs.rs/crossterm/latest/crossterm/event/fn.read.html
         let event = read().expect("Can read events");
-        let command = Command::from(event);
-        if let Command::Continue = command {
-            continue;
+        if let Some(command) = Command::maybe_from(event) {
+            tx.send(command).unwrap();
         }
-        tx.send(command).unwrap();
     });
 }

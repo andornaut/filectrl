@@ -1,6 +1,7 @@
 pub mod color;
 pub mod command;
 
+use self::command::CommandHandler;
 use crate::{
     app::command::{
         Command, {receive_commands, spawn_command_sender},
@@ -12,8 +13,6 @@ use crate::{
 use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
 use std::{sync::mpsc, thread, time::Duration};
-
-use self::command::CommandHandler;
 
 const BROADCAST_CYCLES: u8 = 3;
 const MAIN_LOOP_MIN_SLEEP_MS: u64 = 30;
@@ -63,7 +62,6 @@ impl App {
             commands = commands
                 .iter()
                 .flat_map(|command| recursively_handle_command(self, command))
-                .filter(|command| command.is_actionable())
                 .collect();
             if commands.is_empty() {
                 break;
