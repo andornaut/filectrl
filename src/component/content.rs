@@ -1,5 +1,3 @@
-use std::env;
-
 use super::Component;
 use crate::{
     app::command::{Command, CommandHandler},
@@ -13,6 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
     Frame,
 };
+use std::env;
 
 pub struct Content {
     directory: Path,
