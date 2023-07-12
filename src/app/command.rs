@@ -1,4 +1,4 @@
-use crate::file_system::Path;
+use crate::file_system::path_display::PathDisplay;
 use crossterm::event::read;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{
@@ -23,8 +23,8 @@ pub enum Command {
     Resize(u16, u16), // w,h
 
     // FileSystem commands
-    _ChangeDir(Path),
-    UpdateCurrentDir(Path, Vec<Path>),
+    _ChangeDir(PathDisplay),
+    UpdateCurrentDir(PathDisplay, Vec<PathDisplay>),
 }
 
 impl Command {

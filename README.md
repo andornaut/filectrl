@@ -4,15 +4,28 @@ A Text User Interface (TUI) file manager for Linux and macOS.
 
 ## Developing
 
-* [andornaut@github/til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
+* [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
 
 ```bash
-cargo test
 cargo clippy
+cargo fix --allow-dirty --allow-staged
+cargo test
 cargo run
 cargo build --release
 ./target/debug/filectrl
 ```
+
+### Git hooks
+
+* [cargo-husky](https://github.com/rhysd/cargo-husky)
+
+[Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
+
+1. Edit the `[dev-dependencies.cargo-husky]` section of [Cargo.toml](./Cargo.toml)
+1. `rm .git/hooks/pre-commit` (or other hook file)
+1. `cargo clean`
+1. `cargo test`
+1. Verify that the changes have been applied to `.git/hooks/pre-commit`
 
 ### Notable dependencies
 

@@ -1,5 +1,5 @@
 use super::{content::Content, footer::Footer, header::Header};
-use crate::{app::command::CommandHandler, view::Renderable};
+use crate::{app::command::CommandHandler, views::Renderable};
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Margin, Rect},
@@ -39,7 +39,7 @@ impl Default for Root {
 }
 
 impl<B: Backend> Renderable<B> for Root {
-    fn render(&self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(

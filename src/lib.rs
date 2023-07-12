@@ -1,8 +1,8 @@
 mod app;
-mod component;
+mod components;
 mod file_system;
 mod terminal;
-mod view;
+mod views;
 
 use crate::{
     app::App,
