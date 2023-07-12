@@ -6,9 +6,9 @@ use crate::{
     app::command::{
         Command, {receive_commands, spawn_command_sender},
     },
-    component::root::Root,
+    components::root::Root,
     file_system::FileSystem,
-    view::Renderable,
+    views::Renderable,
 };
 use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
