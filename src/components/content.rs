@@ -1,9 +1,13 @@
 use super::Component;
 use crate::{
-    app::command::{Command, CommandHandler},
+    app::{
+        command::{Command, CommandHandler, CommandResult},
+        focus::Focus,
+    },
     file_system::path_display::PathDisplay,
     views::Renderable,
 };
+use crossterm::event::KeyCode;
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
@@ -12,6 +16,7 @@ use ratatui::{
     Frame,
 };
 
+#[derive(Default)]
 pub struct Content {
     children: Vec<PathDisplay>,
     directory: PathDisplay,
@@ -19,13 +24,23 @@ pub struct Content {
 }
 
 impl Content {
-    pub fn new() -> Self {
-        let directory = PathDisplay::try_from("/").unwrap();
-        Self {
-            children: vec![],
-            directory,
-            state: TableState::default(),
+    fn open(&mut self) -> CommandResult {
+        if let Some(i) = self.state.selected() {
+            let child = &self.children[i];
+            let result = PathDisplay::try_from(child.path.clone());
+            return CommandResult::some(match result {
+                Err(err) => Command::Error(err.to_string()),
+                Ok(path) => {
+                    if child.is_dir {
+                        Command::ChangeDir(path)
+                    } else {
+                        // TODO: handle symlinks
+                        Command::OpenFile(path)
+                    }
+                }
+            });
         }
+        CommandResult::none()
     }
 
     fn next(&mut self) {
@@ -58,12 +73,31 @@ impl Content {
 }
 
 impl CommandHandler for Content {
-    fn handle_command(&mut self, command: &Command) -> Option<Command> {
-        if let Command::UpdateCurrentDir(directory, children) = command {
-            self.directory = directory.clone();
-            self.children = children.clone();
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::Key(code, _) => match code {
+                KeyCode::Enter => self.open(),
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.previous();
+                    CommandResult::none()
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.next();
+                    CommandResult::none()
+                }
+                _ => CommandResult::NotHandled,
+            },
+            Command::UpdateCurrentDir(directory, children) => {
+                self.directory = directory.clone();
+                self.children = children.clone();
+                CommandResult::none()
+            }
+            _ => CommandResult::NotHandled,
         }
-        None
+    }
+
+    fn is_focussed(&self, focus: &Focus) -> bool {
+        *focus == Focus::Content
     }
 }
 
@@ -94,7 +128,6 @@ impl<B: Backend> Renderable<B> for Content {
             .header(header)
             .block(Block::default().borders(Borders::ALL).title("Table"))
             .highlight_style(selected_style)
-            .highlight_symbol(">> ")
             .widths(&[
                 Constraint::Percentage(55),
                 Constraint::Length(5),

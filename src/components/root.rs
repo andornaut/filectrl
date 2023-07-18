@@ -6,35 +6,20 @@ use ratatui::{
     widgets::{Block, Borders},
     Frame,
 };
-use std::path::PathBuf;
 
+#[derive(Default)]
 pub struct Root {
     content: Content,
     footer: Footer,
     header: Header,
 }
 
-impl Root {
-    pub fn new(_current_dir: PathBuf) -> Self {
-        Self {
-            content: Content::new(),
-            footer: Footer::new(),
-            header: Header::new(),
-        }
-    }
-}
-
 impl CommandHandler for Root {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
+        let header: &mut dyn CommandHandler = &mut self.header;
         let content: &mut dyn CommandHandler = &mut self.content;
         let footer: &mut dyn CommandHandler = &mut self.footer;
-        vec![content, footer]
-    }
-}
-
-impl Default for Root {
-    fn default() -> Self {
-        Self::new(PathBuf::default())
+        vec![header, content, footer]
     }
 }
 
@@ -44,7 +29,7 @@ impl<B: Backend> Renderable<B> for Root {
             .direction(Direction::Vertical)
             .constraints(
                 [
-                    Constraint::Length(3),
+                    Constraint::Length(4),
                     Constraint::Min(5),
                     Constraint::Length(4),
                 ]

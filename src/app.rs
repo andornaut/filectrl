@@ -1,7 +1,10 @@
 pub mod color;
 pub mod command;
+pub mod focus;
 
-use self::command::CommandHandler;
+use self::command::{CommandHandler, CommandResult};
+use self::focus::Focus;
+
 use crate::{
     app::command::{
         Command, {receive_commands, spawn_command_sender},
@@ -11,15 +14,17 @@ use crate::{
     views::Renderable,
 };
 use anyhow::{anyhow, Result};
+use crossterm::event::KeyCode;
 use ratatui::{backend::Backend, Terminal};
 use std::{sync::mpsc, thread, time::Duration};
 
 const BROADCAST_CYCLES: u8 = 3;
-const MAIN_LOOP_MIN_SLEEP_MS: u64 = 30;
+const MAIN_LOOP_MIN_SLEEP_MS: u64 = 50;
 
 #[derive(Default)]
 pub struct App {
     file_system: FileSystem,
+    focus: Focus,
     root: Root,
 }
 
@@ -34,40 +39,82 @@ impl App {
         let min_duration = Duration::from_millis(MAIN_LOOP_MIN_SLEEP_MS);
         loop {
             let commands = receive_commands(&rx);
-            for command in commands.iter() {
-                if let Command::Quit = command {
-                    return Ok(());
-                }
+
+            if commands.is_empty() {
+                // Only sleep if there are no commands, so that sequential inputs are processed ASAP
+                thread::sleep(min_duration);
+                continue;
             }
 
-            if !commands.is_empty() {
-                self.broadcast_commands(commands)?;
-                self.render(terminal)?;
+            let unhandled_commands = self.broadcast_commands(commands);
+            if should_quit(&unhandled_commands) {
+                return Ok(());
             }
-            thread::sleep(min_duration);
+            if !unhandled_commands.is_empty() {
+                return Err(anyhow!(
+                    "Error: There are unhandled commands: {unhandled_commands:?}"
+                ));
+            }
+            self.render(terminal)?;
         }
     }
 
-    fn broadcast_commands(&mut self, commands: Vec<Command>) -> Result<()> {
+    fn broadcast_commands(&mut self, commands: Vec<Command>) -> Vec<Command> {
         let commands: Vec<Command> = commands
             .into_iter()
-            .flat_map(|command| self.broadcast_command(command))
+            .flat_map(|command| {
+                self.handle_focus_command(&command);
+                let command = self.convert_non_modal_key_command(command);
+                self.broadcast_command(command)
+            })
             .collect();
-        must_not_have_unhandled_commands(&commands)
+        commands
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
+        let focus = &self.focus.clone();
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
             commands = commands
-                .iter()
-                .flat_map(|command| recursively_handle_command(self, command))
+                .into_iter()
+                .flat_map(|command| {
+                    let (mut derived_commands, handled) =
+                        recursively_handle_command(focus, self, &command);
+                    if !handled {
+                        derived_commands.push(command);
+                    }
+                    derived_commands
+                })
                 .collect();
             if commands.is_empty() {
                 break;
             }
         }
         commands
+    }
+
+    fn convert_non_modal_key_command(&self, command: Command) -> Command {
+        if self.focus == Focus::Modal {
+            return command;
+        }
+
+        if let Command::Key(code, _) = command {
+            return match code {
+                KeyCode::Char('q') | KeyCode::Char('Q') => Command::Quit,
+                KeyCode::Backspace => Command::BackDir,
+                _ => command,
+            };
+        }
+
+        command
+    }
+
+    fn handle_focus_command(&mut self, command: &Command) {
+        match command {
+            Command::NextFocus => self.focus.next(),
+            Command::PreviousFocus => self.focus.previous(),
+            _ => (),
+        }
     }
 
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -87,27 +134,37 @@ impl CommandHandler for App {
     }
 }
 
-fn must_not_have_unhandled_commands(commands: &[Command]) -> Result<()> {
-    if commands.is_empty() {
-        Ok(())
+fn recursively_handle_command(
+    focus: &Focus,
+    handler: &mut dyn CommandHandler,
+    command: &Command,
+) -> (Vec<Command>, bool) {
+    let mut derived_commands = Vec::new();
+
+    let result = if command.needs_focus() && !handler.is_focussed(focus) {
+        CommandResult::NotHandled
     } else {
-        Err(anyhow!(
-            "Error: There are unhandled commands: {:?}",
-            commands
-        ))
+        handler.handle_command(command)
+    };
+
+    let mut handled = !matches!(result, CommandResult::NotHandled);
+
+    if let CommandResult::Handled(Some(derived_command)) = result {
+        derived_commands.push(derived_command);
     }
+
+    let child_derived = handler.children().into_iter().flat_map(|child| {
+        let (child_derived, child_handled) = recursively_handle_command(focus, child, command);
+        handled = handled || child_handled;
+        child_derived
+    });
+
+    derived_commands.extend(child_derived);
+    (derived_commands, handled)
 }
 
-fn recursively_handle_command(handler: &mut dyn CommandHandler, command: &Command) -> Vec<Command> {
-    let mut commands = Vec::new();
-    if let Some(c) = handler.handle_command(command) {
-        commands.push(c);
-    }
-
-    let child_commands = handler
-        .children()
-        .into_iter()
-        .flat_map(|child| recursively_handle_command(child, command));
-    commands.extend(child_commands);
+fn should_quit(commands: &[Command]) -> bool {
     commands
+        .iter()
+        .any(|command| matches!(*command, Command::Quit))
 }
