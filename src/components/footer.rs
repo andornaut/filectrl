@@ -2,13 +2,9 @@ use super::Component;
 use crate::{app::command::CommandHandler, views::Renderable};
 use ratatui::{backend::Backend, layout::Rect, widgets::Block, Frame};
 
+#[derive(Default)]
 pub struct Footer {}
 
-impl Footer {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 impl<B: Backend> Component<B> for Footer {}
 
 impl CommandHandler for Footer {}
