@@ -19,21 +19,21 @@ use ratatui::{
 
 #[derive(Default)]
 pub struct Content {
-    children: Vec<PathDisplay>,
-    directory: PathDisplay,
     errors: ErrorsView,
+    directory_contents: Vec<PathDisplay>,
+    directory: PathDisplay,
     state: TableState,
 }
 
 impl Content {
     fn open(&mut self) -> CommandResult {
         if let Some(i) = self.state.selected() {
-            let child = &self.children[i];
-            let result = PathDisplay::try_from(child.path.clone());
+            let path = &self.directory_contents[i];
+            let result = PathDisplay::try_from(path.path.clone());
             return CommandResult::some(match result {
                 Err(err) => Command::Error(err.to_string()),
                 Ok(path) => {
-                    if child.is_dir {
+                    if path.is_dir {
                         Command::ChangeDir(path)
                     } else {
                         // TODO: handle symlinks
@@ -48,7 +48,7 @@ impl Content {
     fn next(&mut self) {
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.children.len() - 1 {
+                if i >= self.directory_contents.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -63,7 +63,7 @@ impl Content {
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.children.len() - 1
+                    self.directory_contents.len() - 1
                 } else {
                     i - 1
                 }
@@ -83,7 +83,7 @@ impl CommandHandler for Content {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Key(code, _) => match code {
-                KeyCode::Enter | KeyCode::Char('l') => self.open(),
+                KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.open(),
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.previous();
                     CommandResult::none()
@@ -96,7 +96,7 @@ impl CommandHandler for Content {
             },
             Command::UpdateCurrentDir(directory, children) => {
                 self.directory = directory.clone();
-                self.children = children.clone();
+                self.directory_contents = children.clone();
                 CommandResult::none()
             }
             _ => CommandResult::NotHandled,
@@ -119,7 +119,11 @@ impl<B: Backend> Renderable<B> for Content {
         let errors_rect = chunks[0];
         let content_rect = chunks[1];
         self.errors.render(frame, errors_rect);
-        frame.render_stateful_widget(create_table(&self.children), content_rect, &mut self.state);
+        frame.render_stateful_widget(
+            create_table(&self.directory_contents),
+            content_rect,
+            &mut self.state,
+        );
     }
 }
 

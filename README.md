@@ -2,6 +2,23 @@
 
 A Text User Interface (TUI) file manager for Linux and macOS.
 
+## Usage
+
+```
+filectrl [directory to navigate to]
+```
+
+### Keyboard controls
+
+Keys | Description
+--- | ---
+q, Q, CTRL+c, or Esc | Quit
+c | Clear errors
+j,k | Down,Up
+Space | Select/Deselect
+Enter, Right, or l | Navigate to selected directory / Open selected file
+Backspace, Left or h | Navigate up one directory
+
 ## Developing
 
 * [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)

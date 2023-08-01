@@ -96,13 +96,13 @@ impl TryFrom<&PathBuf> for PathDisplay {
         let metadata = path_buf.metadata()?; // Will return an Error if the path doesn't exist
         let file_type = metadata.file_type();
         Ok(Self {
-            basename: path_buf_to_basename(&path_buf)?,
+            basename: path_to_basename(&path_buf)?,
             is_dir: file_type.is_dir(),
             is_file: file_type.is_file(),
             is_symlink: file_type.is_symlink(),
             mode: mode_to_string(metadata.permissions().mode()),
             modified: metadata.modified()?.into(),
-            path: path_buf_to_string(&path_buf)?,
+            path: path_to_string(&path_buf)?,
             size: metadata.len(),
         })
     }
@@ -121,14 +121,14 @@ fn osstr_to_string(os_str: &OsStr) -> Result<String> {
         .map_err(|orig| anyhow!("Path cannot be converted to a string: {:?}", orig))
 }
 
-fn path_buf_to_basename(path: &Path) -> Result<String> {
+fn path_to_basename(path: &Path) -> Result<String> {
     match path.file_name() {
         Some(name) => osstr_to_string(name),
         None => Ok(String::from("")),
     }
 }
 
-fn path_buf_to_string(path: &Path) -> Result<String> {
+fn path_to_string(path: &Path) -> Result<String> {
     // Ref. https://stackoverflow.com/a/42579588,
     // https://stackoverflow.com/a/67205030,
     // https://stackoverflow.com/a/31667995
