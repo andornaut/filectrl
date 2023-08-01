@@ -1,4 +1,4 @@
-use super::Component;
+use super::{errors::ErrorsView, View};
 use crate::{
     app::{
         command::{Command, CommandHandler, CommandResult},
@@ -11,6 +11,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
+    prelude::{Direction, Layout},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Cell, Row, Table, TableState},
     Frame,
@@ -20,6 +21,7 @@ use ratatui::{
 pub struct Content {
     children: Vec<PathDisplay>,
     directory: PathDisplay,
+    errors: ErrorsView,
     state: TableState,
 }
 
@@ -73,10 +75,15 @@ impl Content {
 }
 
 impl CommandHandler for Content {
+    fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
+        let errors: &mut dyn CommandHandler = &mut self.errors;
+        vec![errors]
+    }
+
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Key(code, _) => match code {
-                KeyCode::Enter => self.open(),
+                KeyCode::Enter | KeyCode::Char('l') => self.open(),
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.previous();
                     CommandResult::none()
@@ -101,39 +108,49 @@ impl CommandHandler for Content {
     }
 }
 
-impl<B: Backend> Component<B> for Content {}
+impl<B: Backend> View<B> for Content {}
 
 impl<B: Backend> Renderable<B> for Content {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-        let normal_style = Style::default().bg(Color::Blue);
-        let header_cells = ["Name", "Mode", "Size", "Modified"]
-            .iter()
-            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Red)));
-        let header = Row::new(header_cells)
-            .style(normal_style)
-            .height(1)
-            .bottom_margin(1);
-        let rows = self.children.iter().map(|item| {
-            let height = 1;
-            let cells = vec![
-                Cell::from(item.basename.clone()),
-                Cell::from(item.mode.to_string()),
-                Cell::from(item.human_size()),
-                Cell::from(item.human_modified()),
-            ];
-            Row::new(cells).height(height as u16).bottom_margin(1)
-        });
-        let t = Table::new(rows)
-            .header(header)
-            .block(Block::default().borders(Borders::ALL).title("Table"))
-            .highlight_style(selected_style)
-            .widths(&[
-                Constraint::Percentage(55),
-                Constraint::Length(5),
-                Constraint::Length(10),
-                Constraint::Min(35),
-            ]);
-        frame.render_stateful_widget(t, rect, &mut self.state);
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(self.errors.height()), Constraint::Min(0)].as_ref());
+        let chunks = layout.split(rect);
+        let errors_rect = chunks[0];
+        let content_rect = chunks[1];
+        self.errors.render(frame, errors_rect);
+        frame.render_stateful_widget(create_table(&self.children), content_rect, &mut self.state);
     }
+}
+
+fn create_table(children: &[PathDisplay]) -> Table {
+    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+    let normal_style = Style::default().bg(Color::Blue);
+    let header_cells = ["Name", "Mode", "Size", "Modified"]
+        .iter()
+        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Red)));
+    let header = Row::new(header_cells)
+        .style(normal_style)
+        .height(1)
+        .bottom_margin(1);
+    let rows = children.iter().map(|item| {
+        let height = 1;
+        let cells = vec![
+            Cell::from(item.basename.clone()),
+            Cell::from(item.mode.to_string()),
+            Cell::from(item.human_size()),
+            Cell::from(item.human_modified()),
+        ];
+        Row::new(cells).height(height as u16).bottom_margin(1)
+    });
+    Table::new(rows)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title("Table"))
+        .highlight_style(selected_style)
+        .widths(&[
+            Constraint::Percentage(55),
+            Constraint::Length(5),
+            Constraint::Length(10),
+            Constraint::Min(35),
+        ])
 }

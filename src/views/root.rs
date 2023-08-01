@@ -1,4 +1,4 @@
-use super::{content::Content, footer::Footer, header::Header};
+use super::{content::Content, footer::FooterView, header::HeaderView};
 use crate::{app::command::CommandHandler, views::Renderable};
 use ratatui::{
     backend::Backend,
@@ -8,13 +8,13 @@ use ratatui::{
 };
 
 #[derive(Default)]
-pub struct Root {
+pub struct RootView {
     content: Content,
-    footer: Footer,
-    header: Header,
+    footer: FooterView,
+    header: HeaderView,
 }
 
-impl CommandHandler for Root {
+impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
         let header: &mut dyn CommandHandler = &mut self.header;
         let content: &mut dyn CommandHandler = &mut self.content;
@@ -23,7 +23,7 @@ impl CommandHandler for Root {
     }
 }
 
-impl<B: Backend> Renderable<B> for Root {
+impl<B: Backend> Renderable<B> for RootView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
