@@ -2,9 +2,10 @@ mod content;
 mod errors;
 mod footer;
 mod header;
+mod prompt;
 pub mod root;
 
-use crate::app::command::CommandHandler;
+use crate::command::handler::CommandHandler;
 use ratatui::{backend::Backend, layout::Rect, Frame};
 
 pub trait Renderable<B: Backend> {

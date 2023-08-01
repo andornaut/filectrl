@@ -1,20 +1,17 @@
 pub mod color;
-pub mod command;
+mod events;
 pub mod focus;
 
-use self::command::{CommandHandler, CommandResult};
-use self::focus::Focus;
-
+use self::{
+    events::{receive_commands, spawn_command_sender},
+    focus::Focus,
+};
 use crate::{
-    app::command::{
-        Command, {receive_commands, spawn_command_sender},
-    },
+    command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::FileSystem,
-    views::root::RootView,
-    views::Renderable,
+    views::{root::RootView, Renderable},
 };
 use anyhow::{anyhow, Result};
-use crossterm::event::KeyCode;
 use ratatui::{backend::Backend, Terminal};
 use std::{sync::mpsc, thread, time::Duration};
 
@@ -65,7 +62,7 @@ impl App {
                     // Shortcut: Focus Commands are not handled by Views.
                     return Vec::new();
                 }
-                let command = self.translate_non_modal_key_command(command);
+                let command = self.translate_non_prompt_key_command(command);
                 self.broadcast_command(command)
             })
             .collect();
@@ -104,28 +101,19 @@ impl App {
         true
     }
 
-    fn translate_non_modal_key_command(&self, command: Command) -> Command {
-        if self.focus == Focus::Modal {
-            return command;
-        }
-
-        if let Command::Key(code, _) = command {
-            return match code {
-                KeyCode::Char('q') | KeyCode::Char('Q') => Command::Quit,
-                KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => Command::BackDir,
-                _ => command,
-            };
-        }
-
-        command
-    }
-
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         terminal.draw(|frame| {
             let window = frame.size();
             self.root.render(frame, window);
         })?;
         Ok(())
+    }
+
+    fn translate_non_prompt_key_command(&self, command: Command) -> Command {
+        if self.focus == Focus::Prompt {
+            return command;
+        }
+        command.translate_non_prompt_key_command()
     }
 }
 

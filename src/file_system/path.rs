@@ -1,17 +1,13 @@
-use anyhow::{anyhow, Error, Result};
-use chrono::{DateTime, Local};
-use std::{
-    cmp::Ordering,
-    env,
-    ffi::OsStr,
-    os::unix::prelude::PermissionsExt,
-    path::{Path, PathBuf},
+use super::{
+    converters::{mode_to_string, path_to_basename, path_to_string, to_comparable},
+    human::{humanize_bytes, humanize_datetime},
 };
-
-use super::{human::humanize_bytes, human::humanize_datetime};
+use anyhow::{Error, Result};
+use chrono::{DateTime, Local};
+use std::{cmp::Ordering, env, os::unix::prelude::PermissionsExt, path::PathBuf};
 
 #[derive(Clone, Debug, Eq)]
-pub struct PathDisplay {
+pub struct HumanPath {
     pub basename: String,
     pub is_dir: bool,
     pub is_file: bool,
@@ -22,13 +18,13 @@ pub struct PathDisplay {
     pub size: u64,
 }
 
-impl PathDisplay {
+impl HumanPath {
     pub fn breadcrumbs(&self) -> Vec<Self> {
         // Predicate: the path exists, otherwise this will panic
         PathBuf::from(&self.path)
             .ancestors()
             .into_iter()
-            .map(|path| PathDisplay::try_from(&PathBuf::from(path)).unwrap())
+            .map(|path| HumanPath::try_from(&PathBuf::from(path)).unwrap())
             .collect()
     }
 
@@ -41,32 +37,32 @@ impl PathDisplay {
     }
 }
 
-impl Default for PathDisplay {
+impl Default for HumanPath {
     fn default() -> Self {
         let directory = env::current_dir().expect("Can get the CWD");
-        PathDisplay::try_from(&directory).expect("Can create a PathDisplay from the CWD")
+        HumanPath::try_from(&directory).expect("Can create a PathDisplay from the CWD")
     }
 }
 
-impl Ord for PathDisplay {
+impl Ord for HumanPath {
     fn cmp(&self, other: &Self) -> Ordering {
         to_comparable(self).cmp(&to_comparable(other))
     }
 }
 
-impl PartialEq for PathDisplay {
+impl PartialEq for HumanPath {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
     }
 }
 
-impl PartialOrd for PathDisplay {
+impl PartialOrd for HumanPath {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl TryFrom<&str> for PathDisplay {
+impl TryFrom<&str> for HumanPath {
     type Error = Error;
 
     fn try_from(path: &str) -> Result<Self, Self::Error> {
@@ -75,7 +71,7 @@ impl TryFrom<&str> for PathDisplay {
     }
 }
 
-impl TryFrom<String> for PathDisplay {
+impl TryFrom<String> for HumanPath {
     type Error = Error;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
@@ -84,7 +80,7 @@ impl TryFrom<String> for PathDisplay {
     }
 }
 
-impl TryFrom<&PathBuf> for PathDisplay {
+impl TryFrom<&PathBuf> for HumanPath {
     type Error = Error;
 
     fn try_from(path_buf: &PathBuf) -> Result<Self, Self::Error> {
@@ -106,35 +102,4 @@ impl TryFrom<&PathBuf> for PathDisplay {
             size: metadata.len(),
         })
     }
-}
-
-fn mode_to_string(mode: u32) -> String {
-    let mut mode = format!("{mode:o}");
-    mode.split_off(mode.len() - 3)
-}
-
-fn osstr_to_string(os_str: &OsStr) -> Result<String> {
-    // Ref. https://profpatsch.de/notes/rust-string-conversions
-    os_str
-        .to_os_string()
-        .into_string()
-        .map_err(|orig| anyhow!("Path cannot be converted to a string: {:?}", orig))
-}
-
-fn path_to_basename(path: &Path) -> Result<String> {
-    match path.file_name() {
-        Some(name) => osstr_to_string(name),
-        None => Ok(String::from("")),
-    }
-}
-
-fn path_to_string(path: &Path) -> Result<String> {
-    // Ref. https://stackoverflow.com/a/42579588,
-    // https://stackoverflow.com/a/67205030,
-    // https://stackoverflow.com/a/31667995
-    osstr_to_string(path.as_os_str())
-}
-
-fn to_comparable(path: &PathDisplay) -> String {
-    path.basename.trim_start_matches('.').to_lowercase()
 }

@@ -1,11 +1,9 @@
 use super::{errors::ErrorsView, View};
 use crate::{
-    app::{
-        command::{Command, CommandHandler, CommandResult},
-        focus::Focus,
-    },
-    file_system::path_display::PathDisplay,
-    views::Renderable,
+    app::focus::Focus,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+    file_system::path::HumanPath,
+    views::{prompt::PromptView, Renderable},
 };
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -18,10 +16,11 @@ use ratatui::{
 };
 
 #[derive(Default)]
-pub struct Content {
+pub(super) struct Content {
     errors: ErrorsView,
-    directory_contents: Vec<PathDisplay>,
-    directory: PathDisplay,
+    directory_contents: Vec<HumanPath>,
+    directory: HumanPath,
+    prompt: Option<PromptView>,
     state: TableState,
 }
 
@@ -29,7 +28,7 @@ impl Content {
     fn open(&mut self) -> CommandResult {
         if let Some(i) = self.state.selected() {
             let path = &self.directory_contents[i];
-            let result = PathDisplay::try_from(path.path.clone());
+            let result = HumanPath::try_from(path.path.clone());
             return CommandResult::some(match result {
                 Err(err) => Command::Error(err.to_string()),
                 Ok(path) => {
@@ -127,7 +126,7 @@ impl<B: Backend> Renderable<B> for Content {
     }
 }
 
-fn create_table(children: &[PathDisplay]) -> Table {
+fn create_table(children: &[HumanPath]) -> Table {
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
     let normal_style = Style::default().bg(Color::Blue);
     let header_cells = ["Name", "Mode", "Size", "Modified"]

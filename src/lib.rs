@@ -1,4 +1,5 @@
 mod app;
+mod command;
 mod file_system;
 mod terminal;
 mod views;

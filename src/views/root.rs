@@ -1,5 +1,5 @@
 use super::{content::Content, footer::FooterView, header::HeaderView};
-use crate::{app::command::CommandHandler, views::Renderable};
+use crate::{command::handler::CommandHandler, views::Renderable};
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Margin, Rect},
