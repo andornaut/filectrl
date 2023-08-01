@@ -34,7 +34,6 @@ impl App {
 
         // An initial command is required to start the main loop
         tx.send(self.file_system.cd_to_cwd()?)?;
-        tx.send(Command::Error("this is a test error message".to_string()))?;
         spawn_command_sender(tx);
 
         let min_duration = Duration::from_millis(MAIN_LOOP_MIN_SLEEP_MS);
@@ -113,7 +112,7 @@ impl App {
         if let Command::Key(code, _) = command {
             return match code {
                 KeyCode::Char('q') | KeyCode::Char('Q') => Command::Quit,
-                KeyCode::Backspace => Command::BackDir,
+                KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => Command::BackDir,
                 _ => command,
             };
         }
