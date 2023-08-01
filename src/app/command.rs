@@ -6,7 +6,6 @@ use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
-use std::option;
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread,
@@ -46,13 +45,14 @@ impl Command {
                 let KeyEvent {
                     code, modifiers, ..
                 } = key;
+                eprintln!("Command::maybe_from: Key:{code:?}, Modifiers:{modifiers:?}");
                 return Some(match (code, modifiers) {
                     (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         Command::Quit
                     }
                     (KeyCode::Tab, _) => Self::NextFocus,
                     (KeyCode::BackTab, _) => Self::PreviousFocus,
-                    (KeyCode::Char(' '), KeyModifiers::CONTROL) => Self::ClearErrors,
+                    (KeyCode::Char('c'), _) => Self::ClearErrors,
                     (_, _) => Self::Key(code, modifiers),
                 });
             }

@@ -9,8 +9,8 @@ use crate::{
     app::command::{
         Command, {receive_commands, spawn_command_sender},
     },
-    components::root::Root,
     file_system::FileSystem,
+    views::root::RootView,
     views::Renderable,
 };
 use anyhow::{anyhow, Result};
@@ -25,7 +25,7 @@ const MAIN_LOOP_MIN_SLEEP_MS: u64 = 50;
 pub struct App {
     file_system: FileSystem,
     focus: Focus,
-    root: Root,
+    root: RootView,
 }
 
 impl App {
@@ -34,6 +34,7 @@ impl App {
 
         // An initial command is required to start the main loop
         tx.send(self.file_system.cd_to_cwd()?)?;
+        tx.send(Command::Error("this is a test error message".to_string()))?;
         spawn_command_sender(tx);
 
         let min_duration = Duration::from_millis(MAIN_LOOP_MIN_SLEEP_MS);
@@ -46,15 +47,13 @@ impl App {
                 continue;
             }
 
-            let unhandled_commands = self.broadcast_commands(commands);
-            if should_quit(&unhandled_commands) {
+            let remaining_commands = self.broadcast_commands(commands);
+
+            if should_quit(&remaining_commands) {
                 return Ok(());
             }
-            if !unhandled_commands.is_empty() {
-                return Err(anyhow!(
-                    "Error: There are unhandled commands: {unhandled_commands:?}"
-                ));
-            }
+
+            must_not_contain_unhandled(&remaining_commands)?;
             self.render(terminal)?;
         }
     }
@@ -63,8 +62,11 @@ impl App {
         let commands: Vec<Command> = commands
             .into_iter()
             .flat_map(|command| {
-                self.handle_focus_command(&command);
-                let command = self.convert_non_modal_key_command(command);
+                if self.handle_focus_command(&command) {
+                    // Shortcut: Focus Commands are not handled by Views.
+                    return Vec::new();
+                }
+                let command = self.translate_non_modal_key_command(command);
                 self.broadcast_command(command)
             })
             .collect();
@@ -72,6 +74,7 @@ impl App {
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
+        eprintln!("broadcast_command: command:{command:?}");
         let focus = &self.focus.clone();
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
@@ -93,7 +96,16 @@ impl App {
         commands
     }
 
-    fn convert_non_modal_key_command(&self, command: Command) -> Command {
+    fn handle_focus_command(&mut self, command: &Command) -> bool {
+        match command {
+            Command::NextFocus => self.focus.next(),
+            Command::PreviousFocus => self.focus.previous(),
+            _ => return false,
+        }
+        true
+    }
+
+    fn translate_non_modal_key_command(&self, command: Command) -> Command {
         if self.focus == Focus::Modal {
             return command;
         }
@@ -107,14 +119,6 @@ impl App {
         }
 
         command
-    }
-
-    fn handle_focus_command(&mut self, command: &Command) {
-        match command {
-            Command::NextFocus => self.focus.next(),
-            Command::PreviousFocus => self.focus.previous(),
-            _ => (),
-        }
     }
 
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -161,6 +165,19 @@ fn recursively_handle_command(
 
     derived_commands.extend(child_derived);
     (derived_commands, handled)
+}
+
+fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
+    let unhandled_count = commands
+        .into_iter()
+        .filter(|command| !matches!(command, Command::Key(_, _)))
+        .count();
+    if unhandled_count > 0 {
+        return Err(anyhow!(
+            "Error: There are unhandled {unhandled_count} commands: {commands:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn should_quit(commands: &[Command]) -> bool {
