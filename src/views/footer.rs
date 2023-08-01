@@ -1,9 +1,9 @@
 use super::View;
-use crate::{app::command::CommandHandler, views::Renderable};
+use crate::{command::handler::CommandHandler, views::Renderable};
 use ratatui::{backend::Backend, layout::Rect, widgets::Block, Frame};
 
 #[derive(Default)]
-pub struct FooterView {}
+pub(super) struct FooterView {}
 
 impl<B: Backend> View<B> for FooterView {}
 

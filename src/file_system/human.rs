@@ -1,11 +1,10 @@
-use std::cmp;
-
 use chrono::{DateTime, Datelike, Local, Timelike};
+use std::cmp;
 
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
-pub fn humanize_bytes(bytes: u64) -> String {
+pub(super) fn humanize_bytes(bytes: u64) -> String {
     if bytes == 0 {
         // Avoid panic: "argument of integer logarithm must be positive"
         return "0".to_string();
@@ -17,7 +16,7 @@ pub fn humanize_bytes(bytes: u64) -> String {
     format!("{rounded}{unit}")
 }
 
-pub fn humanize_datetime(
+pub(super) fn humanize_datetime(
     datetime: DateTime<Local>,
     relative_to_datetime: DateTime<Local>,
 ) -> String {

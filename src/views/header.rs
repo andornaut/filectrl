@@ -1,17 +1,15 @@
 use super::View;
 use crate::{
-    app::{
-        command::{Command, CommandHandler, CommandResult},
-        focus::Focus,
-    },
-    file_system::path_display::PathDisplay,
+    app::focus::Focus,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+    file_system::path::HumanPath,
     views::Renderable,
 };
 use ratatui::{backend::Backend, layout::Rect, widgets::Block, Frame};
 
 #[derive(Default)]
-pub struct HeaderView {
-    directory: PathDisplay,
+pub(super) struct HeaderView {
+    directory: HumanPath,
 }
 
 impl<B: Backend> View<B> for HeaderView {}

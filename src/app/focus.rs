@@ -1,7 +1,8 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Focus {
     Header,
-    Modal,
+    Prompt,
+    #[default]
     Content,
 }
 
@@ -17,11 +18,5 @@ impl Focus {
     pub fn previous(&mut self) {
         // `next()` and `previous()` are equivalent when there are only two focussable areas
         self.next()
-    }
-}
-
-impl Default for Focus {
-    fn default() -> Self {
-        Focus::Content
     }
 }

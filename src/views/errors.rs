@@ -1,6 +1,6 @@
 use super::View;
 use crate::{
-    app::command::{Command, CommandHandler, CommandResult},
+    command::{handler::CommandHandler, result::CommandResult, Command},
     views::Renderable,
 };
 use ratatui::{
@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 #[derive(Default)]
-pub struct ErrorsView {
+pub(super) struct ErrorsView {
     errors: Vec<String>,
 }
 
