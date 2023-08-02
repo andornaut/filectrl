@@ -10,6 +10,7 @@ filectrl [directory to navigate to]
 
 ### Keyboard controls
 
+***Normal mode***
 Keys | Description
 --- | ---
 q, Q, CTRL+c, or Esc | Quit
@@ -18,6 +19,12 @@ j,k | Down,Up
 Space | Select/Deselect
 Enter, Right, or l | Navigate to selected directory / Open selected file
 Backspace, Left or h | Navigate up one directory
+
+***Prompt mode***
+Keys | Description
+--- | ---
+CTRL+c or Esc | Close the prompt
+Enter | Submit your input
 
 ## Developing
 
@@ -52,3 +59,4 @@ Name | Description
 [dirs-next](https://github.com/xdg-rs/dirs/tree/master/dirs) | Low-level library that provides conventional config/cache/data paths
 [notify](https://github.com/notify-rs/notify)|Cross-platform filesystem notification library
 [ratatui](https://github.com/tui-rs-revival/ratatui) | Library to build rich terminal user interfaces
+[tui-rs](https://github.com/sayanarijit/tui-input/) | TUI input library
