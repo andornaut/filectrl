@@ -1,4 +1,4 @@
-use super::{content::Content, footer::FooterView, header::HeaderView};
+use super::{content::ContentView, footer::FooterView, header::HeaderView};
 use crate::{command::handler::CommandHandler, views::Renderable};
 use ratatui::{
     backend::Backend,
@@ -9,7 +9,7 @@ use ratatui::{
 
 #[derive(Default)]
 pub struct RootView {
-    content: Content,
+    content: ContentView,
     footer: FooterView,
     header: HeaderView,
 }

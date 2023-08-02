@@ -23,3 +23,9 @@ impl CommandResult {
         Self::Handled(Some(command))
     }
 }
+
+impl From<Command> for CommandResult {
+    fn from(value: Command) -> Self {
+        Self::some(value)
+    }
+}

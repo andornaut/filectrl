@@ -1,7 +1,7 @@
 use self::path::HumanPath;
 use crate::command::{
-    as_error_command, as_error_option_command, handler::CommandHandler, result::CommandResult,
-    Command,
+    handler::CommandHandler, result::CommandResult, unwrap_option_or_error_command,
+    unwrap_or_error_command, Command,
 };
 use anyhow::{anyhow, Result};
 use std::{fs, path::PathBuf};
@@ -51,10 +51,21 @@ impl FileSystem {
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::BackDir => CommandResult::option(as_error_option_command(self.back())),
+            Command::BackDir => CommandResult::option(unwrap_option_or_error_command(self.back())),
             Command::ChangeDir(directory) => {
-                let command = as_error_command(self.cd(directory.clone()));
-                CommandResult::some(command)
+                let command = unwrap_or_error_command(self.cd(directory.clone()));
+                command.into()
+            }
+            Command::RefreshDir => {
+                eprintln!("TODO: RefreshDir: {}", self.directory.path);
+                CommandResult::none()
+            }
+            Command::RenameDir(old_path, new_basename) => {
+                eprintln!(
+                    "TODO: RenameDir: {old_basename} -> {new_basename}",
+                    old_basename = old_path.basename
+                );
+                CommandResult::none()
             }
             _ => CommandResult::NotHandled,
         }

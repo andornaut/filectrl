@@ -57,28 +57,28 @@ impl App {
     fn broadcast_commands(&mut self, commands: Vec<Command>) -> Vec<Command> {
         let commands: Vec<Command> = commands
             .into_iter()
-            .flat_map(|command| {
-                if self.handle_focus_command(&command) {
-                    // Shortcut: Focus Commands are not handled by Views.
-                    return Vec::new();
-                }
-                let command = self.translate_non_prompt_key_command(command);
-                self.broadcast_command(command)
-            })
+            .flat_map(|command| self.broadcast_command(command))
             .collect();
         commands
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
-        eprintln!("broadcast_command: command:{command:?}");
-        let focus = &self.focus.clone();
+        let command = self.translate_non_prompt_key_command(command);
+        let focus = self.focus.clone();
+        eprintln!("broadcast_command: focus:{focus:?} command:{command:?}");
+
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
             commands = commands
                 .into_iter()
                 .flat_map(|command| {
+                    if self.handle_focus_command(&command) {
+                        // Shortcut: Focus Commands are not handled by Views/Handlers.
+                        return Vec::new();
+                    }
+
                     let (mut derived_commands, handled) =
-                        recursively_handle_command(focus, self, &command);
+                        recursively_handle_command(&focus, self, &command);
                     if !handled {
                         derived_commands.push(command);
                     }
@@ -96,6 +96,10 @@ impl App {
         match command {
             Command::NextFocus => self.focus.next(),
             Command::PreviousFocus => self.focus.previous(),
+            Command::Focus(focus) => {
+                eprintln!("Changed focus to: {focus:?}");
+                self.focus = focus.clone();
+            }
             _ => return false,
         }
         true
