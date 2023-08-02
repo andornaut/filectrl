@@ -14,7 +14,8 @@ filectrl [directory to navigate to]
 Keys | Description
 --- | ---
 q, Q, CTRL+c, or Esc | Quit
-c | Clear errors
+c | Clear error messages
+r | Refresh current directory
 j,k | Down,Up
 Space | Select/Deselect
 Enter, Right, or l | Navigate to selected directory / Open selected file

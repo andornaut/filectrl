@@ -1,13 +1,9 @@
 pub mod handler;
 pub mod result;
 
-use crate::file_system::path::HumanPath;
+use crate::{app::focus::Focus, file_system::path::HumanPath};
 use anyhow::Result;
-use crossterm::event::{read, Event, KeyCode, KeyEvent, KeyModifiers};
-use std::{
-    sync::mpsc::{Receiver, Sender},
-    thread,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -17,7 +13,12 @@ pub enum Command {
     Quit,
     NextFocus,
     PreviousFocus,
+    Focus(Focus),
     Resize(u16, u16), // w,h
+
+    // Content commands
+    CancelPrompt,
+    SubmitPrompt(String),
 
     // Generic key event. Will be specialized during `app.broadcast()`
     Key(KeyCode, KeyModifiers),
@@ -26,6 +27,8 @@ pub enum Command {
     BackDir,
     ChangeDir(HumanPath),
     OpenFile(HumanPath),
+    RefreshDir,
+    RenameDir(HumanPath, String),
     UpdateCurrentDir(HumanPath, Vec<HumanPath>),
 }
 
@@ -64,6 +67,7 @@ impl Command {
                     Command::BackDir
                 }
                 (KeyCode::Char('c'), _) => Self::ClearErrors,
+                (KeyCode::Char('r'), _) => Self::RefreshDir,
                 (_, _) => self,
             },
             _ => self,
@@ -71,10 +75,10 @@ impl Command {
     }
 }
 
-pub fn as_error_command(result: Result<Command>) -> Command {
+pub fn unwrap_or_error_command(result: Result<Command>) -> Command {
     result.unwrap_or_else(|err| Command::Error(err.to_string()))
 }
 
-pub fn as_error_option_command(result: Result<Option<Command>>) -> Option<Command> {
+pub fn unwrap_option_or_error_command(result: Result<Option<Command>>) -> Option<Command> {
     result.unwrap_or_else(|err| Some(Command::Error(err.to_string())))
 }

@@ -16,26 +16,27 @@ use ratatui::{
 };
 
 #[derive(Default)]
-pub(super) struct Content {
+pub(super) struct ContentView {
     errors: ErrorsView,
     directory_contents: Vec<HumanPath>,
     directory: HumanPath,
-    mode: ContentMode,
-    prompt: Option<PromptView>,
+    mode: Mode,
+    prompt: PromptView,
     state: TableState,
 }
 
-impl Content {
+impl ContentView {
     fn open(&mut self) -> CommandResult {
         match self.selected() {
             Some(path) => {
                 let path = path.clone();
                 // TODO: handle symlinks
-                CommandResult::some(if path.is_dir {
+                (if path.is_dir {
                     Command::ChangeDir(path)
                 } else {
                     Command::OpenFile(path)
                 })
+                .into()
             }
             None => CommandResult::none(),
         }
@@ -76,24 +77,39 @@ impl Content {
         }
     }
 
-    fn rename(&mut self) {
+    fn cancel_prompt(&mut self) -> CommandResult {
+        self.mode = Mode::Table;
+        Command::Focus(Focus::Content).into()
+    }
+
+    fn prompt_rename(&mut self) -> CommandResult {
         match self.selected() {
-            Some(path) => {
-                self.prompt = Some(PromptView::new(
-                    format!("Rename \"{}\" to...", path.basename),
-                    Some(path.basename.clone()),
-                ));
-                self.mode = ContentMode::Prompt;
+            Some(selected_path) => {
+                let label = format!("Rename \"{}\" to...", selected_path.basename);
+                self.mode = Mode::PromptRename(selected_path.clone());
+                self.prompt.setup(label);
+                Command::Focus(Focus::Prompt).into()
             }
-            None => (),
+            None => CommandResult::none(),
+        }
+    }
+
+    fn submit_prompt(&mut self, value: String) -> CommandResult {
+        match self.mode.clone() {
+            Mode::PromptRename(selected_path) => {
+                self.mode = Mode::Table;
+                Command::RenameDir(selected_path, value).into()
+            }
+            _ => panic!("Invalid ContentView.mode:{:?}", self.mode),
         }
     }
 }
 
-impl CommandHandler for Content {
+impl CommandHandler for ContentView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
         let errors: &mut dyn CommandHandler = &mut self.errors;
-        vec![errors]
+        let prompt: &mut dyn CommandHandler = &mut self.prompt;
+        vec![errors, prompt]
     }
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -108,15 +124,15 @@ impl CommandHandler for Content {
                     self.next();
                     CommandResult::none()
                 }
-                KeyCode::F(2) => {
-                    self.rename();
-                    CommandResult::none()
-                }
+                KeyCode::F(2) => self.prompt_rename(),
                 _ => CommandResult::NotHandled,
             },
+            Command::CancelPrompt => self.cancel_prompt(),
+            Command::SubmitPrompt(value) => self.submit_prompt(value.clone()),
             Command::UpdateCurrentDir(directory, children) => {
                 self.directory = directory.clone();
                 self.directory_contents = children.clone();
+                self.state.select(None);
                 CommandResult::none()
             }
             _ => CommandResult::NotHandled,
@@ -128,9 +144,9 @@ impl CommandHandler for Content {
     }
 }
 
-impl<B: Backend> View<B> for Content {}
+impl<B: Backend> View<B> for ContentView {}
 
-impl<B: Backend> Renderable<B> for Content {
+impl<B: Backend> Renderable<B> for ContentView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -141,13 +157,10 @@ impl<B: Backend> Renderable<B> for Content {
         self.errors.render(frame, errors_rect);
 
         match self.mode {
-            ContentMode::Prompt => {
-                self.prompt
-                    .as_mut()
-                    .expect("A PromptView is always created before it's rendered")
-                    .render(frame, content_rect);
+            Mode::PromptRename(_) => {
+                self.prompt.render(frame, content_rect);
             }
-            ContentMode::Table => {
+            Mode::Table => {
                 let table = create_table(&self.directory_contents);
                 frame.render_stateful_widget(table, content_rect, &mut self.state);
             }
@@ -187,9 +200,9 @@ fn create_table(children: &[HumanPath]) -> Table {
         ])
 }
 
-#[derive(Default)]
-enum ContentMode {
-    Prompt,
+#[derive(Clone, Debug, Default)]
+enum Mode {
+    PromptRename(HumanPath),
     #[default]
     Table,
 }
