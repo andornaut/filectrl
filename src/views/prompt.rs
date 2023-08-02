@@ -15,9 +15,10 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub fn new(label: String) -> Self {
+    pub fn new(label: String, default_input: Option<String>) -> Self {
         Self {
             label,
+            input: default_input.unwrap_or(String::from("")),
             ..Self::default()
         }
     }

@@ -20,28 +20,25 @@ pub(super) struct Content {
     errors: ErrorsView,
     directory_contents: Vec<HumanPath>,
     directory: HumanPath,
+    mode: ContentMode,
     prompt: Option<PromptView>,
     state: TableState,
 }
 
 impl Content {
     fn open(&mut self) -> CommandResult {
-        if let Some(i) = self.state.selected() {
-            let path = &self.directory_contents[i];
-            let result = HumanPath::try_from(path.path.clone());
-            return CommandResult::some(match result {
-                Err(err) => Command::Error(err.to_string()),
-                Ok(path) => {
-                    if path.is_dir {
-                        Command::ChangeDir(path)
-                    } else {
-                        // TODO: handle symlinks
-                        Command::OpenFile(path)
-                    }
-                }
-            });
+        match self.selected() {
+            Some(path) => {
+                let path = path.clone();
+                // TODO: handle symlinks
+                CommandResult::some(if path.is_dir {
+                    Command::ChangeDir(path)
+                } else {
+                    Command::OpenFile(path)
+                })
+            }
+            None => CommandResult::none(),
         }
-        CommandResult::none()
     }
 
     fn next(&mut self) {
@@ -71,6 +68,26 @@ impl Content {
         };
         self.state.select(Some(i));
     }
+
+    fn selected(&self) -> Option<&HumanPath> {
+        match self.state.selected() {
+            Some(i) => Some(&self.directory_contents[i]),
+            None => None,
+        }
+    }
+
+    fn rename(&mut self) {
+        match self.selected() {
+            Some(path) => {
+                self.prompt = Some(PromptView::new(
+                    format!("Rename \"{}\" to...", path.basename),
+                    Some(path.basename.clone()),
+                ));
+                self.mode = ContentMode::Prompt;
+            }
+            None => (),
+        }
+    }
 }
 
 impl CommandHandler for Content {
@@ -89,6 +106,10 @@ impl CommandHandler for Content {
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.next();
+                    CommandResult::none()
+                }
+                KeyCode::F(2) => {
+                    self.rename();
                     CommandResult::none()
                 }
                 _ => CommandResult::NotHandled,
@@ -118,11 +139,19 @@ impl<B: Backend> Renderable<B> for Content {
         let errors_rect = chunks[0];
         let content_rect = chunks[1];
         self.errors.render(frame, errors_rect);
-        frame.render_stateful_widget(
-            create_table(&self.directory_contents),
-            content_rect,
-            &mut self.state,
-        );
+
+        match self.mode {
+            ContentMode::Prompt => {
+                self.prompt
+                    .as_mut()
+                    .expect("A PromptView is always created before it's rendered")
+                    .render(frame, content_rect);
+            }
+            ContentMode::Table => {
+                let table = create_table(&self.directory_contents);
+                frame.render_stateful_widget(table, content_rect, &mut self.state);
+            }
+        }
     }
 }
 
@@ -156,4 +185,11 @@ fn create_table(children: &[HumanPath]) -> Table {
             Constraint::Length(10),
             Constraint::Min(35),
         ])
+}
+
+#[derive(Default)]
+enum ContentMode {
+    Prompt,
+    #[default]
+    Table,
 }
