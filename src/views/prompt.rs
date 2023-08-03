@@ -74,6 +74,10 @@ impl CommandHandler for PromptView {
                     (_, _) => self.handle_input(code, modifiers),
                 };
             }
+            // Workaround for being unable to return 2 commands from this method:
+            // self.submit() returns Command::SubmitPrompt, and then this listens
+            // for the same and return Command::Focus
+            Command::SubmitPrompt(_) => Command::Focus(Focus::Content).into(),
             _ => CommandResult::NotHandled,
         }
     }
