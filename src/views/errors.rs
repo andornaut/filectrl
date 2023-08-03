@@ -1,8 +1,5 @@
 use super::View;
-use crate::{
-    command::{handler::CommandHandler, result::CommandResult, Command},
-    views::Renderable,
-};
+use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -24,30 +21,32 @@ impl ErrorsView {
         u16::try_from(self.errors.len() + 1).expect("The numbe of errors + 1 fits within u16")
     }
 
+    fn add_error(&mut self, message: String) -> CommandResult {
+        self.errors.push(message);
+        CommandResult::none()
+    }
+
+    fn clear_errors(&mut self) -> CommandResult {
+        self.errors.clear();
+        CommandResult::none()
+    }
+
     fn should_render(&self) -> bool {
         self.errors.len() > 0
     }
 }
 
-impl<B: Backend> View<B> for ErrorsView {}
-
 impl CommandHandler for ErrorsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearErrors => {
-                self.errors.clear();
-                CommandResult::none()
-            }
-            Command::Error(message) => {
-                self.errors.push(message.clone());
-                CommandResult::none()
-            }
+            Command::ClearErrors => self.clear_errors(),
+            Command::AddError(message) => self.add_error(message.clone()),
             _ => CommandResult::NotHandled,
         }
     }
 }
 
-impl<B: Backend> Renderable<B> for ErrorsView {
+impl<B: Backend> View<B> for ErrorsView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         if !self.should_render() {
             return;

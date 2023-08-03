@@ -9,7 +9,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub enum Command {
     // App commands
     ClearErrors,
-    Error(String),
+    AddError(String),
     Quit,
     NextFocus,
     PreviousFocus,
@@ -76,9 +76,9 @@ impl Command {
 }
 
 pub fn unwrap_or_error_command(result: Result<Command>) -> Command {
-    result.unwrap_or_else(|err| Command::Error(err.to_string()))
+    result.unwrap_or_else(|err| Command::AddError(err.to_string()))
 }
 
 pub fn unwrap_option_or_error_command(result: Result<Option<Command>>) -> Option<Command> {
-    result.unwrap_or_else(|err| Some(Command::Error(err.to_string())))
+    result.unwrap_or_else(|err| Some(Command::AddError(err.to_string())))
 }
