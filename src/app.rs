@@ -15,7 +15,7 @@ use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
 use std::{sync::mpsc, thread, time::Duration};
 
-const BROADCAST_CYCLES: u8 = 3;
+const BROADCAST_CYCLES: u8 = 4;
 const MAIN_LOOP_MIN_SLEEP_MS: u64 = 50;
 
 #[derive(Default)]

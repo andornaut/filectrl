@@ -43,7 +43,7 @@ impl ContentView {
         match self.mode.clone() {
             Mode::PromptRename(selected_path) => {
                 self.mode = Mode::Table;
-                Command::RenameDir(selected_path, value).into()
+                Command::RenamePath(selected_path, value).into()
             }
             _ => panic!("Invalid ContentView.mode:{:?}", self.mode),
         }

@@ -26,9 +26,10 @@ pub enum Command {
     // FileSystem commands
     BackDir,
     ChangeDir(HumanPath),
+    DeletePath(HumanPath),
     OpenFile(HumanPath),
     RefreshDir,
-    RenameDir(HumanPath, String),
+    RenamePath(HumanPath, String),
     UpdateCurrentDir(HumanPath, Vec<HumanPath>),
 }
 
