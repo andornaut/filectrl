@@ -2,7 +2,6 @@ use super::View;
 use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command},
-    views::Renderable,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -25,24 +24,32 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub fn setup(&mut self, value: String) {
+    pub(super) fn setup(&mut self, value: String) {
         self.label = value;
         self.input.reset();
         self.focus = PromptFocus::Input;
-    }
-
-    fn next_focus(&mut self) {
-        self.focus.next()
-    }
-
-    fn previous_focus(&mut self) {
-        self.focus.previous()
     }
 
     fn cancel(&mut self) -> CommandResult {
         eprintln!("PromptView.cancel()");
         self.input.reset();
         Command::CancelPrompt.into()
+    }
+
+    fn handle_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+        let key_event = KeyEvent::new(code, modifiers);
+        self.input.handle_event(&Event::Key(key_event));
+        CommandResult::none()
+    }
+
+    fn next_focus(&mut self) -> CommandResult {
+        self.focus.next();
+        CommandResult::none()
+    }
+
+    fn previous_focus(&mut self) -> CommandResult {
+        self.focus.previous();
+        CommandResult::none()
     }
 
     fn submit(&mut self) -> CommandResult {
@@ -53,8 +60,6 @@ impl PromptView {
     }
 }
 
-impl<B: Backend> View<B> for PromptView {}
-
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match *command {
@@ -63,20 +68,10 @@ impl CommandHandler for PromptView {
                     (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         self.cancel()
                     }
-                    (KeyCode::Tab, _) => {
-                        self.next_focus();
-                        CommandResult::none()
-                    }
-                    (KeyCode::BackTab, _) => {
-                        self.previous_focus();
-                        CommandResult::none()
-                    }
+                    (KeyCode::Tab, _) => self.next_focus(),
+                    (KeyCode::BackTab, _) => self.previous_focus(),
                     (KeyCode::Enter, _) => self.submit(),
-                    (_, _) => {
-                        let key_event = KeyEvent::new(code, modifiers);
-                        self.input.handle_event(&Event::Key(key_event));
-                        CommandResult::none()
-                    }
+                    (_, _) => self.handle_input(code, modifiers),
                 };
             }
             _ => CommandResult::NotHandled,
@@ -88,7 +83,7 @@ impl CommandHandler for PromptView {
     }
 }
 
-impl<B: Backend> Renderable<B> for PromptView {
+impl<B: Backend> View<B> for PromptView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)

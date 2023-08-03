@@ -3,7 +3,6 @@ use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::path::HumanPath,
-    views::Renderable,
 };
 use ratatui::{backend::Backend, layout::Rect, widgets::Block, Frame};
 
@@ -12,15 +11,17 @@ pub(super) struct HeaderView {
     directory: HumanPath,
 }
 
-impl<B: Backend> View<B> for HeaderView {}
+impl HeaderView {
+    fn update_current_dir(&mut self, directory: HumanPath) -> CommandResult {
+        self.directory = directory;
+        CommandResult::none()
+    }
+}
 
 impl CommandHandler for HeaderView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::UpdateCurrentDir(directory, _) => {
-                self.directory = directory.clone();
-                CommandResult::none()
-            }
+            Command::UpdateCurrentDir(directory, _) => self.update_current_dir(directory.clone()),
             _ => CommandResult::NotHandled,
         }
     }
@@ -30,7 +31,7 @@ impl CommandHandler for HeaderView {
     }
 }
 
-impl<B: Backend> Renderable<B> for HeaderView {
+impl<B: Backend> View<B> for HeaderView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
         let path = self.directory.path.clone();
         let block = Block::default().title(path);

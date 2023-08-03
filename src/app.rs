@@ -9,7 +9,7 @@ use self::{
 use crate::{
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::FileSystem,
-    views::{root::RootView, Renderable},
+    views::{root::RootView, View},
 };
 use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
