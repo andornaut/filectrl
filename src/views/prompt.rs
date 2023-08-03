@@ -13,8 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-use tui_input::backend::crossterm::EventHandler;
-use tui_input::Input;
+use tui_input::{backend::crossterm::EventHandler, Input};
 
 #[derive(Default)]
 pub(super) struct PromptView {
@@ -31,7 +30,6 @@ impl PromptView {
     }
 
     fn cancel(&mut self) -> CommandResult {
-        eprintln!("PromptView.cancel()");
         self.input.reset();
         Command::CancelPrompt.into()
     }
@@ -54,7 +52,6 @@ impl PromptView {
 
     fn submit(&mut self) -> CommandResult {
         let value = self.input.value().into();
-        eprintln!("PromptView.submit():{value}");
         self.input.reset();
         Command::SubmitPrompt(value).into()
     }
@@ -76,7 +73,7 @@ impl CommandHandler for PromptView {
             }
             // Workaround for being unable to return 2 commands from this method:
             // self.submit() returns Command::SubmitPrompt, and then this listens
-            // for the same and return Command::Focus
+            // for the same and returns Command::Focus
             Command::SubmitPrompt(_) => Command::Focus(Focus::Content).into(),
             _ => CommandResult::NotHandled,
         }

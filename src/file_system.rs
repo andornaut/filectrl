@@ -46,6 +46,23 @@ impl FileSystem {
         self.directory = directory.clone();
         Ok(Command::UpdateCurrentDir(directory, children))
     }
+
+    fn delete(&mut self, path: &HumanPath) -> CommandResult {
+        eprintln!("TODO: Delete: {path:?}");
+        self.refresh()
+    }
+
+    fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
+        eprintln!(
+            "TODO: Rename: {old_basename} -> {new_basename}",
+            old_basename = old_path.basename
+        );
+        self.refresh()
+    }
+
+    fn refresh(&mut self) -> CommandResult {
+        unwrap_or_error_command(self.cd(self.directory.clone())).into()
+    }
 }
 
 impl CommandHandler for FileSystem {
@@ -53,20 +70,11 @@ impl CommandHandler for FileSystem {
         match command {
             Command::BackDir => CommandResult::option(unwrap_option_or_error_command(self.back())),
             Command::ChangeDir(directory) => {
-                let command = unwrap_or_error_command(self.cd(directory.clone()));
-                command.into()
+                unwrap_or_error_command(self.cd(directory.clone())).into()
             }
-            Command::RefreshDir => {
-                eprintln!("TODO: RefreshDir: {}", self.directory.path);
-                CommandResult::none()
-            }
-            Command::RenameDir(old_path, new_basename) => {
-                eprintln!(
-                    "TODO: RenameDir: {old_basename} -> {new_basename}",
-                    old_basename = old_path.basename
-                );
-                CommandResult::none()
-            }
+            Command::DeletePath(path) => self.delete(path).into(),
+            Command::RefreshDir => self.refresh(),
+            Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
             _ => CommandResult::NotHandled,
         }
     }

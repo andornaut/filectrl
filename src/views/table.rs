@@ -28,6 +28,30 @@ impl TableView {
         }
     }
 
+    fn delete(&self) -> CommandResult {
+        match self.selected() {
+            Some(path) => Command::DeletePath(path.clone()).into(),
+            None => CommandResult::none(),
+        }
+    }
+
+    fn next(&mut self) -> CommandResult {
+        self.navigate(1)
+    }
+
+    fn previous(&mut self) -> CommandResult {
+        self.navigate(-1)
+    }
+
+    fn navigate(&mut self, delta: i8) -> CommandResult {
+        let i = match self.state.selected() {
+            Some(i) => navigate(self.directory_contents.len() - 1, i, delta),
+            None => 0,
+        };
+        self.state.select(Some(i));
+        CommandResult::none()
+    }
+
     fn open(&mut self) -> CommandResult {
         match self.selected() {
             Some(path) => {
@@ -44,36 +68,6 @@ impl TableView {
         }
     }
 
-    fn next(&mut self) -> CommandResult {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.directory_contents.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
-        CommandResult::none()
-    }
-
-    fn previous(&mut self) -> CommandResult {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.directory_contents.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
-        CommandResult::none()
-    }
-
     fn update_current_dir(
         &mut self,
         directory: HumanPath,
@@ -81,8 +75,12 @@ impl TableView {
     ) -> CommandResult {
         self.directory = directory;
         self.directory_contents = children;
-        self.state.select(None);
+        self.unselect_all();
         CommandResult::none()
+    }
+
+    fn unselect_all(&mut self) {
+        self.state.select(None);
     }
 }
 
@@ -93,6 +91,7 @@ impl CommandHandler for TableView {
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.open(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
+                KeyCode::Char('r') => self.delete(),
                 _ => CommandResult::NotHandled,
             },
             Command::UpdateCurrentDir(directory, children) => {
@@ -144,4 +143,39 @@ fn create_table(children: &[HumanPath]) -> Table {
             Constraint::Length(10),
             Constraint::Min(35),
         ])
+}
+
+fn navigate(len: usize, index: usize, delta: i8) -> usize {
+    let len = i32::try_from(len).expect("Directory list length fits into an i32");
+    let index = i32::try_from(index).unwrap();
+    let delta = i32::from(delta);
+    let mut result = (index + delta) % len;
+    if result < 0 {
+        result += len;
+    }
+    usize::try_from(result).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case(1,  4, 0, 1 ; "add 1")]
+    #[test_case(2,  4, 0, 2 ; "add 2")]
+    #[test_case(0,  4, 3, 1 ; "add 1 overflow")]
+    #[test_case(1,  4, 3, 2 ; "add 2 overflow")]
+    #[test_case(2,  4, 3, -1 ; "subtract 1")]
+    #[test_case(1,  4, 3, -2 ; "subtract 2")]
+    #[test_case(3,  4, 0, -1 ; "subtract 1 overflow")]
+    #[test_case(2,  4, 0, -2 ; "subtract 2 overflow")]
+    #[test_case(0,  4, 2, 10 ; "add 10 overflow")]
+    #[test_case(1,  4, 2, 11 ; "add 11 overflow")]
+    #[test_case(0,  4, 2, -10 ; "subtract 10 overflow")]
+    #[test_case(3,  4, 2, -11 ; "subtract 11 overflow")]
+    fn test(expected: usize, len: usize, index: usize, delta: i8) {
+        let result = navigate(len, index, delta);
+
+        assert_eq!(expected, result);
+    }
 }
