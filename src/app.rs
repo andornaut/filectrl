@@ -97,7 +97,7 @@ impl App {
             Command::NextFocus => self.focus.next(),
             Command::PreviousFocus => self.focus.previous(),
             Command::Focus(focus) => {
-                eprintln!("Changed focus to: {focus:?}");
+                eprintln!("handle_focus_command(): Changed focus to: {focus:?}");
                 self.focus = focus.clone();
             }
             _ => return false,
@@ -150,7 +150,7 @@ fn recursively_handle_command(
 
     let child_derived = handler.children().into_iter().flat_map(|child| {
         let (child_derived, child_handled) = recursively_handle_command(focus, child, command);
-        handled = handled || child_handled;
+        handled |= child_handled;
         child_derived
     });
 
