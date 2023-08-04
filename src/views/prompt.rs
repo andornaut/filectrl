@@ -85,7 +85,7 @@ impl CommandHandler for PromptView {
 }
 
 impl<B: Backend> View<B> for PromptView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -98,17 +98,6 @@ impl<B: Backend> View<B> for PromptView {
                 .as_ref(),
             )
             .split(rect);
-
-        let msg = vec![
-            Span::raw("Press "),
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to cancel, or "),
-            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to submit"),
-        ];
-        let text = Text::from(Line::from(msg));
-        let help_message = Paragraph::new(text).style(Style::default());
-        frame.render_widget(help_message, chunks[0]);
 
         let width = chunks[0].width.max(3) - 3; // keep 2 for borders and 1 for cursor
         let scroll = self.input.visual_scroll(width as usize);

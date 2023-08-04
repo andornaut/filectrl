@@ -88,7 +88,9 @@ impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Key(code, _) => match code {
-                KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.open(),
+                KeyCode::Enter | KeyCode::Char('f') | KeyCode::Right | KeyCode::Char('l') => {
+                    self.open()
+                }
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Char('d') | KeyCode::Delete => self.delete(),
@@ -107,7 +109,7 @@ impl CommandHandler for TableView {
 }
 
 impl<B: Backend> View<B> for TableView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let header_style = Style::default().bg(Color::Blue).fg(Color::Black);
         let header_cells = ["Name", "Mode", "Size", "Modified"]

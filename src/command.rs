@@ -65,7 +65,9 @@ impl Command {
                     Command::UpDir
                 }
                 (KeyCode::Char('c'), _) => Self::ClearErrors,
-                (KeyCode::Char('r'), _) | (KeyCode::F(5), _) => Self::RefreshDir,
+                (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => {
+                    Self::RefreshDir
+                }
                 (_, _) => self,
             },
             _ => self,
