@@ -21,7 +21,7 @@ impl ErrorsView {
         if !self.should_render() {
             return 0;
         }
-        u16::try_from(self.errors.len() + 1).expect("The numbe of errors + 1 fits within u16")
+        u16::try_from(self.errors.len() + 1).expect("The number of errors + 1 fits within u16")
     }
 
     fn add_error(&mut self, message: String) -> CommandResult {
@@ -35,7 +35,7 @@ impl ErrorsView {
     }
 
     fn should_render(&self) -> bool {
-        self.errors.len() > 0
+        !self.errors.is_empty()
     }
 }
 

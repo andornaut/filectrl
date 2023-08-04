@@ -68,11 +68,7 @@ impl TableView {
         }
     }
 
-    fn update_current_dir(
-        &mut self,
-        directory: HumanPath,
-        children: Vec<HumanPath>,
-    ) -> CommandResult {
+    fn update_dir(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
         self.directory = directory;
         self.directory_contents = children;
         self.unselect_all();
@@ -96,8 +92,8 @@ impl CommandHandler for TableView {
                 KeyCode::Char('d') | KeyCode::Delete => self.delete(),
                 _ => CommandResult::NotHandled,
             },
-            Command::Dir(directory, children) => {
-                self.update_current_dir(directory.clone(), children.clone())
+            Command::UpdateDir(directory, children) => {
+                self.update_dir(directory.clone(), children.clone())
             }
             _ => CommandResult::NotHandled,
         }
