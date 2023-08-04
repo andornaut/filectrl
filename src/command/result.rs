@@ -7,14 +7,6 @@ pub enum CommandResult {
 }
 
 impl CommandResult {
-    pub fn option(optional_command: Option<Command>) -> Self {
-        if let Some(derived_command) = optional_command {
-            CommandResult::some(derived_command)
-        } else {
-            CommandResult::none()
-        }
-    }
-
     pub fn none() -> Self {
         Self::Handled(None)
     }
