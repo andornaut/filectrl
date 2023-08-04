@@ -9,7 +9,7 @@ use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, Row, Table, TableState},
+    widgets::{Cell, Row, Table, TableState},
     Frame,
 };
 
@@ -108,37 +108,31 @@ impl CommandHandler for TableView {
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
-        let table = create_table(&self.directory_contents);
+        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let header_style = Style::default().bg(Color::Blue).fg(Color::Black);
+        let header_cells = ["Name", "Mode", "Size", "Modified"]
+            .into_iter()
+            .map(|h| Cell::from(h));
+        let header = Row::new(header_cells).style(header_style).height(1);
+        let rows = self.directory_contents.iter().map(|item| {
+            Row::new(vec![
+                Cell::from(item.basename.clone()),
+                Cell::from(item.mode.to_string()),
+                Cell::from(item.human_size()),
+                Cell::from(item.human_modified()),
+            ])
+        });
+        let table = Table::new(rows)
+            .header(header)
+            .highlight_style(selected_style)
+            .widths(&[
+                Constraint::Percentage(55),
+                Constraint::Length(5),
+                Constraint::Length(10),
+                Constraint::Min(35),
+            ]);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }
-}
-
-fn create_table(children: &[HumanPath]) -> Table {
-    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-    let normal_style = Style::default().bg(Color::Blue);
-    let header_cells = ["Name", "Mode", "Size", "Modified"]
-        .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Red)));
-    let header = Row::new(header_cells).style(normal_style).height(1);
-    let rows = children.iter().map(|item| {
-        let cells = vec![
-            Cell::from(item.basename.clone()),
-            Cell::from(item.mode.to_string()),
-            Cell::from(item.human_size()),
-            Cell::from(item.human_modified()),
-        ];
-        Row::new(cells)
-    });
-    Table::new(rows)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Table"))
-        .highlight_style(selected_style)
-        .widths(&[
-            Constraint::Percentage(55),
-            Constraint::Length(5),
-            Constraint::Length(10),
-            Constraint::Min(35),
-        ])
 }
 
 fn navigate(len: usize, index: usize, delta: i8) -> usize {

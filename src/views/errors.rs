@@ -14,7 +14,7 @@ pub(super) struct ErrorsView {
 }
 
 impl ErrorsView {
-    pub fn height(&self) -> u16 {
+    pub(super) fn height(&self) -> u16 {
         if !self.should_render() {
             return 0;
         }
@@ -39,8 +39,8 @@ impl ErrorsView {
 impl CommandHandler for ErrorsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearErrors => self.clear_errors(),
             Command::AddError(message) => self.add_error(message.clone()),
+            Command::ClearErrors => self.clear_errors(),
             _ => CommandResult::NotHandled,
         }
     }
@@ -51,18 +51,15 @@ impl<B: Backend> View<B> for ErrorsView {
         if !self.should_render() {
             return;
         }
-        let list = create_list(&self.errors);
+        let style = Style::default().fg(Color::Red);
+        let items: Vec<ListItem> = self
+            .errors
+            .iter()
+            .map(|error| ListItem::new(error.clone()))
+            .collect();
+        let list = List::new(items)
+            .style(style)
+            .block(Block::default().title("Errors:"));
         frame.render_widget(list, rect);
     }
-}
-
-fn create_list(messages: &[String]) -> List {
-    let style = Style::default().fg(Color::Red);
-    let items: Vec<ListItem> = messages
-        .iter()
-        .map(|error| ListItem::new(error.clone()))
-        .collect();
-    List::new(items)
-        .style(style)
-        .block(Block::default().title("Errors:"))
 }
