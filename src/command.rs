@@ -22,7 +22,7 @@ pub enum Command {
     // FileSystem commands
     ChangeDir(HumanPath),
     DeletePath(HumanPath),
-    Dir(HumanPath, Vec<HumanPath>),
+    UpdateDir(HumanPath, Vec<HumanPath>),
     OpenFile(HumanPath),
     RefreshDir,
     RenamePath(HumanPath, String),

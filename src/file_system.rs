@@ -32,7 +32,7 @@ impl FileSystem {
 
     fn cd_return_command(&mut self, directory: HumanPath) -> Command {
         match cd(&directory) {
-            Ok(children) => Command::Dir(directory, children),
+            Ok(children) => Command::UpdateDir(directory, children),
             Err(err) => Command::AddError(err.to_string()),
         }
     }
