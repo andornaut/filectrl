@@ -21,13 +21,13 @@ pub enum Command {
     SubmitPrompt(String),
 
     // FileSystem commands
-    UpDir,
     ChangeDir(HumanPath),
     DeletePath(HumanPath),
     Dir(HumanPath, Vec<HumanPath>),
     OpenFile(HumanPath),
     RefreshDir,
     RenamePath(HumanPath, String),
+    UpDir,
 }
 
 impl Command {

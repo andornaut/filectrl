@@ -15,7 +15,7 @@ Keys | Description
 --- | ---
 q, Q, CTRL+c, or Esc | Quit
 c | Clear error messages
-d or DEL | Delete the selected path
+d or Delete | Delete the selected path
 r or F5 | Refresh current directory
 j,k | Down,Up
 Space | Select/Deselect

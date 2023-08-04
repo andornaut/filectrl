@@ -13,10 +13,14 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use ratatui::{backend::Backend, Terminal};
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
 const BROADCAST_CYCLES: u8 = 4;
-const MAIN_LOOP_MIN_SLEEP_MS: u64 = 50;
+const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 
 #[derive(Default)]
 pub struct App {
@@ -33,13 +37,13 @@ impl App {
         tx.send(self.file_system.cd_to_cwd()?)?;
         spawn_command_sender(tx);
 
-        let min_duration = Duration::from_millis(MAIN_LOOP_MIN_SLEEP_MS);
+        let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
         loop {
+            let start = Instant::now();
             let commands = receive_commands(&rx);
 
             if commands.is_empty() {
-                // Only sleep if there are no commands, so that sequential inputs are processed ASAP
-                thread::sleep(min_duration);
+                thread::sleep(max_sleep);
                 continue;
             }
 
@@ -51,6 +55,9 @@ impl App {
 
             must_not_contain_unhandled(&remaining_commands)?;
             self.render(terminal)?;
+
+            let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
+            thread::sleep(actual_sleep);
         }
     }
 
@@ -65,8 +72,6 @@ impl App {
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
         let command = self.translate_non_prompt_key_command(command);
         let focus = self.focus.clone();
-        eprintln!("broadcast_command: focus:{focus:?} command:{command:?}");
-
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
             commands = commands
@@ -97,7 +102,6 @@ impl App {
             Command::NextFocus => self.focus.next(),
             Command::PreviousFocus => self.focus.previous(),
             Command::Focus(focus) => {
-                eprintln!("handle_focus_command(): Changed focus to: {focus:?}");
                 self.focus = focus.clone();
             }
             _ => return false,
