@@ -21,7 +21,7 @@ impl HeaderView {
 impl CommandHandler for HeaderView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::UpdateCurrentDir(directory, _) => self.update_current_dir(directory.clone()),
+            Command::Dir(directory, _) => self.update_current_dir(directory.clone()),
             _ => CommandResult::NotHandled,
         }
     }

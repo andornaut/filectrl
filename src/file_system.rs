@@ -44,7 +44,7 @@ impl FileSystem {
         let mut children: Vec<HumanPath> = children.into_iter().map(Result::unwrap).collect();
         children.sort();
         self.directory = directory.clone();
-        Ok(Command::UpdateCurrentDir(directory, children))
+        Ok(Command::Dir(directory, children))
     }
 
     fn delete(&mut self, path: &HumanPath) -> CommandResult {
@@ -68,7 +68,7 @@ impl FileSystem {
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::BackDir => CommandResult::option(unwrap_option_or_error_command(self.back())),
+            Command::UpDir => CommandResult::option(unwrap_option_or_error_command(self.back())),
             Command::ChangeDir(directory) => {
                 unwrap_or_error_command(self.cd(directory.clone())).into()
             }

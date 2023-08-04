@@ -7,30 +7,27 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug)]
 pub enum Command {
-    // App commands
-    ClearErrors,
     AddError(String),
-    Quit,
+    ClearErrors,
+    Focus(Focus),
+    Key(KeyCode, KeyModifiers),
     NextFocus,
     PreviousFocus,
-    Focus(Focus),
+    Quit,
     Resize(u16, u16), // w,h
 
-    // Content commands
+    // Content/Prompt commands
     CancelPrompt,
     SubmitPrompt(String),
 
-    // Generic key event. Will be specialized during `app.broadcast()`
-    Key(KeyCode, KeyModifiers),
-
     // FileSystem commands
-    BackDir,
+    UpDir,
     ChangeDir(HumanPath),
     DeletePath(HumanPath),
+    Dir(HumanPath, Vec<HumanPath>),
     OpenFile(HumanPath),
     RefreshDir,
     RenamePath(HumanPath, String),
-    UpdateCurrentDir(HumanPath, Vec<HumanPath>),
 }
 
 impl Command {
@@ -65,10 +62,10 @@ impl Command {
                 (KeyCode::Tab, _) => Self::NextFocus,
                 (KeyCode::BackTab, _) => Self::PreviousFocus,
                 (KeyCode::Backspace, _) | (KeyCode::Left, _) | (KeyCode::Char('h'), _) => {
-                    Command::BackDir
+                    Command::UpDir
                 }
                 (KeyCode::Char('c'), _) => Self::ClearErrors,
-                (KeyCode::Char('r'), _) => Self::RefreshDir,
+                (KeyCode::Char('r'), _) | (KeyCode::F(5), _) => Self::RefreshDir,
                 (_, _) => self,
             },
             _ => self,

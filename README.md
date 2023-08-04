@@ -15,7 +15,8 @@ Keys | Description
 --- | ---
 q, Q, CTRL+c, or Esc | Quit
 c | Clear error messages
-r | Refresh current directory
+d or DEL | Delete the selected path
+r or F5 | Refresh current directory
 j,k | Down,Up
 Space | Select/Deselect
 Enter, Right, or l | Navigate to selected directory / Open selected file
@@ -56,6 +57,7 @@ cargo build --release
 
 Name | Description
 --- | ---
+[color-to-tui](https://github.com/uttarayan21/color-to-tui) | Parse hex colors to `tui::style::Color`
 [crossterm](https://github.com/crossterm-rs/crossterm)| Cross-platform terminal library ([Documentation](https://docs.rs/crossterm/latest/crossterm/))
 [dirs-next](https://github.com/xdg-rs/dirs/tree/master/dirs) | Low-level library that provides conventional config/cache/data paths
 [notify](https://github.com/notify-rs/notify)|Cross-platform filesystem notification library
