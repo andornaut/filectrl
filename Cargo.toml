@@ -15,6 +15,7 @@ readme = "README.md"
 anyhow = "1.0.71"
 chrono = { version = "0.4.26", default-features = false, features = ["clock", "time"] }
 crossterm = "0.26.1"
+open = "5.0.0"
 ratatui = { version = "0.22.0", features = ["all-widgets"] }
 tui-input = "0.7.1"
 unicode-width = "0.1.10"
