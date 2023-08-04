@@ -32,7 +32,7 @@ impl CommandHandler for HeaderView {
 }
 
 impl<B: Backend> View<B> for HeaderView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
         let path = self.directory.path.clone();
         let block = Block::default().title(path);
         frame.render_widget(block, rect);

@@ -112,7 +112,7 @@ impl App {
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         terminal.draw(|frame| {
             let window = frame.size();
-            self.root.render(frame, window);
+            self.root.render(frame, window, &self.focus);
         })?;
         Ok(())
     }

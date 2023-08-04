@@ -61,7 +61,7 @@ impl CommandHandler for ContentView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Key(code, _) => match code {
-                KeyCode::F(2) => self.prompt_rename(),
+                KeyCode::Char('r') | KeyCode::F(2) => self.prompt_rename(),
                 _ => CommandResult::NotHandled,
             },
             Command::CancelPrompt => self.cancel_prompt(),
@@ -76,7 +76,7 @@ impl CommandHandler for ContentView {
 }
 
 impl<B: Backend> View<B> for ContentView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(self.errors.height()), Constraint::Min(0)].as_ref());
@@ -84,14 +84,14 @@ impl<B: Backend> View<B> for ContentView {
         let errors_rect = chunks[0];
         let content_rect = chunks[1];
 
-        self.errors.render(frame, errors_rect);
+        self.errors.render(frame, errors_rect, focus);
 
         match self.mode {
             Mode::PromptRename(_) => {
-                self.prompt.render(frame, content_rect);
+                self.prompt.render(frame, content_rect, focus);
             }
             Mode::Table => {
-                self.table.render(frame, content_rect);
+                self.table.render(frame, content_rect, focus);
             }
         }
     }

@@ -1,5 +1,8 @@
 use super::View;
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::{
+    app::focus::Focus,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -47,7 +50,7 @@ impl CommandHandler for ErrorsView {
 }
 
 impl<B: Backend> View<B> for ErrorsView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
         if !self.should_render() {
             return;
         }

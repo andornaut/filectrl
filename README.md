@@ -15,8 +15,9 @@ Keys | Description
 --- | ---
 q, Q, CTRL+c, or Esc | Quit
 c | Clear error messages
-d or Delete | Delete the selected path
-r or F5 | Refresh current directory
+d or Delete | Delete selected
+r or F2 | Rename selected
+CTRL+r or F5 | Refresh
 j,k | Down,Up
 Space | Select/Deselect
 Enter, Right, or l | Navigate to selected directory / Open selected file
