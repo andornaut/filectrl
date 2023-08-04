@@ -35,21 +35,21 @@ impl TableView {
         }
     }
 
+    fn navigate(&mut self, delta: i8) -> CommandResult {
+        let i = match self.state.selected() {
+            Some(i) => navigate(self.directory_contents.len(), i, delta),
+            None => 0,
+        };
+        self.state.select(Some(i));
+        CommandResult::none()
+    }
+
     fn next(&mut self) -> CommandResult {
         self.navigate(1)
     }
 
     fn previous(&mut self) -> CommandResult {
         self.navigate(-1)
-    }
-
-    fn navigate(&mut self, delta: i8) -> CommandResult {
-        let i = match self.state.selected() {
-            Some(i) => navigate(self.directory_contents.len() - 1, i, delta),
-            None => 0,
-        };
-        self.state.select(Some(i));
-        CommandResult::none()
     }
 
     fn open(&mut self) -> CommandResult {
@@ -91,10 +91,10 @@ impl CommandHandler for TableView {
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.open(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
-                KeyCode::Char('r') => self.delete(),
+                KeyCode::Char('d') | KeyCode::Delete => self.delete(),
                 _ => CommandResult::NotHandled,
             },
-            Command::UpdateCurrentDir(directory, children) => {
+            Command::Dir(directory, children) => {
                 self.update_current_dir(directory.clone(), children.clone())
             }
             _ => CommandResult::NotHandled,
@@ -119,19 +119,15 @@ fn create_table(children: &[HumanPath]) -> Table {
     let header_cells = ["Name", "Mode", "Size", "Modified"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Red)));
-    let header = Row::new(header_cells)
-        .style(normal_style)
-        .height(1)
-        .bottom_margin(1);
+    let header = Row::new(header_cells).style(normal_style).height(1);
     let rows = children.iter().map(|item| {
-        let height = 1;
         let cells = vec![
             Cell::from(item.basename.clone()),
             Cell::from(item.mode.to_string()),
             Cell::from(item.human_size()),
             Cell::from(item.human_modified()),
         ];
-        Row::new(cells).height(height as u16).bottom_margin(1)
+        Row::new(cells)
     });
     Table::new(rows)
         .header(header)
