@@ -4,7 +4,12 @@ use super::{
 };
 use anyhow::{Error, Result};
 use chrono::{DateTime, Local};
-use std::{cmp::Ordering, env, os::unix::prelude::PermissionsExt, path::PathBuf};
+use std::{
+    cmp::Ordering,
+    env,
+    os::unix::prelude::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Debug, Eq)]
 pub struct HumanPath {
@@ -21,7 +26,7 @@ pub struct HumanPath {
 impl HumanPath {
     pub fn breadcrumbs(&self) -> Vec<Self> {
         // Predicate: the path exists, otherwise this will panic
-        PathBuf::from(&self.path)
+        PathBuf::from(self.path.clone())
             .ancestors()
             .into_iter()
             .map(|path| HumanPath::try_from(&PathBuf::from(path)).unwrap())
@@ -34,6 +39,14 @@ impl HumanPath {
 
     pub fn human_size(&self) -> String {
         humanize_bytes(self.size)
+    }
+
+    pub fn parent(&self) -> Option<HumanPath> {
+        let path_buf = PathBuf::from(self.path.clone());
+        match path_buf.parent() {
+            Some(parent) => Some(HumanPath::try_from(parent).unwrap()),
+            None => None,
+        }
     }
 }
 
@@ -84,6 +97,14 @@ impl TryFrom<&PathBuf> for HumanPath {
     type Error = Error;
 
     fn try_from(path_buf: &PathBuf) -> Result<Self, Self::Error> {
+        Self::try_from(path_buf.as_path())
+    }
+}
+
+impl TryFrom<&Path> for HumanPath {
+    type Error = Error;
+
+    fn try_from(path_buf: &Path) -> Result<Self, Self::Error> {
         // Only hold on to the data we care about, and drop DirEntry to avoid consuming File Handles on Unix.
         // Ref: https://doc.rust-lang.org/std/fs/struct.DirEntry.html#platform-specific-behavior
         //   On Unix, the DirEntry struct contains an internal reference to the open directory.

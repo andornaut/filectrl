@@ -8,8 +8,7 @@ use ratatui::{
     backend::Backend,
     layout::Rect,
     prelude::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };

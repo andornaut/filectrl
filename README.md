@@ -13,20 +13,23 @@ filectrl [directory to navigate to]
 ***Normal mode***
 Keys | Description
 --- | ---
-q, Q, CTRL+c, or Esc | Quit
+Esc, CTRL+c, or q | Quit
+h,j,k,l | Left,Down,Up,Right
+Enter, Right, or l | Navigate/Open selected
+Backspace, Left or h | Navigate up/back one directory
+Tab,SHIFT+Tab | Next focus,Previous focus
 c | Clear error messages
 d or Delete | Delete selected
 r or F2 | Rename selected
 CTRL+r or F5 | Refresh
-j,k | Down,Up
-Space | Select/Deselect
-Enter, Right, or l | Navigate to selected directory / Open selected file
-Backspace, Left or h | Navigate up one directory
+n | Sort by name (toggle direction)
+m | Sort by modified (toggle direction)
+s | Sort by size (toggle direction)
 
-***Prompt mode***
+***Input mode***
 Keys | Description
 --- | ---
-CTRL+c or Esc | Close the prompt
+Esc or CTRL+c | Close the input prompt
 Enter | Submit your input
 
 ## Developing

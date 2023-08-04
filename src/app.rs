@@ -34,7 +34,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
 
         // An initial command is required to start the main loop
-        tx.send(self.file_system.cd_to_cwd()?)?;
+        tx.send(self.file_system.cd_to_cwd())?;
         spawn_command_sender(tx);
 
         let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
