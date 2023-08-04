@@ -77,6 +77,7 @@ impl App {
             commands = commands
                 .into_iter()
                 .flat_map(|command| {
+                    eprintln!("App.broadcast_command() command:{command:?}");
                     if self.handle_focus_command(&command) {
                         // Shortcut: Focus Commands are not handled by Views/Handlers.
                         return Vec::new();

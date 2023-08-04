@@ -19,7 +19,7 @@ Enter, Right, or l | Navigate/Open selected
 Backspace, Left or h | Navigate up/back one directory
 Tab,SHIFT+Tab | Next focus,Previous focus
 c | Clear error messages
-d or Delete | Delete selected
+Delete | Delete selected
 r or F2 | Rename selected
 CTRL+r or F5 | Refresh
 n | Sort by name (toggle direction)
