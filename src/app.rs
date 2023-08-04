@@ -77,12 +77,11 @@ impl App {
             commands = commands
                 .into_iter()
                 .flat_map(|command| {
+                    // The same command may be broadcast up to BROADCAST_CYCLES times
+                    // if it doesn't produce a derived command. This seems wasteful,
+                    // but it only occurs for Command::Quit or if the command is
+                    // ultimately unhandled, which results in an error anyway.
                     eprintln!("App.broadcast_command() command:{command:?}");
-                    if self.handle_focus_command(&command) {
-                        // Shortcut: Focus Commands are not handled by Views/Handlers.
-                        return Vec::new();
-                    }
-
                     let (mut derived_commands, handled) =
                         recursively_handle_command(&focus, self, &command);
                     if !handled {
@@ -96,18 +95,6 @@ impl App {
             }
         }
         commands
-    }
-
-    fn handle_focus_command(&mut self, command: &Command) -> bool {
-        match command {
-            Command::NextFocus => self.focus.next(),
-            Command::PreviousFocus => self.focus.previous(),
-            Command::Focus(focus) => {
-                self.focus = focus.clone();
-            }
-            _ => return false,
-        }
-        true
     }
 
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -131,6 +118,21 @@ impl CommandHandler for App {
         let file_system: &mut dyn CommandHandler = &mut self.file_system;
         let root: &mut dyn CommandHandler = &mut self.root;
         vec![file_system, root]
+    }
+
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::NextFocus => self.focus.next(),
+            Command::PreviousFocus => self.focus.previous(),
+            Command::Focus(focus) => {
+                self.focus = focus.clone();
+            }
+            Command::Resize(w, h) => {
+                eprintln!("TODO App.handle_command() command:{command:?}");
+            }
+            _ => return CommandResult::NotHandled,
+        }
+        CommandResult::none()
     }
 }
 

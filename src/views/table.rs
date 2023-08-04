@@ -174,8 +174,8 @@ impl<B: Backend> View<B> for TableView {
             .highlight_style(selected_style)
             .widths(&[
                 Constraint::Percentage(55),
-                Constraint::Length(5),
-                Constraint::Length(10),
+                Constraint::Max(5),
+                Constraint::Max(10),
                 Constraint::Min(35),
             ]);
         frame.render_stateful_widget(table, rect, &mut self.state);
