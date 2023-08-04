@@ -7,11 +7,12 @@ use chrono::{DateTime, Local};
 use std::{
     cmp::Ordering,
     env,
+    fmt::{self, Display},
     os::unix::prelude::PermissionsExt,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq)]
 pub struct HumanPath {
     pub basename: String,
     pub is_dir: bool,
@@ -37,6 +38,14 @@ impl HumanPath {
         humanize_datetime(self.modified, Local::now())
     }
 
+    pub fn human_name(&self) -> String {
+        let name = self.basename.clone();
+        if self.is_dir {
+            name + "/"
+        } else {
+            name
+        }
+    }
     pub fn human_size(&self) -> String {
         humanize_bytes(self.size)
     }
@@ -50,10 +59,22 @@ impl HumanPath {
     }
 }
 
+impl fmt::Debug for HumanPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path)
+    }
+}
+
 impl Default for HumanPath {
     fn default() -> Self {
         let directory = env::current_dir().expect("Can get the CWD");
         HumanPath::try_from(&directory).expect("Can create a PathDisplay from the CWD")
+    }
+}
+
+impl Display for HumanPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path)
     }
 }
 

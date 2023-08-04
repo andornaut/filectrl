@@ -15,9 +15,10 @@ pub enum Command {
     Quit,
     Resize(u16, u16), // w,h
 
-    // Content/Prompt commands
+    // Content & Prompt commands
     CancelPrompt,
     SubmitPrompt(String),
+    Sort(SortColumn),
 
     // FileSystem commands
     ChangeDir(HumanPath),
@@ -69,6 +70,25 @@ impl Command {
                 (_, _) => self,
             },
             _ => self,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SortColumn {
+    #[default]
+    Name,
+    Modified,
+    Size,
+}
+
+impl PartialEq<&str> for SortColumn {
+    fn eq(&self, other: &&str) -> bool {
+        let other = other.to_lowercase();
+        match self {
+            Self::Modified => "modified" == other,
+            Self::Name => "name" == other,
+            Self::Size => "size" == other,
         }
     }
 }

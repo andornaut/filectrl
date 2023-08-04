@@ -1,7 +1,7 @@
 use super::View;
 use crate::{
     app::focus::Focus,
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    command::{handler::CommandHandler, result::CommandResult, Command, SortColumn},
     file_system::path::HumanPath,
 };
 use crossterm::event::KeyCode;
@@ -17,6 +17,8 @@ use ratatui::{
 pub(super) struct TableView {
     directory_contents: Vec<HumanPath>,
     directory: HumanPath,
+    sort_column: SortColumn,
+    sort_direction: SortDirection,
     state: TableState,
 }
 
@@ -71,12 +73,57 @@ impl TableView {
     fn update_dir(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
         self.directory = directory;
         self.directory_contents = children;
+        self.sort();
         self.unselect_all();
+        CommandResult::none()
+    }
+
+    fn sort(&mut self) {
+        match self.sort_column {
+            SortColumn::Name => self.directory_contents.sort(), // Sorts by name by default
+            SortColumn::Modified => self
+                .directory_contents
+                .sort_by_cached_key(|path| path.modified),
+            SortColumn::Size => self.directory_contents.sort_by_cached_key(|path| path.size),
+        };
+        if self.sort_direction == SortDirection::Descending {
+            self.directory_contents.reverse();
+        }
+    }
+
+    fn sort_by(&mut self, column: SortColumn) -> CommandResult {
+        if self.sort_column == column {
+            self.sort_direction.toggle();
+        } else {
+            self.sort_column = column;
+        }
+        self.sort();
         CommandResult::none()
     }
 
     fn unselect_all(&mut self) {
         self.state.select(None);
+    }
+
+    fn header_style(&self, name: &str) -> Style {
+        if self.sort_column == name {
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Green)
+                .fg(Color::Black)
+        } else {
+            Style::default().bg(Color::Blue).fg(Color::Black)
+        }
+    }
+    fn header_label(&self, name: &str) -> String {
+        if self.sort_column == name {
+            match self.sort_direction {
+                SortDirection::Ascending => format!("{name}⌃"),
+                SortDirection::Descending => format!("{name}⌄"),
+            }
+        } else {
+            name.into()
+        }
     }
 }
 
@@ -84,12 +131,15 @@ impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Key(code, _) => match code {
+                KeyCode::Delete => self.delete(),
                 KeyCode::Enter | KeyCode::Char('f') | KeyCode::Right | KeyCode::Char('l') => {
                     self.open()
                 }
-                KeyCode::Up | KeyCode::Char('k') => self.previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
-                KeyCode::Char('d') | KeyCode::Delete => self.delete(),
+                KeyCode::Up | KeyCode::Char('k') => self.previous(),
+                KeyCode::Char('n') => self.sort_by(SortColumn::Name),
+                KeyCode::Char('m') => self.sort_by(SortColumn::Modified),
+                KeyCode::Char('s') => self.sort_by(SortColumn::Size),
                 _ => CommandResult::NotHandled,
             },
             Command::UpdateDir(directory, children) => {
@@ -106,20 +156,19 @@ impl CommandHandler for TableView {
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-        let header_style = Style::default().bg(Color::Blue).fg(Color::Black);
         let header_cells = ["Name", "Mode", "Size", "Modified"]
             .into_iter()
-            .map(|h| Cell::from(h));
-        let header = Row::new(header_cells).style(header_style).height(1);
+            .map(|h| Cell::from(self.header_label(h)).style(self.header_style(h)));
+        let header = Row::new(header_cells).style(Style::default().bg(Color::Blue));
         let rows = self.directory_contents.iter().map(|item| {
             Row::new(vec![
-                Cell::from(item.basename.clone()),
+                Cell::from(item.human_name()),
                 Cell::from(item.mode.to_string()),
                 Cell::from(item.human_size()),
                 Cell::from(item.human_modified()),
             ])
         });
+        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let table = Table::new(rows)
             .header(header)
             .highlight_style(selected_style)
@@ -144,6 +193,22 @@ fn navigate(len: usize, index: usize, delta: i8) -> usize {
     usize::try_from(result).unwrap()
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum SortDirection {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    fn toggle(&mut self) {
+        match self {
+            Self::Ascending => *self = Self::Descending,
+            Self::Descending => *self = Self::Ascending,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,7 +226,7 @@ mod tests {
     #[test_case(1,  4, 2, 11 ; "add 11 overflow")]
     #[test_case(0,  4, 2, -10 ; "subtract 10 overflow")]
     #[test_case(3,  4, 2, -11 ; "subtract 11 overflow")]
-    fn test(expected: usize, len: usize, index: usize, delta: i8) {
+    fn navigate_is_correct(expected: usize, len: usize, index: usize, delta: i8) {
         let result = navigate(len, index, delta);
 
         assert_eq!(expected, result);

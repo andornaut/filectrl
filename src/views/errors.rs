@@ -58,7 +58,8 @@ impl<B: Backend> View<B> for ErrorsView {
         let items: Vec<ListItem> = self
             .errors
             .iter()
-            .map(|error| ListItem::new(error.clone()))
+            .map(|error| ListItem::new(format!("• {error}")))
+            .rev()
             .collect();
         let list = List::new(items)
             .style(style)

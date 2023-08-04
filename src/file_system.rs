@@ -1,7 +1,4 @@
-use self::{
-    operations::{cd, delete, rename},
-    path::HumanPath,
-};
+use self::path::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 mod converters;
@@ -31,21 +28,24 @@ impl FileSystem {
     }
 
     fn cd_return_command(&mut self, directory: HumanPath) -> Command {
-        match cd(&directory) {
-            Ok(children) => Command::UpdateDir(directory, children),
+        match operations::cd(&directory) {
+            Ok(children) => {
+                self.directory = directory.clone();
+                Command::UpdateDir(directory, children)
+            }
             Err(err) => Command::AddError(err.to_string()),
         }
     }
 
     fn delete(&mut self, path: &HumanPath) -> CommandResult {
-        if let Err(err) = delete(path) {
+        if let Err(err) = operations::delete(path) {
             return Command::AddError(err.to_string()).into();
         }
         self.refresh()
     }
 
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
-        if let Err(err) = rename(old_path, new_basename) {
+        if let Err(err) = operations::rename(old_path, new_basename) {
             return Command::AddError(err.to_string()).into();
         }
         self.refresh()

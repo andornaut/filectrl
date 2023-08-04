@@ -38,7 +38,7 @@ fn content_help() -> Paragraph<'static> {
         Span::raw(" Rename: "),
         Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Delete: "),
-        Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("Delete", Style::default().add_modifier(Modifier::BOLD)),
     ];
     let text = Text::from(Line::from(spans));
     Paragraph::new(text).style(Style::default())
