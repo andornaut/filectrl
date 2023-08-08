@@ -33,7 +33,7 @@ impl FileSystem {
         match operations::cd(&directory) {
             Ok(children) => {
                 self.directory = directory.clone();
-                Command::UpdateDir(directory, children)
+                Command::SetDirectory(directory, children)
             }
             Err(err) => Command::AddError(err.to_string()),
         }

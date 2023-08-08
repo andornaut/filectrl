@@ -1,6 +1,6 @@
 use super::View;
 use crate::{
-    app::focus::Focus,
+    app::{color::error_style, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command},
 };
 use ratatui::{
@@ -54,7 +54,6 @@ impl<B: Backend> View<B> for ErrorsView {
         if !self.should_render() {
             return;
         }
-        let style = Style::default().fg(Color::Red);
         let items: Vec<ListItem> = self
             .errors
             .iter()
@@ -62,7 +61,7 @@ impl<B: Backend> View<B> for ErrorsView {
             .rev()
             .collect();
         let list = List::new(items)
-            .style(style)
+            .style(error_style())
             .block(Block::default().title("Errors:"));
         frame.render_widget(list, rect);
     }

@@ -43,7 +43,7 @@ impl TableView {
             None => 0,
         };
         self.state.select(Some(i));
-        CommandResult::none()
+        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
     fn next(&mut self) -> CommandResult {
@@ -54,12 +54,17 @@ impl TableView {
         self.navigate(-1)
     }
 
+    fn unselect_all(&mut self) -> CommandResult {
+        self.state.select(None);
+        Command::SetSelected(None).into()
+    }
+
     fn open(&mut self) -> CommandResult {
         match self.selected() {
             Some(path) => {
                 let path = path.clone();
                 // TODO: handle symlinks
-                (if path.is_dir {
+                (if path.is_dir() {
                     Command::ChangeDir(path)
                 } else {
                     Command::OpenFile(path)
@@ -70,12 +75,11 @@ impl TableView {
         }
     }
 
-    fn update_dir(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
+    fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
         self.directory = directory;
         self.directory_contents = children;
         self.sort();
-        self.unselect_all();
-        CommandResult::none()
+        self.unselect_all()
     }
 
     fn sort(&mut self) {
@@ -83,8 +87,10 @@ impl TableView {
             SortColumn::Name => self.directory_contents.sort(), // Sorts by name by default
             SortColumn::Modified => self
                 .directory_contents
-                .sort_by_cached_key(|path| path.modified),
-            SortColumn::Size => self.directory_contents.sort_by_cached_key(|path| path.size),
+                .sort_by_cached_key(|path| path.modified()),
+            SortColumn::Size => self
+                .directory_contents
+                .sort_by_cached_key(|path| path.size()),
         };
         if self.sort_direction == SortDirection::Descending {
             self.directory_contents.reverse();
@@ -99,10 +105,6 @@ impl TableView {
         }
         self.sort();
         CommandResult::none()
-    }
-
-    fn unselect_all(&mut self) {
-        self.state.select(None);
     }
 
     fn header_style(&self, name: &str) -> Style {
@@ -132,7 +134,7 @@ impl CommandHandler for TableView {
         match command {
             Command::Key(code, _) => match code {
                 KeyCode::Delete => self.delete(),
-                KeyCode::Enter | KeyCode::Char('f') | KeyCode::Right | KeyCode::Char('l') => {
+                KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
                     self.open()
                 }
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
@@ -140,10 +142,11 @@ impl CommandHandler for TableView {
                 KeyCode::Char('n') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') => self.sort_by(SortColumn::Size),
+                KeyCode::Char(' ') => self.unselect_all(),
                 _ => CommandResult::NotHandled,
             },
-            Command::UpdateDir(directory, children) => {
-                self.update_dir(directory.clone(), children.clone())
+            Command::SetDirectory(directory, children) => {
+                self.set_directory(directory.clone(), children.clone())
             }
             _ => CommandResult::NotHandled,
         }
@@ -162,22 +165,37 @@ impl<B: Backend> View<B> for TableView {
         let header = Row::new(header_cells).style(Style::default().bg(Color::Blue));
         let rows = self.directory_contents.iter().map(|item| {
             Row::new(vec![
-                Cell::from(item.human_name()),
-                Cell::from(item.human_modified()),
-                Cell::from(item.human_size()),
-                Cell::from(item.mode.to_string()),
+                Cell::from(item.name()),
+                Cell::from(item.modified()),
+                Cell::from(item.size()),
+                Cell::from(item.mode()),
             ])
         });
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+
+        let mut constraints = Vec::new();
+        let width = rect.width; // 2 for border, 1 for padding
+        eprintln!("TableView.render() width:{}", width);
+        let mut name_width = width;
+        if width > 50 {
+            name_width = width - 12 - 1;
+            constraints.push(Constraint::Length(12));
+        }
+        if width > 68 {
+            name_width = width - 12 - 5 - 2;
+            constraints.push(Constraint::Length(5));
+        }
+        if width > 79 {
+            name_width = width - 12 - 5 - 10 - 3;
+            constraints.push(Constraint::Length(10));
+        }
+
+        constraints.insert(0, Constraint::Length(name_width));
+
         let table = Table::new(rows)
             .header(header)
             .highlight_style(selected_style)
-            .widths(&[
-                Constraint::Percentage(55),
-                Constraint::Length(12),
-                Constraint::Length(5),
-                Constraint::Length(4),
-            ]);
+            .widths(&constraints);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }
 }

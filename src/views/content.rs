@@ -1,4 +1,4 @@
-use super::{errors::ErrorsView, table::TableView, View};
+use super::{bordered, errors::ErrorsView, table::TableView, View};
 use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command},
@@ -77,6 +77,8 @@ impl CommandHandler for ContentView {
 
 impl<B: Backend> View<B> for ContentView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+        let rect = bordered(frame, rect, None);
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(self.errors.height()), Constraint::Min(0)].as_ref());

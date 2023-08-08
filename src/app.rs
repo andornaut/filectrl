@@ -128,7 +128,7 @@ impl CommandHandler for App {
                 self.focus = focus.clone();
             }
             Command::Resize(w, h) => {
-                eprintln!("TODO App.handle_command() command:{command:?}");
+                eprintln!("App.handle_command() Resize:w{w} x h{h}");
             }
             _ => return CommandResult::NotHandled,
         }

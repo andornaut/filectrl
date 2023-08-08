@@ -1,4 +1,4 @@
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 
 #[derive(Copy, Clone)]
 pub enum ColorTheme {
@@ -28,4 +28,8 @@ impl From<ColorTheme> for Color {
             ColorTheme::ErrorFg => RED,
         }
     }
+}
+
+pub fn error_style() -> Style {
+    Style::default().bg(Color::DarkGray).fg(Color::Red)
 }

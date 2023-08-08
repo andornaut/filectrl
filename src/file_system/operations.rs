@@ -18,7 +18,7 @@ pub(super) fn cd(directory: &HumanPath) -> Result<Vec<HumanPath>> {
 
 pub(super) fn delete(path: &HumanPath) -> Result<()> {
     let pathname = &path.path;
-    if path.is_dir {
+    if path.is_dir() {
         fs::remove_dir_all(pathname)?;
     } else {
         // File or Symlink
