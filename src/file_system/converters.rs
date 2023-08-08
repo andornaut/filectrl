@@ -3,8 +3,9 @@ use anyhow::{anyhow, Result};
 use std::{ffi::OsStr, path::Path};
 
 pub(super) fn mode_to_string(mode: u32) -> String {
-    let mut mode = format!("{mode:o}");
-    mode.split_off(mode.len() - 3)
+    //let mut mode = format!("{mode:o}");
+    // mode.split_off(mode.len() - 3)
+    unix_mode::to_string(mode)
 }
 
 pub(super) fn path_to_basename(path: &Path) -> Result<String> {

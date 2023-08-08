@@ -15,13 +15,15 @@ Keys | Description
 --- | ---
 Esc, CTRL+c, or q | Quit
 h,j,k,l | Left,Down,Up,Right
-Enter, Right, or l | Navigate/Open selected
-Backspace, Left or h | Navigate up/back one directory
+Enter, Right, f, or l | Navigate/Open selected
+Backspace, Left, b or h | Navigate up/back one directory
 Tab,SHIFT+Tab | Next focus,Previous focus
 c | Clear error messages
 Delete | Delete selected
 r or F2 | Rename selected
+Space | Unselect
 CTRL+r or F5 | Refresh
+? | Toggle show help
 n | Sort by name (toggle direction)
 m | Sort by modified (toggle direction)
 s | Sort by size (toggle direction)

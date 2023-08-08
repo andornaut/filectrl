@@ -1,7 +1,8 @@
 use super::converters::{mode_to_string, path_to_basename, path_to_string, to_comparable};
 use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
-use std::cmp;
+use std::time::SystemTime;
+use std::{cmp, io};
 use std::{
     cmp::Ordering,
     env,
@@ -16,13 +17,13 @@ const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 #[derive(Clone, Eq)]
 pub struct HumanPath {
     pub basename: String,
-    pub is_dir: bool,
-    pub is_file: bool,
-    pub is_symlink: bool,
-    pub mode: String,
-    pub modified: DateTime<Local>,
     pub path: String,
-    pub size: u64,
+
+    mode: u32,
+    accessed: Option<DateTime<Local>>,
+    created: Option<DateTime<Local>>,
+    modified: DateTime<Local>,
+    size: u64,
 }
 
 impl HumanPath {
@@ -35,20 +36,71 @@ impl HumanPath {
             .collect()
     }
 
-    pub fn human_modified(&self) -> String {
+    pub fn accessed(&self) -> String {
+        maybe_time_to_string(&self.accessed)
+    }
+
+    pub fn created(&self) -> String {
+        maybe_time_to_string(&self.created)
+    }
+
+    pub fn modified(&self) -> String {
         humanize_datetime(self.modified, Local::now())
     }
 
-    pub fn human_name(&self) -> String {
+    pub fn name(&self) -> String {
         let name = self.basename.clone();
-        if self.is_dir {
+        if self.is_dir() {
             name + "/"
         } else {
             name
         }
     }
-    pub fn human_size(&self) -> String {
+
+    pub fn mode(&self) -> String {
+        unix_mode::to_string(self.mode)
+    }
+    pub fn size(&self) -> String {
         humanize_bytes(self.size)
+    }
+    pub fn is_block_device(&self) -> bool {
+        unix_mode::is_block_device(self.mode)
+    }
+
+    pub fn is_char_device(&self) -> bool {
+        unix_mode::is_char_device(self.mode)
+    }
+
+    pub fn is_dir(&self) -> bool {
+        unix_mode::is_dir(self.mode)
+    }
+
+    pub fn is_fifo(&self) -> bool {
+        unix_mode::is_fifo(self.mode)
+    }
+
+    pub fn is_file(&self) -> bool {
+        unix_mode::is_file(self.mode)
+    }
+
+    pub fn is_setgid(&self) -> bool {
+        unix_mode::is_setgid(self.mode)
+    }
+
+    pub fn is_setuid(&self) -> bool {
+        unix_mode::is_setuid(self.mode)
+    }
+
+    pub fn is_socket(&self) -> bool {
+        unix_mode::is_socket(self.mode)
+    }
+
+    pub fn is_sticky(&self) -> bool {
+        unix_mode::is_sticky(self.mode)
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        unix_mode::is_symlink(self.mode)
     }
 
     pub fn parent(&self) -> Option<HumanPath> {
@@ -126,26 +178,31 @@ impl TryFrom<&PathBuf> for HumanPath {
 impl TryFrom<&Path> for HumanPath {
     type Error = Error;
 
-    fn try_from(path_buf: &Path) -> Result<Self, Self::Error> {
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
         // Only hold on to the data we care about, and drop DirEntry to avoid consuming File Handles on Unix.
         // Ref: https://doc.rust-lang.org/std/fs/struct.DirEntry.html#platform-specific-behavior
         //   On Unix, the DirEntry struct contains an internal reference to the open directory.
         //   Holding DirEntry objects will consume a file handle even after the ReadDir iterator is dropped.
-        let path_buf = path_buf.canonicalize()?;
-        let metadata = path_buf.metadata()?; // Will return an Error if the path doesn't exist
-        let file_type = metadata.file_type();
+        let metadata = path.symlink_metadata()?; // Will return an Error if the path doesn't exist
         Ok(Self {
-            basename: path_to_basename(&path_buf)?,
-            is_dir: file_type.is_dir(),
-            is_file: file_type.is_file(),
-            is_symlink: file_type.is_symlink(),
-            mode: mode_to_string(metadata.permissions().mode()),
+            basename: path_to_basename(&path)?,
+            accessed: ok_time(metadata.accessed()),
+            created: ok_time(metadata.created()),
+            mode: metadata.permissions().mode(),
             modified: metadata.modified()?.into(),
-            path: path_to_string(&path_buf)?,
+            path: path_to_string(&path)?,
             size: metadata.len(),
         })
     }
 }
+
+fn ok_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
+    match result {
+        Err(_) => None,
+        Ok(time) => Some(time.into()),
+    }
+}
+
 fn humanize_bytes(bytes: u64) -> String {
     if bytes == 0 {
         // Avoid panic: "argument of integer logarithm must be positive"
@@ -184,6 +241,13 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
         datetime.remove(0);
     }
     datetime
+}
+
+fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> String {
+    match time {
+        Some(time) => humanize_datetime(*time, Local::now()),
+        None => "unknown".into(),
+    }
 }
 
 #[cfg(test)]

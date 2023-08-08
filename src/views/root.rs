@@ -1,55 +1,68 @@
-use super::{content::ContentView, footer::FooterView, header::HeaderView, View};
-use crate::{app::focus::Focus, command::handler::CommandHandler};
+use super::{content::ContentView, header::HeaderView, help::HelpView, status::StatusView, View};
+use crate::{
+    app::focus::Focus,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+};
 use ratatui::{
     backend::Backend,
-    layout::{Constraint, Direction, Layout, Margin, Rect},
-    widgets::{Block, Borders},
+    layout::{Constraint, Direction, Layout, Rect},
     Frame,
 };
 
 #[derive(Default)]
 pub struct RootView {
     content: ContentView,
-    footer: FooterView,
     header: HeaderView,
+    help: HelpView,
+    status: StatusView,
+    show_help: bool,
+}
+
+impl RootView {
+    fn toggle_show_help(&mut self) -> CommandResult {
+        self.show_help = !self.show_help;
+        CommandResult::none()
+    }
 }
 
 impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
-        let header: &mut dyn CommandHandler = &mut self.header;
         let content: &mut dyn CommandHandler = &mut self.content;
-        let footer: &mut dyn CommandHandler = &mut self.footer;
-        vec![header, content, footer]
+        let header: &mut dyn CommandHandler = &mut self.header;
+        let help: &mut dyn CommandHandler = &mut self.help;
+        let status: &mut dyn CommandHandler = &mut self.status;
+        vec![header, help, content, status]
+    }
+
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::ToggleHelp => self.toggle_show_help(),
+            _ => CommandResult::NotHandled,
+        }
     }
 }
 
 impl<B: Backend> View<B> for RootView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+        let mut constraints = vec![
+            Constraint::Length(1),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ];
+        if self.show_help {
+            constraints.insert(0, Constraint::Length(4));
+        }
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Length(4),
-                    Constraint::Min(5),
-                    Constraint::Length(4),
-                ]
-                .as_ref(),
-            );
-        let chunks = layout.split(rect);
-        let header_rect = bordered(frame, chunks[0]);
-        let content_rect = bordered(frame, chunks[1]);
-        let footer_rect = bordered(frame, chunks[2]);
-        self.header.render(frame, header_rect, focus);
-        self.content.render(frame, content_rect, focus);
-        self.footer.render(frame, footer_rect, focus);
-    }
-}
+            .constraints(constraints);
+        let split = layout.split(rect);
+        let mut chunks = split.into_iter();
 
-fn bordered<B: Backend>(frame: &mut Frame<B>, rect: Rect) -> Rect {
-    let block = Block::default().borders(Borders::ALL);
-    frame.render_widget(block, rect);
-    rect.inner(&Margin {
-        horizontal: 1,
-        vertical: 1,
-    })
+        if self.show_help {
+            self.help.render(frame, *chunks.next().unwrap(), focus);
+        }
+        self.header.render(frame, *chunks.next().unwrap(), focus);
+        self.content.render(frame, *chunks.next().unwrap(), focus);
+        self.status.render(frame, *chunks.next().unwrap(), focus);
+    }
 }

@@ -12,7 +12,7 @@ pub(super) struct HeaderView {
 }
 
 impl HeaderView {
-    fn update_dir(&mut self, directory: HumanPath) -> CommandResult {
+    fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
         self.directory = directory;
         CommandResult::none()
     }
@@ -21,7 +21,7 @@ impl HeaderView {
 impl CommandHandler for HeaderView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::UpdateDir(directory, _) => self.update_dir(directory.clone()),
+            Command::SetDirectory(directory, _) => self.set_directory(directory.clone()),
             _ => CommandResult::NotHandled,
         }
     }

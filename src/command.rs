@@ -14,20 +14,22 @@ pub enum Command {
     PreviousFocus,
     Quit,
     Resize(u16, u16), // w,h
+    ToggleHelp,
 
     // Content & Prompt commands
     CancelPrompt,
+    SetSelected(Option<HumanPath>),
     SubmitPrompt(String),
     Sort(SortColumn),
 
     // FileSystem commands
+    BackDir,
     ChangeDir(HumanPath),
     DeletePath(HumanPath),
-    UpdateDir(HumanPath, Vec<HumanPath>),
     OpenFile(HumanPath),
     RefreshDir,
     RenamePath(HumanPath, String),
-    BackDir,
+    SetDirectory(HumanPath, Vec<HumanPath>),
 }
 
 impl Command {
@@ -60,10 +62,12 @@ impl Command {
                 | (KeyCode::Char('q'), _) => Command::Quit,
                 (KeyCode::Tab, _) => Self::NextFocus,
                 (KeyCode::BackTab, _) => Self::PreviousFocus,
-                (KeyCode::Backspace, _) | (KeyCode::Left, _) | (KeyCode::Char('h'), _) => {
-                    Command::BackDir
-                }
+                (KeyCode::Backspace, _)
+                | (KeyCode::Left, _)
+                | (KeyCode::Char('b'), _)
+                | (KeyCode::Char('h'), _) => Command::BackDir,
                 (KeyCode::Char('c'), _) => Self::ClearErrors,
+                (KeyCode::Char('?'), _) => Self::ToggleHelp,
                 (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => {
                     Self::RefreshDir
                 }
