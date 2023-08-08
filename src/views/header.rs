@@ -2,7 +2,7 @@ use super::View;
 use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command},
-    file_system::path::HumanPath,
+    file_system::human::HumanPath,
 };
 use ratatui::{backend::Backend, layout::Rect, widgets::Block, Frame};
 

@@ -1,10 +1,9 @@
-use self::path::HumanPath;
+use self::human::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 mod converters;
-mod human;
+pub mod human;
 mod operations;
-pub mod path;
 
 #[derive(Default)]
 pub struct FileSystem {

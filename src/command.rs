@@ -1,7 +1,7 @@
 pub mod handler;
 pub mod result;
 
-use crate::{app::focus::Focus, file_system::path::HumanPath};
+use crate::{app::focus::Focus, file_system::human::HumanPath};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug)]
