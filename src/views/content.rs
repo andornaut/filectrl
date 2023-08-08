@@ -2,7 +2,7 @@ use super::{errors::ErrorsView, table::TableView, View};
 use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command},
-    file_system::path::HumanPath,
+    file_system::human::HumanPath,
     views::prompt::PromptView,
 };
 use crossterm::event::KeyCode;

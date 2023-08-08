@@ -2,7 +2,7 @@ use super::View;
 use crate::{
     app::focus::Focus,
     command::{handler::CommandHandler, result::CommandResult, Command, SortColumn},
-    file_system::path::HumanPath,
+    file_system::human::HumanPath,
 };
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -156,16 +156,16 @@ impl CommandHandler for TableView {
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let header_cells = ["Name", "Mode", "Size", "Modified"]
+        let header_cells = ["Name", "Modified", "Size", "Mode"]
             .into_iter()
             .map(|h| Cell::from(self.header_label(h)).style(self.header_style(h)));
         let header = Row::new(header_cells).style(Style::default().bg(Color::Blue));
         let rows = self.directory_contents.iter().map(|item| {
             Row::new(vec![
                 Cell::from(item.human_name()),
-                Cell::from(item.mode.to_string()),
-                Cell::from(item.human_size()),
                 Cell::from(item.human_modified()),
+                Cell::from(item.human_size()),
+                Cell::from(item.mode.to_string()),
             ])
         });
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
@@ -174,9 +174,9 @@ impl<B: Backend> View<B> for TableView {
             .highlight_style(selected_style)
             .widths(&[
                 Constraint::Percentage(55),
-                Constraint::Max(5),
-                Constraint::Max(10),
-                Constraint::Min(35),
+                Constraint::Length(12),
+                Constraint::Length(5),
+                Constraint::Length(4),
             ]);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }

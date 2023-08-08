@@ -1,4 +1,4 @@
-use super::path::HumanPath;
+use super::human::HumanPath;
 use anyhow::{anyhow, Result};
 use std::{ffi::OsStr, path::Path};
 
