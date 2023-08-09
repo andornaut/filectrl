@@ -93,7 +93,7 @@ impl TableView {
         self.unselect_all()
     }
 
-    fn sort(&mut self) {
+    fn sort(&mut self) -> CommandResult {
         match self.sort_column {
             SortColumn::Name => self.directory_contents.sort(), // Sorts by name by default
             SortColumn::Modified => self
@@ -106,6 +106,7 @@ impl TableView {
         if self.sort_direction == SortDirection::Descending {
             self.directory_contents.reverse();
         }
+        self.unselect_all()
     }
 
     fn sort_by(&mut self, column: SortColumn) -> CommandResult {
@@ -114,8 +115,7 @@ impl TableView {
         } else {
             self.sort_column = column;
         }
-        self.sort();
-        CommandResult::none()
+        self.sort()
     }
 
     fn header_label(&self, column: &SortColumn) -> String {
@@ -206,12 +206,12 @@ fn constraints(width: u16) -> (Vec<Constraint>, u16) {
         name_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
         constraints.push(Constraint::Length(MODIFIED_LEN));
     }
-    if width > 57 {
-        name_width -= SIZE_LEN - 1;
+    if width > 39 + MODIFIED_LEN + 1 + SIZE_LEN + 1 {
+        name_width -= SIZE_LEN + 1;
         constraints.push(Constraint::Length(SIZE_LEN));
     }
-    if width > 68 {
-        name_width -= MODE_LEN - 1;
+    if width > 39 + MODIFIED_LEN + 1 + SIZE_LEN + 1 + MODE_LEN + 1 {
+        name_width -= MODE_LEN + 1;
         constraints.push(Constraint::Length(MODE_LEN));
     }
     constraints.insert(0, Constraint::Length(name_width));
