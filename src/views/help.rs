@@ -18,14 +18,21 @@ pub(super) struct HelpView {}
 
 impl CommandHandler for HelpView {}
 
+const MIN_WIDTH: u16 = 44;
+
 impl<B: Backend> View<B> for HelpView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+        let width = rect.width;
         let rect = bordered(frame, rect, Some("Help".into()));
 
-        if rect.width < 49 {
-            let span = Span::raw("Resize the window to display help");
+        if width < MIN_WIDTH {
+            let span = Span::raw(format!(
+                "Resize your terminal to >={MIN_WIDTH} columns to display help"
+            ));
             let text = Text::from(Line::from(span));
-            let paragraph = Paragraph::new(text).style(error_style());
+            let paragraph = Paragraph::new(text)
+                .style(error_style())
+                .wrap(Wrap { trim: true });
             frame.render_widget(paragraph, rect);
             return;
         }
@@ -54,7 +61,7 @@ fn content_help() -> Vec<Span<'static>> {
         Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Select down/up: "),
         Span::styled("j/k", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Open selected: "),
+        Span::raw(" Open: "),
         Span::styled("f", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Refresh: "),
         Span::styled("CTRL+r", Style::default().add_modifier(Modifier::BOLD)),

@@ -15,6 +15,7 @@ use ratatui::{
     widgets::{Block, Borders},
     Frame,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) trait View<B: Backend>: CommandHandler {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _focus: &Focus);
@@ -34,4 +35,28 @@ pub(super) fn bordered<B: Backend>(
         horizontal: 1,
         vertical: 1,
     })
+}
+pub(super) fn split_utf8_with_reservation(
+    line: &str,
+    width: usize,
+    reservation: &str,
+) -> Vec<String> {
+    if len_utf8(line) <= width {
+        return vec![line.to_string()];
+    }
+
+    let reserved = len_utf8(reservation);
+    split_utf8(line, width.saturating_sub(reserved))
+}
+
+fn len_utf8(line: &str) -> usize {
+    UnicodeSegmentation::graphemes(line, true).count()
+}
+
+fn split_utf8(line: &str, width: usize) -> Vec<String> {
+    let mut graphemes = UnicodeSegmentation::graphemes(line, true);
+    (0..)
+        .map(|_| graphemes.by_ref().take(width).collect::<String>())
+        .take_while(|s| !s.is_empty())
+        .collect::<Vec<_>>()
 }

@@ -1,8 +1,14 @@
 use super::View;
 use crate::{
     app::focus::Focus,
-    command::{handler::CommandHandler, result::CommandResult, Command, SortColumn},
+    command::{
+        handler::CommandHandler,
+        result::CommandResult,
+        sorting::{SortColumn, SortDirection},
+        Command,
+    },
     file_system::human::HumanPath,
+    views::split_utf8_with_reservation,
 };
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -12,6 +18,11 @@ use ratatui::{
     widgets::{Cell, Row, Table, TableState},
     Frame,
 };
+
+const MODE_LEN: u16 = 10;
+const MODIFIED_LEN: u16 = 12;
+const SIZE_LEN: u16 = 7;
+const SEPARATOR: &str = "\n…";
 
 #[derive(Default)]
 pub(super) struct TableView {
@@ -107,24 +118,26 @@ impl TableView {
         CommandResult::none()
     }
 
-    fn header_style(&self, name: &str) -> Style {
-        if self.sort_column == name {
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .bg(Color::Green)
-                .fg(Color::Black)
-        } else {
-            Style::default().bg(Color::Blue).fg(Color::Black)
+    fn header_label(&self, column: &SortColumn) -> String {
+        let label = match column {
+            SortColumn::Name => "[N]ame",
+            SortColumn::Modified => "[M]odified",
+            SortColumn::Size => "[S]ize",
+        };
+        if self.sort_column != *column {
+            return label.into();
+        }
+        match self.sort_direction {
+            SortDirection::Ascending => format!("{label}⌃"),
+            SortDirection::Descending => format!("{label}⌄"),
         }
     }
-    fn header_label(&self, name: &str) -> String {
-        if self.sort_column == name {
-            match self.sort_direction {
-                SortDirection::Ascending => format!("{name}⌃"),
-                SortDirection::Descending => format!("{name}⌄"),
-            }
+
+    fn header_style(&self, column: &SortColumn) -> Style {
+        if self.sort_column == *column {
+            header_style_sorted()
         } else {
-            name.into()
+            header_style_default()
         }
     }
 }
@@ -139,9 +152,9 @@ impl CommandHandler for TableView {
                 }
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                KeyCode::Char('n') => self.sort_by(SortColumn::Name),
-                KeyCode::Char('m') => self.sort_by(SortColumn::Modified),
-                KeyCode::Char('s') => self.sort_by(SortColumn::Size),
+                KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
+                KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
+                KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
                 KeyCode::Char(' ') => self.unselect_all(),
                 _ => CommandResult::NotHandled,
             },
@@ -159,45 +172,65 @@ impl CommandHandler for TableView {
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let header_cells = ["Name", "Modified", "Size", "Mode"]
+        let mut header_cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
             .into_iter()
-            .map(|h| Cell::from(self.header_label(h)).style(self.header_style(h)));
-        let header = Row::new(header_cells).style(Style::default().bg(Color::Blue));
+            .map(|header| Cell::from(self.header_label(&header)).style(self.header_style(&header)))
+            .collect();
+        header_cells.push(Cell::from("Mode").style(header_style_default()));
+        let header = Row::new(header_cells).style(header_style_default());
+        let (constraints, name_width) = constraints(rect.width);
         let rows = self.directory_contents.iter().map(|item| {
+            let name_lines =
+                split_utf8_with_reservation(&item.name(), name_width as usize, SEPARATOR);
+
             Row::new(vec![
-                Cell::from(item.name()),
+                Cell::from(name_lines.join(SEPARATOR)),
                 Cell::from(item.modified()),
-                Cell::from(item.size()),
+                Cell::from(format!("{: >7}", item.size())), // 7 must match SIZE_LEN
                 Cell::from(item.mode()),
             ])
+            .height(name_lines.len() as u16)
         });
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-
-        let mut constraints = Vec::new();
-        let width = rect.width; // 2 for border, 1 for padding
-        eprintln!("TableView.render() width:{}", width);
-        let mut name_width = width;
-        if width > 50 {
-            name_width = width - 12 - 1;
-            constraints.push(Constraint::Length(12));
-        }
-        if width > 68 {
-            name_width = width - 12 - 5 - 2;
-            constraints.push(Constraint::Length(5));
-        }
-        if width > 79 {
-            name_width = width - 12 - 5 - 10 - 3;
-            constraints.push(Constraint::Length(10));
-        }
-
-        constraints.insert(0, Constraint::Length(name_width));
-
         let table = Table::new(rows)
             .header(header)
-            .highlight_style(selected_style)
+            .highlight_style(selected_style())
             .widths(&constraints);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }
+}
+
+fn constraints(width: u16) -> (Vec<Constraint>, u16) {
+    let mut constraints = Vec::new();
+    let mut name_width = width;
+    if width > 39 {
+        name_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
+        constraints.push(Constraint::Length(MODIFIED_LEN));
+    }
+    if width > 57 {
+        name_width -= SIZE_LEN - 1;
+        constraints.push(Constraint::Length(SIZE_LEN));
+    }
+    if width > 68 {
+        name_width -= MODE_LEN - 1;
+        constraints.push(Constraint::Length(MODE_LEN));
+    }
+    constraints.insert(0, Constraint::Length(name_width));
+    (constraints, name_width)
+}
+
+fn header_style_default() -> Style {
+    Style::default().bg(Color::Blue).fg(Color::Black)
+}
+
+fn header_style_sorted() -> Style {
+    Style::default()
+        .add_modifier(Modifier::BOLD)
+        .bg(Color::Green)
+        .fg(Color::Black)
+}
+
+fn selected_style() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
 }
 
 fn navigate(len: usize, index: usize, delta: i8) -> usize {
@@ -209,22 +242,6 @@ fn navigate(len: usize, index: usize, delta: i8) -> usize {
         result += len;
     }
     usize::try_from(result).unwrap()
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-enum SortDirection {
-    #[default]
-    Ascending,
-    Descending,
-}
-
-impl SortDirection {
-    fn toggle(&mut self) {
-        match self {
-            Self::Ascending => *self = Self::Descending,
-            Self::Descending => *self = Self::Ascending,
-        }
-    }
 }
 
 #[cfg(test)]
