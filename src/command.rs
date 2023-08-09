@@ -1,8 +1,11 @@
 pub mod handler;
 pub mod result;
+pub mod sorting;
 
 use crate::{app::focus::Focus, file_system::human::HumanPath};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+use self::sorting::SortColumn;
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -76,14 +79,6 @@ impl Command {
             _ => self,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum SortColumn {
-    #[default]
-    Name,
-    Modified,
-    Size,
 }
 
 impl PartialEq<&str> for SortColumn {

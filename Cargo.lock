@@ -127,6 +127,7 @@ dependencies = [
  "ratatui",
  "test-case",
  "tui-input",
+ "unicode-segmentation",
  "unicode-width",
  "unix_mode",
 ]
