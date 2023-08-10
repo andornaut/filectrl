@@ -90,19 +90,19 @@ impl<B: Backend> View<B> for StatusView {
             spans.push(Span::styled("Selected type:", selected_style));
 
             if selected.is_block_device() {
-                spans.push(Span::styled("block", selected_value_style));
+                spans.push(Span::styled("Block", selected_value_style));
             }
             if selected.is_char_device() {
-                spans.push(Span::styled("character", selected_value_style));
+                spans.push(Span::styled("Character", selected_value_style));
             }
             if selected.is_dir() {
-                spans.push(Span::styled("directory", selected_value_style));
+                spans.push(Span::styled("Directory", selected_value_style));
             }
             if selected.is_fifo() {
                 spans.push(Span::styled("FIFO", selected_value_style));
             }
             if selected.is_file() {
-                spans.push(Span::styled("file", selected_value_style));
+                spans.push(Span::styled("File", selected_value_style));
             }
             if selected.is_setgid() {
                 spans.push(Span::styled("SetGID", selected_value_style));
@@ -111,13 +111,13 @@ impl<B: Backend> View<B> for StatusView {
                 spans.push(Span::styled("SetUID", selected_value_style));
             }
             if selected.is_socket() {
-                spans.push(Span::styled("socket", selected_value_style));
+                spans.push(Span::styled("Socket", selected_value_style));
             }
             if selected.is_sticky() {
-                spans.push(Span::styled("sticky", selected_value_style));
+                spans.push(Span::styled("Sticky", selected_value_style));
             }
             if selected.is_symlink() {
-                spans.push(Span::styled("symlink", selected_value_style));
+                spans.push(Span::styled("Symlink", selected_value_style));
             }
             spans.push(Span::styled(" Accessed:", selected_style));
             spans.push(Span::styled(selected.accessed(), selected_value_style));
