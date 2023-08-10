@@ -58,7 +58,7 @@ impl<B: Backend> View<B> for RootView {
             constraints.insert(0, Constraint::Length(4));
         }
 
-        if show_prompt(focus) {
+        if focus.is_prompt() {
             constraints.push(Constraint::Length(1));
         }
 
@@ -74,12 +74,8 @@ impl<B: Backend> View<B> for RootView {
         self.header.render(frame, *chunks.next().unwrap(), focus);
         self.content.render(frame, *chunks.next().unwrap(), focus);
         self.status.render(frame, *chunks.next().unwrap(), focus);
-        if show_prompt(focus) {
+        if focus.is_prompt() {
             self.prompt.render(frame, *chunks.next().unwrap(), focus);
         }
     }
-}
-
-fn show_prompt(focus: &Focus) -> bool {
-    matches!(focus, Focus::Prompt)
 }

@@ -17,13 +17,13 @@ const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 #[derive(Clone, Eq)]
 pub struct HumanPath {
     pub basename: String,
+    pub modified: DateTime<Local>,
     pub path: String,
+    pub size: u64,
 
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
-    modified: DateTime<Local>,
-    size: u64,
 }
 
 impl HumanPath {
@@ -121,7 +121,7 @@ impl fmt::Debug for HumanPath {
 impl Default for HumanPath {
     fn default() -> Self {
         let directory = env::current_dir().expect("Can get the CWD");
-        HumanPath::try_from(&directory).expect("Can create a PathDisplay from the CWD")
+        HumanPath::try_from(&directory).expect("Can create a HumanPath from the CWD")
     }
 }
 

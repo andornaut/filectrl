@@ -2,7 +2,7 @@ use super::View;
 use crate::{
     app::{
         focus::Focus,
-        style::{header_style_default, header_style_sorted, selected_style},
+        style::{table_header_style_default, table_header_style_sorted, table_selected_style},
     },
     command::{
         handler::CommandHandler,
@@ -29,8 +29,10 @@ const SEPARATOR: &str = "\n…";
 
 #[derive(Default)]
 pub(super) struct TableView {
-    directory_contents: Vec<HumanPath>,
+    directory_items: Vec<HumanPath>,
     directory: HumanPath,
+    directory_items_sorted: Vec<HumanPath>,
+    filter: String,
     sort_column: SortColumn,
     sort_direction: SortDirection,
     state: TableState,
@@ -42,87 +44,6 @@ impl TableView {
             Some(path) => Command::DeletePath(path.clone()).into(),
             None => CommandResult::none(),
         }
-    }
-
-    fn navigate(&mut self, delta: i8) -> CommandResult {
-        let i = match self.state.selected() {
-            Some(i) => navigate(self.directory_contents.len(), i, delta),
-            None => 0,
-        };
-        self.state.select(Some(i));
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
-    }
-
-    fn next(&mut self) -> CommandResult {
-        self.navigate(1)
-    }
-
-    fn previous(&mut self) -> CommandResult {
-        self.navigate(-1)
-    }
-
-    fn selected(&self) -> Option<&HumanPath> {
-        match self.state.selected() {
-            Some(i) => Some(&self.directory_contents[i]),
-            None => None,
-        }
-    }
-
-    fn unselect_all(&mut self) -> CommandResult {
-        self.state.select(None);
-        Command::SetSelected(None).into()
-    }
-
-    fn open(&mut self) -> CommandResult {
-        match self.selected() {
-            Some(path) => {
-                let path = path.clone();
-                // TODO: handle symlinks
-                (if path.is_dir() {
-                    Command::ChangeDir(path)
-                } else {
-                    Command::OpenFile(path)
-                })
-                .into()
-            }
-            None => CommandResult::none(),
-        }
-    }
-
-    fn open_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Rename).into()
-    }
-
-    fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
-        self.directory = directory;
-        self.directory_contents = children;
-        self.sort();
-        self.unselect_all()
-    }
-
-    fn sort(&mut self) -> CommandResult {
-        match self.sort_column {
-            SortColumn::Name => self.directory_contents.sort(), // Sorts by name by default
-            SortColumn::Modified => self
-                .directory_contents
-                .sort_by_cached_key(|path| path.modified()),
-            SortColumn::Size => self
-                .directory_contents
-                .sort_by_cached_key(|path| path.size()),
-        };
-        if self.sort_direction == SortDirection::Descending {
-            self.directory_contents.reverse();
-        }
-        self.unselect_all()
-    }
-
-    fn sort_by(&mut self, column: SortColumn) -> CommandResult {
-        if self.sort_column == column {
-            self.sort_direction.toggle();
-        } else {
-            self.sort_column = column;
-        }
-        self.sort()
     }
 
     fn header_label(&self, column: &SortColumn) -> String {
@@ -142,10 +63,108 @@ impl TableView {
 
     fn header_style(&self, column: &SortColumn) -> Style {
         if self.sort_column == *column {
-            header_style_sorted()
+            table_header_style_sorted()
         } else {
-            header_style_default()
+            table_header_style_default()
         }
+    }
+
+    fn navigate(&mut self, delta: i8) -> CommandResult {
+        if self.directory_items_sorted.is_empty() {
+            return CommandResult::none();
+        }
+
+        let i = match self.state.selected() {
+            Some(i) => navigate(self.directory_items_sorted.len(), i, delta),
+            None => 0,
+        };
+        self.state.select(Some(i));
+        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+    }
+
+    fn next(&mut self) -> CommandResult {
+        self.navigate(1)
+    }
+
+    fn previous(&mut self) -> CommandResult {
+        self.navigate(-1)
+    }
+
+    fn open(&mut self) -> CommandResult {
+        match self.selected() {
+            Some(path) => {
+                let path = path.clone();
+                (if path.is_dir() {
+                    Command::ChangeDir(path)
+                } else {
+                    Command::OpenFile(path)
+                })
+                .into()
+            }
+            None => CommandResult::none(),
+        }
+    }
+
+    fn open_filter_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Filter).into()
+    }
+
+    fn open_rename_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Rename).into()
+    }
+
+    fn selected(&self) -> Option<&HumanPath> {
+        match self.state.selected() {
+            Some(i) => Some(&self.directory_items_sorted[i]),
+            None => None,
+        }
+    }
+
+    fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
+        self.directory = directory;
+        self.directory_items = children;
+        self.sort()
+    }
+
+    fn set_filter(&mut self, filter: String) -> CommandResult {
+        self.filter = filter;
+        self.sort()
+    }
+
+    fn sort(&mut self) -> CommandResult {
+        let mut items = self.directory_items.clone();
+        match self.sort_column {
+            SortColumn::Name => items.sort(), // Sorts by name by default
+            SortColumn::Modified => items.sort_by_cached_key(|path| path.modified),
+            SortColumn::Size => items.sort_by_cached_key(|path| path.size),
+        };
+        if self.sort_direction == SortDirection::Descending {
+            items.reverse();
+        }
+
+        if !self.filter.is_empty() {
+            let filter_lowercase = self.filter.to_ascii_lowercase();
+            items = items
+                .into_iter()
+                .filter(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase))
+                .collect();
+        }
+        self.directory_items_sorted = items;
+        self.unselect()
+    }
+
+    fn sort_by(&mut self, column: SortColumn) -> CommandResult {
+        if self.sort_column == column {
+            self.sort_direction.toggle();
+        } else {
+            self.sort_column = column;
+        }
+        self.sort()
+    }
+
+    fn unselect(&mut self) -> CommandResult {
+        self.state.select(None);
+        Command::SetSelected(None).into()
     }
 }
 
@@ -154,22 +173,25 @@ impl CommandHandler for TableView {
         match command {
             Command::Key(code, _) => match code {
                 KeyCode::Delete => self.delete(),
+                KeyCode::Esc => Command::SetFilter("".into()).into(),
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
                     self.open()
                 }
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                KeyCode::Char('r') | KeyCode::F(2) => self.open_prompt(),
+                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
-                KeyCode::Char(' ') => self.unselect_all(),
+                KeyCode::Char(' ') => self.unselect(),
 
                 _ => CommandResult::NotHandled,
             },
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
             }
+            Command::SetFilter(filter) => self.set_filter(filter.clone()),
             _ => CommandResult::NotHandled,
         }
     }
@@ -185,10 +207,10 @@ impl<B: Backend> View<B> for TableView {
             .into_iter()
             .map(|header| Cell::from(self.header_label(&header)).style(self.header_style(&header)))
             .collect();
-        header_cells.push(Cell::from("Mode").style(header_style_default()));
-        let header = Row::new(header_cells).style(header_style_default());
+        header_cells.push(Cell::from("Mode").style(table_header_style_default()));
+        let header = Row::new(header_cells).style(table_header_style_default());
         let (constraints, name_width) = constraints(rect.width);
-        let rows = self.directory_contents.iter().map(|item| {
+        let rows = self.directory_items_sorted.iter().map(|item| {
             let name_lines =
                 split_utf8_with_reservation(&item.name(), name_width as usize, SEPARATOR);
 
@@ -202,7 +224,7 @@ impl<B: Backend> View<B> for TableView {
         });
         let table = Table::new(rows)
             .header(header)
-            .highlight_style(selected_style())
+            .highlight_style(table_selected_style())
             .widths(&constraints);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }

@@ -26,13 +26,11 @@ impl<B: Backend> View<B> for HelpView {
         let rect = bordered(frame, rect, Some("Help".into()));
 
         if width < MIN_WIDTH {
-            let span = Span::raw(format!(
+            let paragraph = Paragraph::new(format!(
                 "Resize your terminal to >={MIN_WIDTH} columns to display help"
-            ));
-            let text = Text::from(Line::from(span));
-            let paragraph = Paragraph::new(text)
-                .style(error_style())
-                .wrap(Wrap { trim: true });
+            ))
+            .style(error_style())
+            .wrap(Wrap { trim: true });
             frame.render_widget(paragraph, rect);
             return;
         }
@@ -42,15 +40,10 @@ impl<B: Backend> View<B> for HelpView {
             Focus::Header => header_help(),
             Focus::Prompt => prompt_help(),
         };
-        let text = Text::from(Line::from(spans));
-        let text_width = text.width();
-        let paragraph = Paragraph::new(text)
+        let line = Line::from(spans);
+        let paragraph = Paragraph::new(line)
             .style(Style::default())
             .wrap(Wrap { trim: true });
-        eprintln!(
-            "FooterView.render() text.width:{} rect.width:{}",
-            text_width, rect.width
-        );
         frame.render_widget(paragraph, rect);
     }
 }

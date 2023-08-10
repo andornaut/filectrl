@@ -18,7 +18,7 @@ pub enum PromptKind {
 pub enum Command {
     AddError(String),
     ClearErrors,
-    Focus(Focus),
+    SetFocus(Focus),
     Key(KeyCode, KeyModifiers),
     NextFocus,
     PreviousFocus,
@@ -27,20 +27,16 @@ pub enum Command {
     ToggleHelp,
 
     // Content & Prompt commands
-    CancelPrompt,
-    OpenPrompt(PromptKind),
-    SetSelected(Option<HumanPath>),
-    SubmitPrompt(String),
-    Sort(SortColumn),
-
-    // FileSystem commands
     BackDir,
     ChangeDir(HumanPath),
     DeletePath(HumanPath),
     OpenFile(HumanPath),
+    OpenPrompt(PromptKind),
     RefreshDir,
     RenamePath(HumanPath, String),
     SetDirectory(HumanPath, Vec<HumanPath>),
+    SetFilter(String),
+    SetSelected(Option<HumanPath>),
 }
 
 impl Command {
@@ -68,9 +64,9 @@ impl Command {
     pub fn translate_non_prompt_key_command(self) -> Command {
         match self {
             Command::Key(code, modifiers) => match (code, modifiers) {
-                (KeyCode::Esc, _)
-                | (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                | (KeyCode::Char('q'), _) => Command::Quit,
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Char('q'), _) => {
+                    Command::Quit
+                }
                 (KeyCode::Tab, _) => Self::NextFocus,
                 (KeyCode::BackTab, _) => Self::PreviousFocus,
                 (KeyCode::Backspace, _)
