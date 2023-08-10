@@ -29,7 +29,3 @@ impl From<ColorTheme> for Color {
         }
     }
 }
-
-pub fn error_style() -> Style {
-    Style::default().bg(Color::DarkGray).fg(Color::Red)
-}
