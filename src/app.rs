@@ -125,7 +125,7 @@ impl CommandHandler for App {
         match command {
             Command::NextFocus => self.focus.next(),
             Command::PreviousFocus => self.focus.previous(),
-            Command::Focus(focus) => {
+            Command::SetFocus(focus) => {
                 self.focus = focus.clone();
             }
             Command::Resize(_, _) => (),

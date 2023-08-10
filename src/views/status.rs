@@ -1,6 +1,12 @@
 use super::View;
 use crate::{
-    app::focus::Focus,
+    app::{
+        focus::Focus,
+        style::{
+            status_directory_style, status_filter_mode_style, status_normal_mode_style,
+            status_selected_style,
+        },
+    },
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
@@ -17,6 +23,7 @@ use ratatui::{
 pub(super) struct StatusView {
     directory: HumanPath,
     directory_len: usize,
+    filter: String,
     selected: Option<HumanPath>,
 }
 
@@ -24,6 +31,11 @@ impl StatusView {
     fn set_directory(&mut self, directory: HumanPath, directory_len: usize) -> CommandResult {
         self.directory = directory;
         self.directory_len = directory_len;
+        CommandResult::none()
+    }
+
+    fn set_filter(&mut self, filter: String) -> CommandResult {
+        self.filter = filter;
         CommandResult::none()
     }
 
@@ -39,32 +51,43 @@ impl CommandHandler for StatusView {
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.len())
             }
+            Command::SetFilter(filter) => self.set_filter(filter.clone()),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }
-    }
-
-    fn is_focussed(&self, focus: &Focus) -> bool {
-        *focus == Focus::Header
     }
 }
 
 impl<B: Backend> View<B> for StatusView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let directory_style = Style::default().bg(Color::Magenta);
+        if !self.filter.is_empty() {
+            let spans = vec![
+                Span::raw("Filtered by \""),
+                Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw("\". Press "),
+                Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" to exit filtered mode."),
+            ];
+            let paragraph = Paragraph::new(Line::from(spans)).style(status_filter_mode_style());
+            frame.render_widget(paragraph, rect);
+            return;
+        }
+
+        let directory_style = status_directory_style();
         let directory_value_style = directory_style.add_modifier(Modifier::BOLD);
-        let selected_style = Style::default().bg(Color::Blue);
+        let selected_style = status_selected_style();
         let selected_value_style = selected_style.add_modifier(Modifier::BOLD);
 
         let mut spans = vec![
-            Span::styled("Directory | # items:", directory_style),
-            Span::styled(self.directory_len.to_string(), directory_value_style),
-            Span::styled("mode:", directory_style),
+            Span::styled("Directory mode:", directory_style),
             Span::styled(self.directory.mode(), directory_value_style),
+            Span::styled(" #items:", directory_style),
+            Span::styled(self.directory_len.to_string(), directory_value_style),
         ];
 
         if let Some(selected) = &self.selected {
-            spans.push(Span::styled("Selected | type:", selected_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("Selected type:", selected_style));
 
             if selected.is_block_device() {
                 spans.push(Span::styled("block", selected_value_style));
@@ -96,15 +119,15 @@ impl<B: Backend> View<B> for StatusView {
             if selected.is_symlink() {
                 spans.push(Span::styled("symlink", selected_value_style));
             }
-            spans.push(Span::styled("accessed:", selected_style));
+            spans.push(Span::styled(" Accessed:", selected_style));
             spans.push(Span::styled(selected.accessed(), selected_value_style));
-            spans.push(Span::styled("created:", selected_style));
+            spans.push(Span::styled(" Created:", selected_style));
             spans.push(Span::styled(selected.created(), selected_value_style));
         }
         let text = Text::from(Line::from(spans));
         let paragraph = Paragraph::new(text)
-            .style(Style::default())
-            .wrap(Wrap { trim: true });
+            .style(status_normal_mode_style())
+            .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, rect);
     }
 }
