@@ -215,7 +215,7 @@ impl<B: Backend> View<B> for TableView {
                 split_utf8_with_reservation(&item.name(), name_width as usize, SEPARATOR);
 
             Row::new(vec![
-                Cell::from(name_lines.join(SEPARATOR)),
+                Cell::from(name_lines.join(SEPARATOR)).style(item.style()),
                 Cell::from(item.modified()),
                 Cell::from(format!("{: >7}", item.size())), // 7 must match SIZE_LEN
                 Cell::from(item.mode()),
