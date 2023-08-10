@@ -1,6 +1,7 @@
 pub mod color;
 mod events;
 pub mod focus;
+pub mod style;
 
 use self::{
     events::{receive_commands, spawn_command_sender},

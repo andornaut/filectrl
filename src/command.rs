@@ -7,6 +7,13 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use self::sorting::SortColumn;
 
+#[derive(Clone, Debug, Default)]
+pub enum PromptKind {
+    Filter,
+    #[default]
+    Rename,
+}
+
 #[derive(Clone, Debug)]
 pub enum Command {
     AddError(String),
@@ -21,6 +28,7 @@ pub enum Command {
 
     // Content & Prompt commands
     CancelPrompt,
+    OpenPrompt(PromptKind),
     SetSelected(Option<HumanPath>),
     SubmitPrompt(String),
     Sort(SortColumn),

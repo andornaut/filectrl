@@ -1,11 +1,14 @@
 use super::View;
 use crate::{
-    app::focus::Focus,
+    app::{
+        focus::Focus,
+        style::{header_style_default, header_style_sorted, selected_style},
+    },
     command::{
         handler::CommandHandler,
         result::CommandResult,
         sorting::{SortColumn, SortDirection},
-        Command,
+        Command, PromptKind,
     },
     file_system::human::HumanPath,
     views::split_utf8_with_reservation,
@@ -14,7 +17,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     widgets::{Cell, Row, Table, TableState},
     Frame,
 };
@@ -34,13 +37,6 @@ pub(super) struct TableView {
 }
 
 impl TableView {
-    pub(super) fn selected(&self) -> Option<&HumanPath> {
-        match self.state.selected() {
-            Some(i) => Some(&self.directory_contents[i]),
-            None => None,
-        }
-    }
-
     fn delete(&self) -> CommandResult {
         match self.selected() {
             Some(path) => Command::DeletePath(path.clone()).into(),
@@ -65,6 +61,13 @@ impl TableView {
         self.navigate(-1)
     }
 
+    fn selected(&self) -> Option<&HumanPath> {
+        match self.state.selected() {
+            Some(i) => Some(&self.directory_contents[i]),
+            None => None,
+        }
+    }
+
     fn unselect_all(&mut self) -> CommandResult {
         self.state.select(None);
         Command::SetSelected(None).into()
@@ -84,6 +87,10 @@ impl TableView {
             }
             None => CommandResult::none(),
         }
+    }
+
+    fn open_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Rename).into()
     }
 
     fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
@@ -152,10 +159,12 @@ impl CommandHandler for TableView {
                 }
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
+                KeyCode::Char('r') | KeyCode::F(2) => self.open_prompt(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
                 KeyCode::Char(' ') => self.unselect_all(),
+
                 _ => CommandResult::NotHandled,
             },
             Command::SetDirectory(directory, children) => {
@@ -216,21 +225,6 @@ fn constraints(width: u16) -> (Vec<Constraint>, u16) {
     }
     constraints.insert(0, Constraint::Length(name_width));
     (constraints, name_width)
-}
-
-fn header_style_default() -> Style {
-    Style::default().bg(Color::Blue).fg(Color::Black)
-}
-
-fn header_style_sorted() -> Style {
-    Style::default()
-        .add_modifier(Modifier::BOLD)
-        .bg(Color::Green)
-        .fg(Color::Black)
-}
-
-fn selected_style() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
 }
 
 fn navigate(len: usize, index: usize, delta: i8) -> usize {

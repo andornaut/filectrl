@@ -1,6 +1,6 @@
 use super::View;
 use crate::{
-    app::{color::error_style, focus::Focus},
+    app::{focus::Focus, style::error_style},
     command::handler::CommandHandler,
     views::bordered,
 };
