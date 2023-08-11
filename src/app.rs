@@ -20,7 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const BROADCAST_CYCLES: u8 = 4;
+const BROADCAST_CYCLES: u8 = 5;
 const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 
 #[derive(Default)]

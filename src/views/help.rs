@@ -23,7 +23,7 @@ const MIN_WIDTH: u16 = 44;
 impl<B: Backend> View<B> for HelpView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
         let width = rect.width;
-        let rect = bordered(frame, rect, Some("Help".into()));
+        let rect = bordered(frame, rect, Some("Help".into()), None);
 
         if width < MIN_WIDTH {
             let paragraph = Paragraph::new(format!(
@@ -36,7 +36,7 @@ impl<B: Backend> View<B> for HelpView {
         }
 
         let spans = match *focus {
-            Focus::Content => content_help(),
+            Focus::Table => content_help(),
             Focus::Header => header_help(),
             Focus::Prompt => prompt_help(),
         };

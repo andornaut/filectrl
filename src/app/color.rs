@@ -3,21 +3,42 @@ use anyhow::Result;
 use ratatui::style::Color;
 use regex::Regex;
 
+pub fn light_beige() -> Color {
+    hex_to_color("#ccc8b0").unwrap()
+}
+
+pub fn beige() -> Color {
+    hex_to_color("#9c9977").unwrap()
+}
+
 pub fn black() -> Color {
     hex_to_color("#1d1f21").unwrap()
 }
+
 pub fn dark_brown() -> Color {
     hex_to_color("#373424").unwrap()
 }
+
+pub fn pink() -> Color {
+    hex_to_color("#ff00ff").unwrap()
+}
+
+pub fn dark_cyan() -> Color {
+    hex_to_color("#006B6B").unwrap()
+}
+
 pub fn brown() -> Color {
     hex_to_color("#423f2e").unwrap()
 }
+
 pub fn light_brown() -> Color {
     hex_to_color("#777755").unwrap()
 }
+
 pub fn dark_grey() -> Color {
     hex_to_color("#555").unwrap()
 }
+
 pub fn blue() -> Color {
     hex_to_color("#80a0ff").unwrap()
 }
@@ -52,6 +73,10 @@ pub fn light_purple() -> Color {
 
 pub fn light_salmon() -> Color {
     hex_to_color("#cc6666").unwrap()
+}
+
+pub fn red() -> Color {
+    hex_to_color("#dc322f").unwrap()
 }
 
 const COLOR_HEX: &str = "^[a-f0-9]{3}([a-f0-9]{3})?$";

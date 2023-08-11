@@ -1,6 +1,6 @@
 use super::{
-    content::ContentView, header::HeaderView, help::HelpView, prompt::PromptView,
-    status::StatusView, View,
+    errors::ErrorsView, header::HeaderView, help::HelpView, prompt::PromptView, status::StatusView,
+    table::TableView, View,
 };
 use crate::{
     app::focus::Focus,
@@ -14,10 +14,11 @@ use ratatui::{
 
 #[derive(Default)]
 pub struct RootView {
-    content: ContentView,
+    errors: ErrorsView,
     header: HeaderView,
     help: HelpView,
     status: StatusView,
+    table: TableView,
     prompt: PromptView,
     show_help: bool,
 }
@@ -31,12 +32,13 @@ impl RootView {
 
 impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
-        let content: &mut dyn CommandHandler = &mut self.content;
+        let errors: &mut dyn CommandHandler = &mut self.errors;
         let header: &mut dyn CommandHandler = &mut self.header;
         let help: &mut dyn CommandHandler = &mut self.help;
         let prompt: &mut dyn CommandHandler = &mut self.prompt;
         let status: &mut dyn CommandHandler = &mut self.status;
-        vec![header, help, content, status, prompt]
+        let table: &mut dyn CommandHandler = &mut self.table;
+        vec![errors, header, help, prompt, status, table]
     }
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -50,32 +52,33 @@ impl CommandHandler for RootView {
 impl<B: Backend> View<B> for RootView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
         let mut constraints = vec![
-            Constraint::Length(1),
+            Constraint::Length(self.errors.height()),
+            Constraint::Length(self.header.height(rect)),
             Constraint::Min(5),
             Constraint::Length(1),
         ];
-        if self.show_help {
-            constraints.insert(0, Constraint::Length(4));
-        }
+        let mut handlers: Vec<&mut dyn View<_>> = vec![
+            &mut self.errors,
+            &mut self.header,
+            &mut self.table,
+            &mut self.status,
+        ];
 
+        if self.show_help {
+            constraints.insert(1, Constraint::Length(4));
+            handlers.insert(1, &mut self.help);
+        }
         if focus.is_prompt() {
             constraints.push(Constraint::Length(1));
+            handlers.push(&mut self.prompt)
         }
 
-        let layout = Layout::default()
+        Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints);
-        let split = layout.split(rect);
-        let mut chunks = split.into_iter();
-
-        if self.show_help {
-            self.help.render(frame, *chunks.next().unwrap(), focus);
-        }
-        self.header.render(frame, *chunks.next().unwrap(), focus);
-        self.content.render(frame, *chunks.next().unwrap(), focus);
-        self.status.render(frame, *chunks.next().unwrap(), focus);
-        if focus.is_prompt() {
-            self.prompt.render(frame, *chunks.next().unwrap(), focus);
-        }
+            .constraints(constraints)
+            .split(rect)
+            .into_iter()
+            .zip(handlers.into_iter())
+            .for_each(|(chunk, handler)| handler.render(frame, *chunk, focus));
     }
 }
