@@ -2,7 +2,7 @@ use super::View;
 use crate::{
     app::{
         focus::Focus,
-        style::{table_header_style_default, table_header_style_sorted, table_selected_style},
+        style::{table_header_active_style, table_header_style, table_selected_style},
     },
     command::{
         handler::CommandHandler,
@@ -13,11 +13,12 @@ use crate::{
     file_system::human::HumanPath,
     views::split_utf8_with_reservation,
 };
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
     style::Style,
+    text::{Line, Span, Spans, Text},
     widgets::{Cell, Row, Table, TableState},
     Frame,
 };
@@ -63,9 +64,9 @@ impl TableView {
 
     fn header_style(&self, column: &SortColumn) -> Style {
         if self.sort_column == *column {
-            table_header_style_sorted()
+            table_header_active_style()
         } else {
-            table_header_style_default()
+            table_header_style()
         }
     }
 
@@ -171,22 +172,25 @@ impl TableView {
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Key(code, _) => match code {
-                KeyCode::Delete => self.delete(),
-                KeyCode::Esc => Command::SetFilter("".into()).into(),
-                KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
-                    self.open()
+            Command::Key(code, modifiers) => match (*code, *modifiers) {
+                (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                    Command::SetFilter("".into()).into()
                 }
-                KeyCode::Down | KeyCode::Char('j') => self.next(),
-                KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
-                KeyCode::Char('/') => self.open_filter_prompt(),
-                KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
-                KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
-                KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
-                KeyCode::Char(' ') => self.unselect(),
-
-                _ => CommandResult::NotHandled,
+                (_, _) => match code {
+                    KeyCode::Delete => self.delete(),
+                    KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
+                        self.open()
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => self.next(),
+                    KeyCode::Up | KeyCode::Char('k') => self.previous(),
+                    KeyCode::Char('/') => self.open_filter_prompt(),
+                    KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                    KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
+                    KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
+                    KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
+                    KeyCode::Char(' ') => self.unselect(),
+                    _ => CommandResult::NotHandled,
+                },
             },
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
@@ -197,7 +201,7 @@ impl CommandHandler for TableView {
     }
 
     fn is_focussed(&self, focus: &Focus) -> bool {
-        *focus == Focus::Content
+        *focus == Focus::Table
     }
 }
 
@@ -207,20 +211,32 @@ impl<B: Backend> View<B> for TableView {
             .into_iter()
             .map(|header| Cell::from(self.header_label(&header)).style(self.header_style(&header)))
             .collect();
-        header_cells.push(Cell::from("Mode").style(table_header_style_default()));
-        let header = Row::new(header_cells).style(table_header_style_default());
+        header_cells.push(Cell::from("Mode").style(table_header_style()));
+        let header = Row::new(header_cells).style(table_header_style());
         let (constraints, name_width) = constraints(rect.width);
         let rows = self.directory_items_sorted.iter().map(|item| {
-            let name_lines =
+            let name_split =
                 split_utf8_with_reservation(&item.name(), name_width as usize, SEPARATOR);
-
+            let name_len = name_split.len();
+            let name_lines: Vec<_> = name_split
+                .into_iter()
+                .enumerate()
+                .map(|(i, part)| {
+                    if i == name_len - 1 {
+                        Line::styled(part, item.style())
+                    } else {
+                        Line::styled(format!("{}…", part), item.style())
+                    }
+                })
+                .collect();
+            let size = format!("{: >7}", item.size()); // 7 must match SIZE_LEN
             Row::new(vec![
-                Cell::from(name_lines.join(SEPARATOR)).style(item.style()),
+                Cell::from(Text::from(name_lines)),
                 Cell::from(item.modified()),
-                Cell::from(format!("{: >7}", item.size())), // 7 must match SIZE_LEN
+                Cell::from(size),
                 Cell::from(item.mode()),
             ])
-            .height(name_lines.len() as u16)
+            .height(name_len as u16)
         });
         let table = Table::new(rows)
             .header(header)

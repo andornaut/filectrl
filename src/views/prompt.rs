@@ -28,7 +28,7 @@ pub(super) struct PromptView {
 
 impl PromptView {
     fn cancel(&mut self) -> CommandResult {
-        Command::SetFocus(Focus::Content).into()
+        Command::SetFocus(Focus::Table).into()
     }
 
     fn handle_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
@@ -39,8 +39,8 @@ impl PromptView {
 
     fn label(&self) -> String {
         match self.kind {
-            PromptKind::Filter => "Filter:".into(),
-            PromptKind::Rename => "Rename:".into(),
+            PromptKind::Filter => " Filter:".into(),
+            PromptKind::Rename => " Rename:".into(),
         }
     }
 
@@ -70,7 +70,7 @@ impl PromptView {
             PromptKind::Filter => Command::SetFilter(value.into()),
             PromptKind::Rename => match &self.selected {
                 Some(selected_path) => Command::RenamePath(selected_path.clone(), value.into()),
-                None => Command::SetFocus(Focus::Content),
+                None => Command::SetFocus(Focus::Table),
             },
         }
         .into()
@@ -82,20 +82,23 @@ impl CommandHandler for PromptView {
         match command {
             Command::Key(code, modifiers) => {
                 return match (*code, *modifiers) {
-                    (KeyCode::Esc, _) => self.cancel(),
+                    (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        self.cancel()
+                    }
                     (KeyCode::Enter, _) => self.submit(),
                     (_, _) => self.handle_input(*code, *modifiers),
                 };
             }
             Command::OpenPrompt(kind) => self.open(kind),
+            Command::SetDirectory(_, _) => Command::SetFilter("".into()).into(),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
             // Workarounds for being unable to return 2 commands from this method:
             // self.submit() -> RenamePath -> SetFocus
-            Command::RenamePath(_, _) => Command::SetFocus(Focus::Content).into(),
+            Command::RenamePath(_, _) => Command::SetFocus(Focus::Table).into(),
             // self.submit() -> SetFilter -> SetFocus
             Command::SetFilter(filter) => {
                 self.filter = filter.clone();
-                Command::SetFocus(Focus::Content).into()
+                Command::SetFocus(Focus::Table).into()
             }
             _ => CommandResult::NotHandled,
         }

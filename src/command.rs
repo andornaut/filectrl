@@ -64,21 +64,21 @@ impl Command {
     pub fn translate_non_prompt_key_command(self) -> Command {
         match self {
             Command::Key(code, modifiers) => match (code, modifiers) {
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Char('q'), _) => {
-                    Command::Quit
-                }
-                (KeyCode::Tab, _) => Self::NextFocus,
-                (KeyCode::BackTab, _) => Self::PreviousFocus,
-                (KeyCode::Backspace, _)
-                | (KeyCode::Left, _)
-                | (KeyCode::Char('b'), _)
-                | (KeyCode::Char('h'), _) => Command::BackDir,
-                (KeyCode::Char('c'), _) => Self::ClearErrors,
-                (KeyCode::Char('?'), _) => Self::ToggleHelp,
                 (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => {
                     Self::RefreshDir
                 }
-                (_, _) => self,
+                (_, _) => match code {
+                    KeyCode::Char('q') => Command::Quit,
+                    KeyCode::Tab => Self::NextFocus,
+                    KeyCode::BackTab => Self::PreviousFocus,
+                    KeyCode::Backspace
+                    | KeyCode::Left
+                    | KeyCode::Char('b')
+                    | KeyCode::Char('h') => Command::BackDir,
+                    KeyCode::Char('e') => Self::ClearErrors,
+                    KeyCode::Char('?') => Self::ToggleHelp,
+                    _ => self,
+                },
             },
             _ => self,
         }

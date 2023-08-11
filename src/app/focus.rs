@@ -3,7 +3,7 @@ pub enum Focus {
     Header,
     Prompt,
     #[default]
-    Content,
+    Table,
 }
 
 impl Focus {
@@ -16,8 +16,8 @@ impl Focus {
             return;
         }
         match self {
-            Self::Header => *self = Self::Content,
-            Self::Content => *self = Self::Header,
+            Self::Header => *self = Self::Table,
+            Self::Table => *self = Self::Header,
             _ => todo!(),
         }
     }

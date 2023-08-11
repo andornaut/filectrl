@@ -1,4 +1,3 @@
-mod content;
 mod errors;
 mod header;
 mod help;
@@ -12,6 +11,7 @@ use ratatui::{
     backend::Backend,
     layout::Rect,
     prelude::Margin,
+    style::Style,
     widgets::{Block, Borders},
     Frame,
 };
@@ -25,10 +25,14 @@ pub(super) fn bordered<B: Backend>(
     frame: &mut Frame<B>,
     rect: Rect,
     title: Option<String>,
+    style: Option<Style>,
 ) -> Rect {
     let mut block = Block::default().borders(Borders::ALL);
     if let Some(title) = title {
         block = block.title(title);
+    }
+    if let Some(style) = style {
+        block = block.border_style(style);
     }
     frame.render_widget(block, rect);
     rect.inner(&Margin {
@@ -36,6 +40,7 @@ pub(super) fn bordered<B: Backend>(
         vertical: 1,
     })
 }
+
 pub(super) fn split_utf8_with_reservation(
     line: &str,
     width: usize,

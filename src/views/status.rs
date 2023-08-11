@@ -3,8 +3,8 @@ use crate::{
     app::{
         focus::Focus,
         style::{
-            status_directory_style, status_filter_mode_style, status_normal_mode_style,
-            status_selected_style,
+            status_directory_label_style, status_directory_style, status_filter_mode_style,
+            status_normal_mode_style, status_selected_label_style, status_selected_style,
         },
     },
     command::{handler::CommandHandler, result::CommandResult, Command},
@@ -13,7 +13,7 @@ use crate::{
 use ratatui::{
     backend::Backend,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
     Frame,
@@ -62,7 +62,7 @@ impl<B: Backend> View<B> for StatusView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
         if !self.filter.is_empty() {
             let spans = vec![
-                Span::raw("Filtered by \""),
+                Span::raw(" Filtered by \""),
                 Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw("\". Press "),
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
@@ -79,15 +79,16 @@ impl<B: Backend> View<B> for StatusView {
         let selected_value_style = selected_style.add_modifier(Modifier::BOLD);
 
         let mut spans = vec![
-            Span::styled("Directory mode:", directory_style),
+            Span::styled(" Directory ", status_directory_label_style()),
+            Span::styled(" Mode:", directory_style),
             Span::styled(self.directory.mode(), directory_value_style),
             Span::styled(" #items:", directory_style),
             Span::styled(self.directory_len.to_string(), directory_value_style),
         ];
 
         if let Some(selected) = &self.selected {
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled("Selected type:", selected_style));
+            spans.push(Span::styled(" Selected ", status_selected_label_style()));
+            spans.push(Span::styled(" Type:", selected_style));
 
             if selected.is_block_device() {
                 spans.push(Span::styled("Block", selected_value_style));
