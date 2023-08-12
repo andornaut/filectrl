@@ -14,7 +14,7 @@ use ratatui::{
     backend::Backend,
     layout::Rect,
     style::{Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
 };
@@ -28,51 +28,18 @@ pub(super) struct StatusView {
 }
 
 impl StatusView {
-    fn set_directory(&mut self, directory: HumanPath, directory_len: usize) -> CommandResult {
-        self.directory = directory;
-        self.directory_len = directory_len;
-        CommandResult::none()
+    fn filter_widget(&mut self) -> Paragraph<'_> {
+        let spans = vec![
+            Span::raw(" Filtered by \""),
+            Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("\". Press "),
+            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" to exit filtered mode."),
+        ];
+        Paragraph::new(Line::from(spans)).style(status_filter_mode_style())
     }
 
-    fn set_filter(&mut self, filter: String) -> CommandResult {
-        self.filter = filter;
-        CommandResult::none()
-    }
-
-    fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
-        self.selected = selected;
-        CommandResult::none()
-    }
-}
-
-impl CommandHandler for StatusView {
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
-            Command::SetDirectory(directory, children) => {
-                self.set_directory(directory.clone(), children.len())
-            }
-            Command::SetFilter(filter) => self.set_filter(filter.clone()),
-            Command::SetSelected(selected) => self.set_selected(selected.clone()),
-            _ => CommandResult::NotHandled,
-        }
-    }
-}
-
-impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        if !self.filter.is_empty() {
-            let spans = vec![
-                Span::raw(" Filtered by \""),
-                Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw("\". Press "),
-                Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to exit filtered mode."),
-            ];
-            let paragraph = Paragraph::new(Line::from(spans)).style(status_filter_mode_style());
-            frame.render_widget(paragraph, rect);
-            return;
-        }
-
+    fn normal_widget(&mut self) -> Paragraph<'_> {
         let directory_style = status_directory_style();
         let directory_value_style = directory_style.add_modifier(Modifier::BOLD);
         let selected_style = status_selected_style();
@@ -82,8 +49,8 @@ impl<B: Backend> View<B> for StatusView {
             Span::styled(" Directory ", status_directory_label_style()),
             Span::styled(" Mode:", directory_style),
             Span::styled(self.directory.mode(), directory_value_style),
-            Span::styled(" #items:", directory_style),
-            Span::styled(self.directory_len.to_string(), directory_value_style),
+            Span::styled(" #Items:", directory_style),
+            Span::styled(self.directory_len.to_string() + " ", directory_value_style),
         ];
 
         if let Some(selected) = &self.selected {
@@ -125,10 +92,48 @@ impl<B: Backend> View<B> for StatusView {
             spans.push(Span::styled(" Created:", selected_style));
             spans.push(Span::styled(selected.created(), selected_value_style));
         }
-        let text = Text::from(Line::from(spans));
-        let paragraph = Paragraph::new(text)
+        Paragraph::new(Line::from(spans))
             .style(status_normal_mode_style())
-            .wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, rect);
+            .wrap(Wrap { trim: false })
+    }
+
+    fn set_directory(&mut self, directory: HumanPath, children: &Vec<HumanPath>) -> CommandResult {
+        self.directory = directory;
+        self.directory_len = children.len();
+        CommandResult::none()
+    }
+
+    fn set_filter(&mut self, filter: String) -> CommandResult {
+        self.filter = filter;
+        CommandResult::none()
+    }
+
+    fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
+        self.selected = selected;
+        CommandResult::none()
+    }
+}
+
+impl CommandHandler for StatusView {
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::SetDirectory(directory, children) => {
+                self.set_directory(directory.clone(), children)
+            }
+            Command::SetFilter(filter) => self.set_filter(filter.clone()),
+            Command::SetSelected(selected) => self.set_selected(selected.clone()),
+            _ => CommandResult::NotHandled,
+        }
+    }
+}
+
+impl<B: Backend> View<B> for StatusView {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
+        let widget = if self.filter.is_empty() {
+            self.normal_widget()
+        } else {
+            self.filter_widget()
+        };
+        frame.render_widget(widget, rect);
     }
 }

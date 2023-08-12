@@ -24,15 +24,12 @@ pub(super) trait View<B: Backend>: CommandHandler {
 pub(super) fn bordered<B: Backend>(
     frame: &mut Frame<B>,
     rect: Rect,
+    style: Style,
     title: Option<String>,
-    style: Option<Style>,
 ) -> Rect {
-    let mut block = Block::default().borders(Borders::ALL);
+    let mut block = Block::default().borders(Borders::ALL).border_style(style);
     if let Some(title) = title {
         block = block.title(title);
-    }
-    if let Some(style) = style {
-        block = block.border_style(style);
     }
     frame.render_widget(block, rect);
     rect.inner(&Margin {
@@ -43,7 +40,7 @@ pub(super) fn bordered<B: Backend>(
 
 pub(super) fn split_utf8_with_reservation(
     line: &str,
-    width: usize,
+    width: u16,
     reservation: &str,
 ) -> Vec<String> {
     if len_utf8(line) <= width {
@@ -54,14 +51,14 @@ pub(super) fn split_utf8_with_reservation(
     split_utf8(line, width.saturating_sub(reserved))
 }
 
-fn len_utf8(line: &str) -> usize {
-    UnicodeSegmentation::graphemes(line, true).count()
+fn len_utf8(line: &str) -> u16 {
+    UnicodeSegmentation::graphemes(line, true).count() as u16
 }
 
-fn split_utf8(line: &str, width: usize) -> Vec<String> {
+fn split_utf8(line: &str, width: u16) -> Vec<String> {
     let mut graphemes = UnicodeSegmentation::graphemes(line, true);
     (0..)
-        .map(|_| graphemes.by_ref().take(width).collect::<String>())
+        .map(|_| graphemes.by_ref().take(width as usize).collect::<String>())
         .take_while(|s| !s.is_empty())
         .collect::<Vec<_>>()
 }

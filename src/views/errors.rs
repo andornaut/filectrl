@@ -53,7 +53,7 @@ impl<B: Backend> View<B> for ErrorsView {
         if !self.should_show() {
             return;
         }
-        let rect = bordered(frame, rect, Some("Errors".into()), Some(error_style()));
+        let rect = bordered(frame, rect, error_style(), Some("Errors".into()));
         let items: Vec<ListItem> = self
             .errors
             .iter()

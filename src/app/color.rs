@@ -3,80 +3,91 @@ use anyhow::Result;
 use ratatui::style::Color;
 use regex::Regex;
 
-pub fn light_beige() -> Color {
-    hex_to_color("#ccc8b0").unwrap()
-}
-
+// Beige
 pub fn beige() -> Color {
     hex_to_color("#9c9977").unwrap()
 }
 
+pub fn light_beige() -> Color {
+    hex_to_color("#ccc8b0").unwrap()
+}
+
+// Black
 pub fn black() -> Color {
     hex_to_color("#1d1f21").unwrap()
 }
 
-pub fn dark_brown() -> Color {
-    hex_to_color("#373424").unwrap()
-}
-
-pub fn pink() -> Color {
-    hex_to_color("#ff00ff").unwrap()
-}
-
-pub fn dark_cyan() -> Color {
-    hex_to_color("#006B6B").unwrap()
-}
-
-pub fn brown() -> Color {
-    hex_to_color("#423f2e").unwrap()
-}
-
-pub fn light_brown() -> Color {
-    hex_to_color("#777755").unwrap()
-}
-
-pub fn dark_grey() -> Color {
-    hex_to_color("#555").unwrap()
+// Blue
+pub fn dark_blue() -> Color {
+    hex_to_color("#003399").unwrap()
 }
 
 pub fn blue() -> Color {
-    hex_to_color("#80a0ff").unwrap()
-}
-
-pub fn dark_blue() -> Color {
-    hex_to_color("#5c6886").unwrap()
-}
-
-pub fn dark_green() -> Color {
-    hex_to_color("#5c8668").unwrap()
-}
-
-pub fn cyan() -> Color {
-    hex_to_color("#70c0b1").unwrap()
+    hex_to_color("#268BD2").unwrap()
 }
 
 pub fn light_blue() -> Color {
     hex_to_color("#81a2be").unwrap()
 }
 
-pub fn light_orange() -> Color {
-    hex_to_color("#f0c674").unwrap()
+// Brown
+pub fn dark_brown() -> Color {
+    hex_to_color("#373424").unwrap()
+}
+
+pub fn brown() -> Color {
+    hex_to_color("#423f2e").unwrap()
+}
+pub fn light_brown() -> Color {
+    hex_to_color("#777755").unwrap()
+}
+
+// Cyan
+pub fn dark_cyan() -> Color {
+    hex_to_color("#006B6B").unwrap()
+}
+
+pub fn cyan() -> Color {
+    hex_to_color("#70c0b1").unwrap()
+}
+
+// Gold
+pub fn gold() -> Color {
+    hex_to_color("#B58900").unwrap()
+}
+
+// Grey
+pub fn dark_grey() -> Color {
+    hex_to_color("#555").unwrap()
 }
 
 pub fn light_grey() -> Color {
     hex_to_color("#c5c8c6").unwrap()
 }
 
+// Orange
+pub fn light_orange() -> Color {
+    hex_to_color("#f0c674").unwrap()
+}
+
+// Pink
+pub fn pink() -> Color {
+    hex_to_color("#ff00ff").unwrap()
+}
+
+// Purple
 pub fn light_purple() -> Color {
     hex_to_color("#b294bb").unwrap()
 }
 
-pub fn light_salmon() -> Color {
-    hex_to_color("#cc6666").unwrap()
-}
-
+// Red
 pub fn red() -> Color {
     hex_to_color("#dc322f").unwrap()
+}
+
+// Salmon
+pub fn light_salmon() -> Color {
+    hex_to_color("#cc6666").unwrap()
 }
 
 const COLOR_HEX: &str = "^[a-f0-9]{3}([a-f0-9]{3})?$";

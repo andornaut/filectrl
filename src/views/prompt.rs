@@ -12,7 +12,6 @@ use ratatui::{
     backend::Backend,
     layout::Rect,
     prelude::{Constraint, Direction, Layout},
-    text::{Line, Span, Text},
     widgets::Paragraph,
     Frame,
 };
@@ -27,6 +26,14 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
+    pub(super) fn height(&self, focus: &Focus) -> u16 {
+        if self.is_focussed(focus) {
+            1
+        } else {
+            0
+        }
+    }
+
     fn cancel(&mut self) -> CommandResult {
         Command::SetFocus(Focus::Table).into()
     }
@@ -39,8 +46,8 @@ impl PromptView {
 
     fn label(&self) -> String {
         match self.kind {
-            PromptKind::Filter => " Filter:".into(),
-            PromptKind::Rename => " Rename:".into(),
+            PromptKind::Filter => " Filter ".into(),
+            PromptKind::Rename => " Rename ".into(),
         }
     }
 
@@ -110,7 +117,11 @@ impl CommandHandler for PromptView {
 }
 
 impl<B: Backend> View<B> for PromptView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+        if !self.is_focussed(focus) {
+            return;
+        }
+
         let label = self.label();
         let label_width = len_utf8(&label);
         let chunks = Layout::default()
@@ -119,8 +130,9 @@ impl<B: Backend> View<B> for PromptView {
             .split(rect);
 
         let input_width = chunks[1].width;
+        let cursor_x_pos = self.input.visual_cursor() as u16;
         let x_offset = self.input.visual_scroll(input_width as usize) as u16;
-        let x_offset_scroll = if self.input.visual_cursor() as u16 >= input_width {
+        let x_offset_scroll = if cursor_x_pos >= input_width {
             // Workaround: when there's scrolling, the cursor would otherwise
             // be positioned on the last char instead of after the last char
             // as is the case when there is no scrolling.
@@ -132,18 +144,9 @@ impl<B: Backend> View<B> for PromptView {
         let input_widget = Paragraph::new(self.input.value())
             .scroll((0, x_offset_scroll))
             .style(prompt_input_style());
-
-        let span = Span::from(label);
-        let line = Line::from(span);
-        let text = Text::from(line);
-        let label_widget = Paragraph::new(text).style(prompt_label_style());
-
+        let label_widget = Paragraph::new(label).style(prompt_label_style());
         frame.render_widget(label_widget, chunks[0]);
         frame.render_widget(input_widget, chunks[1]);
-
-        frame.set_cursor(
-            chunks[1].x + self.input.visual_cursor() as u16 - x_offset,
-            chunks[1].y,
-        );
+        frame.set_cursor(chunks[1].x + cursor_x_pos - x_offset, chunks[1].y);
     }
 }
