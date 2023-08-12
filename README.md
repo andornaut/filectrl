@@ -39,7 +39,7 @@ Esc or CTRL+C | Exit filtered mode
 Keys | Description
 --- | ---
 Esc or CTRL+c | Exit input mode
-Enter | Submit your input
+Enter | Submit your input and exit input mode
 
 ## Developing
 

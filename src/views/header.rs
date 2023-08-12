@@ -1,8 +1,8 @@
-use super::{bordered, View};
+use super::{len_utf8, View};
 use crate::{
     app::{
         focus::Focus,
-        style::{header_component_active_style, header_component_style},
+        style::{header_active_style, header_inactive_style, header_style},
     },
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::human::HumanPath,
@@ -10,7 +10,7 @@ use crate::{
 use ratatui::{
     backend::Backend,
     layout::Rect,
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
@@ -22,41 +22,13 @@ pub(super) struct HeaderView {
 
 impl HeaderView {
     pub(super) fn height(&self, rect: Rect) -> u16 {
-        self.spans(rect.width as u16).len() as u16
+        // TODO: It's wasteful to do this twice per render(). Consider alternatives.
+        spans(&self.directory.path, rect.width as u16).len() as u16
     }
 
     fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
         self.directory = directory;
         CommandResult::none()
-    }
-
-    fn spans(&self, width: u16) -> Vec<Vec<Span<'_>>> {
-        let active_style = header_component_active_style();
-        let style = header_component_style();
-
-        let path = self.directory.path.clone();
-        let mut container = vec![Vec::new()];
-        let mut line_len = 0;
-        let mut it = path.split('/').peekable();
-
-        it.next(); // Skip empty string
-
-        while let Some(part) = it.next() {
-            let part = format!("/{}", part);
-            let is_last = it.peek().is_none();
-            let style = if is_last { active_style } else { style };
-
-            line_len += part.len();
-            if line_len as u16 > width {
-                // New line
-                container.push(Vec::new());
-                line_len = part.len();
-            }
-
-            let line = &mut container.last_mut().unwrap();
-            line.push(Span::styled(part, style));
-        }
-        container
     }
 }
 
@@ -75,11 +47,44 @@ impl CommandHandler for HeaderView {
 
 impl<B: Backend> View<B> for HeaderView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let mut text = Text::default();
-        self.spans(rect.width)
+        let text: Vec<_> = spans(&self.directory.path, rect.width)
             .into_iter()
-            .for_each(|spans| text.extend(Text::from(Line::from(spans))));
-        let paragraph = Paragraph::new(text);
+            .map(|spans| Line::from(spans))
+            .collect();
+        let paragraph = Paragraph::new(text).style(header_style());
         frame.render_widget(paragraph, rect);
     }
+}
+
+fn spans<'a>(path: &'a str, width: u16) -> Vec<Vec<Span<'a>>> {
+    let active_style = header_active_style();
+    let inactive_style = header_inactive_style();
+
+    let mut container = vec![Vec::new()];
+    let mut line_len = 0;
+    let mut it = path.split('/').peekable();
+
+    it.next(); // Skip empty string
+
+    while let Some(name) = it.next() {
+        let name = format!("/{}", name);
+        let is_last = it.peek().is_none();
+        let style = if is_last {
+            active_style
+        } else {
+            inactive_style
+        };
+
+        let name_len = len_utf8(&name);
+        line_len += name_len;
+        if line_len > width {
+            // New line
+            container.push(Vec::new());
+            line_len = name_len;
+        }
+
+        let line = &mut container.last_mut().unwrap();
+        line.push(Span::styled(name, style));
+    }
+    container
 }

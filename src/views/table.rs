@@ -18,15 +18,16 @@ use ratatui::{
     backend::Backend,
     layout::{Constraint, Rect},
     style::Style,
-    text::{Line, Span, Spans, Text},
+    text::{Line, Span, Text},
     widgets::{Cell, Row, Table, TableState},
     Frame,
 };
 
+const NAME_MIN_LEN: u16 = 39;
 const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
 const SIZE_LEN: u16 = 7;
-const SEPARATOR: &str = "\n…";
+const LINE_SEPARATOR: &str = "\n…";
 
 #[derive(Default)]
 pub(super) struct TableView {
@@ -44,29 +45,6 @@ impl TableView {
         match self.selected() {
             Some(path) => Command::DeletePath(path.clone()).into(),
             None => CommandResult::none(),
-        }
-    }
-
-    fn header_label(&self, column: &SortColumn) -> String {
-        let label = match column {
-            SortColumn::Name => "[N]ame",
-            SortColumn::Modified => "[M]odified",
-            SortColumn::Size => "[S]ize",
-        };
-        if self.sort_column != *column {
-            return label.into();
-        }
-        match self.sort_direction {
-            SortDirection::Ascending => format!("{label}⌃"),
-            SortDirection::Descending => format!("{label}⌄"),
-        }
-    }
-
-    fn header_style(&self, column: &SortColumn) -> Style {
-        if self.sort_column == *column {
-            table_header_active_style()
-        } else {
-            table_header_style()
         }
     }
 
@@ -91,7 +69,15 @@ impl TableView {
         self.navigate(-1)
     }
 
-    fn open(&mut self) -> CommandResult {
+    fn open_filter_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Filter).into()
+    }
+
+    fn open_rename_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Rename).into()
+    }
+
+    fn open_selected(&mut self) -> CommandResult {
         match self.selected() {
             Some(path) => {
                 let path = path.clone();
@@ -104,14 +90,6 @@ impl TableView {
             }
             None => CommandResult::none(),
         }
-    }
-
-    fn open_filter_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Filter).into()
-    }
-
-    fn open_rename_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Rename).into()
     }
 
     fn selected(&self) -> Option<&HumanPath> {
@@ -179,7 +157,7 @@ impl CommandHandler for TableView {
                 (_, _) => match code {
                     KeyCode::Delete => self.delete(),
                     KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
-                        self.open()
+                        self.open_selected()
                     }
                     KeyCode::Down | KeyCode::Char('j') => self.next(),
                     KeyCode::Up | KeyCode::Char('k') => self.previous(),
@@ -207,37 +185,12 @@ impl CommandHandler for TableView {
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let mut header_cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
-            .into_iter()
-            .map(|header| Cell::from(self.header_label(&header)).style(self.header_style(&header)))
-            .collect();
-        header_cells.push(Cell::from("Mode").style(table_header_style()));
-        let header = Row::new(header_cells).style(table_header_style());
         let (constraints, name_width) = constraints(rect.width);
-        let rows = self.directory_items_sorted.iter().map(|item| {
-            let name_split =
-                split_utf8_with_reservation(&item.name(), name_width as usize, SEPARATOR);
-            let name_len = name_split.len();
-            let name_lines: Vec<_> = name_split
-                .into_iter()
-                .enumerate()
-                .map(|(i, part)| {
-                    if i == name_len - 1 {
-                        Line::styled(part, item.style())
-                    } else {
-                        Line::styled(format!("{}…", part), item.style())
-                    }
-                })
-                .collect();
-            let size = format!("{: >7}", item.size()); // 7 must match SIZE_LEN
-            Row::new(vec![
-                Cell::from(Text::from(name_lines)),
-                Cell::from(item.modified()),
-                Cell::from(size),
-                Cell::from(item.mode()),
-            ])
-            .height(name_len as u16)
-        });
+        let header = header(&self.sort_column, &self.sort_direction);
+        let rows = self
+            .directory_items_sorted
+            .iter()
+            .map(|item| row(item, name_width));
         let table = Table::new(rows)
             .header(header)
             .highlight_style(table_selected_style())
@@ -248,21 +201,78 @@ impl<B: Backend> View<B> for TableView {
 
 fn constraints(width: u16) -> (Vec<Constraint>, u16) {
     let mut constraints = Vec::new();
-    let mut name_width = width;
-    if width > 39 {
-        name_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
+    let mut name_column_width = width;
+    let mut len = NAME_MIN_LEN;
+    if width > len {
+        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
         constraints.push(Constraint::Length(MODIFIED_LEN));
     }
-    if width > 39 + MODIFIED_LEN + 1 + SIZE_LEN + 1 {
-        name_width -= SIZE_LEN + 1;
+    len += MODIFIED_LEN + 1 + SIZE_LEN + 1;
+    if width > len {
+        name_column_width -= SIZE_LEN + 1;
         constraints.push(Constraint::Length(SIZE_LEN));
     }
-    if width > 39 + MODIFIED_LEN + 1 + SIZE_LEN + 1 + MODE_LEN + 1 {
-        name_width -= MODE_LEN + 1;
+    len += MODE_LEN + 1;
+    if width > len {
+        name_column_width -= MODE_LEN + 1;
         constraints.push(Constraint::Length(MODE_LEN));
     }
-    constraints.insert(0, Constraint::Length(name_width));
-    (constraints, name_width)
+    constraints.insert(0, Constraint::Length(name_column_width));
+    (constraints, name_column_width)
+}
+
+fn header_label(
+    sort_column: &SortColumn,
+    sort_direction: &SortDirection,
+    column: &SortColumn,
+) -> String {
+    let label = match column {
+        SortColumn::Name => "[N]ame",
+        SortColumn::Modified => "[M]odified",
+        SortColumn::Size => "[S]ize",
+    };
+    if sort_column != column {
+        return label.into();
+    }
+    match sort_direction {
+        SortDirection::Ascending => format!("{label}⌃"),
+        SortDirection::Descending => format!("{label}⌄"),
+    }
+}
+
+fn header_style(sort_column: &SortColumn, column: &SortColumn) -> Style {
+    if sort_column == column {
+        table_header_active_style()
+    } else {
+        table_header_style()
+    }
+}
+
+fn header<'a>(sort_column: &'a SortColumn, sort_direction: &'a SortDirection) -> Row<'a> {
+    let mut cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
+        .into_iter()
+        .map(|header| {
+            Cell::from(header_label(sort_column, sort_direction, &header))
+                .style(header_style(sort_column, &header))
+        })
+        .collect();
+    cells.push(Cell::from("Mode").style(table_header_style())); // Mode cannot be sorted/active
+    Row::new(cells).style(table_header_style())
+}
+
+fn row(item: &HumanPath, name_column_width: u16) -> Row<'_> {
+    let lines = split_name(&item, name_column_width);
+    let len = lines.len();
+
+    // 7 must match SIZE_LEN
+    let size = format!("{: >7}", item.size());
+    Row::new(vec![
+        Cell::from(Text::from(lines)),
+        Cell::from(item.modified()),
+        Cell::from(size),
+        Cell::from(item.mode()),
+    ])
+    .height(len as u16)
 }
 
 fn navigate(len: usize, index: usize, delta: i8) -> usize {
@@ -274,6 +284,19 @@ fn navigate(len: usize, index: usize, delta: i8) -> usize {
         result += len;
     }
     usize::try_from(result).unwrap()
+}
+
+fn split_name<'a>(path: &HumanPath, width: u16) -> Vec<Line<'a>> {
+    let line = path.name();
+    let split = split_utf8_with_reservation(&line, width, LINE_SEPARATOR);
+    let mut lines = Vec::new();
+    let mut it = split.into_iter().peekable();
+    while let Some(part) = it.next() {
+        let is_last = it.peek().is_none();
+        let part = if is_last { part.clone() } else { part + "…" };
+        lines.push(Line::from(Span::styled(part, path.style())));
+    }
+    lines
 }
 
 #[cfg(test)]

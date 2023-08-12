@@ -1,48 +1,58 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, style::error_style},
-    command::handler::CommandHandler,
+    app::{focus::Focus, style::help_style},
+    command::{handler::CommandHandler, result::CommandResult, Command},
     views::bordered,
 };
 use ratatui::{
     backend::Backend,
     layout::Rect,
     style::{Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
 };
 
 #[derive(Default)]
-pub(super) struct HelpView {}
+pub(super) struct HelpView {
+    should_show: bool,
+}
 
-impl CommandHandler for HelpView {}
+impl HelpView {
+    pub(super) fn height(&self) -> u16 {
+        if self.should_show {
+            4 // 2 + 2 for borders
+        } else {
+            0
+        }
+    }
 
-const MIN_WIDTH: u16 = 44;
+    fn toggle_show_help(&mut self) -> CommandResult {
+        self.should_show = !self.should_show;
+        CommandResult::none()
+    }
+}
+impl CommandHandler for HelpView {
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::ToggleHelp => self.toggle_show_help(),
+            _ => CommandResult::NotHandled,
+        }
+    }
+}
 
 impl<B: Backend> View<B> for HelpView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
-        let width = rect.width;
-        let rect = bordered(frame, rect, Some("Help".into()), None);
-
-        if width < MIN_WIDTH {
-            let paragraph = Paragraph::new(format!(
-                "Resize your terminal to >={MIN_WIDTH} columns to display help"
-            ))
-            .style(error_style())
-            .wrap(Wrap { trim: true });
-            frame.render_widget(paragraph, rect);
+        if !self.should_show {
             return;
         }
-
+        let rect = bordered(frame, rect, help_style(), Some("Help".into()));
         let spans = match *focus {
-            Focus::Table => content_help(),
-            Focus::Header => header_help(),
             Focus::Prompt => prompt_help(),
+            _ => content_help(),
         };
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line)
-            .style(Style::default())
+        let paragraph = Paragraph::new(Line::from(spans))
+            .style(help_style())
             .wrap(Wrap { trim: true });
         frame.render_widget(paragraph, rect);
     }
@@ -50,29 +60,20 @@ impl<B: Backend> View<B> for HelpView {
 
 fn content_help() -> Vec<Span<'static>> {
     vec![
-        Span::raw("Navigate up: "),
-        Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Select down/up: "),
-        Span::styled("j/k", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("Left/Down/Up/Right: "),
+        Span::styled("h/j/k/l", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Open: "),
         Span::styled("f", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(" Navigate up: "),
+        Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Refresh: "),
         Span::styled("CTRL+r", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Rename: "),
         Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Delete: "),
         Span::styled("Delete", Style::default().add_modifier(Modifier::BOLD)),
-    ]
-}
-
-fn header_help() -> Vec<Span<'static>> {
-    vec![
-        Span::raw("Navigate up: "),
-        Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Select left/right: "),
-        Span::styled("h/l", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Open selected: "),
-        Span::styled("f", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(" Quit: "),
+        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
     ]
 }
 
