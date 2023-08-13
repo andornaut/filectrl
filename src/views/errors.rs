@@ -1,6 +1,6 @@
 use super::{bordered, View};
 use crate::{
-    app::{focus::Focus, style::error_style},
+    app::{config::Theme, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command},
 };
 use ratatui::{
@@ -49,18 +49,19 @@ impl CommandHandler for ErrorsView {
 }
 
 impl<B: Backend> View<B> for ErrorsView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
         if !self.should_show() {
             return;
         }
-        let rect = bordered(frame, rect, error_style(), Some("Errors".into()));
+        let style = theme.error();
+        let rect = bordered(frame, rect, style, Some("Errors".into()));
         let items: Vec<ListItem> = self
             .errors
             .iter()
             .map(|error| ListItem::new(format!(" • {error}")))
             .rev() // Newest error messages near the top
             .collect();
-        let list = List::new(items).style(error_style());
+        let list = List::new(items).style(style);
         frame.render_widget(list, rect);
     }
 }

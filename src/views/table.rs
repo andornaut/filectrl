@@ -1,9 +1,6 @@
 use super::View;
 use crate::{
-    app::{
-        focus::Focus,
-        style::{table_header_active_style, table_header_style, table_selected_style},
-    },
+    app::{config::Theme, focus::Focus},
     command::{
         handler::CommandHandler,
         result::CommandResult,
@@ -81,7 +78,7 @@ impl TableView {
         match self.selected() {
             Some(path) => {
                 let path = path.clone();
-                (if path.is_dir() {
+                (if path.is_directory() {
                     Command::ChangeDir(path)
                 } else {
                     Command::OpenFile(path)
@@ -184,16 +181,16 @@ impl CommandHandler for TableView {
 }
 
 impl<B: Backend> View<B> for TableView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
         let (constraints, name_width) = constraints(rect.width);
-        let header = header(&self.sort_column, &self.sort_direction);
+        let header = header(theme, &self.sort_column, &self.sort_direction);
         let rows = self
             .directory_items_sorted
             .iter()
-            .map(|item| row(item, name_width));
+            .map(|item| row(item, name_width, theme));
         let table = Table::new(rows)
             .header(header)
-            .highlight_style(table_selected_style())
+            .highlight_style(theme.table_selected())
             .widths(&constraints);
         frame.render_stateful_widget(table, rect, &mut self.state);
     }
@@ -240,28 +237,35 @@ fn header_label(
     }
 }
 
-fn header_style(sort_column: &SortColumn, column: &SortColumn) -> Style {
+fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
     if sort_column == column {
-        table_header_active_style()
+        theme.table_header_active()
     } else {
-        table_header_style()
+        theme.table_header()
     }
 }
 
-fn header<'a>(sort_column: &'a SortColumn, sort_direction: &'a SortDirection) -> Row<'a> {
+fn header<'a>(
+    theme: &Theme,
+    sort_column: &'a SortColumn,
+    sort_direction: &'a SortDirection,
+) -> Row<'a> {
     let mut cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
         .into_iter()
         .map(|header| {
-            Cell::from(header_label(sort_column, sort_direction, &header))
-                .style(header_style(sort_column, &header))
+            Cell::from(header_label(sort_column, sort_direction, &header)).style(header_style(
+                theme,
+                sort_column,
+                &header,
+            ))
         })
         .collect();
-    cells.push(Cell::from("Mode").style(table_header_style())); // Mode cannot be sorted/active
-    Row::new(cells).style(table_header_style())
+    cells.push(Cell::from("Mode").style(theme.table_header())); // Mode cannot be sorted/active
+    Row::new(cells).style(theme.table_header())
 }
 
-fn row(item: &HumanPath, name_column_width: u16) -> Row<'_> {
-    let lines = split_name(&item, name_column_width);
+fn row<'a>(item: &'a HumanPath, name_column_width: u16, theme: &Theme) -> Row<'a> {
+    let lines = split_name(&item, name_column_width, theme);
     let len = lines.len();
 
     // 7 must match SIZE_LEN
@@ -286,7 +290,7 @@ fn navigate(len: usize, index: usize, delta: i8) -> usize {
     usize::try_from(result).unwrap()
 }
 
-fn split_name<'a>(path: &HumanPath, width: u16) -> Vec<Line<'a>> {
+fn split_name<'a>(path: &HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {
     let line = path.name();
     let split = split_utf8_with_reservation(&line, width, LINE_SEPARATOR);
     let mut lines = Vec::new();
@@ -294,9 +298,41 @@ fn split_name<'a>(path: &HumanPath, width: u16) -> Vec<Line<'a>> {
     while let Some(part) = it.next() {
         let is_last = it.peek().is_none();
         let part = if is_last { part.clone() } else { part + "…" };
-        lines.push(Line::from(Span::styled(part, path.style())));
+        lines.push(Line::from(Span::styled(part, name_style(path, theme))));
     }
     lines
+}
+
+fn name_style(path: &HumanPath, theme: &Theme) -> Style {
+    if path.is_block_device() {
+        return theme.table_block_device();
+    }
+    if path.is_character_device() {
+        return theme.table_character_device();
+    }
+    if path.is_directory() {
+        return theme.table_directory();
+    }
+    if path.is_fifo() {
+        return theme.table_fifo();
+    }
+    if path.is_setgid() {
+        return theme.table_setgid();
+    }
+    if path.is_setuid() {
+        return theme.table_setuid();
+    }
+    if path.is_socket() {
+        return theme.table_socket();
+    }
+    if path.is_sticky() {
+        return theme.table_sticky();
+    }
+    if path.is_symlink() {
+        return theme.table_symlink();
+    }
+    // catch-all
+    return theme.table_file();
 }
 
 #[cfg(test)]

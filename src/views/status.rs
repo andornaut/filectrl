@@ -1,12 +1,6 @@
 use super::View;
 use crate::{
-    app::{
-        focus::Focus,
-        style::{
-            status_directory_label_style, status_directory_style, status_filter_mode_style,
-            status_normal_mode_style, status_selected_label_style, status_selected_style,
-        },
-    },
+    app::{config::Theme, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
@@ -28,7 +22,7 @@ pub(super) struct StatusView {
 }
 
 impl StatusView {
-    fn filter_widget(&mut self) -> Paragraph<'_> {
+    fn filter_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
         let spans = vec![
             Span::raw(" Filtered by \""),
             Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
@@ -36,17 +30,17 @@ impl StatusView {
             Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" to exit filtered mode."),
         ];
-        Paragraph::new(Line::from(spans)).style(status_filter_mode_style())
+        Paragraph::new(Line::from(spans)).style(theme.status_filtered_mode())
     }
 
-    fn normal_widget(&mut self) -> Paragraph<'_> {
-        let directory_style = status_directory_style();
+    fn normal_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
+        let directory_style = theme.status_directory();
         let directory_value_style = directory_style.add_modifier(Modifier::BOLD);
-        let selected_style = status_selected_style();
+        let selected_style = theme.status_selected();
         let selected_value_style = selected_style.add_modifier(Modifier::BOLD);
 
         let mut spans = vec![
-            Span::styled(" Directory ", status_directory_label_style()),
+            Span::styled(" Directory ", theme.status_directory_label()),
             Span::styled(" Mode:", directory_style),
             Span::styled(self.directory.mode(), directory_value_style),
             Span::styled(" #Items:", directory_style),
@@ -54,16 +48,16 @@ impl StatusView {
         ];
 
         if let Some(selected) = &self.selected {
-            spans.push(Span::styled(" Selected ", status_selected_label_style()));
+            spans.push(Span::styled(" Selected ", theme.status_selected_label()));
             spans.push(Span::styled(" Type:", selected_style));
 
             if selected.is_block_device() {
                 spans.push(Span::styled("Block", selected_value_style));
             }
-            if selected.is_char_device() {
+            if selected.is_character_device() {
                 spans.push(Span::styled("Character", selected_value_style));
             }
-            if selected.is_dir() {
+            if selected.is_directory() {
                 spans.push(Span::styled("Directory", selected_value_style));
             }
             if selected.is_fifo() {
@@ -93,7 +87,7 @@ impl StatusView {
             spans.push(Span::styled(selected.created(), selected_value_style));
         }
         Paragraph::new(Line::from(spans))
-            .style(status_normal_mode_style())
+            .style(theme.status_normal_mode())
             .wrap(Wrap { trim: false })
     }
 
@@ -128,11 +122,11 @@ impl CommandHandler for StatusView {
 }
 
 impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
         let widget = if self.filter.is_empty() {
-            self.normal_widget()
+            self.normal_widget(theme)
         } else {
-            self.filter_widget()
+            self.filter_widget(theme)
         };
         frame.render_widget(widget, rect);
     }

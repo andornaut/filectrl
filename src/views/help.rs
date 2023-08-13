@@ -1,6 +1,6 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, style::help_style},
+    app::{config::Theme, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command},
     views::bordered,
 };
@@ -42,17 +42,18 @@ impl CommandHandler for HelpView {
 }
 
 impl<B: Backend> View<B> for HelpView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
         if !self.should_show {
             return;
         }
-        let rect = bordered(frame, rect, help_style(), Some("Help".into()));
+        let style = theme.help();
+        let rect = bordered(frame, rect, style, Some("Help".into()));
         let spans = match *focus {
             Focus::Prompt => prompt_help(),
             _ => content_help(),
         };
         let paragraph = Paragraph::new(Line::from(spans))
-            .style(help_style())
+            .style(style)
             .wrap(Wrap { trim: true });
         frame.render_widget(paragraph, rect);
     }

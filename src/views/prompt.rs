@@ -1,9 +1,6 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{
-        focus::Focus,
-        style::{prompt_input_style, prompt_label_style},
-    },
+    app::{config::Theme, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command, PromptKind},
     file_system::human::HumanPath,
 };
@@ -117,7 +114,7 @@ impl CommandHandler for PromptView {
 }
 
 impl<B: Backend> View<B> for PromptView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
         if !self.is_focussed(focus) {
             return;
         }
@@ -143,8 +140,8 @@ impl<B: Backend> View<B> for PromptView {
 
         let input_widget = Paragraph::new(self.input.value())
             .scroll((0, x_offset_scroll))
-            .style(prompt_input_style());
-        let label_widget = Paragraph::new(label).style(prompt_label_style());
+            .style(theme.prompt_input());
+        let label_widget = Paragraph::new(label).style(theme.prompt_label());
         frame.render_widget(label_widget, chunks[0]);
         frame.render_widget(input_widget, chunks[1]);
         frame.set_cursor(chunks[1].x + cursor_x_pos - x_offset, chunks[1].y);

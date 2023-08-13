@@ -2,10 +2,11 @@ use super::human::HumanPath;
 use anyhow::{anyhow, Result};
 use std::{ffi::OsStr, path::Path};
 
-pub(super) fn mode_to_string(mode: u32) -> String {
-    //let mut mode = format!("{mode:o}");
-    // mode.split_off(mode.len() - 3)
-    unix_mode::to_string(mode)
+pub fn path_to_string(path: &Path) -> Result<String> {
+    // Ref. https://stackoverflow.com/a/42579588,
+    // https://stackoverflow.com/a/67205030,
+    // https://stackoverflow.com/a/31667995
+    osstr_to_string(path.as_os_str())
 }
 
 pub(super) fn path_to_basename(path: &Path) -> Result<String> {
@@ -13,13 +14,6 @@ pub(super) fn path_to_basename(path: &Path) -> Result<String> {
         Some(name) => osstr_to_string(name),
         None => Ok(String::from("")),
     }
-}
-
-pub(super) fn path_to_string(path: &Path) -> Result<String> {
-    // Ref. https://stackoverflow.com/a/42579588,
-    // https://stackoverflow.com/a/67205030,
-    // https://stackoverflow.com/a/31667995
-    osstr_to_string(path.as_os_str())
 }
 
 pub(super) fn to_comparable(path: &HumanPath) -> String {

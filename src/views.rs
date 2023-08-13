@@ -6,7 +6,10 @@ pub mod root;
 mod status;
 mod table;
 
-use crate::{app::focus::Focus, command::handler::CommandHandler};
+use crate::{
+    app::{config::Theme, focus::Focus},
+    command::handler::CommandHandler,
+};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -18,7 +21,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) trait View<B: Backend>: CommandHandler {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _focus: &Focus);
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _focus: &Focus, theme: &Theme);
 }
 
 pub(super) fn bordered<B: Backend>(

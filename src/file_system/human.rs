@@ -1,9 +1,6 @@
-use crate::app::color::{black, light_blue, light_grey, light_orange, light_purple, light_salmon};
-
 use super::converters::{path_to_basename, path_to_string, to_comparable};
 use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
-use ratatui::style::Style;
 use std::time::SystemTime;
 use std::{cmp, io};
 use std::{
@@ -53,7 +50,7 @@ impl HumanPath {
 
     pub fn name(&self) -> String {
         let name = self.basename.clone();
-        if self.is_dir() {
+        if self.is_directory() {
             name + "/"
         } else {
             name
@@ -72,11 +69,11 @@ impl HumanPath {
         unix_mode::is_block_device(self.mode)
     }
 
-    pub fn is_char_device(&self) -> bool {
+    pub fn is_character_device(&self) -> bool {
         unix_mode::is_char_device(self.mode)
     }
 
-    pub fn is_dir(&self) -> bool {
+    pub fn is_directory(&self) -> bool {
         unix_mode::is_dir(self.mode)
     }
 
@@ -114,36 +111,6 @@ impl HumanPath {
             Some(parent) => Some(HumanPath::try_from(parent).unwrap()),
             None => None,
         }
-    }
-
-    pub fn style(&self) -> Style {
-        // "Sticky" and "File" types are formated using the default style
-        let style = Style::default().fg(light_grey());
-        if self.is_block_device() {
-            return style.bg(light_blue()).fg(light_orange());
-        }
-        if self.is_char_device() {
-            return style.bg(light_blue()).fg(light_grey());
-        }
-        if self.is_dir() {
-            return style.fg(light_blue());
-        }
-        if self.is_fifo() {
-            return style.bg(light_blue()).fg(black());
-        }
-        if self.is_setgid() {
-            return style.bg(light_orange()).fg(black());
-        }
-        if self.is_setuid() {
-            return style.bg(light_salmon()).fg(light_grey());
-        }
-        if self.is_socket() {
-            return style.bg(light_blue()).fg(light_purple());
-        }
-        if self.is_symlink() {
-            return style.fg(light_purple());
-        }
-        style
     }
 }
 

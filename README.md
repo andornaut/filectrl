@@ -7,7 +7,16 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Usage
 
 ```
-filectrl [directory to navigate to]
+Usage: filectrl [<directory-path>] [-c <config-path>]
+
+FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+
+Positional Arguments:
+  directory-path    path to a directory to navigate to
+
+Options:
+  -c, --config-path path to a configuration file
+  --help            display usage information
 ```
 
 ### Keyboard controls

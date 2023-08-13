@@ -2,7 +2,10 @@ use super::{
     errors::ErrorsView, header::HeaderView, help::HelpView, prompt::PromptView, status::StatusView,
     table::TableView, View,
 };
-use crate::{app::focus::Focus, command::handler::CommandHandler};
+use crate::{
+    app::{config::Theme, focus::Focus},
+    command::handler::CommandHandler,
+};
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -32,7 +35,7 @@ impl CommandHandler for RootView {
 }
 
 impl<B: Backend> View<B> for RootView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
         let constraints = vec![
             Constraint::Length(self.errors.height()),
             Constraint::Length(self.help.height()),
@@ -55,6 +58,6 @@ impl<B: Backend> View<B> for RootView {
             .split(rect)
             .into_iter()
             .zip(handlers.into_iter())
-            .for_each(|(chunk, handler)| handler.render(frame, *chunk, focus));
+            .for_each(|(chunk, handler)| handler.render(frame, *chunk, focus, theme));
     }
 }

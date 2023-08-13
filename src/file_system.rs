@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use self::human::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
-mod converters;
+pub mod converters;
 pub mod human;
 mod operations;
 
