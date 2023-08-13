@@ -1,15 +1,13 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{
-        focus::Focus,
-        style::{header_active_style, header_inactive_style, header_style},
-    },
+    app::{config::Theme, focus::Focus},
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
 use ratatui::{
     backend::Backend,
     layout::Rect,
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -23,7 +21,8 @@ pub(super) struct HeaderView {
 impl HeaderView {
     pub(super) fn height(&self, rect: Rect) -> u16 {
         // TODO: It's wasteful to do this twice per render(). Consider alternatives.
-        spans(&self.directory.path, rect.width as u16).len() as u16
+        let style = Style::default();
+        spans(style, style, &self.directory.path, rect.width as u16).len() as u16
     }
 
     fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
@@ -46,20 +45,29 @@ impl CommandHandler for HeaderView {
 }
 
 impl<B: Backend> View<B> for HeaderView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus) {
-        let text: Vec<_> = spans(&self.directory.path, rect.width)
-            .into_iter()
-            .map(|spans| Line::from(spans))
-            .collect();
-        let paragraph = Paragraph::new(text).style(header_style());
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
+        let active_style = theme.header_active();
+        let inactive_style = theme.header();
+        let text: Vec<_> = spans(
+            active_style,
+            inactive_style,
+            &self.directory.path,
+            rect.width,
+        )
+        .into_iter()
+        .map(|spans| Line::from(spans))
+        .collect();
+        let paragraph = Paragraph::new(text).style(theme.header());
         frame.render_widget(paragraph, rect);
     }
 }
 
-fn spans<'a>(path: &'a str, width: u16) -> Vec<Vec<Span<'a>>> {
-    let active_style = header_active_style();
-    let inactive_style = header_inactive_style();
-
+fn spans<'a>(
+    active_style: Style,
+    inactive_style: Style,
+    path: &'a str,
+    width: u16,
+) -> Vec<Vec<Span<'a>>> {
     let mut container = vec![Vec::new()];
     let mut line_len = 0;
     let mut it = path.split('/').peekable();

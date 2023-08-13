@@ -10,18 +10,21 @@ use filectrl::run;
 struct Args {
     /// path to a configuration file
     #[argh(option, short = 'c')]
-    config_path: Option<String>,
+    config: Option<String>,
 
     /// path to a directory to navigate to
-    #[argh(positional, arg_name = "directory-path")]
-    directory_path: Option<String>,
+    #[argh(positional)]
+    directory: Option<String>,
 }
 
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
 
-    let directory = args
-        .directory_path
-        .map(|directory| PathBuf::from(directory));
-    run(directory)
+    let config = to_path_buf(args.config);
+    let directory = to_path_buf(args.directory);
+    run(config, directory)
+}
+
+fn to_path_buf(option: Option<String>) -> Option<PathBuf> {
+    option.map(|directory| PathBuf::from(directory))
 }

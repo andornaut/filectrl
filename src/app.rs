@@ -1,15 +1,15 @@
-pub mod color;
+pub mod config;
 mod events;
 pub mod focus;
-pub mod style;
 
 use self::{
+    config::Config,
     events::{receive_commands, spawn_command_sender},
     focus::Focus,
 };
 use crate::{
     command::{handler::CommandHandler, result::CommandResult, Command},
-    file_system::{human::HumanPath, FileSystem},
+    file_system::FileSystem,
     views::{root::RootView, View},
 };
 use anyhow::{anyhow, Result};
@@ -26,21 +26,29 @@ const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 
 #[derive(Default)]
 pub struct App {
+    config: Config,
     file_system: FileSystem,
     focus: Focus,
     root: RootView,
 }
 
 impl App {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
+    }
+
     pub fn run<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
-        directory: Option<PathBuf>,
+        directory_path: Option<PathBuf>,
     ) -> Result<()> {
         let (tx, rx) = mpsc::channel();
 
         // An initial command is required to start the main loop
-        tx.send(self.file_system.init(directory).try_into_command()?)?;
+        tx.send(self.file_system.init(directory_path).try_into_command()?)?;
         spawn_command_sender(tx);
 
         let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
@@ -106,7 +114,8 @@ impl App {
     fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         terminal.draw(|frame| {
             let window = frame.size();
-            self.root.render(frame, window, &self.focus);
+            self.root
+                .render(frame, window, &self.focus, &self.config.theme);
         })?;
         Ok(())
     }
