@@ -1,11 +1,15 @@
 pub mod config;
+mod default_config;
 mod events;
 pub mod focus;
+pub mod terminal;
+pub mod theme;
 
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
     focus::Focus,
+    terminal::CleanupOnDropTerminal,
 };
 use crate::{
     command::{handler::CommandHandler, result::CommandResult, Command},
@@ -13,7 +17,6 @@ use crate::{
     views::{root::RootView, View},
 };
 use anyhow::{anyhow, Result};
-use ratatui::{backend::Backend, Terminal};
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -24,27 +27,26 @@ use std::{
 const BROADCAST_CYCLES: u8 = 5;
 const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 
-#[derive(Default)]
 pub struct App {
     config: Config,
     file_system: FileSystem,
     focus: Focus,
     root: RootView,
+    terminal: CleanupOnDropTerminal,
 }
 
 impl App {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, terminal: CleanupOnDropTerminal) -> Self {
         Self {
             config,
-            ..Self::default()
+            file_system: FileSystem::default(),
+            focus: Focus::default(),
+            root: RootView::default(),
+            terminal,
         }
     }
 
-    pub fn run<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        directory_path: Option<PathBuf>,
-    ) -> Result<()> {
+    pub fn run(&mut self, directory_path: Option<PathBuf>) -> Result<()> {
         let (tx, rx) = mpsc::channel();
 
         // An initial command is required to start the main loop
@@ -68,7 +70,7 @@ impl App {
             }
 
             must_not_contain_unhandled(&remaining_commands)?;
-            self.render(terminal)?;
+            self.render()?;
 
             let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
             thread::sleep(actual_sleep);
@@ -111,8 +113,8 @@ impl App {
         commands
     }
 
-    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        terminal.draw(|frame| {
+    fn render(&mut self) -> Result<()> {
+        self.terminal.draw(|frame| {
             let window = frame.size();
             self.root
                 .render(frame, window, &self.focus, &self.config.theme);

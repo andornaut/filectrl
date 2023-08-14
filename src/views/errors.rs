@@ -1,6 +1,6 @@
 use super::{bordered, View};
 use crate::{
-    app::{config::Theme, focus::Focus},
+    app::{focus::Focus, theme::Theme},
     command::{handler::CommandHandler, result::CommandResult, Command},
 };
 use ratatui::{

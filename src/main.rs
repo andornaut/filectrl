@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use argh::FromArgs;
+use filectrl::app::config::Config;
 use filectrl::run;
 
 #[derive(FromArgs)]
@@ -12,6 +13,10 @@ struct Args {
     #[argh(option, short = 'c')]
     config: Option<String>,
 
+    /// write the default config to ~/.config/filectrl/config.toml, then exit
+    #[argh(switch)]
+    write_config: Option<bool>,
+
     /// path to a directory to navigate to
     #[argh(positional)]
     directory: Option<String>,
@@ -19,6 +24,10 @@ struct Args {
 
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
+
+    if args.write_config.unwrap_or_default() {
+        return Config::write_default_config();
+    }
 
     let config = to_path_buf(args.config);
     let directory = to_path_buf(args.directory);
