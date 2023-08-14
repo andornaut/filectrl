@@ -2,10 +2,18 @@ pub mod handler;
 pub mod result;
 pub mod sorting;
 
-use crate::{app::focus::Focus, file_system::human::HumanPath};
+use crate::file_system::human::HumanPath;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use self::sorting::SortColumn;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Focus {
+    Header,
+    Prompt,
+    #[default]
+    Table,
+}
 
 #[derive(Clone, Debug, Default)]
 pub enum PromptKind {
@@ -18,17 +26,18 @@ pub enum PromptKind {
 pub enum Command {
     AddError(String),
     ClearErrors,
-    SetFocus(Focus),
     Key(KeyCode, KeyModifiers),
     NextFocus,
     PreviousFocus,
     Quit,
     Resize(u16, u16), // w,h
+    SetFocus(Focus),
     ToggleHelp,
 
     // Content & Prompt commands
     BackDir,
     ChangeDir(HumanPath),
+    ClosePrompt,
     DeletePath(HumanPath),
     OpenFile(HumanPath),
     OpenPrompt(PromptKind),

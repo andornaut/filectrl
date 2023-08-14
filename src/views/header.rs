@@ -1,7 +1,7 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, result::CommandResult, Command, Focus},
     file_system::human::HumanPath,
 };
 use ratatui::{

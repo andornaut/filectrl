@@ -1,7 +1,7 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command, PromptKind},
+    app::theme::Theme,
+    command::{handler::CommandHandler, result::CommandResult, Command, Focus, PromptKind},
     file_system::human::HumanPath,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -31,10 +31,6 @@ impl PromptView {
         }
     }
 
-    fn cancel(&mut self) -> CommandResult {
-        Command::SetFocus(Focus::Table).into()
-    }
-
     fn handle_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         let key_event = KeyEvent::new(code, modifiers);
         self.input.handle_event(&Event::Key(key_event));
@@ -55,12 +51,15 @@ impl PromptView {
             PromptKind::Filter => self.input = Input::new(self.filter.clone()),
             PromptKind::Rename => match &self.selected {
                 Some(selected) => self.input = Input::new(selected.basename.clone()),
-                None => {
-                    return CommandResult::none();
-                }
+                None => (),
             },
         }
-        Command::SetFocus(Focus::Prompt).into()
+        CommandResult::none()
+    }
+
+    fn set_filter(&mut self, filter: String) -> CommandResult {
+        self.filter = filter;
+        CommandResult::none()
     }
 
     fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
@@ -69,15 +68,14 @@ impl PromptView {
     }
 
     fn submit(&mut self) -> CommandResult {
-        let value = self.input.value();
+        let value = self.input.value().to_string();
         match self.kind {
-            PromptKind::Filter => Command::SetFilter(value.into()),
+            PromptKind::Filter => Command::SetFilter(value).into(),
             PromptKind::Rename => match &self.selected {
-                Some(selected_path) => Command::RenamePath(selected_path.clone(), value.into()),
-                None => Command::SetFocus(Focus::Table),
+                Some(selected_path) => Command::RenamePath(selected_path.clone(), value).into(),
+                None => CommandResult::none(),
             },
         }
-        .into()
     }
 }
 
@@ -87,7 +85,7 @@ impl CommandHandler for PromptView {
             Command::Key(code, modifiers) => {
                 return match (*code, *modifiers) {
                     (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        self.cancel()
+                        Command::ClosePrompt.into()
                     }
                     (KeyCode::Enter, _) => self.submit(),
                     (_, _) => self.handle_input(*code, *modifiers),
@@ -95,21 +93,14 @@ impl CommandHandler for PromptView {
             }
             Command::OpenPrompt(kind) => self.open(kind),
             Command::SetDirectory(_, _) => Command::SetFilter("".into()).into(),
+            Command::SetFilter(filter) => self.set_filter(filter.clone()),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
-            // Workarounds for being unable to return 2 commands from this method:
-            // self.submit() -> RenamePath -> SetFocus
-            Command::RenamePath(_, _) => Command::SetFocus(Focus::Table).into(),
-            // self.submit() -> SetFilter -> SetFocus
-            Command::SetFilter(filter) => {
-                self.filter = filter.clone();
-                Command::SetFocus(Focus::Table).into()
-            }
             _ => CommandResult::NotHandled,
         }
     }
 
-    fn is_focussed(&self, focus: &crate::app::focus::Focus) -> bool {
-        focus.is_prompt()
+    fn is_focussed(&self, focus: &Focus) -> bool {
+        *focus == Focus::Prompt
     }
 }
 

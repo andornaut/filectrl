@@ -1,18 +1,16 @@
 pub mod config;
 mod default_config;
 mod events;
-pub mod focus;
 pub mod terminal;
 pub mod theme;
 
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
-    focus::Focus,
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    command::{handler::CommandHandler, result::CommandResult, Command, Focus},
     file_system::FileSystem,
     views::{root::RootView, View},
 };
@@ -139,8 +137,6 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::NextFocus => self.focus.next(),
-            Command::PreviousFocus => self.focus.previous(),
             Command::SetFocus(focus) => {
                 self.focus = focus.clone();
             }
