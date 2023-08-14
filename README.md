@@ -41,16 +41,15 @@ q | Quit
 h / j / k / l | Left / Down / Up / Right
 Enter, Right, f, l | Open selected
 Backspace, Left, b, h | Navigate up one directory
-Tab / SHIFT+Tab | Next focus / Previous focus
 Delete | Delete selected
 r, F2 | Rename selected
 Space | Unselect
 CTRL+r, F5 | Refresh
 e | Clear error messages
 ? | Toggle help
-n | Sort by name (toggle direction)
-m | Sort by modified (toggle direction)
-s | Sort by size (toggle direction)
+n | Sort by name (toggle direction if already sorted)
+m | Sort by modified (toggle direction if already sorted)
+s | Sort by size (toggle direction if already sorted)
 
 ***Filtered mode***
 Keys | Description

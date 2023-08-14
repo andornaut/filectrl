@@ -50,10 +50,10 @@ impl TableView {
             return CommandResult::none();
         }
 
-        let i = match self.state.selected() {
-            Some(i) => navigate(self.directory_items_sorted.len(), i, delta),
-            None => 0,
-        };
+        let i = self
+            .state
+            .selected()
+            .map_or(0, |i| navigate(self.directory_items_sorted.len(), i, delta));
         self.state.select(Some(i));
         Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
@@ -76,24 +76,15 @@ impl TableView {
 
     fn open_selected(&mut self) -> CommandResult {
         match self.selected() {
-            Some(path) => {
-                let path = path.clone();
-                (if path.is_directory() {
-                    Command::ChangeDir(path)
-                } else {
-                    Command::OpenFile(path)
-                })
-                .into()
-            }
+            Some(path) => Command::Open(path.clone()).into(),
             None => CommandResult::none(),
         }
     }
 
     fn selected(&self) -> Option<&HumanPath> {
-        match self.state.selected() {
-            Some(i) => Some(&self.directory_items_sorted[i]),
-            None => None,
-        }
+        self.state
+            .selected()
+            .map(|i| &self.directory_items_sorted[i])
     }
 
     fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {

@@ -17,35 +17,30 @@ pub enum Focus {
 
 #[derive(Clone, Debug, Default)]
 pub enum PromptKind {
-    Filter,
     #[default]
+    Filter,
     Rename,
 }
 
 #[derive(Clone, Debug)]
 pub enum Command {
     AddError(String),
-    ClearErrors,
-    Key(KeyCode, KeyModifiers),
-    NextFocus,
-    PreviousFocus,
-    Quit,
-    Resize(u16, u16), // w,h
-    SetFocus(Focus),
-    ToggleHelp,
-
-    // Content & Prompt commands
     BackDir,
-    ChangeDir(HumanPath),
+    ClearErrors,
     ClosePrompt,
     DeletePath(HumanPath),
-    OpenFile(HumanPath),
+    Key(KeyCode, KeyModifiers),
+    Open(HumanPath),
     OpenPrompt(PromptKind),
+    Quit,
     RefreshDir,
     RenamePath(HumanPath, String),
+    Resize(u16, u16), // w,h
     SetDirectory(HumanPath, Vec<HumanPath>),
     SetFilter(String),
+    SetFocus(Focus),
     SetSelected(Option<HumanPath>),
+    ToggleHelp,
 }
 
 impl Command {
@@ -78,8 +73,6 @@ impl Command {
                 }
                 (_, _) => match code {
                     KeyCode::Char('q') => Command::Quit,
-                    KeyCode::Tab => Self::NextFocus,
-                    KeyCode::BackTab => Self::PreviousFocus,
                     KeyCode::Backspace
                     | KeyCode::Left
                     | KeyCode::Char('b')
