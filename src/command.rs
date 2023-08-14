@@ -35,13 +35,6 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn needs_focus(&self) -> bool {
-        match self {
-            Self::Key(_, _) => true,
-            _ => false,
-        }
-    }
-
     pub fn maybe_from(event: Event) -> Option<Self> {
         match event {
             Event::Key(key) => {
@@ -53,6 +46,13 @@ impl Command {
             Event::Mouse(_) => None,
             Event::Resize(w, h) => Some(Self::Resize(w, h)),
             _ => None,
+        }
+    }
+
+    pub fn needs_focus(&self) -> bool {
+        match self {
+            Self::Key(_, _) => true,
+            _ => false,
         }
     }
 
