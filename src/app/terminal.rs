@@ -21,7 +21,7 @@ impl CleanupOnDropTerminal {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
         terminal.clear()?;
-        //terminal.hide_cursor()?;
+        terminal.hide_cursor()?;
 
         Ok(Self(terminal))
     }

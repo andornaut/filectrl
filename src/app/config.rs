@@ -13,7 +13,7 @@ use super::theme::Theme;
 
 const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub theme: Theme,
 }
