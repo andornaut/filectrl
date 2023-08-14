@@ -94,6 +94,11 @@ impl TableView {
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
+        // Avoid performing an extra SetFilter(None)
+        // set_directory() -> sort() -> SetFilter(None) -> set_filter() -> sort() -> SetFilter(None)
+        if self.filter.is_empty() && filter.is_empty() {
+            return CommandResult::none();
+        }
         self.filter = filter;
         self.sort()
     }
