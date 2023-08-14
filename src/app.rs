@@ -76,11 +76,10 @@ impl App {
     }
 
     fn broadcast_commands(&mut self, commands: Vec<Command>) -> Vec<Command> {
-        let commands: Vec<Command> = commands
+        commands
             .into_iter()
             .flat_map(|command| self.broadcast_command(command))
-            .collect();
-        commands
+            .collect()
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {

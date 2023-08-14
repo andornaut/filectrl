@@ -18,8 +18,8 @@ use tui_input::{backend::crossterm::EventHandler, Input};
 pub(super) struct PromptView {
     filter: String,
     input: Input,
-    selected: Option<HumanPath>,
     kind: PromptKind,
+    selected: Option<HumanPath>,
 }
 
 impl PromptView {

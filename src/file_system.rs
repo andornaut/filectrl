@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use self::human::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use std::{fs, path::PathBuf};
 
 pub mod converters;
 pub mod human;
@@ -65,8 +64,14 @@ impl FileSystem {
     }
 
     fn open(&mut self, path: &HumanPath) -> CommandResult {
-        open::that_in_background(&path.path);
-        CommandResult::none()
+        let path = fs::canonicalize(&path.path).unwrap();
+        let path = HumanPath::try_from(&path).unwrap();
+        if path.is_directory() {
+            self.cd(path)
+        } else {
+            open::that_in_background(&path.path);
+            CommandResult::none()
+        }
     }
 
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
@@ -86,9 +91,8 @@ impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::BackDir => self.back(),
-            Command::ChangeDir(directory) => self.cd(directory.clone()),
             Command::DeletePath(path) => self.delete(path),
-            Command::OpenFile(path) => self.open(path),
+            Command::Open(path) => self.open(path),
             Command::RefreshDir => self.refresh(),
             Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
             _ => CommandResult::NotHandled,

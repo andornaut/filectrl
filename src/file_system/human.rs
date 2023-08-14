@@ -52,11 +52,11 @@ impl HumanPath {
     }
 
     pub fn name(&self) -> String {
-        let name = self.basename.clone();
+        let name = &self.basename;
         if self.is_directory() {
             format!("{name}{MAIN_SEPARATOR}")
         } else {
-            name
+            name.clone()
         }
     }
 
@@ -245,7 +245,9 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
 }
 
 fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> String {
-    time.map_or("".into(), |time| humanize_datetime(time, Local::now()))
+    time.map_or("<unknown>".into(), |time| {
+        humanize_datetime(time, Local::now())
+    })
 }
 
 #[cfg(test)]
