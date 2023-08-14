@@ -7,17 +7,28 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Usage
 
 ```
-Usage: filectrl [<directory-path>] [-c <config-path>]
+Usage: filectrl [<directory>] [-c <config>] [--write-config]
 
-FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a light, opinionated, responsive, theme-able, and simple
+Text User Interface (TUI) file manager for Linux and macOS
 
 Positional Arguments:
-  directory-path    path to a directory to navigate to
+  directory         path to a directory to navigate to
 
 Options:
-  -c, --config-path path to a configuration file
+  -c, --config      path to a configuration file
+  --write-config    write the default config to ~/.config/filectrl/config.toml,
+                    then exit
   --help            display usage information
 ```
+
+### Configuration
+
+The configuration is read from the following locations in order:
+
+1. The path specified by the command line option: `--config-path`
+1. The default path, if it exists: `~/.config/filectrl/config.toml`
+1. The built-in [default configuration](./src/app/default_config.rs)
 
 ### Keyboard controls
 

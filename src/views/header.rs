@@ -1,6 +1,6 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{config::Theme, focus::Focus},
+    app::{focus::Focus, theme::Theme},
     command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::human::HumanPath,
 };

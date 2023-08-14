@@ -1,6 +1,6 @@
 use super::View;
 use crate::{
-    app::{config::Theme, focus::Focus},
+    app::{focus::Focus, theme::Theme},
     command::{
         handler::CommandHandler,
         result::CommandResult,
@@ -305,34 +305,34 @@ fn split_name<'a>(path: &HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> 
 
 fn name_style(path: &HumanPath, theme: &Theme) -> Style {
     if path.is_block_device() {
-        return theme.table_block_device();
+        return theme.table_name_block_device();
     }
     if path.is_character_device() {
-        return theme.table_character_device();
+        return theme.table_name_character_device();
     }
     if path.is_directory() {
-        return theme.table_directory();
+        return theme.table_name_directory();
     }
     if path.is_fifo() {
-        return theme.table_fifo();
+        return theme.table_name_fifo();
     }
     if path.is_setgid() {
-        return theme.table_setgid();
+        return theme.table_name_setgid();
     }
     if path.is_setuid() {
-        return theme.table_setuid();
+        return theme.table_name_setuid();
     }
     if path.is_socket() {
-        return theme.table_socket();
+        return theme.table_name_socket();
     }
     if path.is_sticky() {
-        return theme.table_sticky();
+        return theme.table_name_sticky();
     }
     if path.is_symlink() {
-        return theme.table_symlink();
+        return theme.table_name_symlink();
     }
     // catch-all
-    return theme.table_file();
+    return theme.table_name_file();
 }
 
 #[cfg(test)]
