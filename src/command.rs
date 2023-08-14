@@ -7,14 +7,6 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use self::sorting::SortColumn;
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum Focus {
-    Header,
-    Prompt,
-    #[default]
-    Table,
-}
-
 #[derive(Clone, Debug, Default)]
 pub enum PromptKind {
     #[default]
@@ -38,7 +30,6 @@ pub enum Command {
     Resize(u16, u16), // w,h
     SetDirectory(HumanPath, Vec<HumanPath>),
     SetFilter(String),
-    SetFocus(Focus),
     SetSelected(Option<HumanPath>),
     ToggleHelp,
 }

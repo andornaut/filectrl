@@ -3,8 +3,8 @@ use super::{
     table::TableView, View,
 };
 use crate::{
-    app::theme::Theme,
-    command::{handler::CommandHandler, result::CommandResult, Command, Focus},
+    app::{focus::Focus, theme::Theme},
+    command::handler::CommandHandler,
 };
 use ratatui::{
     backend::Backend,
@@ -31,19 +31,6 @@ impl CommandHandler for RootView {
         let status: &mut dyn CommandHandler = &mut self.status;
         let table: &mut dyn CommandHandler = &mut self.table;
         vec![errors, header, help, prompt, status, table]
-    }
-
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        // Consolidate all Focus changes here, so that other CommandHandler's
-        // don't have to choose between returning a Focus or other derived
-        // command.
-        match command {
-            Command::ClosePrompt => Command::SetFocus(Focus::Table).into(),
-            Command::OpenPrompt(_) => Command::SetFocus(Focus::Prompt).into(),
-            Command::RenamePath(_, _) => Command::SetFocus(Focus::Table).into(),
-            Command::SetFilter(_) => Command::SetFocus(Focus::Table).into(),
-            _ => CommandResult::NotHandled,
-        }
     }
 }
 

@@ -1,16 +1,18 @@
 pub mod config;
 mod default_config;
 mod events;
+pub mod focus;
 pub mod terminal;
 pub mod theme;
 
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
+    focus::Focus,
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{handler::CommandHandler, result::CommandResult, Command, Focus},
+    command::{handler::CommandHandler, result::CommandResult, Command},
     file_system::FileSystem,
     views::{root::RootView, View},
 };
@@ -119,6 +121,11 @@ impl App {
         Ok(())
     }
 
+    fn set_focus(&mut self, focus: Focus) -> CommandResult {
+        self.focus = focus;
+        CommandResult::none()
+    }
+
     fn translate_non_prompt_key_command(&self, command: Command) -> Command {
         if self.focus == Focus::Prompt {
             return command;
@@ -136,13 +143,13 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::SetFocus(focus) => {
-                self.focus = focus.clone();
-            }
-            Command::Resize(_, _) => (),
-            _ => return CommandResult::NotHandled,
+            Command::ClosePrompt => self.set_focus(Focus::Table),
+            Command::OpenPrompt(_) => self.set_focus(Focus::Prompt),
+            Command::RenamePath(_, _) => self.set_focus(Focus::Table),
+            Command::Resize(_, _) => CommandResult::none(), // TODO can probably Command::Resize
+            Command::SetFilter(_) => self.set_focus(Focus::Table),
+            _ => CommandResult::NotHandled,
         }
-        CommandResult::none()
     }
 }
 
