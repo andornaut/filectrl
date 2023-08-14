@@ -1,11 +1,11 @@
 use super::View;
 use crate::{
-    app::theme::Theme,
+    app::{focus::Focus, theme::Theme},
     command::{
         handler::CommandHandler,
         result::CommandResult,
         sorting::{SortColumn, SortDirection},
-        Command, Focus, PromptKind,
+        Command, PromptKind,
     },
     file_system::human::HumanPath,
     views::split_utf8_with_reservation,

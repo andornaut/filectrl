@@ -1,7 +1,7 @@
 use super::{len_utf8, View};
 use crate::{
-    app::theme::Theme,
-    command::{handler::CommandHandler, result::CommandResult, Command, Focus, PromptKind},
+    app::{focus::Focus, theme::Theme},
+    command::{handler::CommandHandler, result::CommandResult, Command, PromptKind},
     file_system::human::HumanPath,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
