@@ -1,6 +1,7 @@
 use super::converters::{path_to_basename, path_to_string, to_comparable};
 use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
+use std::path::MAIN_SEPARATOR;
 use std::time::SystemTime;
 use std::{cmp, io};
 use std::{
@@ -27,13 +28,15 @@ pub struct HumanPath {
 }
 
 impl HumanPath {
-    pub fn breadcrumbs(&self) -> Vec<Self> {
+    pub fn breadcrumbs(&self) -> Vec<String> {
         // Predicate: the path exists, otherwise this will panic
-        PathBuf::from(self.path.clone())
+        let mut breadcrumbs: Vec<_> = PathBuf::from(self.path.clone())
             .ancestors()
             .into_iter()
-            .map(|path| HumanPath::try_from(&PathBuf::from(path)).unwrap())
-            .collect()
+            .map(|path| path_to_basename(path))
+            .collect();
+        breadcrumbs.reverse();
+        breadcrumbs
     }
 
     pub fn accessed(&self) -> String {
@@ -51,7 +54,7 @@ impl HumanPath {
     pub fn name(&self) -> String {
         let name = self.basename.clone();
         if self.is_directory() {
-            name + "/"
+            format!("{name}{MAIN_SEPARATOR}")
         } else {
             name
         }
@@ -59,6 +62,13 @@ impl HumanPath {
 
     pub fn mode(&self) -> String {
         unix_mode::to_string(self.mode)
+    }
+
+    pub fn parent(&self) -> Option<HumanPath> {
+        let path_buf = PathBuf::from(self.path.clone());
+        path_buf
+            .parent()
+            .map(|parent| Some(HumanPath::try_from(parent).unwrap()))?
     }
 
     pub fn size(&self) -> String {
@@ -103,14 +113,6 @@ impl HumanPath {
 
     pub fn is_symlink(&self) -> bool {
         unix_mode::is_symlink(self.mode)
-    }
-
-    pub fn parent(&self) -> Option<HumanPath> {
-        let path_buf = PathBuf::from(self.path.clone());
-        match path_buf.parent() {
-            Some(parent) => Some(HumanPath::try_from(parent).unwrap()),
-            None => None,
-        }
     }
 }
 
@@ -187,9 +189,9 @@ impl TryFrom<&Path> for HumanPath {
         //   Holding DirEntry objects will consume a file handle even after the ReadDir iterator is dropped.
         let metadata = path.symlink_metadata()?; // Will return an Error if the path doesn't exist
         Ok(Self {
-            basename: path_to_basename(&path)?,
-            accessed: ok_time(metadata.accessed()),
-            created: ok_time(metadata.created()),
+            accessed: maybe_time(metadata.accessed()),
+            basename: path_to_basename(&path),
+            created: maybe_time(metadata.created()),
             mode: metadata.permissions().mode(),
             modified: metadata.modified()?.into(),
             path: path_to_string(&path)?,
@@ -198,11 +200,8 @@ impl TryFrom<&Path> for HumanPath {
     }
 }
 
-fn ok_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
-    match result {
-        Err(_) => None,
-        Ok(time) => Some(time.into()),
-    }
+fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
+    result.map(|time| time.into()).ok()
 }
 
 fn humanize_bytes(bytes: u64) -> String {
@@ -246,10 +245,7 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
 }
 
 fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> String {
-    match time {
-        Some(time) => humanize_datetime(*time, Local::now()),
-        None => "unknown".into(),
-    }
+    time.map_or("".into(), |time| humanize_datetime(time, Local::now()))
 }
 
 #[cfg(test)]

@@ -9,11 +9,12 @@ pub fn path_to_string(path: &Path) -> Result<String> {
     osstr_to_string(path.as_os_str())
 }
 
-pub(super) fn path_to_basename(path: &Path) -> Result<String> {
-    match path.file_name() {
-        Some(name) => osstr_to_string(name),
-        None => Ok(String::from("")),
-    }
+const UNKNOWN_NAME: &'static str = "<unknown name>";
+
+pub(super) fn path_to_basename(path: &Path) -> String {
+    path.file_name().map_or(UNKNOWN_NAME.into(), |name| {
+        osstr_to_string(name).unwrap_or(UNKNOWN_NAME.into())
+    })
 }
 
 pub(super) fn to_comparable(path: &HumanPath) -> String {

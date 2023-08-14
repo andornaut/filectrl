@@ -12,6 +12,7 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+use std::path::MAIN_SEPARATOR;
 
 #[derive(Default)]
 pub(super) struct HeaderView {
@@ -22,7 +23,13 @@ impl HeaderView {
     pub(super) fn height(&self, rect: Rect) -> u16 {
         // TODO: It's wasteful to do this twice per render(). Consider alternatives.
         let style = Style::default();
-        spans(style, style, &self.directory.path, rect.width as u16).len() as u16
+        spans(
+            style,
+            style,
+            rect.width as u16,
+            &self.directory.breadcrumbs(),
+        )
+        .len() as u16
     }
 
     fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
@@ -48,15 +55,11 @@ impl<B: Backend> View<B> for HeaderView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
         let active_style = theme.header_active();
         let inactive_style = theme.header();
-        let text: Vec<_> = spans(
-            active_style,
-            inactive_style,
-            &self.directory.path,
-            rect.width,
-        )
-        .into_iter()
-        .map(|spans| Line::from(spans))
-        .collect();
+        let breadcrumbs = self.directory.breadcrumbs();
+        let text: Vec<_> = spans(active_style, inactive_style, rect.width, &breadcrumbs)
+            .into_iter()
+            .map(|spans| Line::from(spans))
+            .collect();
         let paragraph = Paragraph::new(text).style(theme.header());
         frame.render_widget(paragraph, rect);
     }
@@ -65,17 +68,15 @@ impl<B: Backend> View<B> for HeaderView {
 fn spans<'a>(
     active_style: Style,
     inactive_style: Style,
-    path: &'a str,
     width: u16,
+    breadcrumbs: &[String],
 ) -> Vec<Vec<Span<'a>>> {
     let mut container = vec![Vec::new()];
     let mut line_len = 0;
-    let mut it = path.split('/').peekable();
-
-    it.next(); // Skip empty string
+    let mut it = breadcrumbs.into_iter().peekable();
 
     while let Some(name) = it.next() {
-        let name = format!("/{}", name);
+        let name = format!("{}{MAIN_SEPARATOR}", name);
         let is_last = it.peek().is_none();
         let style = if is_last {
             active_style

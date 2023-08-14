@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Theme {
     #[serde(with = "color_to_tui")]
     error_bg: Color,

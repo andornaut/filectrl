@@ -30,7 +30,7 @@ The configuration is drawn from the first of the following:
 1. The default path, if it exists: `~/.config/filectrl/config.toml`
 1. The built-in [default configuration](./src/app/default_config.rs)
 
-Run `filectrl --write-config` to write the default config to `~/.config/filectrl/config.toml`.
+Run `filectrl --write-config` to write the [default configuration](./src/app/default_config.rs) to `~/.config/filectrl/config.toml`.
 
 ### Keyboard controls
 
