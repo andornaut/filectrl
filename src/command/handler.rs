@@ -1,5 +1,5 @@
 use super::{result::CommandResult, Command};
-use crate::app::focus::Focus;
+use crate::command::Focus;
 
 pub trait CommandHandler {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {

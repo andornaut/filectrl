@@ -1,7 +1,7 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, result::CommandResult, Command, Focus},
     views::bordered,
 };
 use ratatui::{

@@ -7,8 +7,8 @@ mod status;
 mod table;
 
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::handler::CommandHandler,
+    app::theme::Theme,
+    command::{handler::CommandHandler, Focus},
 };
 use ratatui::{
     backend::Backend,
