@@ -3,8 +3,8 @@ use super::{
     table::TableView, View,
 };
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::handler::CommandHandler,
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
     backend::Backend,
@@ -35,14 +35,14 @@ impl CommandHandler for RootView {
 }
 
 impl<B: Backend> View<B> for RootView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
         let constraints = vec![
             Constraint::Length(self.errors.height()),
             Constraint::Length(self.help.height()),
             Constraint::Length(self.header.height(rect)),
             Constraint::Min(5),
             Constraint::Length(1),
-            Constraint::Length(self.prompt.height(focus)),
+            Constraint::Length(self.prompt.height(mode)),
         ];
         let handlers: Vec<&mut dyn View<_>> = vec![
             &mut self.errors,
@@ -58,6 +58,6 @@ impl<B: Backend> View<B> for RootView {
             .split(rect)
             .into_iter()
             .zip(handlers.into_iter())
-            .for_each(|(chunk, handler)| handler.render(frame, *chunk, focus, theme));
+            .for_each(|(chunk, handler)| handler.render(frame, *chunk, mode, theme));
     }
 }

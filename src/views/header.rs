@@ -1,7 +1,7 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
 use ratatui::{
@@ -45,14 +45,10 @@ impl CommandHandler for HeaderView {
             _ => CommandResult::NotHandled,
         }
     }
-
-    fn is_focussed(&self, focus: &Focus) -> bool {
-        *focus == Focus::Header
-    }
 }
 
 impl<B: Backend> View<B> for HeaderView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
         let active_style = theme.header_active();
         let inactive_style = theme.header();
         let breadcrumbs = self.directory.breadcrumbs();

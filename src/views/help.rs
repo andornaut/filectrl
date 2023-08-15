@@ -1,9 +1,10 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
     views::bordered,
 };
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -33,23 +34,23 @@ impl HelpView {
     }
 }
 impl CommandHandler for HelpView {
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
-            Command::ToggleHelp => self.toggle_show_help(),
+    fn handle_input(&mut self, code: &KeyCode, _: &KeyModifiers) -> CommandResult {
+        match *code {
+            KeyCode::Char('?') => self.toggle_show_help(),
             _ => CommandResult::NotHandled,
         }
     }
 }
 
 impl<B: Backend> View<B> for HelpView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;
         }
         let style = theme.help();
         let rect = bordered(frame, rect, style, Some("Help".into()));
-        let spans = match *focus {
-            Focus::Prompt => prompt_help(),
+        let spans = match *mode {
+            InputMode::Prompt => prompt_help(),
             _ => content_help(),
         };
         let paragraph = Paragraph::new(Line::from(spans))

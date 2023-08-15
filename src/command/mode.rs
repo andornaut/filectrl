@@ -1,7 +1,6 @@
 #[derive(Clone, Debug, Default, PartialEq)]
-pub enum Focus {
-    Header,
+pub enum InputMode {
     Prompt,
     #[default]
-    Table,
+    Normal,
 }

@@ -1,6 +1,5 @@
 use super::Command;
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Error, Result};
 
 #[derive(Clone, Debug)]
 pub enum CommandResult {
@@ -16,8 +15,18 @@ impl CommandResult {
     pub fn some(command: Command) -> Self {
         Self::Handled(Some(command))
     }
+}
 
-    pub fn try_into_command(&self) -> Result<Command> {
+impl From<Command> for CommandResult {
+    fn from(value: Command) -> Self {
+        Self::some(value)
+    }
+}
+
+impl TryInto<Command> for CommandResult {
+    type Error = Error;
+
+    fn try_into(self) -> Result<Command, Self::Error> {
         match self {
             Self::Handled(option) => match option {
                 Some(command) => Ok(command.clone()),
@@ -29,11 +38,5 @@ impl CommandResult {
                 "Cannot convert to Command, because CommandResult is not Handled"
             )),
         }
-    }
-}
-
-impl From<Command> for CommandResult {
-    fn from(value: Command) -> Self {
-        Self::some(value)
     }
 }

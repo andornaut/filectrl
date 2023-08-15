@@ -1,22 +1,21 @@
 pub mod config;
 mod default_config;
 mod events;
-pub mod focus;
 pub mod terminal;
 pub mod theme;
 
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
-    focus::Focus,
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
     file_system::FileSystem,
     views::{root::RootView, View},
 };
 use anyhow::{anyhow, Result};
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -30,7 +29,7 @@ const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 pub struct App {
     config: Config,
     file_system: FileSystem,
-    focus: Focus,
+    mode: InputMode,
     root: RootView,
     terminal: CleanupOnDropTerminal,
 }
@@ -40,17 +39,17 @@ impl App {
         Self {
             config,
             file_system: FileSystem::default(),
-            focus: Focus::default(),
+            mode: InputMode::default(),
             root: RootView::default(),
             terminal,
         }
     }
 
-    pub fn run(&mut self, directory_path: Option<PathBuf>) -> Result<()> {
+    pub fn run(&mut self, directory: Option<PathBuf>) -> Result<()> {
         let (tx, rx) = mpsc::channel();
 
         // An initial command is required to start the main loop
-        tx.send(self.file_system.init(directory_path).try_into_command()?)?;
+        tx.send(self.file_system.init(directory)?)?;
         spawn_command_sender(tx);
 
         let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
@@ -85,8 +84,7 @@ impl App {
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
-        let command = self.translate_non_prompt_key_command(command);
-        let focus = self.focus.clone();
+        let mode = self.mode.clone();
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCAST_CYCLES {
             commands = commands
@@ -98,7 +96,7 @@ impl App {
                     // ultimately unhandled, which results in an error anyway.
                     eprintln!("App.broadcast_command() command:{command:?}");
                     let (mut derived_commands, handled) =
-                        recursively_handle_command(&focus, self, &command);
+                        recursively_handle_command(self, &command, &mode);
                     if !handled {
                         derived_commands.push(command);
                     }
@@ -116,21 +114,14 @@ impl App {
         self.terminal.draw(|frame| {
             let window = frame.size();
             self.root
-                .render(frame, window, &self.focus, &self.config.theme);
+                .render(frame, window, &self.mode, &self.config.theme);
         })?;
         Ok(())
     }
 
-    fn set_focus(&mut self, focus: Focus) -> CommandResult {
-        self.focus = focus;
+    fn set_mode(&mut self, mode: InputMode) -> CommandResult {
+        self.mode = mode;
         CommandResult::none()
-    }
-
-    fn translate_non_prompt_key_command(&self, command: Command) -> Command {
-        if self.focus == Focus::Prompt {
-            return command;
-        }
-        command.translate_non_prompt_key_command()
     }
 }
 
@@ -143,27 +134,39 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClosePrompt => self.set_focus(Focus::Table),
-            Command::OpenPrompt(_) => self.set_focus(Focus::Prompt),
-            Command::RenamePath(_, _) => self.set_focus(Focus::Table),
-            Command::Resize(_, _) => CommandResult::none(), // TODO can probably Command::Resize
-            Command::SetFilter(_) => self.set_focus(Focus::Table),
+            Command::ClosePrompt => self.set_mode(InputMode::Normal),
+            Command::OpenPrompt(_) => self.set_mode(InputMode::Prompt),
+            Command::RenamePath(_, _) => self.set_mode(InputMode::Normal),
+            Command::Resize(_, _) => CommandResult::none(), // TODO can probably remove Command::Resize
+            Command::SetFilter(_) => self.set_mode(InputMode::Normal),
+            _ => CommandResult::NotHandled,
+        }
+    }
+
+    fn handle_input(&mut self, code: &KeyCode, _: &KeyModifiers) -> CommandResult {
+        match *code {
+            KeyCode::Char('q') => Command::Quit.into(),
             _ => CommandResult::NotHandled,
         }
     }
 }
 
 fn recursively_handle_command(
-    focus: &Focus,
     handler: &mut dyn CommandHandler,
     command: &Command,
+    mode: &InputMode,
 ) -> (Vec<Command>, bool) {
     let mut derived_commands = Vec::new();
 
-    let result = if command.needs_focus() && !handler.is_focussed(focus) {
-        CommandResult::NotHandled
-    } else {
-        handler.handle_command(command)
+    let result = match command {
+        Command::Key(code, modifiers) => {
+            if handler.should_receive_input(mode) {
+                handler.handle_input(code, modifiers)
+            } else {
+                CommandResult::NotHandled
+            }
+        }
+        _ => handler.handle_command(command),
     };
 
     let mut handled = !matches!(result, CommandResult::NotHandled);
@@ -173,7 +176,7 @@ fn recursively_handle_command(
     }
 
     let child_derived = handler.children().into_iter().flat_map(|child| {
-        let (child_derived, child_handled) = recursively_handle_command(focus, child, command);
+        let (child_derived, child_handled) = recursively_handle_command(child, command, mode);
         handled |= child_handled;
         child_derived
     });
