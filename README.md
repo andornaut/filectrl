@@ -32,6 +32,17 @@ The configuration is drawn from the first of the following:
 
 Run `filectrl --write-config` to write the [default configuration](./src/app/default_config.rs) to `~/.config/filectrl/config.toml`.
 
+#### Theme
+
+All colors can be changed by editing the configuration file:
+
+```
+filectrl --write-config
+vim ~/.config/filectrl/config.toml
+```
+
+You can see all of the available theme variables in the [default configuration](./src/app/default_config.rs).
+
 ### Keyboard controls
 
 ***Normal mode***
