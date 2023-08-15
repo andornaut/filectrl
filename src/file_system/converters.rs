@@ -1,8 +1,7 @@
-use super::human::HumanPath;
 use anyhow::{anyhow, Result};
 use std::{ffi::OsStr, path::Path};
 
-pub fn path_to_string(path: &Path) -> Result<String> {
+pub(super) fn path_to_string(path: &Path) -> Result<String> {
     // Ref. https://stackoverflow.com/a/42579588,
     // https://stackoverflow.com/a/67205030,
     // https://stackoverflow.com/a/31667995
@@ -13,10 +12,6 @@ pub(super) fn path_to_basename(path: &Path) -> String {
     // file_name() is None for the root dir (eg. `/`)
     path.file_name()
         .map_or("".into(), |name| osstr_to_string(name).unwrap_or("".into()))
-}
-
-pub(super) fn to_comparable(path: &HumanPath) -> String {
-    path.basename.trim_start_matches('.').to_lowercase()
 }
 
 fn osstr_to_string(os_str: &OsStr) -> Result<String> {

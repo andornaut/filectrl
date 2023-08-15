@@ -1,8 +1,5 @@
+use super::{mode::InputMode, result::CommandResult, Command};
 use crossterm::event::{KeyCode, KeyModifiers};
-
-use crate::command::mode::InputMode;
-
-use super::{result::CommandResult, Command};
 
 pub trait CommandHandler {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {

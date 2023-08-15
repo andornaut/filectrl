@@ -1,15 +1,10 @@
-use super::View;
+use super::{split_utf8_with_reservation, View};
 use crate::{
     app::theme::Theme,
     command::{
-        handler::CommandHandler,
-        mode::InputMode,
-        result::CommandResult,
-        sorting::{SortColumn, SortDirection},
-        Command, PromptKind,
+        handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
     },
     file_system::human::HumanPath,
-    views::split_utf8_with_reservation,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
@@ -26,6 +21,30 @@ const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
 const SIZE_LEN: u16 = 7;
 const LINE_SEPARATOR: &str = "\n…";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum SortDirection {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub fn toggle(&mut self) {
+        match self {
+            Self::Ascending => *self = Self::Descending,
+            Self::Descending => *self = Self::Ascending,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum SortColumn {
+    #[default]
+    Name,
+    Modified,
+    Size,
+}
 
 #[derive(Default)]
 pub(super) struct TableView {
@@ -107,7 +126,7 @@ impl TableView {
     fn sort(&mut self) -> CommandResult {
         let mut items = self.directory_items.clone();
         match self.sort_column {
-            SortColumn::Name => items.sort(), // Sorts by name by default
+            SortColumn::Name => items.sort_by_cached_key(|path| path.name_comparator()),
             SortColumn::Modified => items.sort_by_cached_key(|path| path.modified),
             SortColumn::Size => items.sort_by_cached_key(|path| path.size),
         };

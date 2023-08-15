@@ -1,8 +1,7 @@
-use super::View;
+use super::{bordered, View};
 use crate::{
     app::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
-    views::bordered,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{

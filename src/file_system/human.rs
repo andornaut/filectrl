@@ -1,15 +1,14 @@
-use super::converters::{path_to_basename, path_to_string, to_comparable};
+use super::converters::{path_to_basename, path_to_string};
 use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
-use std::path::MAIN_SEPARATOR;
-use std::time::SystemTime;
-use std::{cmp, io};
 use std::{
-    cmp::Ordering,
+    cmp::{self},
     env,
     fmt::{self, Display},
+    io,
     os::unix::prelude::PermissionsExt,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR},
+    time::SystemTime,
 };
 
 const FACTOR: u64 = 1024;
@@ -58,6 +57,10 @@ impl HumanPath {
         } else {
             name.clone()
         }
+    }
+
+    pub fn name_comparator(self: &HumanPath) -> String {
+        self.basename.trim_start_matches('.').to_lowercase()
     }
 
     pub fn mode(&self) -> String {
@@ -135,21 +138,9 @@ impl Display for HumanPath {
     }
 }
 
-impl Ord for HumanPath {
-    fn cmp(&self, other: &Self) -> Ordering {
-        to_comparable(self).cmp(&to_comparable(other))
-    }
-}
-
 impl PartialEq for HumanPath {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
-    }
-}
-
-impl PartialOrd for HumanPath {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 
