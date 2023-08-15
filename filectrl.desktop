@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=FileCTRL
+GenericName=File Manager
+Icon=system-file-manager
+Comment=Browse the file system and manage the files
+Categories=System;FileTools;FileManager;Utility;Core;
+TryExec=filectrl
+Exec=filectrl %F
+StartupNotify=false
+Terminal=true
+MimeType=inode/directory;
