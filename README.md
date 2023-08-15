@@ -4,7 +4,14 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 ![image](./screenshot.png)
 
+## Installation
+
+1. `git clone` and `cd` into this repository
+1. Run ```cargo build --release && cp target/release/filectrl ~/.local/bin/```
+
 ## Usage
+
+Run `filectrl --help` to view the available command line arguments and options:
 
 ```
 Usage: filectrl [<directory>] [-c <config>] [--write-config]
@@ -48,7 +55,9 @@ You can see all of the available theme variables in the [default configuration](
 * [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
 * [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
-Edit `~/.config/filectrl/config.toml` to configure which terminal to use:
+You can select a file, then press "f" to open it using the default application configured in your environment.
+
+You can also press "t" to open a terminal at the current directory. Edit `~/.config/filectrl/config.toml` to configure the command to use to run the terminal.
 
 ```toml
 # %s will be replaced by the directory path:
@@ -61,15 +70,15 @@ terminal_template = "alacritty --working-directory %s"
 Keys | Description
 --- | ---
 q | Quit
-h / j / k / l | Left / Down / Up / Right
-Enter, Right, f, l | Open selected
-Backspace, Left, b, h | Navigate up one directory
+j / k | Move selection down / Up
+Backspace, Left, b, h | Navigate to the parent directory
+Enter, Right, f, l | Open the selected file or navigate to the selected directory
+t | Open a terminal at the current directory
 Delete | Delete selected
 r, F2 | Rename selected
 Space | Unselect
 CTRL+r, F5 | Refresh
 e | Clear error messages
-t | Open a terminal at the current directory
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
