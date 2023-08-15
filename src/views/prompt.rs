@@ -97,12 +97,10 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                Command::ClosePrompt.into()
-            }
-            (KeyCode::Enter, _) => self.submit(),
-            (_, _) => self.handle_key(*code, *modifiers),
+        match *code {
+            KeyCode::Esc => Command::ClosePrompt.into(),
+            KeyCode::Enter => self.submit(),
+            _ => self.handle_key(*code, *modifiers),
         }
     }
 
