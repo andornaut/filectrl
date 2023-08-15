@@ -1,8 +1,9 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, theme::Theme},
+    app::theme::Theme,
     command::{
         handler::CommandHandler,
+        mode::InputMode,
         result::CommandResult,
         sorting::{SortColumn, SortDirection},
         Command, PromptKind,
@@ -143,26 +144,6 @@ impl TableView {
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Key(code, modifiers) => match (*code, *modifiers) {
-                (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                    Command::SetFilter("".into()).into()
-                }
-                (_, _) => match code {
-                    KeyCode::Delete => self.delete(),
-                    KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
-                        self.open_selected()
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => self.next(),
-                    KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                    KeyCode::Char('/') => self.open_filter_prompt(),
-                    KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
-                    KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
-                    KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
-                    KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
-                    KeyCode::Char(' ') => self.unselect(),
-                    _ => CommandResult::NotHandled,
-                },
-            },
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
             }
@@ -171,13 +152,32 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn is_focussed(&self, focus: &Focus) -> bool {
-        *focus == Focus::Table
+    fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                Command::SetFilter("".into()).into()
+            }
+            (_, _) => match code {
+                KeyCode::Delete => self.delete(),
+                KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
+                    self.open_selected()
+                }
+                KeyCode::Down | KeyCode::Char('j') => self.next(),
+                KeyCode::Up | KeyCode::Char('k') => self.previous(),
+                KeyCode::Char('/') => self.open_filter_prompt(),
+                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
+                KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
+                KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
+                KeyCode::Char(' ') => self.unselect(),
+                _ => CommandResult::NotHandled,
+            },
+        }
     }
 }
 
 impl<B: Backend> View<B> for TableView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
         let (constraints, name_width) = constraints(rect.width);
         let header = header(theme, &self.sort_column, &self.sort_direction);
         let rows = self

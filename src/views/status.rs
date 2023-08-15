@@ -1,7 +1,7 @@
 use super::View;
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
 use ratatui::{
@@ -122,7 +122,7 @@ impl CommandHandler for StatusView {
 }
 
 impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
         let widget = if self.filter.is_empty() {
             self.normal_widget(theme)
         } else {

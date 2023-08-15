@@ -7,8 +7,8 @@ mod status;
 mod table;
 
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::handler::CommandHandler,
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
     backend::Backend,
@@ -21,7 +21,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) trait View<B: Backend>: CommandHandler {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _focus: &Focus, theme: &Theme);
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme);
 }
 
 pub(super) fn bordered<B: Backend>(

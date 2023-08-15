@@ -1,8 +1,9 @@
 use super::{bordered, View};
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    app::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
 };
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -42,14 +43,20 @@ impl CommandHandler for ErrorsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::AddError(message) => self.add_error(message.clone()),
-            Command::ClearErrors => self.clear_errors(),
+            _ => CommandResult::NotHandled,
+        }
+    }
+
+    fn handle_input(&mut self, code: &KeyCode, _: &KeyModifiers) -> CommandResult {
+        match *code {
+            KeyCode::Char('e') => self.clear_errors(),
             _ => CommandResult::NotHandled,
         }
     }
 }
 
 impl<B: Backend> View<B> for ErrorsView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &Focus, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
         if !self.should_show() {
             return;
         }

@@ -1,7 +1,9 @@
 use super::{len_utf8, View};
 use crate::{
-    app::{focus::Focus, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command, PromptKind},
+    app::theme::Theme,
+    command::{
+        handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
+    },
     file_system::human::HumanPath,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -23,15 +25,15 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub(super) fn height(&self, focus: &Focus) -> u16 {
-        if self.is_focussed(focus) {
+    pub(super) fn height(&self, mode: &InputMode) -> u16 {
+        if self.should_show(mode) {
             1
         } else {
             0
         }
     }
 
-    fn handle_input(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         let key_event = KeyEvent::new(code, modifiers);
         self.input.handle_event(&Event::Key(key_event));
         CommandResult::none()
@@ -67,6 +69,10 @@ impl PromptView {
         CommandResult::none()
     }
 
+    fn should_show(&self, mode: &InputMode) -> bool {
+        *mode == InputMode::Prompt
+    }
+
     fn submit(&mut self) -> CommandResult {
         let value = self.input.value().to_string();
         match self.kind {
@@ -82,15 +88,6 @@ impl PromptView {
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Key(code, modifiers) => {
-                return match (*code, *modifiers) {
-                    (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        Command::ClosePrompt.into()
-                    }
-                    (KeyCode::Enter, _) => self.submit(),
-                    (_, _) => self.handle_input(*code, *modifiers),
-                };
-            }
             Command::OpenPrompt(kind) => self.open(kind),
             Command::SetDirectory(_, _) => Command::SetFilter("".into()).into(),
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
@@ -99,14 +96,24 @@ impl CommandHandler for PromptView {
         }
     }
 
-    fn is_focussed(&self, focus: &Focus) -> bool {
-        *focus == Focus::Prompt
+    fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                Command::ClosePrompt.into()
+            }
+            (KeyCode::Enter, _) => self.submit(),
+            (_, _) => self.handle_key(*code, *modifiers),
+        }
+    }
+
+    fn should_receive_input(&self, mode: &InputMode) -> bool {
+        matches!(mode, InputMode::Prompt)
     }
 }
 
 impl<B: Backend> View<B> for PromptView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, focus: &Focus, theme: &Theme) {
-        if !self.is_focussed(focus) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+        if !self.should_show(mode) {
             return;
         }
 

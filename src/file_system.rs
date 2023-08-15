@@ -1,5 +1,8 @@
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use self::human::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use anyhow::Result;
 use std::{fs, path::PathBuf};
 
 pub mod converters;
@@ -12,7 +15,7 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
-    pub fn init(&mut self, directory: Option<PathBuf>) -> CommandResult {
+    pub fn init(&mut self, directory: Option<PathBuf>) -> Result<Command> {
         match directory {
             Some(directory) => match directory.canonicalize() {
                 Ok(directory) => match HumanPath::try_from(&directory) {
@@ -31,6 +34,7 @@ impl FileSystem {
             },
             None => self.cd(HumanPath::default()),
         }
+        .try_into()
     }
 
     fn back(&mut self) -> CommandResult {
@@ -41,9 +45,6 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: HumanPath) -> CommandResult {
-        // TODO This fails entirely if eg. `directory` contains one broken
-        // symlink. This should handle this case more gracefully:
-        // include the broken file in the returned directory list.
         (match operations::cd(&directory) {
             Ok(children) => {
                 self.directory = directory.clone();
@@ -90,11 +91,20 @@ impl FileSystem {
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::BackDir => self.back(),
             Command::DeletePath(path) => self.delete(path),
             Command::Open(path) => self.open(path),
-            Command::RefreshDir => self.refresh(),
             Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
+            _ => CommandResult::NotHandled,
+        }
+    }
+
+    fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Backspace, _)
+            | (KeyCode::Left, _)
+            | (KeyCode::Char('b'), _)
+            | (KeyCode::Char('h'), _) => self.back(),
+            (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => self.refresh(),
             _ => CommandResult::NotHandled,
         }
     }

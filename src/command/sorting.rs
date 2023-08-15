@@ -22,4 +22,13 @@ pub enum SortColumn {
     Size,
 }
 
-impl SortColumn {}
+impl PartialEq<&str> for SortColumn {
+    fn eq(&self, other: &&str) -> bool {
+        let other = other.to_lowercase();
+        match self {
+            Self::Modified => "modified" == other,
+            Self::Name => "name" == other,
+            Self::Size => "size" == other,
+        }
+    }
+}
