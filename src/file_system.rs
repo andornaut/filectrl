@@ -2,12 +2,14 @@ use crossterm::event::{KeyCode, KeyModifiers};
 
 use self::human::HumanPath;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::{fs, path::PathBuf};
 
-pub mod converters;
+mod converters;
 pub mod human;
 mod operations;
+
+const TERMINAL_EMULATOR: &'static str = "x-terminal-emulator";
 
 #[derive(Default)]
 pub struct FileSystem {
@@ -20,17 +22,11 @@ impl FileSystem {
             Some(directory) => match directory.canonicalize() {
                 Ok(directory) => match HumanPath::try_from(&directory) {
                     Ok(directory) => self.cd(directory),
-                    Err(error) => Command::AddError(format!(
-                        "Cannot change directory to {:?}: {error}",
-                        directory
-                    ))
-                    .into(),
+                    Err(error) => {
+                        anyhow!("Cannot change directory to {directory:?}: {error:?}").into()
+                    }
                 },
-                Err(error) => Command::AddError(format!(
-                    "Cannot change directory to {:?}: {error}",
-                    directory
-                ))
-                .into(),
+                Err(error) => anyhow!("Cannot change directory to {directory:?}: {error:?}").into(),
             },
             None => self.cd(HumanPath::default()),
         }
@@ -50,18 +46,16 @@ impl FileSystem {
                 self.directory = directory.clone();
                 Command::SetDirectory(directory, children)
             }
-            Err(error) => {
-                Command::AddError(format!("Cannot change directory to {directory}: {error}"))
-            }
+            Err(error) => anyhow!("Cannot change directory to {directory}: {error}").into(),
         })
         .into()
     }
 
     fn delete(&mut self, path: &HumanPath) -> CommandResult {
-        if let Err(error) = operations::delete(path) {
-            return Command::AddError(format!("Cannot delete {path}: {error}")).into();
+        match operations::delete(path) {
+            Err(error) => anyhow!("Cannot delete {path}: {error}").into(),
+            Ok(_) => self.refresh(),
         }
-        self.refresh()
     }
 
     fn open(&mut self, path: &HumanPath) -> CommandResult {
@@ -75,12 +69,17 @@ impl FileSystem {
         }
     }
 
+    fn open_terminal(&mut self) -> CommandResult {
+        eprintln!("opening {} via {TERMINAL_EMULATOR}", &self.directory.path);
+        open::with_in_background(&self.directory.path, TERMINAL_EMULATOR);
+        CommandResult::none()
+    }
+
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
-        if let Err(error) = operations::rename(old_path, new_basename) {
-            let message = format!("Cannot rename {old_path} to {new_basename}: {error}");
-            return Command::AddError(message).into();
+        match operations::rename(old_path, new_basename) {
+            Err(error) => anyhow!("Cannot rename {old_path} to {new_basename}: {error}").into(),
+            Ok(_) => self.refresh(),
         }
-        self.refresh()
     }
 
     fn refresh(&mut self) -> CommandResult {
@@ -104,6 +103,7 @@ impl CommandHandler for FileSystem {
             | (KeyCode::Left, _)
             | (KeyCode::Char('b'), _)
             | (KeyCode::Char('h'), _) => self.back(),
+            (KeyCode::Char('t'), _) => self.open_terminal(),
             (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => self.refresh(),
             _ => CommandResult::NotHandled,
         }

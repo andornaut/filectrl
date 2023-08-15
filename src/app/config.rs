@@ -1,15 +1,8 @@
-use anyhow::anyhow;
-use anyhow::Error;
-use anyhow::Result;
+use super::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
+use anyhow::{anyhow, Error, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
-use serde::Deserialize;
-use serde::Serialize;
-use std::fs;
-use std::io::ErrorKind;
-use std::path::PathBuf;
-
-use super::default_config::DEFAULT_CONFIG_TOML;
-use super::theme::Theme;
+use serde::{Deserialize, Serialize};
+use std::{fs, io::ErrorKind, path::PathBuf};
 
 const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 

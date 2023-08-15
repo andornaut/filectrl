@@ -18,10 +18,11 @@ pub(super) struct ErrorsView {
 
 impl ErrorsView {
     pub(super) fn height(&self) -> u16 {
-        if !self.should_show() {
-            return 0;
+        if self.should_show() {
+            self.errors.len() as u16 + 2 // +2 for borders
+        } else {
+            0
         }
-        self.errors.len() as u16 + 2 // +2 for borders
     }
 
     fn add_error(&mut self, message: String) -> CommandResult {

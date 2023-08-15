@@ -1,9 +1,10 @@
 pub mod handler;
 pub mod mode;
 pub mod result;
-pub mod sorting;
 
+use self::result::CommandResult;
 use crate::file_system::human::HumanPath;
+use anyhow::{anyhow, Error};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug, Default)]
@@ -41,6 +42,30 @@ impl Command {
             Event::Mouse(_) => None,
             Event::Resize(w, h) => Some(Self::Resize(w, h)),
             _ => None,
+        }
+    }
+}
+
+impl From<Error> for Command {
+    fn from(value: Error) -> Self {
+        Self::AddError(value.to_string())
+    }
+}
+
+impl TryFrom<CommandResult> for Command {
+    type Error = Error;
+
+    fn try_from(value: CommandResult) -> Result<Self, Self::Error> {
+        match value {
+            CommandResult::Handled(option) => match option {
+                Some(command) => Ok(command.clone()),
+                None => Err(anyhow!(
+                    "Cannot convert to Command, because CommandResult::Handled is None"
+                )),
+            },
+            _ => Err(anyhow!(
+                "Cannot convert to Command, because CommandResult is not Handled"
+            )),
         }
     }
 }
