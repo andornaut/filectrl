@@ -29,7 +29,38 @@ Options:
   --help            display usage information
 ```
 
-### Configuration
+### Keyboard controls
+
+***Normal mode***
+Keys | Description
+--- | ---
+q | Quit
+j / k | Move selection down / Up
+Backspace, Left, b, h | Navigate to the parent directory
+Enter, Right, f, l | Open the selected file or navigate to the selected directory
+t | Open a terminal at the current directory
+Delete | Delete selected
+r, F2 | Rename selected
+Space | Unselect
+CTRL+r, F5 | Refresh
+e | Clear error messages
+n | Sort by name (toggle direction if already sorted)
+m | Sort by modified (toggle direction if already sorted)
+s | Sort by size (toggle direction if already sorted)
+? | Toggle help
+
+***Filtered mode***
+Keys | Description
+--- | ---
+Esc or CTRL+C | Exit filtered mode
+
+***Input mode***
+Keys | Description
+--- | ---
+Esc or CTRL+c | Exit input mode
+Enter | Submit your input and exit input mode
+
+## Configuration
 
 The configuration is drawn from the first of the following:
 
@@ -64,36 +95,18 @@ You can also press "t" to open a terminal at the current directory. Edit `~/.con
 terminal_template = "alacritty --working-directory %s"
 ```
 
-### Keyboard controls
+### Desktop entry
 
-***Normal mode***
-Keys | Description
---- | ---
-q | Quit
-j / k | Move selection down / Up
-Backspace, Left, b, h | Navigate to the parent directory
-Enter, Right, f, l | Open the selected file or navigate to the selected directory
-t | Open a terminal at the current directory
-Delete | Delete selected
-r, F2 | Rename selected
-Space | Unselect
-CTRL+r, F5 | Refresh
-e | Clear error messages
-n | Sort by name (toggle direction if already sorted)
-m | Sort by modified (toggle direction if already sorted)
-s | Sort by size (toggle direction if already sorted)
-? | Toggle help
+* [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html>)
 
-***Filtered mode***
-Keys | Description
---- | ---
-Esc or CTRL+C | Exit filtered mode
+You can add the [`filectrl.desktop` file](./filectrl.desktop) to`~/.local/share/applications/`, so that you can
+make it the default application for opening directories:
 
-***Input mode***
-Keys | Description
---- | ---
-Esc or CTRL+c | Exit input mode
-Enter | Submit your input and exit input mode
+```bash
+cp filectrl.desktop `~/.local/share/applications/
+update-desktop-database ~/.local/share/applications/
+xdg-mime default filectrl.desktop inode/directory
+```
 
 ## Developing
 
