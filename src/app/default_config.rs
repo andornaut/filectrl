@@ -1,4 +1,7 @@
 pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
+# %s will be replaced by the directory path:
+terminal_template = "alacritty --working-directory %s"
+
 [theme]
 error_bg = "#373424"
 error_fg = "#DC322F"

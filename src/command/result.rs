@@ -25,6 +25,7 @@ impl From<Command> for CommandResult {
 
 impl From<Error> for CommandResult {
     fn from(value: Error) -> Self {
-        value.into()
+        let command: Command = value.into();
+        command.into()
     }
 }

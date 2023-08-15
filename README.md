@@ -32,7 +32,7 @@ The configuration is drawn from the first of the following:
 
 Run `filectrl --write-config` to write the [default configuration](./src/app/default_config.rs) to `~/.config/filectrl/config.toml`.
 
-#### Theme
+### Theming
 
 All colors can be changed by editing the configuration file:
 
@@ -42,6 +42,18 @@ vim ~/.config/filectrl/config.toml
 ```
 
 You can see all of the available theme variables in the [default configuration](./src/app/default_config.rs).
+
+### Default applications
+
+* [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
+* [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
+
+Edit `~/.config/filectrl/config.toml` to configure which terminal to use:
+
+```toml
+# %s will be replaced by the directory path:
+terminal_template = "alacritty --working-directory %s"
+```
 
 ### Keyboard controls
 
@@ -57,10 +69,11 @@ r, F2 | Rename selected
 Space | Unselect
 CTRL+r, F5 | Refresh
 e | Clear error messages
-? | Toggle help
+t | Open a terminal at the current directory
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
+? | Toggle help
 
 ***Filtered mode***
 Keys | Description
