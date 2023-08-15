@@ -174,7 +174,7 @@ impl CommandHandler for TableView {
     fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                Command::SetFilter("".into()).into()
+                self.set_filter("".into()).into()
             }
             (_, _) => match code {
                 KeyCode::Delete => self.delete(),

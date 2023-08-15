@@ -52,12 +52,12 @@ s | Sort by size (toggle direction if already sorted)
 ***Filtered mode***
 Keys | Description
 --- | ---
-Esc or CTRL+C | Exit filtered mode
+Esc | Exit filtered mode
 
 ***Input mode***
 Keys | Description
 --- | ---
-Esc or CTRL+c | Exit input mode
+Esc | Exit input mode
 Enter | Submit your input and exit input mode
 
 ## Configuration
@@ -88,7 +88,7 @@ You can see all of the available theme variables in the [default configuration](
 
 You can select a file, then press "f" to open it using the default application configured in your environment.
 
-You can also press "t" to open a terminal at the current directory. Edit `~/.config/filectrl/config.toml` to configure the command to use to run the terminal.
+You can press "t" to open a terminal at the current directory. Edit `~/.config/filectrl/config.toml` to configure the command to use to run the terminal.
 
 ```toml
 # %s will be replaced by the directory path:
@@ -97,15 +97,14 @@ terminal_template = "alacritty --working-directory %s"
 
 ### Desktop entry
 
-* [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html>)
+* ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html>)
 
-You can add the [`filectrl.desktop` file](./filectrl.desktop) to`~/.local/share/applications/`, so that you can
-make it the default application for opening directories:
+You can make `filectrl` the default application for opening directories. Start by copying the [`filectrl.desktop` file](./filectrl.desktop) to `~/.local/share/applications/`:
 
 ```bash
-cp filectrl.desktop `~/.local/share/applications/
-update-desktop-database ~/.local/share/applications/
+cp filectrl.desktop ~/.local/share/applications/
 xdg-mime default filectrl.desktop inode/directory
+update-desktop-database ~/.local/share/applications/
 ```
 
 ## Developing

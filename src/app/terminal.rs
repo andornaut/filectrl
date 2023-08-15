@@ -1,5 +1,8 @@
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -18,12 +21,31 @@ impl CleanupOnDropTerminal {
         enable_raw_mode()?;
 
         let mut stdout = stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-        terminal.clear()?;
-        terminal.hide_cursor()?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            // Is only supported on some terminals
+            // https://docs.rs/crossterm/latest/crossterm/event/struct.PushKeyboardEnhancementFlags.html
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
 
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+        terminal.hide_cursor()?;
+        terminal.clear()?;
         Ok(Self(terminal))
+    }
+
+    pub fn cleanup(&mut self) {
+        self.show_cursor().unwrap();
+        execute!(
+            self.backend_mut(),
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+        )
+        .unwrap();
+        disable_raw_mode().unwrap();
     }
 }
 
@@ -43,14 +65,6 @@ impl DerefMut for CleanupOnDropTerminal {
 
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
-        disable_raw_mode().unwrap();
-
-        execute!(
-            self.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )
-        .unwrap();
-        self.show_cursor().unwrap()
+        self.cleanup();
     }
 }
