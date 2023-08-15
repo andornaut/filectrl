@@ -8,6 +8,7 @@ const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
+    pub terminal_template: String,
     pub theme: Theme,
 }
 
@@ -41,7 +42,7 @@ impl Config {
         match fs::read_to_string(&path) {
             Err(error) => match error.kind() {
                 ErrorKind::NotFound => Ok(Config::default()),
-                _ => Err(anyhow!(error)),
+                _ => Err(error.into()),
             },
             Ok(content) => Self::parse(&content),
         }

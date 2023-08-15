@@ -36,9 +36,10 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config, terminal: CleanupOnDropTerminal) -> Self {
+        let file_system = FileSystem::new(&config);
         Self {
             config,
-            file_system: FileSystem::default(),
+            file_system,
             mode: InputMode::default(),
             root: RootView::default(),
             terminal,

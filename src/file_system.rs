@@ -1,7 +1,11 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use self::human::HumanPath;
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::{
+    app::config::Config,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+    file_system::operations::run_detached,
+};
 use anyhow::{anyhow, Result};
 use std::{fs, path::PathBuf};
 
@@ -9,14 +13,19 @@ mod converters;
 pub mod human;
 mod operations;
 
-const TERMINAL_EMULATOR: &'static str = "x-terminal-emulator";
-
-#[derive(Default)]
 pub struct FileSystem {
     directory: HumanPath,
+    terminal_template: String,
 }
 
 impl FileSystem {
+    pub fn new(config: &Config) -> Self {
+        Self {
+            directory: HumanPath::default(),
+            terminal_template: config.terminal_template.clone(),
+        }
+    }
+
     pub fn init(&mut self, directory: Option<PathBuf>) -> Result<Command> {
         match directory {
             Some(directory) => match directory.canonicalize() {
@@ -64,15 +73,33 @@ impl FileSystem {
         if path.is_directory() {
             self.cd(path)
         } else {
-            open::that_in_background(&path.path);
-            CommandResult::none()
+            match open::that_detached(&path.path) {
+                Err(error) => anyhow!("Failed to open file: {error}").into(),
+                Ok(_) => CommandResult::none(),
+            }
         }
     }
 
     fn open_terminal(&mut self) -> CommandResult {
-        eprintln!("opening {} via {TERMINAL_EMULATOR}", &self.directory.path);
-        open::with_in_background(&self.directory.path, TERMINAL_EMULATOR);
-        CommandResult::none()
+        let cmd = self
+            .terminal_template
+            .trim()
+            .replace("%s", &self.directory.path);
+        let mut it = cmd.split_whitespace();
+        match it.next() {
+            Some(program) => {
+                let args: Vec<_> = it.collect();
+                match run_detached(program, args) {
+                    Err(error) => anyhow!(
+                        "Failed to open the terminal (check your configuration: \"terminal_template={}\"): {error}",
+                        self.terminal_template
+                    )
+                    .into(),
+                    Ok(_) => CommandResult::none(),
+                }
+            },
+            None => anyhow!("Cannot open the terminal, because the \"terminal_template\" configuration is empty").into()
+        }
     }
 
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {

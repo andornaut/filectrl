@@ -1,5 +1,7 @@
 use super::human::HumanPath;
 use anyhow::{anyhow, Result};
+use std::ffi::OsStr;
+use std::process::Stdio;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -32,6 +34,21 @@ pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
     let new_path = join(old_path, new_basename);
     fs::rename(&old_path, new_path)?;
     Ok(())
+}
+
+pub(super) fn run_detached<I, S>(program: &str, args: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    std::process::Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.into())
 }
 
 fn join(left: &Path, right: &str) -> PathBuf {
