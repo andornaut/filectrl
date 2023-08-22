@@ -124,7 +124,7 @@ impl CommandHandler for FileSystem {
         }
     }
 
-    fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Backspace, _)
             | (KeyCode::Left, _)
