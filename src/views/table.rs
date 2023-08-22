@@ -16,7 +16,7 @@ use crate::{
     },
     file_system::human::HumanPath,
 };
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -30,6 +30,7 @@ pub(super) struct TableView {
     directory: HumanPath,
     directory_items_sorted: Vec<HumanPath>,
     filter: String,
+    last_rendered_rect: Rect,
     sort_column: SortColumn,
     sort_direction: SortDirection,
     state: TableState,
@@ -168,11 +169,22 @@ impl CommandHandler for TableView {
             },
         }
     }
+
+    fn handle_mouse(&mut self, _mouse: &MouseEvent) -> CommandResult {
+        // Only invoked if self.should_receive_mouse() is true
+        CommandResult::NotHandled
+    }
+
+    fn should_receive_mouse(&self, _column: u16, _row: u16) -> bool {
+        false
+    }
 }
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
-        let (constraints, name_width) = constraints(rect.width);
+        self.last_rendered_rect = rect;
+
+        let (constraints, name_width) = constraints(self.last_rendered_rect.width);
         let header = header(theme, &self.sort_column, &self.sort_direction);
         let rows = self
             .directory_items_sorted
@@ -182,6 +194,6 @@ impl<B: Backend> View<B> for TableView {
             .header(header)
             .highlight_style(theme.table_selected())
             .widths(&constraints);
-        frame.render_stateful_widget(table, rect, &mut self.state);
+        frame.render_stateful_widget(table, self.last_rendered_rect, &mut self.state);
     }
 }

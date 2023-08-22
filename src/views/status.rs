@@ -34,57 +34,11 @@ impl StatusView {
     }
 
     fn normal_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
-        let directory_style = theme.status_directory();
-        let directory_value_style = directory_style.add_modifier(Modifier::BOLD);
-        let selected_style = theme.status_selected();
-        let selected_value_style = selected_style.add_modifier(Modifier::BOLD);
-
-        let mut spans = vec![
-            Span::styled(" Directory ", theme.status_directory_label()),
-            Span::styled(" Mode:", directory_style),
-            Span::styled(self.directory.mode(), directory_value_style),
-            Span::styled(" #Items:", directory_style),
-            Span::styled(self.directory_len.to_string() + " ", directory_value_style),
-        ];
+        let mut spans = Vec::new();
+        add_directory(&mut spans, theme, self.directory.mode(), self.directory_len);
 
         if let Some(selected) = &self.selected {
-            spans.push(Span::styled(" Selected ", theme.status_selected_label()));
-            spans.push(Span::styled(" Type:", selected_style));
-
-            if selected.is_block_device() {
-                spans.push(Span::styled("Block", selected_value_style));
-            }
-            if selected.is_character_device() {
-                spans.push(Span::styled("Character", selected_value_style));
-            }
-            if selected.is_directory() {
-                spans.push(Span::styled("Directory", selected_value_style));
-            }
-            if selected.is_fifo() {
-                spans.push(Span::styled("FIFO", selected_value_style));
-            }
-            if selected.is_file() {
-                spans.push(Span::styled("File", selected_value_style));
-            }
-            if selected.is_setgid() {
-                spans.push(Span::styled("SetGID", selected_value_style));
-            }
-            if selected.is_setuid() {
-                spans.push(Span::styled("SetUID", selected_value_style));
-            }
-            if selected.is_socket() {
-                spans.push(Span::styled("Socket", selected_value_style));
-            }
-            if selected.is_sticky() {
-                spans.push(Span::styled("Sticky", selected_value_style));
-            }
-            if selected.is_symlink() {
-                spans.push(Span::styled("Symlink", selected_value_style));
-            }
-            spans.push(Span::styled(" Accessed:", selected_style));
-            spans.push(Span::styled(selected.accessed(), selected_value_style));
-            spans.push(Span::styled(" Created:", selected_style));
-            spans.push(Span::styled(selected.created(), selected_value_style));
+            add_selected(&mut spans, theme, selected);
         }
         Paragraph::new(Line::from(spans))
             .style(theme.status_normal_mode())
@@ -130,4 +84,72 @@ impl<B: Backend> View<B> for StatusView {
         };
         frame.render_widget(widget, rect);
     }
+}
+
+fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {
+    let default_style = theme.status_directory();
+    let label_style = theme.status_directory_label();
+    spans.push(Span::styled(" Directory ", theme.status_directory_label()));
+    let fields = vec![(" Mode", mode), (" #Items", len.to_string())];
+    spans.extend(to_entries(fields, default_style, label_style));
+}
+
+fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &HumanPath) {
+    let mut kind = Vec::new();
+    if selected.is_block_device() {
+        kind.push("Block");
+    }
+    if selected.is_character_device() {
+        kind.push("Character");
+    }
+    if selected.is_directory() {
+        kind.push("Directory");
+    }
+    if selected.is_fifo() {
+        kind.push("FIFO");
+    }
+    if selected.is_file() {
+        kind.push("File");
+    }
+    if selected.is_setgid() {
+        kind.push("SetGID");
+    }
+    if selected.is_setuid() {
+        kind.push("SetUID");
+    }
+    if selected.is_socket() {
+        kind.push("Socket");
+    }
+    if selected.is_sticky() {
+        kind.push("Sticky");
+    }
+    if selected.is_symlink() {
+        kind.push("Symlink");
+    }
+    let kind = kind.join(",");
+    let default_style = theme.status_selected();
+    let label_style = theme.status_selected_label();
+    spans.push(Span::styled(" Selected ", label_style));
+    let fields = vec![
+        (" Type", kind),
+        (" Accessed", selected.accessed()),
+        (" Created", selected.created()),
+    ];
+    spans.extend(to_entries(fields, default_style, label_style));
+}
+
+fn to_entries(
+    entries: Vec<(&str, String)>,
+    default_style: Style,
+    label_style: Style,
+) -> Vec<Span<'_>> {
+    entries
+        .into_iter()
+        .flat_map(|(label, value)| {
+            [
+                Span::styled(label, label_style),
+                Span::styled(value, default_style),
+            ]
+        })
+        .collect()
 }

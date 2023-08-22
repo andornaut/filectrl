@@ -17,19 +17,19 @@ use std::path::MAIN_SEPARATOR;
 #[derive(Default)]
 pub(super) struct HeaderView {
     directory: HumanPath,
+    last_rendered_rect: Rect,
 }
 
 impl HeaderView {
-    pub(super) fn height(&self, rect: Rect) -> u16 {
-        // TODO: It's wasteful to do this twice per render(). Consider alternatives.
-        let style = Style::default();
-        spans(
-            style,
-            style,
-            rect.width as u16,
-            &self.directory.breadcrumbs(),
-        )
-        .len() as u16
+    pub(super) fn height(&self, parent_rect: Rect) -> u16 {
+        // If the `rect.width` hasn't changed, then use the cached height to avoid some work.
+        let width = parent_rect.width as u16;
+        if self.last_rendered_rect.width == width {
+            self.last_rendered_rect.height
+        } else {
+            let style = Style::default();
+            spans(&self.directory.breadcrumbs(), width, style, style).len() as u16
+        }
     }
 
     fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
@@ -49,23 +49,31 @@ impl CommandHandler for HeaderView {
 
 impl<B: Backend> View<B> for HeaderView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+        self.last_rendered_rect = rect;
+
         let active_style = theme.header_active();
         let inactive_style = theme.header();
         let breadcrumbs = self.directory.breadcrumbs();
-        let text: Vec<_> = spans(active_style, inactive_style, rect.width, &breadcrumbs)
-            .into_iter()
-            .map(|spans| Line::from(spans))
-            .collect();
+        let text: Vec<_> = spans(
+            &breadcrumbs,
+            self.last_rendered_rect.width,
+            active_style,
+            inactive_style,
+        )
+        .into_iter()
+        .map(|spans| Line::from(spans))
+        .collect();
+
         let paragraph = Paragraph::new(text).style(theme.header());
-        frame.render_widget(paragraph, rect);
+        frame.render_widget(paragraph, self.last_rendered_rect);
     }
 }
 
 fn spans<'a>(
+    breadcrumbs: &[String],
+    width: u16,
     active_style: Style,
     inactive_style: Style,
-    width: u16,
-    breadcrumbs: &[String],
 ) -> Vec<Vec<Span<'a>>> {
     let mut container = vec![Vec::new()];
     let mut line_len = 0;
