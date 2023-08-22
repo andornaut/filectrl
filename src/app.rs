@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use copypasta::{ClipboardContext, ClipboardProvider};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -166,7 +166,7 @@ impl CommandHandler for App {
         }
     }
 
-    fn handle_input(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('q'), _) => Command::Quit.into(),
             (KeyCode::Char('c'), KeyModifiers::CONTROL)
@@ -189,8 +189,16 @@ fn recursively_handle_command(
 
     let result = match command {
         Command::Key(code, modifiers) => {
-            if handler.should_receive_input(mode) {
-                handler.handle_input(code, modifiers)
+            if handler.should_receive_key(mode) {
+                handler.handle_key(code, modifiers)
+            } else {
+                CommandResult::NotHandled
+            }
+        }
+        Command::Mouse(mouse_event) => {
+            let MouseEvent { column, row, .. } = mouse_event;
+            if handler.should_receive_mouse(*column, *row) {
+                handler.handle_mouse(mouse_event)
             } else {
                 CommandResult::NotHandled
             }
