@@ -7,6 +7,7 @@ pub struct Theme {
     error_bg: Color,
     #[serde(with = "color_to_tui")]
     error_fg: Color,
+
     #[serde(with = "color_to_tui")]
     header_active_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -15,10 +16,12 @@ pub struct Theme {
     header_bg: Color,
     #[serde(with = "color_to_tui")]
     header_fg: Color,
+
     #[serde(with = "color_to_tui")]
     help_bg: Color,
     #[serde(with = "color_to_tui")]
     help_fg: Color,
+
     #[serde(with = "color_to_tui")]
     prompt_input_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -27,6 +30,7 @@ pub struct Theme {
     prompt_label_bg: Color,
     #[serde(with = "color_to_tui")]
     prompt_label_fg: Color,
+
     #[serde(with = "color_to_tui")]
     status_directory_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -36,13 +40,9 @@ pub struct Theme {
     #[serde(with = "color_to_tui")]
     status_directory_label_fg: Color,
     #[serde(with = "color_to_tui")]
-    status_filter_mode_bg: Color,
+    status_filter_bg: Color,
     #[serde(with = "color_to_tui")]
-    status_filter_mode_fg: Color,
-    #[serde(with = "color_to_tui")]
-    status_normal_mode_bg: Color,
-    #[serde(with = "color_to_tui")]
-    status_normal_mode_fg: Color,
+    status_filter_fg: Color,
     #[serde(with = "color_to_tui")]
     status_selected_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -51,6 +51,7 @@ pub struct Theme {
     status_selected_label_bg: Color,
     #[serde(with = "color_to_tui")]
     status_selected_label_fg: Color,
+
     #[serde(with = "color_to_tui")]
     table_header_active_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -59,6 +60,7 @@ pub struct Theme {
     table_header_bg: Color,
     #[serde(with = "color_to_tui")]
     table_header_fg: Color,
+
     #[serde(with = "color_to_tui")]
     table_name_block_device_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -99,6 +101,24 @@ pub struct Theme {
     table_name_symlink_bg: Color,
     #[serde(with = "color_to_tui")]
     table_name_symlink_fg: Color,
+
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_begin_bg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_begin_fg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_end_bg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_end_fg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_thumb_bg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_thumb_fg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_track_bg: Color,
+    #[serde(with = "color_to_tui")]
+    table_scrollbar_track_fg: Color,
+
     #[serde(with = "color_to_tui")]
     table_selected_bg: Color,
     #[serde(with = "color_to_tui")]
@@ -136,16 +156,10 @@ impl Theme {
             .fg(self.prompt_label_fg)
     }
 
-    pub fn status_filtered_mode(&self) -> Style {
+    pub fn status_filter(&self) -> Style {
         Style::default()
-            .bg(self.status_filter_mode_bg)
-            .fg(self.status_filter_mode_fg)
-    }
-
-    pub fn status_normal_mode(&self) -> Style {
-        Style::default()
-            .bg(self.status_normal_mode_bg)
-            .fg(self.status_normal_mode_fg)
+            .bg(self.status_filter_bg)
+            .fg(self.status_filter_fg)
     }
 
     pub fn status_directory(&self) -> Style {
@@ -243,6 +257,30 @@ impl Theme {
         Style::default()
             .bg(self.table_name_symlink_bg)
             .fg(self.table_name_symlink_fg)
+    }
+
+    pub fn table_scrollbar_begin(&self) -> Style {
+        Style::default()
+            .bg(self.table_scrollbar_begin_bg)
+            .fg(self.table_scrollbar_begin_fg)
+    }
+
+    pub fn table_scrollbar_end(&self) -> Style {
+        Style::default()
+            .bg(self.table_scrollbar_end_bg)
+            .fg(self.table_scrollbar_end_fg)
+    }
+
+    pub fn table_scrollbar_thumb(&self) -> Style {
+        Style::default()
+            .bg(self.table_scrollbar_thumb_bg)
+            .fg(self.table_scrollbar_thumb_fg)
+    }
+
+    pub fn table_scrollbar_track(&self) -> Style {
+        Style::default()
+            .bg(self.table_scrollbar_track_bg)
+            .fg(self.table_scrollbar_track_fg)
     }
 
     pub fn table_selected(&self) -> Style {

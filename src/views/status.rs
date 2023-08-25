@@ -9,7 +9,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
     Frame,
 };
 
@@ -23,14 +23,15 @@ pub(super) struct StatusView {
 
 impl StatusView {
     fn filter_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
+        let bold_style = Style::default().add_modifier(Modifier::BOLD);
         let spans = vec![
             Span::raw(" Filtered by \""),
-            Span::styled(&self.filter, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(&self.filter, bold_style),
             Span::raw("\". Press "),
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("Esc", bold_style),
             Span::raw(" to exit filtered mode."),
         ];
-        Paragraph::new(Line::from(spans)).style(theme.status_filtered_mode())
+        Paragraph::new(Line::from(spans)).style(theme.status_filter())
     }
 
     fn normal_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
@@ -40,9 +41,7 @@ impl StatusView {
         if let Some(selected) = &self.selected {
             add_selected(&mut spans, theme, selected);
         }
-        Paragraph::new(Line::from(spans))
-            .style(theme.status_normal_mode())
-            .wrap(Wrap { trim: false })
+        Paragraph::new(Line::from(spans)).style(theme.status_selected())
     }
 
     fn set_directory(&mut self, directory: HumanPath, children: &Vec<HumanPath>) -> CommandResult {
@@ -87,14 +86,35 @@ impl<B: Backend> View<B> for StatusView {
 }
 
 fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {
-    let default_style = theme.status_directory();
-    let label_style = theme.status_directory_label();
     spans.push(Span::styled(" Directory ", theme.status_directory_label()));
-    let fields = vec![(" Mode", mode), (" #Items", len.to_string())];
+    let fields = vec![(" Mode:", mode), (" #Items:", format!("{} ", len))];
+    let default_style = theme.status_directory();
+    let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
 }
 
 fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &HumanPath) {
+    spans.push(Span::styled(" Selected ", theme.status_selected_label()));
+    let mut fields = Vec::new();
+    if let Some(owner) = selected.owner() {
+        fields.push((" Owner:", owner));
+    }
+    if let Some(group) = selected.group() {
+        fields.push((" Group:", group));
+    }
+    fields.push((" Type:", kind_field(selected)));
+    if let Some(accessed) = selected.accessed() {
+        fields.push((" Accessed:", accessed));
+    }
+    if let Some(created) = selected.created() {
+        fields.push((" Created:", created));
+    }
+    let default_style = theme.status_selected();
+    let label_style = default_style.add_modifier(Modifier::BOLD);
+    spans.extend(to_entries(fields, default_style, label_style));
+}
+
+fn kind_field(selected: &HumanPath) -> String {
     let mut kind = Vec::new();
     if selected.is_block_device() {
         kind.push("Block");
@@ -126,16 +146,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &HumanPath) {
     if selected.is_symlink() {
         kind.push("Symlink");
     }
-    let kind = kind.join(",");
-    let default_style = theme.status_selected();
-    let label_style = theme.status_selected_label();
-    spans.push(Span::styled(" Selected ", label_style));
-    let fields = vec![
-        (" Type", kind),
-        (" Accessed", selected.accessed()),
-        (" Created", selected.created()),
-    ];
-    spans.extend(to_entries(fields, default_style, label_style));
+    kind.join(",")
 }
 
 fn to_entries(

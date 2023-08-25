@@ -20,7 +20,7 @@ copypasta = "0.8.2"
 crossterm = "0.26.1"
 etcetera = "0.8.0"
 open = "5.0.0"
-ratatui = {version = "0.22.0", features = ["all-widgets"]}
+ratatui = {verseon = "0.22.0", features = ["all-widgets"]}
 regex = "1.9.3"
 serde = "1.0.183"
 toml = "0.7.6"
@@ -28,6 +28,18 @@ tui-input = "0.7.1"
 unicode-segmentation = "1.10.1"
 unicode-width = "0.1.10"
 unix_mode = "0.1.3"
+
+[dependencies.nix]
+default_features = false
+features = ["user"]
+version = "^0"
+
+[patch.crates-io]
+# For:
+# * feat(table): enforce line alignment in table render
+# v0.22.1-alpha.2
+# https://github.com/ratatui-org/ratatui/commit/d2429bc3e44a34197511192dbd215dd32fdf2d9c
+ratatui = {git = "https://github.com/ratatui-org/ratatui.git", rev = "b6b2da5"}
 
 [dev-dependencies]
 test-case = "3.1.0"

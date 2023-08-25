@@ -112,20 +112,6 @@ impl App {
         commands
     }
 
-    fn render(&mut self) -> Result<()> {
-        self.terminal.draw(|frame| {
-            let window = frame.size();
-            self.root
-                .render(frame, window, &self.mode, &self.config.theme);
-        })?;
-        Ok(())
-    }
-
-    fn set_mode(&mut self, mode: InputMode) -> CommandResult {
-        self.mode = mode;
-        CommandResult::none()
-    }
-
     fn clipboard_copy(&mut self) -> CommandResult {
         let mut ctx = ClipboardContext::new().unwrap();
         let content = ctx.get_contents().unwrap();
@@ -144,6 +130,20 @@ impl App {
         let mut ctx = ClipboardContext::new().unwrap();
         let content = ctx.get_contents().unwrap();
         eprintln!("TODO App.clipboard_paste(): {content}");
+        CommandResult::none()
+    }
+
+    fn render(&mut self) -> Result<()> {
+        self.terminal.draw(|frame| {
+            let window = frame.size();
+            self.root
+                .render(frame, window, &self.mode, &self.config.theme);
+        })?;
+        Ok(())
+    }
+
+    fn set_mode(&mut self, mode: InputMode) -> CommandResult {
+        self.mode = mode;
         CommandResult::none()
     }
 }
@@ -223,9 +223,12 @@ fn recursively_handle_command(
 }
 
 fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
+    // Ignore unhandled Key or Mouse commands
     let unhandled_count = commands
         .into_iter()
-        .filter(|command| !matches!(command, Command::Key(_, _)))
+        .filter(|command| {
+            !matches!(command, Command::Key(_, _)) && !matches!(command, Command::Mouse(_))
+        })
         .count();
     if unhandled_count > 0 {
         return Err(anyhow!(
