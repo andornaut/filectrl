@@ -74,7 +74,7 @@ pub(super) fn row<'a>(
     let height = name.len() as u16;
     let row = Row::new(vec![
         Cell::from(Text::from(name)),
-        Cell::from(item.modified()),
+        Cell::from(item.modified().unwrap_or_default()),
         Cell::from(size),
         Cell::from(item.mode()),
     ]);

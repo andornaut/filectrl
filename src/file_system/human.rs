@@ -18,7 +18,6 @@ const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 #[derive(Clone, Eq)]
 pub struct HumanPath {
     pub basename: String,
-    pub modified: DateTime<Local>,
     pub path: String,
     pub size: u64,
 
@@ -27,6 +26,7 @@ pub struct HumanPath {
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
+    modified: Option<DateTime<Local>>,
 }
 
 impl HumanPath {
@@ -53,8 +53,12 @@ impl HumanPath {
         unix_mode::to_string(self.mode)
     }
 
-    pub fn modified(&self) -> String {
-        humanize_datetime(self.modified, Local::now())
+    pub fn modified(&self) -> Option<String> {
+        maybe_time_to_string(&self.modified)
+    }
+
+    pub fn modified_comparator(&self) -> i64 {
+        self.modified.map(|dt| dt.timestamp()).unwrap_or(0)
     }
 
     pub fn name(&self) -> String {
@@ -201,17 +205,13 @@ impl TryFrom<&Path> for HumanPath {
             basename: path_to_basename(&path),
             created: maybe_time(metadata.created()),
             mode: metadata.permissions().mode(),
-            modified: metadata.modified()?.into(),
+            modified: maybe_time(metadata.modified()),
             path: path_to_string(&path)?,
             size: metadata.len(),
             gid: metadata.gid(),
             uid: metadata.uid(),
         })
     }
-}
-
-fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
-    result.map(|time| time.into()).ok()
 }
 
 fn humanize_bytes(bytes: u64) -> String {
@@ -254,6 +254,9 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
     datetime
 }
 
+fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
+    result.ok().map(|time| time.into())
+}
 fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> Option<String> {
     time.map(|time| humanize_datetime(time, Local::now()))
 }

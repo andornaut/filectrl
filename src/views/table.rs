@@ -141,7 +141,7 @@ impl TableView {
         let mut items = self.directory_items.clone();
         match self.sort_column {
             SortColumn::Name => items.sort_by_cached_key(|path| path.name_comparator()),
-            SortColumn::Modified => items.sort_by_cached_key(|path| path.modified),
+            SortColumn::Modified => items.sort_by_cached_key(|path| path.modified_comparator()),
             SortColumn::Size => items.sort_by_cached_key(|path| path.size),
         };
         if self.sort_direction == SortDirection::Descending {
