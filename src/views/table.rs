@@ -3,6 +3,8 @@ mod render;
 mod sort;
 mod style;
 
+use std::time::Instant;
+
 use self::{
     navigate::navigate,
     render::{header, row, scrollbar},
@@ -21,12 +23,10 @@ use ratatui::{
     backend::Backend,
     layout::Rect,
     prelude::{Constraint, Direction, Layout},
-    style::Stylize,
-    symbols::scrollbar::VERTICAL,
-    widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState},
+    widgets::{Block, ScrollbarState, Table, TableState},
     Frame,
 };
-
+const DOUBLE_CLICK_MS: u128 = 500;
 const NAME_MIN_LEN: u16 = 39;
 const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
@@ -48,6 +48,8 @@ pub(super) struct TableView {
     table_visual_rows: Vec<usize>,
     table_rect: Rect,
     table_state: TableState,
+
+    double_click_start: Option<Instant>,
 }
 
 impl TableView {
@@ -74,8 +76,23 @@ impl TableView {
         }
 
         let i = self.table_visual_rows[y as usize];
+        let previously_selected = self.table_state.selected();
+        let previous_double_click_start = self.double_click_start;
         eprintln!("Table.handle_click_table() y:{y} i:{i}");
+
         self.table_state.select(Some(i));
+        self.double_click_start = Some(Instant::now());
+        if let Some(selected_index) = previously_selected {
+            if i == selected_index {
+                // Maybe double-clicked
+                if let Some(start) = previous_double_click_start {
+                    if start.elapsed().as_millis() < DOUBLE_CLICK_MS {
+                        eprintln!("Double clicked on {i}");
+                        return self.open_selected();
+                    }
+                }
+            }
+        }
         Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
@@ -89,6 +106,8 @@ impl TableView {
             .selected()
             .map_or(0, |i| navigate(len, i, delta));
         self.table_state.select(Some(i));
+
+        self.double_click_start = None;
         Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
@@ -171,6 +190,7 @@ impl TableView {
 
     fn unselect(&mut self) -> CommandResult {
         self.table_state.select(None);
+        self.double_click_start = None;
         Command::SetSelected(None).into()
     }
 }
@@ -181,6 +201,7 @@ impl CommandHandler for TableView {
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
             }
+            // self.handle_key() and PromptView may emit SetFilter()
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
             _ => CommandResult::NotHandled,
         }
@@ -189,7 +210,7 @@ impl CommandHandler for TableView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.set_filter("".into()).into()
+                Command::SetFilter("".into()).into()
             }
             (_, _) => match code {
                 KeyCode::Delete => self.delete(),
@@ -278,7 +299,7 @@ impl<B: Backend> View<B> for TableView {
             .widths(&column_constraints);
         frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
 
-        let content_length = self.table_visual_rows.len() as u16;
+        let content_length = self.directory_items.len() as u16;
         if content_length > self.scrollbar_rect.height {
             self.scrollbar_state = self.scrollbar_state.content_length(content_length);
             self.scrollbar_state = self
