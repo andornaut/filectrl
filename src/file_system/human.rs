@@ -138,6 +138,10 @@ impl HumanPath {
     pub fn is_symlink(&self) -> bool {
         unix_mode::is_symlink(self.mode)
     }
+
+    pub fn is_symlink_broken(&self) -> bool {
+        self.is_symlink() && !Path::new(&self.path).exists()
+    }
 }
 
 impl fmt::Debug for HumanPath {

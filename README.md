@@ -13,7 +13,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 Run `filectrl --help` to view the available command line arguments and options:
 
-```
+```text
 Usage: filectrl [<directory>] [-c <config>] [--write-config]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple
@@ -38,10 +38,11 @@ q | Quit
 j / k | Move selection down / Up
 Backspace, Left, b, h | Navigate to the parent directory
 Enter, Right, f, l | Open the selected file or navigate to the selected directory
-t | Open a terminal at the current directory
-Delete | Delete selected
-r, F2 | Rename selected
-Space | Unselect
+CTRL+f, PgDn | Move selection down one page
+CTRL+b, PgUp | Move selection up one page
+Delete | Delete the selected file or directory
+r, F2 | Rename the selected file or directory
+Space | Deselect a selection if applicable
 CTRL+r, F5 | Refresh
 e | Clear error messages
 n | Sort by name (toggle direction if already sorted)
@@ -70,23 +71,12 @@ The configuration is drawn from the first of the following:
 
 Run `filectrl --write-config` to write the [default configuration](./src/app/default_config.rs) to `~/.config/filectrl/config.toml`.
 
-### Theming
-
-All colors can be changed by editing the configuration file:
-
-```
-filectrl --write-config
-vim ~/.config/filectrl/config.toml
-```
-
-You can see all of the available theme variables in the [default configuration](./src/app/default_config.rs).
-
-### Default applications
+### Opening in other applications
 
 * [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
 * [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
-Key | Description
+Keyboard key | Description
 --- | ---
 f | Open the selected file using the default application configured in your environment
 o | Open the selected file using the program configured in `~/.config/filectrl/config.toml`
@@ -98,6 +88,17 @@ open_current_directory_template = "alacritty --working-directory %s"
 # %s will be replaced by the selected file or directory path:
 open_selected_file_template = "pcmanfm %s"
 ```
+
+### Theming
+
+All colors can be changed by editing the configuration file:
+
+```bash
+filectrl --write-config
+vim ~/.config/filectrl/config.toml
+```
+
+You can see all of the available theme variables in the [default configuration](./src/app/default_config.rs).
 
 ### Desktop entry
 

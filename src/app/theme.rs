@@ -101,6 +101,10 @@ pub struct Theme {
     table_name_symlink_bg: Color,
     #[serde(with = "color_to_tui")]
     table_name_symlink_fg: Color,
+    #[serde(with = "color_to_tui")]
+    table_name_symlink_broken_bg: Color,
+    #[serde(with = "color_to_tui")]
+    table_name_symlink_broken_fg: Color,
 
     #[serde(with = "color_to_tui")]
     table_scrollbar_thumb_bg: Color,
@@ -249,6 +253,12 @@ impl Theme {
         Style::default()
             .bg(self.table_name_symlink_bg)
             .fg(self.table_name_symlink_fg)
+    }
+
+    pub fn table_name_symlink_broken(&self) -> Style {
+        Style::default()
+            .bg(self.table_name_symlink_broken_bg)
+            .fg(self.table_name_symlink_broken_fg)
     }
 
     pub fn table_scrollbar_thumb(&self) -> Style {

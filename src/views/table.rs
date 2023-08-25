@@ -119,6 +119,13 @@ impl TableView {
         self.navigate(-1)
     }
 
+    fn next_page(&mut self) -> CommandResult {
+        todo!("TODO: next_page");
+    }
+
+    fn previous_page(&mut self) -> CommandResult {
+        todo!("TODO: previous_page");
+    }
     fn open_filter_prompt(&self) -> CommandResult {
         Command::OpenPrompt(PromptKind::Filter).into()
     }
@@ -216,6 +223,12 @@ impl CommandHandler for TableView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) | (KeyCode::PageDown, _) => {
+                self.next_page()
+            }
+            (KeyCode::Char('b'), KeyModifiers::CONTROL) | (KeyCode::PageUp, _) => {
+                self.previous_page()
+            }
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 Command::SetFilter("".into()).into()
             }
