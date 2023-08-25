@@ -4,9 +4,8 @@ use super::{
 };
 use crate::{
     app::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
+    command::{handler::CommandHandler, mode::InputMode},
 };
-use crossterm::event::MouseEvent;
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
