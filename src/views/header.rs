@@ -45,6 +45,11 @@ impl CommandHandler for HeaderView {
             _ => CommandResult::NotHandled,
         }
     }
+
+    fn should_receive_mouse(&self, column: u16, row: u16) -> bool {
+        let point = Rect::new(column, row, 1, 1);
+        self.last_rendered_rect.intersects(point)
+    }
 }
 
 impl<B: Backend> View<B> for HeaderView {

@@ -5,7 +5,7 @@ pub mod result;
 use self::result::CommandResult;
 use crate::file_system::human::HumanPath;
 use anyhow::{anyhow, Error};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 #[derive(Clone, Debug, Default)]
 pub enum PromptKind {
@@ -40,7 +40,15 @@ impl Command {
                 } = key;
                 Some(Self::Key(code, modifiers))
             }
-            Event::Mouse(mouse_event) => Some(Self::Mouse(mouse_event)),
+            Event::Mouse(mouse_event) => {
+                if mouse_event.kind == MouseEventKind::Moved
+                    || matches!(mouse_event.kind, MouseEventKind::Up(_))
+                {
+                    None
+                } else {
+                    Some(Self::Mouse(mouse_event))
+                }
+            }
             Event::Resize(w, h) => Some(Self::Resize(w, h)),
             _ => None,
         }

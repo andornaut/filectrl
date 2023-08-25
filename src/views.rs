@@ -12,8 +12,7 @@ use crate::{
 };
 use ratatui::{
     backend::Backend,
-    layout::Rect,
-    prelude::Margin,
+    layout::{Margin, Rect},
     style::Style,
     widgets::{Block, Borders},
     Frame,

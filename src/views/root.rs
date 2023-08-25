@@ -34,16 +34,6 @@ impl CommandHandler for RootView {
         let table: &mut dyn CommandHandler = &mut self.table;
         vec![errors, header, help, prompt, status, table]
     }
-
-    fn handle_mouse(&mut self, _mouse: &MouseEvent) -> CommandResult {
-        // TODO
-        CommandResult::none()
-    }
-
-    fn should_receive_mouse(&self, _column: u16, _row: u16) -> bool {
-        // TODO
-        true
-    }
 }
 
 impl<B: Backend> View<B> for RootView {

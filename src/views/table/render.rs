@@ -1,7 +1,8 @@
 use ratatui::{
-    prelude::Constraint,
+    prelude::Alignment,
+    symbols::scrollbar::VERTICAL,
     text::{Line, Span, Text},
-    widgets::{Cell, Row},
+    widgets::{Cell, Row, Scrollbar, ScrollbarOrientation},
 };
 
 use crate::{app::theme::Theme, file_system::human::HumanPath, views::split_utf8_with_reservation};
@@ -11,32 +12,18 @@ use super::{
     style::{header_style, name_style},
 };
 
-const NAME_MIN_LEN: u16 = 39;
-const MODE_LEN: u16 = 10;
-const MODIFIED_LEN: u16 = 12;
-const SIZE_LEN: u16 = 7;
 const LINE_SEPARATOR: &str = "\n…";
 
-pub(super) fn constraints(width: u16) -> (Vec<Constraint>, u16) {
-    let mut constraints = Vec::new();
-    let mut name_column_width = width;
-    let mut len = NAME_MIN_LEN;
-    if width > len {
-        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
-        constraints.push(Constraint::Length(MODIFIED_LEN));
-    }
-    len += MODIFIED_LEN + 1 + SIZE_LEN + 1;
-    if width > len {
-        name_column_width -= SIZE_LEN + 1;
-        constraints.push(Constraint::Length(SIZE_LEN));
-    }
-    len += MODE_LEN + 1;
-    if width > len {
-        name_column_width -= MODE_LEN + 1;
-        constraints.push(Constraint::Length(MODE_LEN));
-    }
-    constraints.insert(0, Constraint::Length(name_column_width));
-    (constraints, name_column_width)
+pub(super) fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
+    Scrollbar::default()
+        .begin_style(theme.table_scrollbar_begin())
+        .begin_symbol(None) // TODO remove
+        .end_style(theme.table_scrollbar_end())
+        .end_symbol(None) // TODO remove
+        .thumb_style(theme.table_scrollbar_thumb())
+        .track_style(theme.table_scrollbar_track())
+        .orientation(ScrollbarOrientation::VerticalRight)
+        .symbols(VERTICAL)
 }
 
 pub(super) fn header_label(
@@ -73,23 +60,25 @@ pub(super) fn header<'a>(
             ))
         })
         .collect();
-    cells.push(Cell::from("Mode").style(theme.table_header())); // Mode cannot be sorted/active
+    cells.push(Cell::from("Mode").style(theme.table_header())); // Mode cannot be sorted
     Row::new(cells).style(theme.table_header())
 }
 
-pub(super) fn row<'a>(item: &'a HumanPath, name_column_width: u16, theme: &Theme) -> Row<'a> {
-    let lines = split_name(&item, name_column_width, theme);
-    let len = lines.len();
-
-    // 7 must match SIZE_LEN
-    let size = format!("{: >7}", item.size());
-    Row::new(vec![
-        Cell::from(Text::from(lines)),
+pub(super) fn row<'a>(
+    item: &'a HumanPath,
+    name_column_width: u16,
+    theme: &Theme,
+) -> (Row<'a>, u16) {
+    let name = split_name(&item, name_column_width, theme);
+    let size = Line::from(item.size()).alignment(Alignment::Right);
+    let height = name.len() as u16;
+    let row = Row::new(vec![
+        Cell::from(Text::from(name)),
         Cell::from(item.modified()),
         Cell::from(size),
         Cell::from(item.mode()),
-    ])
-    .height(len as u16)
+    ]);
+    (row.height(height), height)
 }
 
 fn split_name<'a>(path: &HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {

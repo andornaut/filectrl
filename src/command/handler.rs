@@ -15,7 +15,7 @@ pub trait CommandHandler {
         CommandResult::NotHandled
     }
 
-    fn handle_mouse(&mut self, _mouse: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, _event: &MouseEvent) -> CommandResult {
         // Only invoked if self.should_receive_mouse() is true
         CommandResult::NotHandled
     }

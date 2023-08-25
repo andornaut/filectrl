@@ -1,12 +1,13 @@
 use super::converters::{path_to_basename, path_to_string};
 use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
+use nix::unistd::{Gid, Group, Uid, User};
 use std::{
     cmp::{self},
     env,
     fmt::{self, Display},
     io,
-    os::unix::prelude::PermissionsExt,
+    os::unix::prelude::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf, MAIN_SEPARATOR},
     time::SystemTime,
 };
@@ -21,6 +22,8 @@ pub struct HumanPath {
     pub path: String,
     pub size: u64,
 
+    gid: u32,
+    uid: u32,
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
@@ -38,12 +41,16 @@ impl HumanPath {
         breadcrumbs
     }
 
-    pub fn accessed(&self) -> String {
+    pub fn accessed(&self) -> Option<String> {
         maybe_time_to_string(&self.accessed)
     }
 
-    pub fn created(&self) -> String {
+    pub fn created(&self) -> Option<String> {
         maybe_time_to_string(&self.created)
+    }
+
+    pub fn mode(&self) -> String {
+        unix_mode::to_string(self.mode)
     }
 
     pub fn modified(&self) -> String {
@@ -63,8 +70,18 @@ impl HumanPath {
         self.basename.trim_start_matches('.').to_lowercase()
     }
 
-    pub fn mode(&self) -> String {
-        unix_mode::to_string(self.mode)
+    pub fn group(&self) -> Option<String> {
+        Group::from_gid(Gid::from_raw(self.gid))
+            .ok()
+            .flatten()
+            .map(|group| group.name)
+    }
+
+    pub fn owner(&self) -> Option<String> {
+        User::from_uid(Uid::from_raw(self.uid))
+            .ok()
+            .flatten()
+            .map(|user| user.name)
     }
 
     pub fn parent(&self) -> Option<HumanPath> {
@@ -187,6 +204,8 @@ impl TryFrom<&Path> for HumanPath {
             modified: metadata.modified()?.into(),
             path: path_to_string(&path)?,
             size: metadata.len(),
+            gid: metadata.gid(),
+            uid: metadata.uid(),
         })
     }
 }
@@ -235,10 +254,8 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
     datetime
 }
 
-fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> String {
-    time.map_or("<unknown>".into(), |time| {
-        humanize_datetime(time, Local::now())
-    })
+fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> Option<String> {
+    time.map(|time| humanize_datetime(time, Local::now()))
 }
 
 #[cfg(test)]
