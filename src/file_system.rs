@@ -1,10 +1,9 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use self::human::HumanPath;
+use self::{human::HumanPath, operations::open_in};
 use crate::{
     app::config::Config,
     command::{handler::CommandHandler, result::CommandResult, Command},
-    file_system::operations::run_detached,
 };
 use anyhow::{anyhow, Result};
 use std::{fs, path::PathBuf};
@@ -15,14 +14,16 @@ mod operations;
 
 pub struct FileSystem {
     directory: HumanPath,
-    terminal_template: String,
+    open_current_directory_template: Option<String>,
+    open_selected_file_template: Option<String>,
 }
 
 impl FileSystem {
     pub fn new(config: &Config) -> Self {
         Self {
             directory: HumanPath::default(),
-            terminal_template: config.terminal_template.clone(),
+            open_current_directory_template: config.open_current_directory_template.clone(),
+            open_selected_file_template: config.open_selected_file_template.clone(),
         }
     }
 
@@ -80,26 +81,17 @@ impl FileSystem {
         }
     }
 
-    fn open_terminal(&mut self) -> CommandResult {
-        let cmd = self
-            .terminal_template
-            .trim()
-            .replace("%s", &self.directory.path);
-        let mut it = cmd.split_whitespace();
-        match it.next() {
-            Some(program) => {
-                let args: Vec<_> = it.collect();
-                match run_detached(program, args) {
-                    Err(error) => anyhow!(
-                        "Failed to open the terminal (check your configuration: \"terminal_template={}\"): {error}",
-                        self.terminal_template
-                    )
-                    .into(),
-                    Ok(_) => CommandResult::none(),
-                }
-            },
-            None => anyhow!("Cannot open the terminal, because the \"terminal_template\" configuration is empty").into()
-        }
+    fn open_current_directory(&self) -> CommandResult {
+        open_in(
+            self.open_current_directory_template.clone(),
+            &self.directory.path,
+        )
+        .map_or_else(|error| error.into(), |_| CommandResult::none())
+    }
+
+    fn open_custom(&self, path: &HumanPath) -> CommandResult {
+        open_in(self.open_selected_file_template.clone(), &path.path)
+            .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
@@ -119,6 +111,7 @@ impl CommandHandler for FileSystem {
         match command {
             Command::DeletePath(path) => self.delete(path),
             Command::Open(path) => self.open(path),
+            Command::OpenCustom(path) => self.open_custom(path),
             Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
             _ => CommandResult::NotHandled,
         }
@@ -126,13 +119,14 @@ impl CommandHandler for FileSystem {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Backspace, _)
-            | (KeyCode::Left, _)
-            | (KeyCode::Char('b'), _)
-            | (KeyCode::Char('h'), _) => self.back(),
-            (KeyCode::Char('t'), _) => self.open_terminal(),
             (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => self.refresh(),
-            _ => CommandResult::NotHandled,
+            (code, _) => match code {
+                KeyCode::Backspace | KeyCode::Left | KeyCode::Char('b') | KeyCode::Char('h') => {
+                    self.back()
+                }
+                KeyCode::Char('t') => self.open_current_directory(),
+                _ => CommandResult::NotHandled,
+            },
         }
     }
 }

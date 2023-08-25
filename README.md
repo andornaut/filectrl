@@ -86,13 +86,17 @@ You can see all of the available theme variables in the [default configuration](
 * [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
 * [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
-You can select a file, then press "f" to open it using the default application configured in your environment.
-
-You can press "t" to open a terminal at the current directory. Edit `~/.config/filectrl/config.toml` to configure the command to use to run the terminal.
+Key | Description
+--- | ---
+f | Open the selected file using the default application configured in your environment
+o | Open the selected file using the program configured in `~/.config/filectrl/config.toml`
+t | Open the current directory in the program configured in `~/.config/filectrl/config.toml`
 
 ```toml
-# %s will be replaced by the directory path:
-terminal_template = "alacritty --working-directory %s"
+# %s will be replaced by the current directory path:
+open_current_directory_template = "alacritty --working-directory %s"
+# %s will be replaced by the selected file or directory path:
+open_selected_file_template = "pcmanfm %s"
 ```
 
 ### Desktop entry

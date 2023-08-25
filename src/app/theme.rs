@@ -103,14 +103,6 @@ pub struct Theme {
     table_name_symlink_fg: Color,
 
     #[serde(with = "color_to_tui")]
-    table_scrollbar_begin_bg: Color,
-    #[serde(with = "color_to_tui")]
-    table_scrollbar_begin_fg: Color,
-    #[serde(with = "color_to_tui")]
-    table_scrollbar_end_bg: Color,
-    #[serde(with = "color_to_tui")]
-    table_scrollbar_end_fg: Color,
-    #[serde(with = "color_to_tui")]
     table_scrollbar_thumb_bg: Color,
     #[serde(with = "color_to_tui")]
     table_scrollbar_thumb_fg: Color,
@@ -257,18 +249,6 @@ impl Theme {
         Style::default()
             .bg(self.table_name_symlink_bg)
             .fg(self.table_name_symlink_fg)
-    }
-
-    pub fn table_scrollbar_begin(&self) -> Style {
-        Style::default()
-            .bg(self.table_scrollbar_begin_bg)
-            .fg(self.table_scrollbar_begin_fg)
-    }
-
-    pub fn table_scrollbar_end(&self) -> Style {
-        Style::default()
-            .bg(self.table_scrollbar_end_bg)
-            .fg(self.table_scrollbar_end_fg)
     }
 
     pub fn table_scrollbar_thumb(&self) -> Style {

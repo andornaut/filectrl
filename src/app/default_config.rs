@@ -1,6 +1,8 @@
 pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
-# %s will be replaced by the directory path:
-terminal_template = "alacritty --working-directory %s"
+# %s will be replaced by the current directory path:
+open_current_directory_template = "alacritty --working-directory %s"
+# %s will be replaced by the selected file or directory path:
+open_selected_file_template = "pcmanfm %s"
 
 [theme]
 error_bg = "#373424"
@@ -56,10 +58,6 @@ table_name_sticky_fg = "#C5C8C6"
 table_name_symlink_bg = "#423F2E"
 table_name_symlink_fg = "#B294BB"
 
-table_scrollbar_begin_bg = "#777755"
-table_scrollbar_begin_fg = "#CCC8B0"
-table_scrollbar_end_bg = "#777755"
-table_scrollbar_end_fg = "#CCC8B0"
 table_scrollbar_thumb_bg = "#373424"
 table_scrollbar_thumb_fg = "#CCC8B0"
 table_scrollbar_track_bg = "#423F2E"
