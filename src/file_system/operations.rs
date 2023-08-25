@@ -29,6 +29,34 @@ pub(super) fn delete(path: &HumanPath) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
+    if let Some(template) = template {
+        if !template.contains("%s") {
+            // TODO: Early up this validation
+            return Err(anyhow!("Invalid program template: {template}"));
+        }
+        let command = template.replace("%s", path);
+
+        let mut it: std::str::SplitWhitespace<'_> = command.split_whitespace();
+
+        it.next().map_or_else(
+            || Ok(()),
+            |program| {
+                let args: Vec<_> = it.collect();
+                if args.len() == 0 {
+                    return Err(anyhow!("Invalid program template: {template}"));
+                }
+                run_detached(program, args).map_or_else(
+                    |error| Err(anyhow!("Failed to open program \"{command}\": {error}")),
+                    |_| Ok(()),
+                )
+            },
+        )
+    } else {
+        Ok(())
+    }
+}
+
 pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
     let old_path = Path::new(&old_path.path);
     let new_path = join(old_path, new_basename);
@@ -36,7 +64,7 @@ pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn run_detached<I, S>(program: &str, args: I) -> Result<()>
+fn run_detached<I, S>(program: &str, args: I) -> Result<()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

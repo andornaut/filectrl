@@ -8,7 +8,8 @@ const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
-    pub terminal_template: String,
+    pub open_current_directory_template: Option<String>,
+    pub open_selected_file_template: Option<String>,
     pub theme: Theme,
 }
 

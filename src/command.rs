@@ -22,6 +22,7 @@ pub enum Command {
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
     Open(HumanPath),
+    OpenCustom(HumanPath),
     OpenPrompt(PromptKind),
     Quit,
     RenamePath(HumanPath, String),

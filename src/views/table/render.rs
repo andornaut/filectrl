@@ -16,10 +16,8 @@ const LINE_SEPARATOR: &str = "\n…";
 
 pub(super) fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
     Scrollbar::default()
-        .begin_style(theme.table_scrollbar_begin())
-        .begin_symbol(None) // TODO remove
-        .end_style(theme.table_scrollbar_end())
-        .end_symbol(None) // TODO remove
+        .begin_symbol(None)
+        .end_symbol(None)
         .thumb_style(theme.table_scrollbar_thumb())
         .track_style(theme.table_scrollbar_track())
         .orientation(ScrollbarOrientation::VerticalRight)

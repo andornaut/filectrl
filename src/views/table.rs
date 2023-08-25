@@ -134,6 +134,13 @@ impl TableView {
         }
     }
 
+    fn open_selected_in_custom_program(&mut self) -> CommandResult {
+        match self.selected() {
+            Some(path) => Command::OpenCustom(path.clone()).into(),
+            None => CommandResult::none(),
+        }
+    }
+
     fn selected(&self) -> Option<&HumanPath> {
         self.table_state
             .selected()
@@ -217,6 +224,7 @@ impl CommandHandler for TableView {
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
                     self.open_selected()
                 }
+                KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
