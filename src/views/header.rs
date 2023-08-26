@@ -81,9 +81,9 @@ impl CommandHandler for HeaderView {
             _ => CommandResult::none(),
         }
     }
-    fn should_receive_mouse(&self, column: u16, row: u16) -> bool {
-        let point = Rect::new(column, row, 1, 1);
-        self.rect.intersects(point)
+
+    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
+        self.rect.intersects(Rect::new(x, y, 1, 1))
     }
 }
 
@@ -111,7 +111,7 @@ impl<B: Backend> View<B> for HeaderView {
 }
 
 #[derive(Debug)]
-struct Position(u16, usize); // end x, index
+struct Position(u16, usize); // x_end_position, breadcrumbs_index
 
 impl Position {
     pub(super) fn intersects(&self, x: u16) -> bool {
@@ -122,6 +122,7 @@ impl Position {
         self.1
     }
 }
+
 fn spans<'a>(
     breadcrumbs: &[String],
     width: u16,
@@ -135,7 +136,6 @@ fn spans<'a>(
     let mut positions: Vec<Vec<Position>> = vec![Vec::new()];
 
     while let Some((i, name)) = it.next() {
-        let name = format!("{}{MAIN_SEPARATOR}", name);
         let is_last = it.peek().is_none();
         let style = if is_last {
             active_style
@@ -143,13 +143,14 @@ fn spans<'a>(
             inactive_style
         };
 
+        let name = format!("{}{MAIN_SEPARATOR}", name);
         let name_len = len_utf8(&name);
         row_len += name_len;
         if row_len > width {
             // Move to the next row
             container.push(Vec::new());
-            row_len = name_len;
             positions.push(Vec::new());
+            row_len = name_len;
         }
 
         let container_row = &mut container.last_mut().unwrap();

@@ -62,8 +62,7 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn should_receive_mouse(&self, column: u16, row: u16) -> bool {
-        let point = Rect::new(column, row, 1, 1);
-        self.table_rect.intersects(point)
+    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
+        self.table_rect.intersects(Rect::new(x, y, 1, 1))
     }
 }

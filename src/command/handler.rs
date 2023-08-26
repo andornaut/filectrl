@@ -24,7 +24,7 @@ pub trait CommandHandler {
         matches!(mode, InputMode::Normal)
     }
 
-    fn should_receive_mouse(&self, _column: u16, _row: u16) -> bool {
+    fn should_receive_mouse(&self, _x: u16, _y: u16) -> bool {
         false
     }
 }
