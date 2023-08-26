@@ -44,10 +44,10 @@ Delete | Delete the selected file or directory
 r, F2 | Rename the selected file or directory
 Space | Deselect a selection if applicable
 CTRL+r, F5 | Refresh
-e | Clear error messages
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
+e | Clear error messages
 ? | Toggle help
 
 ***Filtered mode***
@@ -79,8 +79,9 @@ Run `filectrl --write-config` to write the [default configuration](./src/app/def
 Keyboard key | Description
 --- | ---
 f | Open the selected file using the default application configured in your environment
-o | Open the selected file using the program configured in `~/.config/filectrl/config.toml`
-t | Open the current directory in the program configured in `~/.config/filectrl/config.toml`
+o | Open the selected file using the program configured by: `open_selected_file_template`
+t | Open the current directory in the program configured by: `open_current_directory_template`
+w | Open a new `filectrl` window in the terminal configured by: `open_new_window_template`
 
 ```toml
 # %s will be replaced by the current directory path:
@@ -102,7 +103,7 @@ You can see all of the available theme variables in the [default configuration](
 
 ### Desktop entry
 
-* ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html>)
+* ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html)
 
 You can make `filectrl` the default application for opening directories. Start by copying the [`filectrl.desktop` file](./filectrl.desktop) to `~/.local/share/applications/`:
 
