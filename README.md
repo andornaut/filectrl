@@ -38,8 +38,8 @@ q | Quit
 j / k | Move selection down / Up
 Backspace, Left, b, h | Navigate to the parent directory
 Enter, Right, f, l | Open the selected file or navigate to the selected directory
-CTRL+f, PgDn | Move selection down one page
-CTRL+b, PgUp | Move selection up one page
+CTRL+f, PgDn | Move selection and scroll down one page
+CTRL+b, PgUp | Move selection and scroll up one page
 Delete | Delete the selected file or directory
 r, F2 | Rename the selected file or directory
 Space | Deselect a selection if applicable
