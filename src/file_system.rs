@@ -15,6 +15,7 @@ mod operations;
 pub struct FileSystem {
     directory: HumanPath,
     open_current_directory_template: Option<String>,
+    open_new_window_template: Option<String>,
     open_selected_file_template: Option<String>,
 }
 
@@ -23,6 +24,7 @@ impl FileSystem {
         Self {
             directory: HumanPath::default(),
             open_current_directory_template: config.open_current_directory_template.clone(),
+            open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
         }
     }
@@ -94,6 +96,11 @@ impl FileSystem {
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
+    fn open_new_window(&self) -> CommandResult {
+        open_in(self.open_new_window_template.clone(), &self.directory.path)
+            .map_or_else(|error| error.into(), |_| CommandResult::none())
+    }
+
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
         match operations::rename(old_path, new_basename) {
             Err(error) => anyhow!("Cannot rename {old_path} to {new_basename}: {error}").into(),
@@ -124,6 +131,7 @@ impl CommandHandler for FileSystem {
                 KeyCode::Backspace | KeyCode::Left | KeyCode::Char('b') | KeyCode::Char('h') => {
                     self.back()
                 }
+                KeyCode::Char('w') => self.open_new_window(),
                 KeyCode::Char('t') => self.open_current_directory(),
                 _ => CommandResult::NotHandled,
             },
