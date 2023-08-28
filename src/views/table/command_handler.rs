@@ -17,15 +17,16 @@ impl CommandHandler for TableView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('f'), KeyModifiers::CONTROL) | (KeyCode::PageDown, _) => {
-                self.next_page()
-            }
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy(),
+            (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut(),
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste(),
             (KeyCode::Char('b'), KeyModifiers::CONTROL) | (KeyCode::PageUp, _) => {
                 self.previous_page()
             }
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                Command::SetFilter("".into()).into()
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) | (KeyCode::PageDown, _) => {
+                self.next_page()
             }
+            (KeyCode::Esc, _) => Command::SetFilter("".into()).into(),
             (_, _) => match code {
                 KeyCode::Delete => self.delete(),
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {

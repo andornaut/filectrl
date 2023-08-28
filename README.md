@@ -7,7 +7,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Installation
 
 1. `git clone` and `cd` into this repository
-1. Run ```cargo build --release && cp target/release/filectrl ~/.local/bin/```
+1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
 
 ## Usage
 

@@ -63,6 +63,7 @@ impl<B: Backend> View<B> for TableView {
         let table = Table::new(rows)
             .header(header)
             .highlight_style(theme.table_selected())
+            .style(theme.table_body())
             .widths(&column_constraints);
         frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
 

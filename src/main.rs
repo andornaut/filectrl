@@ -13,7 +13,7 @@ struct Args {
 
     /// write the default config to ~/.config/filectrl/config.toml, then exit
     #[argh(switch)]
-    write_config: Option<bool>,
+    write_default_config: Option<bool>,
 
     /// path to a directory to navigate to
     #[argh(positional)]
@@ -23,7 +23,7 @@ struct Args {
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
 
-    if args.write_config.unwrap_or_default() {
+    if args.write_default_config.unwrap_or_default() {
         return Config::write_default_config();
     }
 

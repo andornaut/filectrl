@@ -57,10 +57,24 @@ pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
     }
 }
 
+pub(super) fn copy(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
+    let new_path = Path::new(&new_dir.path).join(&old_path.basename);
+    let old_path = Path::new(&old_path.path);
+    fs::copy(old_path, new_path)?;
+    Ok(())
+}
+
+pub(super) fn mv(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
+    let new_path = Path::new(&new_dir.path).join(&old_path.basename);
+    let old_path = Path::new(&old_path.path);
+    fs::rename(old_path, new_path)?;
+    Ok(())
+}
+
 pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
     let old_path = Path::new(&old_path.path);
-    let new_path = join(old_path, new_basename);
-    fs::rename(&old_path, new_path)?;
+    let new_path = join_parent(old_path, new_basename);
+    fs::rename(old_path, new_path)?;
     Ok(())
 }
 
@@ -79,7 +93,7 @@ where
         .map_err(|error| error.into())
 }
 
-fn join(left: &Path, right: &str) -> PathBuf {
+fn join_parent(left: &Path, right: &str) -> PathBuf {
     match left.parent() {
         Some(parent) => parent.join(right),
         None => PathBuf::from(right),
@@ -99,7 +113,7 @@ mod tests {
     #[test_case("/b", "", "/b"; "empty to /b absolute")]
     fn join_is_correct(expected: &str, left: &str, right: &str) {
         let old_path = Path::new(left);
-        let result = join(&old_path, right);
+        let result = join_parent(&old_path, right);
 
         assert_eq!(expected, result.to_string_lossy());
     }
