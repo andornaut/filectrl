@@ -15,7 +15,6 @@ use crate::{
     views::{root::RootView, View},
 };
 use anyhow::{anyhow, Result};
-use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use std::{
     path::PathBuf,
@@ -23,7 +22,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
 const BROADCAST_CYCLES: u8 = 5;
 const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 
@@ -112,27 +110,6 @@ impl App {
         commands
     }
 
-    fn clipboard_copy(&mut self) -> CommandResult {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
-        eprintln!("TODO App.clipboard_copy(): {content}");
-        CommandResult::none()
-    }
-
-    fn clipboard_cut(&mut self) -> CommandResult {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
-        eprintln!("TODO App.clipboard_cut(): {content}");
-        CommandResult::none()
-    }
-
-    fn clipboard_paste(&mut self) -> CommandResult {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().unwrap();
-        eprintln!("TODO App.clipboard_paste(): {content}");
-        CommandResult::none()
-    }
-
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame| {
             let window = frame.size();
@@ -169,12 +146,6 @@ impl CommandHandler for App {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('q'), _) => Command::Quit.into(),
-            (KeyCode::Char('c'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('c'), KeyModifiers::SUPER) => self.clipboard_copy(),
-            (KeyCode::Char('x'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('x'), KeyModifiers::SUPER) => self.clipboard_cut(),
-            (KeyCode::Char('v'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('v'), KeyModifiers::SUPER) => self.clipboard_paste(),
             (_, _) => CommandResult::NotHandled,
         }
     }

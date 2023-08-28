@@ -1,3 +1,4 @@
+mod clipboard;
 mod command_handler;
 mod navigate;
 mod sort;
@@ -5,6 +6,7 @@ mod style;
 mod view;
 
 use self::{
+    clipboard::Clipboard,
     navigate::navigate,
     sort::{SortColumn, SortDirection},
 };
@@ -43,9 +45,34 @@ pub(super) struct TableView {
     table_state: TableState,
 
     double_click_start: Option<Instant>,
+
+    clipboard: Clipboard,
 }
 
 impl TableView {
+    fn copy(&mut self) -> CommandResult {
+        if let Some(path) = self.selected() {
+            let path = &path.path.clone();
+            self.clipboard.copy(&path);
+        }
+        CommandResult::none()
+    }
+
+    fn cut(&mut self) -> CommandResult {
+        if let Some(path) = self.selected() {
+            let path = &path.path.clone();
+            self.clipboard.cut(&path);
+        }
+        CommandResult::none()
+    }
+
+    fn paste(&mut self) -> CommandResult {
+        match self.clipboard.maybe_command(self.directory.clone()) {
+            Some(command) => command.into(),
+            None => CommandResult::none(),
+        }
+    }
+
     fn delete(&self) -> CommandResult {
         match self.selected() {
             Some(path) => Command::DeletePath(path.clone()).into(),
@@ -71,7 +98,6 @@ impl TableView {
         let i = self.table_visual_rows[y as usize];
         let previously_selected = self.table_state.selected();
         let previous_double_click_start = self.double_click_start;
-        eprintln!("Table.handle_click_table() y:{y} i:{i}");
 
         self.table_state.select(Some(i));
         self.double_click_start = Some(Instant::now());

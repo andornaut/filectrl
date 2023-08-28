@@ -182,6 +182,10 @@ impl Theme {
             .fg(self.status_selected_label_fg)
     }
 
+    pub fn table_body(&self) -> Style {
+        self.table_name_file()
+    }
+
     pub fn table_header(&self) -> Style {
         Style::default()
             .bg(self.table_header_bg)

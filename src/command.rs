@@ -18,9 +18,11 @@ pub enum PromptKind {
 pub enum Command {
     AddError(String),
     ClosePrompt,
+    Copy(HumanPath, HumanPath),
     DeletePath(HumanPath),
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
+    Move(HumanPath, HumanPath),
     Open(HumanPath),
     OpenCustom(HumanPath),
     OpenPrompt(PromptKind),

@@ -1,14 +1,13 @@
-use crossterm::event::{KeyCode, KeyModifiers};
-
 use self::{human::HumanPath, operations::open_in};
 use crate::{
     app::config::Config,
-    command::{handler::CommandHandler, result::CommandResult, Command},
+    command::{result::CommandResult, Command},
 };
 use anyhow::{anyhow, Result};
 use std::{fs, path::PathBuf};
 
 mod converters;
+mod handler;
 pub mod human;
 mod operations;
 
@@ -101,6 +100,20 @@ impl FileSystem {
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
+    fn copy(&mut self, old_path: &HumanPath, new_path: &HumanPath) -> CommandResult {
+        match operations::copy(old_path, new_path) {
+            Err(error) => anyhow!("Cannot copy {old_path} to {new_path}: {error}").into(),
+            Ok(_) => self.refresh(),
+        }
+    }
+
+    fn mv(&mut self, old_path: &HumanPath, new_path: &HumanPath) -> CommandResult {
+        match operations::mv(old_path, new_path) {
+            Err(error) => anyhow!("Cannot move {old_path} to {new_path}: {error}").into(),
+            Ok(_) => self.refresh(),
+        }
+    }
+
     fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
         match operations::rename(old_path, new_basename) {
             Err(error) => anyhow!("Cannot rename {old_path} to {new_basename}: {error}").into(),
@@ -110,31 +123,5 @@ impl FileSystem {
 
     fn refresh(&mut self) -> CommandResult {
         self.cd(self.directory.clone())
-    }
-}
-
-impl CommandHandler for FileSystem {
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
-            Command::DeletePath(path) => self.delete(path),
-            Command::Open(path) => self.open(path),
-            Command::OpenCustom(path) => self.open_custom(path),
-            Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
-            _ => CommandResult::NotHandled,
-        }
-    }
-
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => self.refresh(),
-            (code, _) => match code {
-                KeyCode::Backspace | KeyCode::Left | KeyCode::Char('b') | KeyCode::Char('h') => {
-                    self.back()
-                }
-                KeyCode::Char('w') => self.open_new_window(),
-                KeyCode::Char('t') => self.open_current_directory(),
-                _ => CommandResult::NotHandled,
-            },
-        }
     }
 }
