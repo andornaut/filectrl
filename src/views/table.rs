@@ -7,7 +7,7 @@ mod view;
 
 use self::{
     clipboard::Clipboard,
-    navigate::navigate,
+    navigate::navigate_overflowing,
     sort::{SortColumn, SortDirection},
 };
 use crate::{
@@ -19,9 +19,9 @@ use ratatui::{
     prelude::Constraint,
     widgets::{ScrollbarState, TableState},
 };
-use std::time::Instant;
+use std::{cmp::min, time::Instant};
 
-const DOUBLE_CLICK_MS: u128 = 500;
+const DOUBLE_CLICK_MS: u128 = 300;
 const NAME_MIN_LEN: u16 = 39;
 const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
@@ -50,6 +50,7 @@ pub(super) struct TableView {
 }
 
 impl TableView {
+    // Copy / Cut / Paste
     fn copy(&mut self) -> CommandResult {
         if let Some(path) = self.selected() {
             let path = &path.path.clone();
@@ -73,13 +74,7 @@ impl TableView {
         }
     }
 
-    fn delete(&self) -> CommandResult {
-        match self.selected() {
-            Some(path) => Command::DeletePath(path.clone()).into(),
-            None => CommandResult::none(),
-        }
-    }
-
+    // Handle clicks
     fn handle_click_header(&mut self, x: u16) -> CommandResult {
         if let Some(column) = click_column(x, self.name_column_width) {
             self.sort_by(column)
@@ -89,45 +84,47 @@ impl TableView {
     }
 
     fn handle_click_table(&mut self, y: u16) -> CommandResult {
-        let y = y + self.table_state.offset() as u16 - 1; // 1 for header. Cannot overflow because header clicks are handled separately.
-        if y >= self.table_visual_rows.len() as u16 {
+        let first_visual_index = self
+            .table_visual_rows
+            .iter()
+            .position(|&value| value == self.table_state.offset())
+            .unwrap_or_default();
+        let y = first_visual_index + y as usize - 1;
+
+        if y >= self.table_visual_rows.len() {
             // Clicked past the table
             return CommandResult::none();
         }
 
-        let i = self.table_visual_rows[y as usize];
-        let previously_selected = self.table_state.selected();
-        let previous_double_click_start = self.double_click_start;
-
-        self.table_state.select(Some(i));
-        self.double_click_start = Some(Instant::now());
-        if let Some(selected_index) = previously_selected {
-            if i == selected_index {
+        let item_index = self.table_visual_rows[y];
+        if let Some(previously_selected_index) = self.table_state.selected() {
+            if item_index == previously_selected_index {
                 // Maybe double-clicked
-                if let Some(start) = previous_double_click_start {
+                if let Some(start) = self.double_click_start {
                     if start.elapsed().as_millis() < DOUBLE_CLICK_MS {
-                        eprintln!("Double clicked on {i}");
                         return self.open_selected();
                     }
                 }
             }
         }
+
+        self.table_state.select(Some(item_index));
+        self.double_click_start = Some(Instant::now());
         Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
+    // Navigate
     fn navigate(&mut self, delta: i8) -> CommandResult {
         if self.directory_items_sorted.is_empty() {
             return CommandResult::none();
         }
         let len = self.directory_items_sorted.len();
+        // If nothing is selected, then navigate to the first item, i
         let i = self
             .table_state
             .selected()
-            .map_or(0, |i| navigate(len, i, delta));
-        self.table_state.select(Some(i));
-
-        self.double_click_start = None;
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+            .map_or(0, |i| navigate_overflowing(len, i, delta));
+        self.select_index(i)
     }
 
     fn next(&mut self) -> CommandResult {
@@ -138,13 +135,93 @@ impl TableView {
         self.navigate(-1)
     }
 
+    fn first(&mut self) -> CommandResult {
+        self.select_index(0)
+    }
+
+    fn last(&mut self) -> CommandResult {
+        self.select_index(self.directory_items_sorted.len() - 1)
+    }
+
+    fn select_index(&mut self, index: usize) -> CommandResult {
+        self.table_state.select(Some(index));
+        self.double_click_start = None;
+        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+    }
+
+    fn last_index_on_page(&self, offset: usize) -> usize {
+        let window_min = self.window_min(offset);
+        let window_max = self.window_max(window_min);
+        let mut item_index = self.table_visual_rows[window_max];
+
+        // If the last item on this screen spans the next screen, then it won't actually be shown on this screen,
+        // in which case we should display the previous item.
+        if window_max != self.table_visual_rows.len() - 1 // Not applicable if we're already the last item
+            && item_index == self.table_visual_rows[window_max + 1]
+        {
+            item_index -= 1;
+        }
+        item_index
+    }
+
     fn next_page(&mut self) -> CommandResult {
-        todo!("TODO: next_page");
+        // If the last item isn't selected, then select it;
+        //   otherwise, advance such that the last item becomes the first item, and select the new last item.
+        let selected_index = self.table_state.selected().unwrap_or_default();
+        let last_index = self.last_index_on_page(selected_index);
+        if selected_index != last_index {
+            return self.select_index(last_index);
+        }
+        if selected_index == self.directory_items_sorted.len() - 1 {
+            // NOOP if the last item is already selected
+            return CommandResult::none();
+        }
+
+        self.table_state.select(Some(selected_index + 1));
+        self.next_page()
     }
 
     fn previous_page(&mut self) -> CommandResult {
-        todo!("TODO: previous_page");
+        // If the first item isn't selected, then select it;
+        //   otherwise, advance such that the first item becomes the last item, and select the new first item.
+        let selected_index = self.table_state.selected().unwrap_or_default();
+        let first_index = self.table_state.offset();
+        if selected_index != first_index {
+            return self.select_index(first_index);
+        }
+        if selected_index == 0 {
+            // NOOP if the first item is already selected
+            return CommandResult::none();
+        }
+        if selected_index == 1 {
+            return self.select_index(0); // Workaround the +1 below
+        }
+
+        let old_window_min = self.window_min(first_index);
+        let old_item_index = self.table_visual_rows[old_window_min];
+        let rows_per_screen = self.table_rect.height as usize - 1; // -1 for table header
+        let new_visual_index = old_window_min.saturating_sub(rows_per_screen);
+        let mut new_index = self.table_visual_rows[new_visual_index] + 1; // `+ 1` so that the first row becomes the last on the new page
+        let new_window_min = self.window_min(new_index);
+        let new_window_max = self.window_max(new_window_min);
+
+        if new_window_max != self.table_visual_rows.len() - 1 // Not applicable if we're already the last item
+            && self.table_visual_rows[new_window_max] == old_item_index // new_window_max could be the next (+1 item) overlapping element
+            && self.table_visual_rows[new_window_max] == self.table_visual_rows[new_window_max + 1]
+        {
+            new_index = new_index + 1;
+        }
+        return self.select_index(new_index);
     }
+
+    // Delete / Open
+    fn delete(&self) -> CommandResult {
+        match self.selected() {
+            Some(path) => Command::DeletePath(path.clone()).into(),
+            None => CommandResult::none(),
+        }
+    }
+
     fn open_filter_prompt(&self) -> CommandResult {
         Command::OpenPrompt(PromptKind::Filter).into()
     }
@@ -167,12 +244,26 @@ impl TableView {
         }
     }
 
+    // Select / Unselect
     fn selected(&self) -> Option<&HumanPath> {
         self.table_state
             .selected()
             .map(|i| &self.directory_items_sorted[i])
     }
 
+    fn reset_selection(&mut self) -> CommandResult {
+        self.double_click_start = None;
+
+        if self.directory_items_sorted.is_empty() {
+            self.table_state.select(None);
+            return Command::SetSelected(None).into();
+        } else {
+            self.table_state.select(Some(0));
+            return Command::SetSelected(Some(self.directory_items_sorted[0].clone())).into();
+        }
+    }
+
+    // Set directory, filter
     fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
         self.directory = directory;
         self.directory_items = children;
@@ -189,6 +280,7 @@ impl TableView {
         self.sort()
     }
 
+    // Sort
     fn sort(&mut self) -> CommandResult {
         let mut items = self.directory_items.clone();
         match self.sort_column {
@@ -209,7 +301,7 @@ impl TableView {
         }
         self.directory_items_sorted = items;
 
-        self.unselect()
+        self.reset_selection()
     }
 
     fn sort_by(&mut self, column: SortColumn) -> CommandResult {
@@ -221,10 +313,19 @@ impl TableView {
         self.sort()
     }
 
-    fn unselect(&mut self) -> CommandResult {
-        self.table_state.select(None);
-        self.double_click_start = None;
-        Command::SetSelected(None).into()
+    fn window_max(&self, window_min: usize) -> usize {
+        let rows_per_screen = self.table_rect.height - 1;
+        min(
+            self.table_visual_rows.len().saturating_sub(1),
+            window_min + rows_per_screen as usize - 1,
+        )
+    }
+
+    fn window_min(&self, item_offset: usize) -> usize {
+        self.table_visual_rows
+            .iter()
+            .position(|&value| value == item_offset)
+            .unwrap_or_default()
     }
 }
 

@@ -20,14 +20,14 @@ impl CommandHandler for TableView {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy(),
             (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut(),
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste(),
-            (KeyCode::Char('b'), KeyModifiers::CONTROL) | (KeyCode::PageUp, _) => {
-                self.previous_page()
-            }
-            (KeyCode::Char('f'), KeyModifiers::CONTROL) | (KeyCode::PageDown, _) => {
-                self.next_page()
-            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL)
+            | (KeyCode::Char('b'), KeyModifiers::CONTROL)
+            | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL)
+            | (KeyCode::Char('f'), KeyModifiers::CONTROL)
+            | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
             (KeyCode::Esc, _) => Command::SetFilter("".into()).into(),
-            (_, _) => match code {
+            (_, KeyModifiers::NONE) => match code {
                 KeyCode::Delete => self.delete(),
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
                     self.open_selected()
@@ -35,14 +35,17 @@ impl CommandHandler for TableView {
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
+                KeyCode::Char('^') | KeyCode::Home => self.first(),
+                KeyCode::Char('$') | KeyCode::End => self.last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
-                KeyCode::Char(' ') => self.unselect(),
+                KeyCode::Char(' ') => self.reset_selection(),
                 _ => CommandResult::NotHandled,
             },
+            (_, _) => CommandResult::NotHandled,
         }
     }
 

@@ -19,8 +19,10 @@ impl CommandHandler for FileSystem {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), _) => self.refresh(),
-            (code, _) => match code {
+            (KeyCode::Char('r'), KeyModifiers::CONTROL) | (KeyCode::F(5), KeyModifiers::NONE) => {
+                self.refresh()
+            }
+            (code, KeyModifiers::NONE) => match code {
                 KeyCode::Backspace | KeyCode::Left | KeyCode::Char('b') | KeyCode::Char('h') => {
                     self.back()
                 }
@@ -28,6 +30,7 @@ impl CommandHandler for FileSystem {
                 KeyCode::Char('t') => self.open_current_directory(),
                 _ => CommandResult::NotHandled,
             },
+            (_, _) => CommandResult::NotHandled,
         }
     }
 }

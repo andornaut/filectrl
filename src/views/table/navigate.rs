@@ -1,4 +1,4 @@
-pub(super) fn navigate(len: usize, index: usize, delta: i8) -> usize {
+pub(super) fn navigate_overflowing(len: usize, index: usize, delta: i8) -> usize {
     let len = i32::try_from(len).expect("Directory list length fits into an i32");
     let index = i32::try_from(index).unwrap();
     let delta = i32::from(delta);
@@ -26,8 +26,8 @@ mod tests {
     #[test_case(1,  4, 2, 11 ; "add 11 overflow")]
     #[test_case(0,  4, 2, -10 ; "subtract 10 overflow")]
     #[test_case(3,  4, 2, -11 ; "subtract 11 overflow")]
-    fn navigate_is_correct(expected: usize, len: usize, index: usize, delta: i8) {
-        let result = navigate(len, index, delta);
+    fn navigate_overflowing_is_correct(expected: usize, len: usize, index: usize, delta: i8) {
+        let result = navigate_overflowing(len, index, delta);
 
         assert_eq!(expected, result);
     }
