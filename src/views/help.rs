@@ -33,10 +33,10 @@ impl HelpView {
     }
 }
 impl CommandHandler for HelpView {
-    fn handle_key(&mut self, code: &KeyCode, _: &KeyModifiers) -> CommandResult {
-        match *code {
-            KeyCode::Char('?') => self.toggle_show_help(),
-            _ => CommandResult::NotHandled,
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Char('?'), KeyModifiers::NONE) => self.toggle_show_help(),
+            (_, _) => CommandResult::NotHandled,
         }
     }
 }

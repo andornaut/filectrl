@@ -22,6 +22,9 @@ const LINE_SEPARATOR: &str = "\n…";
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+        if rect.height < 2 || rect.width < 8 {
+            return;
+        }
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
@@ -43,9 +46,9 @@ impl<B: Backend> View<B> for TableView {
         self.scrollbar_rect.y += 1;
         self.scrollbar_rect.height -= 1;
 
+        // Render the table
         let (column_constraints, name_column_width) = column_constraints(self.table_rect.width);
         self.name_column_width = name_column_width;
-
         self.table_visual_rows.clear();
         let rows = self
             .directory_items_sorted
@@ -54,11 +57,10 @@ impl<B: Backend> View<B> for TableView {
             .map(|(i, item)| {
                 let (row, height) = row(item, name_column_width, theme);
                 for _ in 0..height {
-                    self.table_visual_rows.push(i)
+                    self.table_visual_rows.push(i);
                 }
                 row
             });
-
         let header = header(theme, &self.sort_column, &self.sort_direction);
         let table = Table::new(rows)
             .header(header)
@@ -67,6 +69,39 @@ impl<B: Backend> View<B> for TableView {
             .widths(&column_constraints);
         frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
 
+        // Adjust row heights to account for overflow
+        let window_min = self.window_min(self.table_state.offset());
+        let window_max = self.window_max(window_min);
+        // Skip the first element, because if it overflows, then the window is empty anyway
+        for item_index in 1..self.directory_items_sorted.len() {
+            let item_min = self
+                .table_visual_rows
+                .iter()
+                .position(|&i| i == item_index)
+                .unwrap();
+            let item_height = self
+                .table_visual_rows
+                .iter()
+                .filter(|&&i| i == item_index)
+                .count();
+            let item_max = item_min + item_height - 1;
+            if item_min < window_min {
+                continue;
+            }
+            if item_min > window_max {
+                break;
+            }
+            if item_min <= window_max && item_max > window_max {
+                let overflow = window_max - item_min + 1;
+                if overflow > 0 {
+                    for _ in 0..overflow {
+                        self.table_visual_rows.insert(item_min - 1, item_index - 1);
+                    }
+                }
+            }
+        }
+
+        // Render the scrollbar
         let content_length = self.directory_items.len() as u16;
         if content_length > self.scrollbar_rect.height {
             self.scrollbar_state = self.scrollbar_state.content_length(content_length);
@@ -140,7 +175,8 @@ fn row<'a>(item: &'a HumanPath, name_column_width: u16, theme: &Theme) -> (Row<'
         Cell::from(size),
         Cell::from(item.mode()),
     ]);
-    (row.height(height), height)
+    let row = row.height(height);
+    (row, height)
 }
 
 fn split_name<'a>(path: &HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {

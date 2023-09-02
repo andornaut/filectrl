@@ -38,11 +38,12 @@ q | Quit
 j / k | Move selection down / Up
 Backspace, Left, b, h | Navigate to the parent directory
 Enter, Right, f, l | Open the selected file or navigate to the selected directory
-CTRL+f, PgDn | Move selection and scroll down one page
-CTRL+b, PgUp | Move selection and scroll up one page
+CTRL+f, CTRL+d PgDn | Move selection and scroll down one page
+CTRL+b, CTRL+u, PgUp | Move selection and scroll up one page
+Home, ^ | Select the first item
+End, $ | Select the last item
 Delete | Delete the selected file or directory
 r, F2 | Rename the selected file or directory
-Space | Deselect a selection if applicable
 CTRL+r, F5 | Refresh
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)

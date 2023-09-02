@@ -58,10 +58,10 @@ impl CommandHandler for ErrorsView {
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, _: &KeyModifiers) -> CommandResult {
-        match *code {
-            KeyCode::Char('e') => self.clear_errors(),
-            _ => CommandResult::NotHandled,
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Char('e'), KeyModifiers::NONE) => self.clear_errors(),
+            (_, _) => CommandResult::NotHandled,
         }
     }
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {

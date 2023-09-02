@@ -94,7 +94,7 @@ impl App {
                     // if it doesn't produce a derived command. This seems wasteful,
                     // but it only occurs for Command::Quit or if the command is
                     // ultimately unhandled, which results in an error anyway.
-                    eprintln!("App.broadcast_command() command:{command:?}");
+                    //eprintln!("App.broadcast_command() command:{command:?}");
                     let (mut derived_commands, handled) =
                         recursively_handle_command(self, &command, &mode);
                     if !handled {
@@ -145,7 +145,7 @@ impl CommandHandler for App {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('q'), _) => Command::Quit.into(),
+            (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
             (_, _) => CommandResult::NotHandled,
         }
     }
