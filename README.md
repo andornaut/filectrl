@@ -126,6 +126,9 @@ cargo test
 cargo run
 cargo build --release
 ./target/debug/filectrl
+
+# Log to ./err
+RUST_LOG=debug cargo run 2>err
 ```
 
 ### Git hooks

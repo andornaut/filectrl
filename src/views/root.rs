@@ -3,7 +3,7 @@ use super::{
     table::TableView, View,
 };
 use crate::{
-    app::theme::Theme,
+    app::{config::Config, theme::Theme},
     command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
@@ -21,6 +21,15 @@ pub struct RootView {
     last_rendered_rect: Rect,
     status: StatusView,
     table: TableView,
+}
+
+impl RootView {
+    pub fn new(config: &Config) -> Self {
+        Self {
+            table: TableView::new(config),
+            ..Self::default()
+        }
+    }
 }
 
 impl CommandHandler for RootView {

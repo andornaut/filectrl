@@ -30,30 +30,31 @@ pub(super) fn delete(path: &HumanPath) -> Result<()> {
 }
 
 pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
-    if let Some(template) = template {
-        if !template.contains("%s") {
-            // TODO: Early up this validation
-            return Err(anyhow!("Invalid program template: {template}"));
+    match template {
+        Some(template) => {
+            if !template.contains("%s") {
+                // TODO: Early up this validation
+                return Err(anyhow!("Invalid program template: {template}"));
+            }
+            let command = template.replace("%s", path);
+
+            let mut it: std::str::SplitWhitespace<'_> = command.split_whitespace();
+
+            it.next().map_or_else(
+                || Ok(()),
+                |program| {
+                    let args: Vec<_> = it.collect();
+                    if args.len() == 0 {
+                        return Err(anyhow!("Invalid program template: {template}"));
+                    }
+                    run_detached(program, args).map_or_else(
+                        |error| Err(anyhow!("Failed to open program \"{command}\": {error}")),
+                        |_| Ok(()),
+                    )
+                },
+            )
         }
-        let command = template.replace("%s", path);
-
-        let mut it: std::str::SplitWhitespace<'_> = command.split_whitespace();
-
-        it.next().map_or_else(
-            || Ok(()),
-            |program| {
-                let args: Vec<_> = it.collect();
-                if args.len() == 0 {
-                    return Err(anyhow!("Invalid program template: {template}"));
-                }
-                run_detached(program, args).map_or_else(
-                    |error| Err(anyhow!("Failed to open program \"{command}\": {error}")),
-                    |_| Ok(()),
-                )
-            },
-        )
-    } else {
-        Ok(())
+        None => Ok(()),
     }
 }
 

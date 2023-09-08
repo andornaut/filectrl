@@ -11,6 +11,7 @@ use self::{
     sort::{SortColumn, SortDirection},
 };
 use crate::{
+    app::config::Config,
     command::{result::CommandResult, Command, PromptKind},
     file_system::human::HumanPath,
 };
@@ -21,7 +22,6 @@ use ratatui::{
 };
 use std::{cmp::min, time::Instant};
 
-const DOUBLE_CLICK_MS: u128 = 300;
 const NAME_MIN_LEN: u16 = 39;
 const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
@@ -45,11 +45,24 @@ pub(super) struct TableView {
     table_state: TableState,
 
     double_click_start: Option<Instant>,
+    double_click_threshold_milliseconds: u16,
 
     clipboard: Clipboard,
 }
 
+const DEFAULT_DOUBLE_CLICK_THRESHOLD_MILLISECONDS: u16 = 300;
+
 impl TableView {
+    pub fn new(config: &Config) -> Self {
+        let double_click_threshold_milliseconds = config
+            .double_click_threshold_milliseconds
+            .unwrap_or(DEFAULT_DOUBLE_CLICK_THRESHOLD_MILLISECONDS);
+        Self {
+            double_click_threshold_milliseconds,
+            ..Self::default()
+        }
+    }
+
     // Copy / Cut / Paste
     fn copy(&mut self) -> CommandResult {
         if let Some(path) = self.selected() {
@@ -101,7 +114,9 @@ impl TableView {
             if item_index == previously_selected_index {
                 // Maybe double-clicked
                 if let Some(start) = self.double_click_start {
-                    if start.elapsed().as_millis() < DOUBLE_CLICK_MS {
+                    if start.elapsed().as_millis()
+                        <= self.double_click_threshold_milliseconds as u128
+                    {
                         return self.open_selected();
                     }
                 }

@@ -9,6 +9,7 @@ const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
+    pub double_click_threshold_milliseconds: Option<u16>,
     pub log_level: Option<LevelFilter>,
     pub open_current_directory_template: Option<String>,
     pub open_new_window_template: Option<String>,

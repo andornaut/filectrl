@@ -1,4 +1,8 @@
 pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
+
+# How long to wait to interpret multiple clicks to the same element as a double click
+double_click_threshold_milliseconds = 300
+
 # One of: off, error, warn, info, debug, or trace
 log_level = "off"
 
