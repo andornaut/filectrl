@@ -16,6 +16,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
+use log::debug;
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -45,11 +46,11 @@ impl App {
         }
     }
 
-    pub fn run(&mut self, directory: Option<PathBuf>) -> Result<()> {
+    pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
         let (tx, rx) = mpsc::channel();
 
         // An initial command is required to start the main loop
-        tx.send(self.file_system.init(directory)?)?;
+        tx.send(self.file_system.init(initial_directory)?)?;
         spawn_command_sender(tx);
 
         let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
@@ -94,7 +95,7 @@ impl App {
                     // if it doesn't produce a derived command. This seems wasteful,
                     // but it only occurs for Command::Quit or if the command is
                     // ultimately unhandled, which results in an error anyway.
-                    //eprintln!("App.broadcast_command() command:{command:?}");
+                    debug!("App.broadcast_command() command:{command:?}");
                     let (mut derived_commands, handled) =
                         recursively_handle_command(self, &command, &mode);
                     if !handled {
