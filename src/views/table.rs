@@ -165,7 +165,7 @@ impl TableView {
     }
 
     fn last_index_on_page(&self, offset: usize) -> usize {
-        let window_min = self.window_min(offset);
+        let window_min = self.position(offset);
         let window_max = self.window_max(window_min);
         let mut item_index = self.table_visual_rows[window_max];
 
@@ -212,19 +212,19 @@ impl TableView {
             return self.select_index(0); // Workaround the +1 below
         }
 
-        let old_window_min = self.window_min(first_index);
+        let old_window_min = self.position(first_index);
         let old_item_index = self.table_visual_rows[old_window_min];
         let rows_per_screen = self.table_rect.height as usize - 1; // -1 for table header
         let new_visual_index = old_window_min.saturating_sub(rows_per_screen);
-        let mut new_index = self.table_visual_rows[new_visual_index] + 1; // `+ 1` so that the first row becomes the last on the new page
-        let new_window_min = self.window_min(new_index);
+        let mut new_index = self.table_visual_rows[new_visual_index] + 1; // `+1` so that the first row becomes the last on the new page
+        let new_window_min = self.position(new_index);
         let new_window_max = self.window_max(new_window_min);
 
         if new_window_max != self.table_visual_rows.len() - 1 // Not applicable if we're already the last item
             && self.table_visual_rows[new_window_max] == old_item_index // new_window_max could be the next (+1 item) overlapping element
             && self.table_visual_rows[new_window_max] == self.table_visual_rows[new_window_max + 1]
         {
-            new_index = new_index + 1;
+            new_index += 1;
         }
         return self.select_index(new_index);
     }
@@ -336,10 +336,10 @@ impl TableView {
         )
     }
 
-    fn window_min(&self, item_offset: usize) -> usize {
+    fn position(&self, item_index: usize) -> usize {
         self.table_visual_rows
             .iter()
-            .position(|&value| value == item_offset)
+            .position(|&i| i == item_index)
             .unwrap_or_default()
     }
 }

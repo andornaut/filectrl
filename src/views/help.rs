@@ -32,6 +32,7 @@ impl HelpView {
         CommandResult::none()
     }
 }
+
 impl CommandHandler for HelpView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {

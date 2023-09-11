@@ -1,4 +1,4 @@
-use super::{bordered, View};
+use super::{bordered, split_with_ellipsis, View};
 use crate::{
     app::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
@@ -7,8 +7,8 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEven
 use ratatui::{
     backend::Backend,
     layout::Rect,
-    prelude::Constraint,
-    widgets::{Paragraph, Wrap},
+    text::{Line, Text},
+    widgets::Paragraph,
     Frame,
 };
 use std::collections::VecDeque;
@@ -22,12 +22,14 @@ pub(super) struct ErrorsView {
 }
 
 impl ErrorsView {
-    pub(super) fn constraint(&self) -> Constraint {
+    pub(super) fn height(&self, width: u16) -> u16 {
         if self.should_show() {
-            // The actual height may be greater if there's text wrapping.
-            Constraint::Min(self.errors.len() as u16 + 2) // +2 for borders
+            // TODO cache `self.list_items()` result for use in render()
+            let width = width.saturating_sub(2); // -2 for horizontal borders
+            let items = self.list_items(width);
+            items.len() as u16 + 2 // +2 for vertical borders
         } else {
-            Constraint::Length(0)
+            0
         }
     }
 
@@ -46,11 +48,15 @@ impl ErrorsView {
         CommandResult::none()
     }
 
-    fn paragraphs(&self) -> Vec<Paragraph<'_>> {
+    fn list_items(&self, width: u16) -> Vec<Line<'_>> {
         self.errors
             .iter()
             .rev() // Newest error messages near the top
-            .map(|message| Paragraph::new(format!("• {message}")).wrap(Wrap { trim: true }))
+            .flat_map(|message| {
+                split_with_ellipsis(&format!("• {message}"), width)
+                    .into_iter()
+                    .map(|line| Line::from(line))
+            })
             .collect()
     }
 
@@ -97,8 +103,10 @@ impl<B: Backend> View<B> for ErrorsView {
         }
         let style = theme.error();
         let bordered_rect = bordered(frame, rect, style, Some("Errors".into()));
-        self.paragraphs()
-            .into_iter()
-            .for_each(|paragraph| frame.render_widget(paragraph.style(style), bordered_rect));
+        let items = self.list_items(bordered_rect.width);
+        frame.render_widget(
+            Paragraph::new(Text::from(items)).style(style),
+            bordered_rect,
+        );
     }
 }

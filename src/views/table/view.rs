@@ -68,7 +68,7 @@ impl<B: Backend> View<B> for TableView {
         frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
 
         // Adjust row heights to account for overflow
-        let window_min = self.window_min(self.table_state.offset());
+        let window_min = self.position(self.table_state.offset());
         let window_max = self.window_max(window_min);
         // Skip the first element, because if it overflows, then the window is empty anyway
         for item_index in 1..self.directory_items_sorted.len() {
@@ -100,12 +100,16 @@ impl<B: Backend> View<B> for TableView {
         }
 
         // Render the scrollbar
-        let content_length = self.directory_items.len() as u16;
-        if content_length > self.scrollbar_rect.height {
-            self.scrollbar_state = self.scrollbar_state.content_length(content_length);
-            self.scrollbar_state = self
-                .scrollbar_state
-                .position(self.table_state.selected().unwrap_or_default() as u16);
+        let visual_content_length = self.table_visual_rows.len() as u16;
+        if visual_content_length > self.scrollbar_rect.height {
+            let selected_visual_index = self
+                .table_state
+                .selected()
+                .map(|item_index| self.position(item_index))
+                .unwrap_or_default();
+
+            self.scrollbar_state = self.scrollbar_state.content_length(visual_content_length);
+            self.scrollbar_state = self.scrollbar_state.position(selected_visual_index as u16);
             frame.render_stateful_widget(
                 scrollbar(theme),
                 self.scrollbar_rect,
