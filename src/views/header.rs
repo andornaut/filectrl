@@ -23,10 +23,11 @@ pub(super) struct HeaderView {
 }
 
 impl HeaderView {
-    pub(super) fn height(&self, parent_rect: Rect) -> u16 {
-        let width = parent_rect.width as u16;
-        let style = Style::default();
-        let (container, _) = spans(&self.breadcrumbs, width, style, style);
+    pub(super) fn height(&self, width: u16, theme: &Theme) -> u16 {
+        // TODO cache `spans()` result for use in render()
+        let active_style = theme.header_active();
+        let inactive_style = theme.header();
+        let (container, _) = spans(&self.breadcrumbs, width, active_style, inactive_style);
         container.len() as u16
     }
 

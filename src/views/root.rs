@@ -9,8 +9,13 @@ use crate::{
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
+
+const MIN_HEIGHT: u16 = 6;
+const MIN_WIDTH: u16 = 10;
+const RESIZE_WINDOW: &'static str = "Resize window";
 
 #[derive(Default)]
 pub struct RootView {
@@ -48,13 +53,21 @@ impl<B: Backend> View<B> for RootView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
         self.last_rendered_rect = rect;
 
+        if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
+            frame.render_widget(
+                Paragraph::new(RESIZE_WINDOW)
+                    .style(theme.error())
+                    .wrap(Wrap { trim: true }),
+                rect,
+            );
+            return;
+        }
+
         let constraints = vec![
-            // ErrorsView and TableView may both have `Min` (dynamic) constraints,
-            // which is currently not handled deterministically by Ratatui
-            self.errors.constraint(), // Min(_) or Length(0)
+            Constraint::Length(self.errors.height(rect.width)),
             Constraint::Length(self.help.height()),
-            Constraint::Length(self.header.height(self.last_rendered_rect)),
-            Constraint::Min(5),
+            Constraint::Length(self.header.height(rect.width, theme)),
+            Constraint::Min(3),
             Constraint::Length(1),
             Constraint::Length(self.prompt.height(mode)),
         ];
@@ -69,7 +82,7 @@ impl<B: Backend> View<B> for RootView {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
-            .split(self.last_rendered_rect)
+            .split(rect)
             .into_iter()
             .zip(handlers.into_iter())
             .for_each(|(chunk, handler)| handler.render(frame, *chunk, mode, theme));

@@ -43,6 +43,8 @@ pub(super) fn bordered<B: Backend>(
 }
 
 pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
+    assert!(width > 0);
+
     let split = split_utf8_with_reservation(&line, width, ELLIPSIS);
     let mut lines = Vec::new();
     let mut it = split.into_iter().peekable();
@@ -53,6 +55,7 @@ pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
     }
     lines
 }
+
 fn split_utf8_with_reservation(line: &str, width: u16, reservation: &str) -> Vec<String> {
     if len_utf8(line) <= width {
         return vec![line.to_string()];
