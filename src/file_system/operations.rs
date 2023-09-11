@@ -1,5 +1,6 @@
 use super::human::HumanPath;
 use anyhow::{anyhow, Result};
+use log::{info, warn};
 use std::ffi::OsStr;
 use std::process::Stdio;
 use std::{
@@ -8,6 +9,7 @@ use std::{
 };
 
 pub(super) fn cd(directory: &HumanPath) -> Result<Vec<HumanPath>> {
+    info!("Changing directory to:\"{directory}\"");
     let entries = fs::read_dir(&directory.path)?;
     let (children, errors): (Vec<_>, Vec<_>) = entries
         .map(|entry| -> Result<HumanPath> { HumanPath::try_from(&entry?.path()) })
@@ -19,6 +21,7 @@ pub(super) fn cd(directory: &HumanPath) -> Result<Vec<HumanPath>> {
 }
 
 pub(super) fn delete(path: &HumanPath) -> Result<()> {
+    info!("Deleting path:\"{path}\"");
     let pathname = &path.path;
     if path.is_directory() {
         fs::remove_dir_all(pathname)?;
@@ -32,35 +35,31 @@ pub(super) fn delete(path: &HumanPath) -> Result<()> {
 pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
     match template {
         Some(template) => {
-            if !template.contains("%s") {
-                // TODO: Early up this validation
-                return Err(anyhow!("Invalid program template: {template}"));
-            }
-            let command = template.replace("%s", path);
-
-            let mut it: std::str::SplitWhitespace<'_> = command.split_whitespace();
+            info!("Opening the program defined in template:\"{template}\", %s:\"{path}\"");
+            let mut it: std::str::SplitWhitespace<'_> = template.split_whitespace();
 
             it.next().map_or_else(
                 || Ok(()),
                 |program| {
-                    let args: Vec<_> = it.collect();
-                    if args.len() == 0 {
-                        return Err(anyhow!("Invalid program template: {template}"));
-                    }
+                    let args = it.map(|arg| arg.replace("%s", path));
                     run_detached(program, args).map_or_else(
-                        |error| Err(anyhow!("Failed to open program \"{command}\": {error}")),
+                        |error| Err(anyhow!("Failed to open program \"{program}\": {error}")),
                         |_| Ok(()),
                     )
                 },
             )
         }
-        None => Ok(()),
+        None => {
+            warn!("Cannot open program, because a template is not configured");
+            Ok(())
+        }
     }
 }
 
 pub(super) fn copy(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
     let new_path = Path::new(&new_dir.path).join(&old_path.basename);
     let old_path = Path::new(&old_path.path);
+    info!("Copying \"{old_path:?}\" to \"{new_path:?}\"");
     fs::copy(old_path, new_path)?;
     Ok(())
 }
@@ -68,6 +67,7 @@ pub(super) fn copy(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
 pub(super) fn mv(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
     let new_path = Path::new(&new_dir.path).join(&old_path.basename);
     let old_path = Path::new(&old_path.path);
+    info!("Moving \"{old_path:?}\" to \"{new_path:?}\"");
     fs::rename(old_path, new_path)?;
     Ok(())
 }
@@ -75,6 +75,7 @@ pub(super) fn mv(old_path: &HumanPath, new_dir: &HumanPath) -> Result<()> {
 pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
     let old_path = Path::new(&old_path.path);
     let new_path = join_parent(old_path, new_basename);
+    info!("Renaming \"{old_path:?}\" to \"{new_path:?}\"");
     fs::rename(old_path, new_path)?;
     Ok(())
 }

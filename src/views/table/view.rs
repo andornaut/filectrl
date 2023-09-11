@@ -8,7 +8,7 @@ use crate::{
     app::theme::Theme,
     command::mode::InputMode,
     file_system::human::HumanPath,
-    views::{split_utf8_with_reservation, View},
+    views::{split_with_ellipsis, View},
 };
 use ratatui::{
     prelude::{Alignment, Backend, Constraint, Direction, Layout, Rect},
@@ -17,8 +17,6 @@ use ratatui::{
     widgets::{Block, Cell, Row, Scrollbar, ScrollbarOrientation, Table},
     Frame,
 };
-
-const LINE_SEPARATOR: &str = "\n…";
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
@@ -179,15 +177,9 @@ fn row<'a>(item: &'a HumanPath, name_column_width: u16, theme: &Theme) -> (Row<'
     (row, height)
 }
 
-fn split_name<'a>(path: &HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {
-    let line = path.name();
-    let split = split_utf8_with_reservation(&line, width, LINE_SEPARATOR);
-    let mut lines = Vec::new();
-    let mut it = split.into_iter().peekable();
-    while let Some(part) = it.next() {
-        let is_last = it.peek().is_none();
-        let part = if is_last { part.clone() } else { part + "…" };
-        lines.push(Line::from(Span::styled(part, name_style(path, theme))));
-    }
-    lines
+fn split_name<'a>(path: &'a HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {
+    split_with_ellipsis(&path.name(), width)
+        .into_iter()
+        .map(|part| Line::from(Span::styled(part, name_style(path, theme))))
+        .collect()
 }

@@ -24,7 +24,6 @@ pub(super) struct HeaderView {
 
 impl HeaderView {
     pub(super) fn height(&self, parent_rect: Rect) -> u16 {
-        // If the `rect.width` hasn't changed, then use the cached height to avoid some work.
         let width = parent_rect.width as u16;
         let style = Style::default();
         let (container, _) = spans(&self.breadcrumbs, width, style, style);
@@ -93,13 +92,18 @@ impl<B: Backend> View<B> for HeaderView {
 
         let active_style = theme.header_active();
         let inactive_style = theme.header();
-        let (container, positions) = spans(
+        let (mut container, mut positions) = spans(
             &self.breadcrumbs,
             self.rect.width,
             active_style,
             inactive_style,
         );
-        self.positions = positions;
+
+        // Prioritize displaying the deepest directories
+        let at = positions.len() - self.rect.height as usize;
+        let container = container.split_off(at);
+        self.positions = positions.split_off(at);
+
         let text: Vec<_> = container
             .into_iter()
             .map(|spans| Line::from(spans))

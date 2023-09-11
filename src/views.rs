@@ -19,6 +19,8 @@ use ratatui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+const ELLIPSIS: &str = "\n…";
+
 pub(super) trait View<B: Backend>: CommandHandler {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme);
 }
@@ -40,11 +42,18 @@ pub(super) fn bordered<B: Backend>(
     })
 }
 
-pub(super) fn split_utf8_with_reservation(
-    line: &str,
-    width: u16,
-    reservation: &str,
-) -> Vec<String> {
+pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
+    let split = split_utf8_with_reservation(&line, width, ELLIPSIS);
+    let mut lines = Vec::new();
+    let mut it = split.into_iter().peekable();
+    while let Some(part) = it.next() {
+        let is_last = it.peek().is_none();
+        let part = if is_last { part.clone() } else { part + "…" };
+        lines.push(part);
+    }
+    lines
+}
+fn split_utf8_with_reservation(line: &str, width: u16, reservation: &str) -> Vec<String> {
     if len_utf8(line) <= width {
         return vec![line.to_string()];
     }
