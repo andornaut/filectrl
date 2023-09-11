@@ -47,7 +47,7 @@ impl<B: Backend> View<B> for HelpView {
             return;
         }
         let style = theme.help();
-        let rect = bordered(frame, rect, style, Some("Help".into()));
+        let bordered_rect = bordered(frame, rect, style, Some("Help".into()));
         let spans = match *mode {
             InputMode::Prompt => prompt_help(),
             _ => content_help(),
@@ -55,7 +55,7 @@ impl<B: Backend> View<B> for HelpView {
         let paragraph = Paragraph::new(Line::from(spans))
             .style(style)
             .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, rect);
+        frame.render_widget(paragraph, bordered_rect);
     }
 }
 

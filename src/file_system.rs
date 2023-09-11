@@ -4,6 +4,7 @@ use crate::{
     command::{result::CommandResult, Command},
 };
 use anyhow::{anyhow, Result};
+use log::info;
 use std::{fs, path::PathBuf};
 
 mod converters;
@@ -70,15 +71,22 @@ impl FileSystem {
     }
 
     fn open(&mut self, path: &HumanPath) -> CommandResult {
-        let path = fs::canonicalize(&path.path).unwrap();
-        let path = HumanPath::try_from(&path).unwrap();
-        if path.is_directory() {
-            self.cd(path)
-        } else {
-            match open::that_detached(&path.path) {
-                Err(error) => anyhow!("Failed to open file: {error}").into(),
-                Ok(_) => CommandResult::none(),
+        match fs::canonicalize(&path.path)
+            .map_err(anyhow::Error::from)
+            .and_then(|path| HumanPath::try_from(&path))
+        {
+            Ok(path) => {
+                if path.is_directory() {
+                    self.cd(path)
+                } else {
+                    info!("Opening path:\"{path}\"");
+                    match open::that_detached(&path.path) {
+                        Err(error) => anyhow!("Failed to open file: {error}").into(),
+                        Ok(_) => CommandResult::none(),
+                    }
+                }
             }
+            Err(err) => err.into(),
         }
     }
 

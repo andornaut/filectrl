@@ -49,7 +49,9 @@ impl<B: Backend> View<B> for RootView {
         self.last_rendered_rect = rect;
 
         let constraints = vec![
-            Constraint::Length(self.errors.height()),
+            // ErrorsView and TableView may both have `Min` (dynamic) constraints,
+            // which is currently not handled deterministically by Ratatui
+            self.errors.constraint(), // Min(_) or Length(0)
             Constraint::Length(self.help.height()),
             Constraint::Length(self.header.height(self.last_rendered_rect)),
             Constraint::Min(5),

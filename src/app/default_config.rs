@@ -4,12 +4,13 @@ pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
 double_click_threshold_milliseconds = 300
 
 # One of: off, error, warn, info, debug, or trace
+# Logs are written to stderr
 log_level = "off"
 
+# Programs to use to open files or directories:
 # %s will be replaced by the current directory path:
 open_current_directory_template = "alacritty --working-directory %s"
 open_new_window_template = "alacritty --command filectrl %s"
-
 # %s will be replaced by the selected file or directory path:
 open_selected_file_template = "pcmanfm %s"
 
