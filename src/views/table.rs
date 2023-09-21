@@ -66,16 +66,18 @@ impl TableView {
     // Copy / Cut / Paste
     fn copy(&mut self) -> CommandResult {
         if let Some(path) = self.selected() {
-            let path = &path.path.clone();
-            self.clipboard.copy(&path);
+            let path = path.clone();
+            self.clipboard.copy(path.path.as_str());
+            return Command::ClipboardCopy(path).into();
         }
         CommandResult::none()
     }
 
     fn cut(&mut self) -> CommandResult {
         if let Some(path) = self.selected() {
-            let path = &path.path.clone();
-            self.clipboard.cut(&path);
+            let path = path.clone();
+            self.clipboard.cut(path.path.as_str());
+            return Command::ClipboardCut(path).into();
         }
         CommandResult::none()
     }

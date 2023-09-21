@@ -1,4 +1,4 @@
-use super::View;
+use super::{len_utf8, truncate_left_utf8_with_ellipsis, View};
 use crate::{
     app::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
@@ -14,14 +14,48 @@ use ratatui::{
 };
 
 #[derive(Default)]
+enum Clipboard {
+    Copy(HumanPath),
+    Cut(HumanPath),
+    #[default]
+    None,
+}
+
+impl Clipboard {
+    fn is_some(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+#[derive(Default)]
 pub(super) struct StatusView {
+    clipboard: Clipboard,
     directory: HumanPath,
     directory_len: usize,
     filter: String,
+    rect: Rect,
     selected: Option<HumanPath>,
 }
 
 impl StatusView {
+    fn clipboard_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
+        let (label, path) = match &self.clipboard {
+            Clipboard::Copy(path) => ("Copy", path),
+            Clipboard::Cut(path) => ("Cut", path),
+            Clipboard::None => unreachable!(),
+        };
+        let bold_style = Style::default().add_modifier(Modifier::BOLD);
+        let width = len_utf8(label) + 4; // 2 for spaces + 2 for quotation marks
+        let width = self.rect.width.saturating_sub(width);
+        let path = truncate_left_utf8_with_ellipsis(&path.path, width);
+        let spans = vec![
+            Span::raw(format!(" {label} \"")),
+            Span::styled(path, bold_style),
+            Span::raw("\""),
+        ];
+        Paragraph::new(Line::from(spans)).style(theme.status_clipboard())
+    }
+
     fn filter_widget(&mut self, theme: &Theme) -> Paragraph<'_> {
         let bold_style = Style::default().add_modifier(Modifier::BOLD);
         let spans = vec![
@@ -44,18 +78,31 @@ impl StatusView {
         Paragraph::new(Line::from(spans)).style(theme.status_selected())
     }
 
+    fn set_clipboard_copy(&mut self, path: HumanPath) -> CommandResult {
+        self.clipboard = Clipboard::Copy(path);
+        CommandResult::none()
+    }
+
+    fn set_clipboard_cut(&mut self, path: HumanPath) -> CommandResult {
+        self.clipboard = Clipboard::Cut(path);
+        CommandResult::none()
+    }
+
     fn set_directory(&mut self, directory: HumanPath, children: &Vec<HumanPath>) -> CommandResult {
+        self.clipboard = Clipboard::None;
         self.directory = directory;
         self.directory_len = children.len();
         CommandResult::none()
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
+        self.clipboard = Clipboard::None;
         self.filter = filter;
         CommandResult::none()
     }
 
     fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
+        self.clipboard = Clipboard::None;
         self.selected = selected;
         CommandResult::none()
     }
@@ -64,6 +111,8 @@ impl StatusView {
 impl CommandHandler for StatusView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::ClipboardCopy(path) => self.set_clipboard_copy(path.clone()),
+            Command::ClipboardCut(path) => self.set_clipboard_cut(path.clone()),
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children)
             }
@@ -76,10 +125,14 @@ impl CommandHandler for StatusView {
 
 impl<B: Backend> View<B> for StatusView {
     fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
-        let widget = if self.filter.is_empty() {
-            self.normal_widget(theme)
-        } else {
+        self.rect = rect;
+
+        let widget = if self.clipboard.is_some() {
+            self.clipboard_widget(theme)
+        } else if !self.filter.is_empty() {
             self.filter_widget(theme)
+        } else {
+            self.normal_widget(theme)
         };
         frame.render_widget(widget, rect);
     }

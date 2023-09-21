@@ -32,6 +32,10 @@ pub struct Theme {
     prompt_label_fg: Color,
 
     #[serde(with = "color_to_tui")]
+    status_clipboard_bg: Color,
+    #[serde(with = "color_to_tui")]
+    status_clipboard_fg: Color,
+    #[serde(with = "color_to_tui")]
     status_directory_bg: Color,
     #[serde(with = "color_to_tui")]
     status_directory_fg: Color,
@@ -150,6 +154,12 @@ impl Theme {
         Style::default()
             .bg(self.prompt_label_bg)
             .fg(self.prompt_label_fg)
+    }
+
+    pub fn status_clipboard(&self) -> Style {
+        Style::default()
+            .bg(self.status_clipboard_bg)
+            .fg(self.status_clipboard_fg)
     }
 
     pub fn status_filter(&self) -> Style {
