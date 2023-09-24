@@ -37,9 +37,7 @@ impl ErrorsView {
         if self.errors.len() == MAX_NUMBER_ERRORS {
             self.errors.pop_front();
         }
-        self.errors
-            .push_back(format!("{message}{}", self.errors.len()));
-
+        self.errors.push_back(message);
         CommandResult::none()
     }
 
@@ -53,9 +51,13 @@ impl ErrorsView {
             .iter()
             .rev() // Newest error messages near the top
             .flat_map(|message| {
-                split_with_ellipsis(&format!("• {message}"), width)
+                split_with_ellipsis(message, width.saturating_sub(2))
                     .into_iter()
-                    .map(|line| Line::from(line))
+                    .enumerate()
+                    .map(|(i, line)| {
+                        let prefix = if i == 0 { "•" } else { " " };
+                        Line::from(format!("{prefix} {line}"))
+                    })
             })
             .collect()
     }

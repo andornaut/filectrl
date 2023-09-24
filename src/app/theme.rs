@@ -48,6 +48,18 @@ pub struct Theme {
     #[serde(with = "color_to_tui")]
     status_filter_fg: Color,
     #[serde(with = "color_to_tui")]
+    status_progress_bg: Color,
+    #[serde(with = "color_to_tui")]
+    status_progress_fg: Color,
+    #[serde(with = "color_to_tui")]
+    status_progress_done_bg: Color,
+    #[serde(with = "color_to_tui")]
+    status_progress_done_fg: Color,
+    #[serde(with = "color_to_tui")]
+    status_progress_error_bg: Color,
+    #[serde(with = "color_to_tui")]
+    status_progress_error_fg: Color,
+    #[serde(with = "color_to_tui")]
     status_selected_bg: Color,
     #[serde(with = "color_to_tui")]
     status_selected_fg: Color,
@@ -178,6 +190,24 @@ impl Theme {
         Style::default()
             .bg(self.status_directory_label_bg)
             .fg(self.status_directory_label_fg)
+    }
+
+    pub fn status_progress(&self) -> Style {
+        Style::default()
+            .bg(self.status_progress_bg)
+            .fg(self.status_progress_fg)
+    }
+
+    pub fn status_progress_done(&self) -> Style {
+        Style::default()
+            .bg(self.status_progress_done_bg)
+            .fg(self.status_progress_done_fg)
+    }
+
+    pub fn status_progress_error(&self) -> Style {
+        Style::default()
+            .bg(self.status_progress_error_bg)
+            .fg(self.status_progress_error_fg)
     }
 
     pub fn status_selected(&self) -> Style {

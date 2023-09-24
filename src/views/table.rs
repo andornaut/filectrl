@@ -1,5 +1,5 @@
 mod clipboard;
-mod command_handler;
+mod handler;
 mod navigate;
 mod sort;
 mod style;

@@ -15,7 +15,7 @@ use std::{
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
-#[derive(Clone, Eq)]
+#[derive(Clone, Eq, Hash)]
 pub struct HumanPath {
     pub basename: String,
     pub path: String,
@@ -146,7 +146,7 @@ impl HumanPath {
 
 impl fmt::Debug for HumanPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.path)
+        write!(f, "\"{}\"", self.path)
     }
 }
 
