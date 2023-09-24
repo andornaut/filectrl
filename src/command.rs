@@ -1,20 +1,21 @@
 pub mod handler;
 pub mod mode;
 pub mod result;
+pub mod task;
 
-use self::result::CommandResult;
+use self::{result::CommandResult, task::Task};
 use crate::file_system::human::HumanPath;
 use anyhow::{anyhow, Error};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {
     #[default]
     Filter,
     Rename,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
     AddError(String),
     ClipboardCopy(HumanPath),
@@ -28,6 +29,7 @@ pub enum Command {
     Open(HumanPath),
     OpenCustom(HumanPath),
     OpenPrompt(PromptKind),
+    Progress(Task),
     Quit,
     RenamePath(HumanPath, String),
     Resize(u16, u16), // w,h

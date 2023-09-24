@@ -29,3 +29,12 @@ impl From<Error> for CommandResult {
         command.into()
     }
 }
+
+impl From<Result<(), Error>> for CommandResult {
+    fn from(value: Result<(), Error>) -> Self {
+        match value {
+            Err(error) => error.into(),
+            Ok(()) => CommandResult::none(),
+        }
+    }
+}

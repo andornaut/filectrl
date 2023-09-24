@@ -49,6 +49,7 @@ n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
 e | Clear error messages
+p | Clear progress bar
 ? | Toggle help
 
 ***Filtered mode***
