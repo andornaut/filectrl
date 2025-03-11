@@ -5,7 +5,6 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    backend::Backend,
     layout::Rect,
     text::{Line, Text},
     widgets::Paragraph,
@@ -97,8 +96,8 @@ impl CommandHandler for ErrorsView {
     }
 }
 
-impl<B: Backend> View<B> for ErrorsView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+impl View for ErrorsView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
         if !self.should_show() {
             return;

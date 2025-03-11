@@ -114,9 +114,9 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame| {
-            let window = frame.size();
+            let window = frame.area();
             self.root
-                .render(frame, window, &self.mode, &self.config.theme);
+                .render(frame, window, &self.mode, &self.config.theme)
         })?;
         Ok(())
     }

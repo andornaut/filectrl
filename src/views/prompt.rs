@@ -8,7 +8,6 @@ use crate::{
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::Paragraph,
     Frame,
@@ -108,8 +107,8 @@ impl CommandHandler for PromptView {
     }
 }
 
-impl<B: Backend> View<B> for PromptView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+impl View for PromptView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
         }
@@ -139,6 +138,6 @@ impl<B: Backend> View<B> for PromptView {
         let label_widget = Paragraph::new(label).style(theme.prompt_label());
         frame.render_widget(label_widget, chunks[0]);
         frame.render_widget(input_widget, chunks[1]);
-        frame.set_cursor(chunks[1].x + cursor_x_pos - x_offset, chunks[1].y);
+        frame.set_cursor_position((chunks[1].x + cursor_x_pos - x_offset, chunks[1].y));
     }
 }

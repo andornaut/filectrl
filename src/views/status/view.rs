@@ -9,7 +9,7 @@ use crate::{
     views::{len_utf8, truncate_left_utf8_with_ellipsis, View},
 };
 use ratatui::{
-    prelude::{Backend, Rect},
+    prelude::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -17,8 +17,8 @@ use ratatui::{
 };
 use std::collections::HashSet;
 
-impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+impl View for StatusView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let widget = if !self.tasks.is_empty() {

@@ -7,7 +7,6 @@ use crate::{
     command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
-    backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Paragraph, Wrap},
     Frame,
@@ -49,8 +48,8 @@ impl CommandHandler for RootView {
     }
 }
 
-impl<B: Backend> View<B> for RootView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+impl View for RootView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         self.last_rendered_rect = rect;
 
         if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
@@ -71,7 +70,7 @@ impl<B: Backend> View<B> for RootView {
             Constraint::Length(1),
             Constraint::Length(self.prompt.height(mode)),
         ];
-        let handlers: Vec<&mut dyn View<_>> = vec![
+        let handlers: Vec<&mut dyn View> = vec![
             &mut self.errors,
             &mut self.help,
             &mut self.header,

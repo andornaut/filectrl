@@ -5,7 +5,6 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
-    backend::Backend,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -42,8 +41,8 @@ impl CommandHandler for HelpView {
     }
 }
 
-impl<B: Backend> View<B> for HelpView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+impl View for HelpView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;
         }

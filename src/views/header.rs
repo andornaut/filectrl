@@ -6,7 +6,6 @@ use crate::{
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    backend::Backend,
     layout::Rect,
     style::Style,
     text::{Line, Span},
@@ -87,8 +86,8 @@ impl CommandHandler for HeaderView {
     }
 }
 
-impl<B: Backend> View<B> for HeaderView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+impl View for HeaderView {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let active_style = theme.header_active();
