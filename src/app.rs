@@ -1,8 +1,6 @@
 pub mod config;
-mod default_config;
 mod events;
 pub mod terminal;
-pub mod theme;
 
 use self::{
     config::Config,
@@ -17,6 +15,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use log::debug;
+use ratatui::backend::CrosstermBackend;
+use ratatui::Frame;
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -113,10 +113,15 @@ impl App {
     }
 
     fn render(&mut self) -> Result<()> {
-        self.terminal.draw(|frame| {
-            let window = frame.size();
-            self.root
-                .render(frame, window, &self.mode, &self.config.theme);
+        self.terminal.draw(|frame: &mut Frame| {
+            let window = frame.area();
+            <RootView as View<CrosstermBackend<std::io::Stdout>>>::render(
+                &mut self.root,
+                frame,
+                window,
+                &self.mode,
+                &self.config.theme,
+            );
         })?;
         Ok(())
     }

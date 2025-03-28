@@ -1,12 +1,11 @@
 use super::{bordered, split_with_ellipsis, View};
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
 };
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    backend::Backend,
-    layout::Rect,
+    prelude::{Backend, Rect},
     text::{Line, Text},
     widgets::Paragraph,
     Frame,
@@ -98,13 +97,13 @@ impl CommandHandler for ErrorsView {
 }
 
 impl<B: Backend> View<B> for ErrorsView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
         if !self.should_show() {
             return;
         }
         let style = theme.error();
-        let bordered_rect = bordered(frame, rect, style, Some("Errors".into()));
+        let bordered_rect = bordered::<B>(frame, rect, style, Some("Errors".into()));
         let items = self.list_items(bordered_rect.width);
         frame.render_widget(
             Paragraph::new(Text::from(items)).style(style),

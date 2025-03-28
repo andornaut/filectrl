@@ -1,12 +1,11 @@
 use super::{bordered, View};
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
-    backend::Backend,
-    layout::Rect,
+    prelude::{Backend, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
@@ -43,12 +42,12 @@ impl CommandHandler for HelpView {
 }
 
 impl<B: Backend> View<B> for HelpView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;
         }
         let style = theme.help();
-        let bordered_rect = bordered(frame, rect, style, Some("Help".into()));
+        let bordered_rect = bordered::<B>(frame, rect, style, Some("Help".into()));
         let spans = match *mode {
             InputMode::Prompt => prompt_help(),
             _ => content_help(),

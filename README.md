@@ -32,6 +32,7 @@ Options:
 ### Keyboard controls
 
 ***Normal mode***
+
 Keys | Description
 --- | ---
 q | Quit
@@ -53,11 +54,13 @@ p | Clear progress bar
 ? | Toggle help
 
 ***Filtered mode***
+
 Keys | Description
 --- | ---
 Esc | Exit filtered mode
 
 ***Input mode***
+
 Keys | Description
 --- | ---
 Esc | Exit input mode
