@@ -111,7 +111,7 @@ impl HumanPath {
         unix_mode::is_dir(self.mode)
     }
 
-    pub fn is_fifo(&self) -> bool {
+    pub fn is_pipe(&self) -> bool {
         unix_mode::is_fifo(self.mode)
     }
 
@@ -141,6 +141,32 @@ impl HumanPath {
 
     pub fn is_symlink_broken(&self) -> bool {
         self.is_symlink() && !Path::new(&self.path).exists()
+    }
+
+    pub fn is_other_writable(&self) -> bool {
+        // Check if the directory is writable by others (o+w)
+        // The other-writable bit is 0o002 in octal (2 in decimal)
+        (self.mode & 0o002) != 0
+    }
+
+    pub fn is_executable(&self) -> bool {
+        // Check if the file is executable by anyone (user, group, or other)
+        // The executable bits are 0o111 in octal (73 in decimal)
+        (self.mode & 0o111) != 0
+    }
+
+    pub fn is_door(&self) -> bool {
+        // Check if the file is a door (Solaris IPC mechanism)
+        // On non-Solaris systems, this will always return false
+        #[cfg(target_os = "solaris")]
+        {
+            unix_mode::is_door(self.mode)
+        }
+
+        #[cfg(not(target_os = "solaris"))]
+        {
+            false
+        }
     }
 }
 

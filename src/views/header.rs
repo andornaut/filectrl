@@ -1,13 +1,12 @@
 use super::{len_utf8, View};
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
     file_system::human::HumanPath,
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    backend::Backend,
-    layout::Rect,
+    prelude::{Backend, Rect},
     style::Style,
     text::{Line, Span},
     widgets::Paragraph,
@@ -88,7 +87,7 @@ impl CommandHandler for HeaderView {
 }
 
 impl<B: Backend> View<B> for HeaderView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let active_style = theme.header_active();

@@ -3,12 +3,12 @@ use super::{
     table::TableView, View,
 };
 use crate::{
-    app::{config::Config, theme::Theme},
+    app::{config::theme::Theme, config::Config},
     command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
-    backend::Backend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
+    prelude::{Backend, Rect},
     widgets::{Paragraph, Wrap},
     Frame,
 };
@@ -50,7 +50,7 @@ impl CommandHandler for RootView {
 }
 
 impl<B: Backend> View<B> for RootView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         self.last_rendered_rect = rect;
 
         if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
@@ -85,6 +85,8 @@ impl<B: Backend> View<B> for RootView {
             .split(rect)
             .into_iter()
             .zip(handlers.into_iter())
-            .for_each(|(chunk, handler)| handler.render(frame, *chunk, mode, theme));
+            .for_each(|(chunk, handler): (&Rect, &mut dyn View<B>)| {
+                handler.render(frame, *chunk, mode, theme)
+            });
     }
 }

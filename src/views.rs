@@ -7,7 +7,7 @@ mod status;
 mod table;
 
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode},
 };
 use ratatui::{
@@ -23,11 +23,11 @@ const ELLIPSIS: &str = "…";
 const NEWLINE_ELLIPSIS: &str = "\n…";
 
 pub(super) trait View<B: Backend>: CommandHandler {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, mode: &InputMode, theme: &Theme);
+    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme);
 }
 
 pub(super) fn bordered<B: Backend>(
-    frame: &mut Frame<B>,
+    frame: &mut Frame,
     rect: Rect,
     style: Style,
     title: Option<String>,
@@ -37,7 +37,7 @@ pub(super) fn bordered<B: Backend>(
         block = block.title(title);
     }
     frame.render_widget(block, rect);
-    rect.inner(&Margin {
+    rect.inner(Margin {
         horizontal: 1,
         vertical: 1,
     })

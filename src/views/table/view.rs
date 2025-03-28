@@ -5,7 +5,7 @@ use super::{
     TableView,
 };
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::mode::InputMode,
     file_system::human::HumanPath,
     views::{split_with_ellipsis, View},
@@ -19,7 +19,7 @@ use ratatui::{
 };
 
 impl<B: Backend> View<B> for TableView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         if rect.height < 2 || rect.width < 8 {
             return;
         }
@@ -59,10 +59,10 @@ impl<B: Backend> View<B> for TableView {
                 }
                 row
             });
-        let header = header(theme, &self.sort_column, &self.sort_direction);
-        let table = Table::new(rows)
-            .header(header)
-            .highlight_style(theme.table_selected())
+        let table_header = header(theme, &self.sort_column, &self.sort_direction);
+        let table = Table::new(rows, vec![Constraint::Percentage(100)])
+            .header(table_header)
+            .row_highlight_style(theme.table_selected())
             .style(theme.table_body())
             .widths(&column_constraints);
         frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
@@ -108,8 +108,10 @@ impl<B: Backend> View<B> for TableView {
                 .map(|item_index| self.position(item_index))
                 .unwrap_or_default();
 
-            self.scrollbar_state = self.scrollbar_state.content_length(visual_content_length);
-            self.scrollbar_state = self.scrollbar_state.position(selected_visual_index as u16);
+            self.scrollbar_state = self
+                .scrollbar_state
+                .content_length(visual_content_length.into())
+                .position(selected_visual_index.into());
             frame.render_stateful_widget(
                 scrollbar(theme),
                 self.scrollbar_rect,
@@ -182,8 +184,9 @@ fn row<'a>(item: &'a HumanPath, name_column_width: u16, theme: &Theme) -> (Row<'
 }
 
 fn split_name<'a>(path: &'a HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {
+    let style = name_style(path, &theme.files);
     split_with_ellipsis(&path.name(), width)
         .into_iter()
-        .map(|part| Line::from(Span::styled(part, name_style(path, theme))))
+        .map(|part| Line::from(Span::styled(part, style)))
         .collect()
 }

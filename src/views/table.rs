@@ -199,6 +199,8 @@ impl TableView {
     }
 
     fn previous_page(&mut self) -> CommandResult {
+        // TODO off-by-1 error at top
+
         // If the first item isn't selected, then select it;
         //   otherwise, advance such that the first item becomes the last item, and select the new first item.
         let selected_index = self.table_state.selected().unwrap_or_default();

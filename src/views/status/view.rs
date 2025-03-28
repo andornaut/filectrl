@@ -1,6 +1,6 @@
 use super::{Clipboard, StatusView};
 use crate::{
-    app::theme::Theme,
+    app::config::theme::Theme,
     command::{
         mode::InputMode,
         task::{Progress, Task},
@@ -18,7 +18,7 @@ use ratatui::{
 use std::collections::HashSet;
 
 impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let widget = if !self.tasks.is_empty() {
@@ -139,7 +139,7 @@ fn kind_field(selected: &HumanPath) -> String {
     if selected.is_directory() {
         kind.push("Directory");
     }
-    if selected.is_fifo() {
+    if selected.is_pipe() {
         kind.push("FIFO");
     }
     if selected.is_file() {

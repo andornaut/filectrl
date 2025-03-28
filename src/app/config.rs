@@ -1,14 +1,23 @@
-use super::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
+mod default_config;
+mod ls_colors;
+mod serialization;
+pub mod theme;
+
+use std::{fs, io::ErrorKind, path::PathBuf};
+
 use anyhow::{anyhow, Error, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
 use log::LevelFilter;
+use ls_colors::apply_ls_colors;
 use serde::{Deserialize, Serialize};
-use std::{fs, io::ErrorKind, path::PathBuf};
+
+use self::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
 
 const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
+    pub apply_ls_colors: bool,
     pub double_click_threshold_milliseconds: Option<u16>,
     pub log_level: Option<LevelFilter>,
     pub open_current_directory_template: Option<String>,
@@ -19,7 +28,7 @@ pub struct Config {
 
 impl Config {
     pub fn write_default_config() -> Result<()> {
-        let config = Config::default();
+        let config = Self::default();
         let content = toml::to_string_pretty(&config)?;
         let path = Self::default_path();
 
@@ -38,25 +47,21 @@ impl Config {
     }
 
     fn parse(content: &str) -> Result<Self> {
-        toml::from_str::<Config>(content)
-            .map_err(|error| anyhow!("Cannot parse config file: {error}"))
-    }
+        // Parse the TOML directly
+        let mut config = toml::from_str::<Config>(content)
+            .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
-    fn read_default_path() -> Result<Config> {
-        let path = Self::default_path();
-        match fs::read_to_string(&path) {
-            Err(error) => match error.kind() {
-                ErrorKind::NotFound => Ok(Config::default()),
-                _ => Err(error.into()),
-            },
-            Ok(content) => Self::parse(&content),
+        if config.apply_ls_colors {
+            apply_ls_colors(&mut config.theme.files);
         }
-    }
 
-    fn read_user_path(path: PathBuf) -> Result<Self> {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| anyhow!("Cannot read config file at: {path:?}: {error}"))?;
-        Self::parse(&content)
+        Ok(config)
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::parse(DEFAULT_CONFIG_TOML).expect("Default configuration should be valid")
     }
 }
 
@@ -64,15 +69,33 @@ impl TryFrom<Option<PathBuf>> for Config {
     type Error = Error;
 
     fn try_from(value: Option<PathBuf>) -> Result<Self> {
-        match value {
-            Some(path) => Self::read_user_path(path),
-            None => Self::read_default_path(),
+        // Try to use the user-provided path
+        if let Some(path) = value {
+            return match fs::read_to_string(&path) {
+                Ok(content) => Self::parse(&content),
+                Err(err) => Err(anyhow!(
+                    "Could not read config from user-supplied path ({}): {}",
+                    path.display(),
+                    err
+                )),
+            };
         }
-    }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        toml::from_str::<Self>(DEFAULT_CONFIG_TOML).unwrap()
+        // No user-provided path provided, so try the default path
+        let default_path = Self::default_path();
+        match fs::read_to_string(&default_path) {
+            Ok(content) => Self::parse(&content),
+            Err(err) => {
+                if err.kind() == ErrorKind::NotFound {
+                    // Fallback to the built-in config
+                    return Ok(Self::default());
+                }
+                Err(anyhow!(
+                    "could not read config from the default path ({}): {}",
+                    default_path.display(),
+                    err
+                ))
+            }
+        }
     }
 }

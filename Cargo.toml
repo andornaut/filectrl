@@ -16,18 +16,17 @@ anyhow = "~1.0"
 arboard = {version = "3.2.1", default-features = false}
 argh = "0.1"
 chrono = {version = "0.4", default-features = false, features = ["clock", "time"]}
-color-to-tui = "0.3"
 crossterm = "0.26"
-env_logger = { version = "0.10.0", default-features = false }
+env_logger = {version = "0.10.0", default-features = false}
 etcetera = "0.8"
-log = { version = "0.4.20", default-features = false, features = ["serde"] }
+log = {version = "0.4.20", default-features = false, features = ["serde"]}
 open = "~5.0"
-ratatui = {version = "0.23", features = ["all-widgets"]}
+ratatui = {version = "0.30.0-alpha.2", features = ["all-widgets", "serde"]}
 regex = "~1.9"
-serde = "~1.0"
+serde = {version = "1.0.218", features = ["derive"]}
 toml = "0.7"
 tui-input = "0.7"
-unicode-segmentation = "~1.10"
+unicode-segmentation = "~1.12"
 unicode-width = "0.1"
 unix_mode = "0.1"
 
