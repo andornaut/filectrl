@@ -14,7 +14,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
-use log::debug;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Frame;
 use std::{
@@ -96,7 +95,7 @@ impl App {
                     // if it doesn't produce a derived command. This seems wasteful,
                     // but it only occurs for Command::Quit or if the command is
                     // ultimately unhandled, which results in an error anyway.
-                    debug!("broadcast_command() {command:?}");
+                    //debug!("broadcast_command() {command:?}");
                     let (mut derived_commands, handled) =
                         recursively_handle_command(self, &command, &mode);
                     if !handled {

@@ -55,9 +55,9 @@ impl CommandHandler for TableView {
                 let x = event.column.saturating_sub(self.table_rect.x);
                 let y = event.row.saturating_sub(self.table_rect.y);
                 if y == 0 {
-                    self.handle_click_header(x)
+                    self.click_header(x)
                 } else {
-                    self.handle_click_table(y)
+                    self.click_table(y)
                 }
             }
             MouseEventKind::ScrollUp => self.previous(),

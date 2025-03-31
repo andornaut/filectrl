@@ -764,6 +764,27 @@ pub struct Theme {
     )]
     table_scrollbar_thumb_fg: Option<Color>,
 
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_scrollbar_begin_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_scrollbar_end_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_scrollbar_begin_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_scrollbar_end_fg: Option<Color>,
+
     // Table selected
     #[serde(
         deserialize_with = "deserialize_optional_color",
@@ -814,14 +835,24 @@ impl Theme {
     style_getter!(table_body, table_body_fg, table_body_bg);
     style_getter!(table_header, table_header_fg, table_header_bg);
     style_getter!(
-        table_scrollbar_track,
-        table_scrollbar_track_fg,
-        table_scrollbar_track_bg
+        table_scrollbar_begin,
+        table_scrollbar_begin_fg,
+        table_scrollbar_begin_bg
+    );
+    style_getter!(
+        table_scrollbar_end,
+        table_scrollbar_end_fg,
+        table_scrollbar_end_bg
     );
     style_getter!(
         table_scrollbar_thumb,
         table_scrollbar_thumb_fg,
         table_scrollbar_thumb_bg
+    );
+    style_getter!(
+        table_scrollbar_track,
+        table_scrollbar_track_fg,
+        table_scrollbar_track_bg
     );
     style_getter!(table_selected, table_selected_fg, table_selected_bg);
     style_getter!(
