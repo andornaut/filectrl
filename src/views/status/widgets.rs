@@ -1,40 +1,23 @@
-use super::{Clipboard, StatusView};
 use crate::{
     app::config::theme::Theme,
-    command::{
-        mode::InputMode,
-        task::{Progress, Task},
-    },
+    command::task::{Progress, Task},
     file_system::human::HumanPath,
-    views::{len_utf8, truncate_left_utf8_with_ellipsis, View},
+    views::{len_utf8, truncate_left_utf8_with_ellipsis},
 };
 use ratatui::{
-    prelude::{Backend, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 use std::collections::HashSet;
 
-impl<B: Backend> View<B> for StatusView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
-        self.rect = rect;
+use super::Clipboard;
 
-        let widget = if !self.tasks.is_empty() {
-            progress_paragraph(&self.tasks, theme, rect.width)
-        } else if self.clipboard.is_some() {
-            clipboard_paragraph(&self.clipboard, self.rect.width, theme)
-        } else if !self.filter.is_empty() {
-            filter_paragraph(&self.filter, theme)
-        } else {
-            default_paragraph(&self.directory, self.directory_len, &self.selected, theme)
-        };
-        frame.render_widget(widget, rect);
-    }
-}
-
-fn clipboard_paragraph<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme) -> Paragraph<'a> {
+pub fn clipboard_paragraph<'a>(
+    clipboard: &'a Clipboard,
+    width: u16,
+    theme: &Theme,
+) -> Paragraph<'a> {
     let (label, path) = match clipboard {
         Clipboard::Copy(path) => ("Copied", path),
         Clipboard::Cut(path) => ("Cut", path),
@@ -51,19 +34,7 @@ fn clipboard_paragraph<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme) 
     Paragraph::new(Line::from(spans)).style(theme.status_clipboard())
 }
 
-fn filter_paragraph<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
-    let bold_style = Style::default().add_modifier(Modifier::BOLD);
-    let spans = vec![
-        Span::raw(" Filtered by \""),
-        Span::styled(filter, bold_style),
-        Span::raw("\". Press "),
-        Span::styled("Esc", bold_style),
-        Span::raw(" to exit filtered mode."),
-    ];
-    Paragraph::new(Line::from(spans)).style(theme.status_filter())
-}
-
-fn default_paragraph<'a>(
+pub fn default_paragraph<'a>(
     directory: &'a HumanPath,
     directory_len: usize,
     selected: &Option<HumanPath>,
@@ -78,7 +49,23 @@ fn default_paragraph<'a>(
     Paragraph::new(Line::from(spans)).style(theme.status_selected())
 }
 
-fn progress_paragraph<'a>(tasks: &'a HashSet<Task>, theme: &Theme, width: u16) -> Paragraph<'a> {
+pub fn filter_paragraph<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
+    let bold_style = Style::default().add_modifier(Modifier::BOLD);
+    let spans = vec![
+        Span::raw(" Filtered by \""),
+        Span::styled(filter, bold_style),
+        Span::raw("\". Press "),
+        Span::styled("Esc", bold_style),
+        Span::raw(" to exit filtered mode."),
+    ];
+    Paragraph::new(Line::from(spans)).style(theme.status_filter())
+}
+
+pub fn progress_paragraph<'a>(
+    tasks: &'a HashSet<Task>,
+    theme: &Theme,
+    width: u16,
+) -> Paragraph<'a> {
     let mut progress = Progress(0, 0);
     let mut has_error = false;
     for task in tasks {

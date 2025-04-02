@@ -1,4 +1,4 @@
-use super::sort::{SortColumn, SortDirection};
+use super::columns::{SortColumn, SortDirection};
 use super::style::header_style;
 use super::style::name_style;
 use crate::app::config::theme::Theme;
@@ -76,11 +76,11 @@ fn header_label<'a>(
 }
 
 pub(super) fn row<'a>(
-    item: &'a HumanPath,
-    name_column_width: u16,
     theme: &Theme,
+    name_column_width: u16,
+    item: &'a HumanPath,
 ) -> (Row<'a>, u16) {
-    let name = split_name(&item, name_column_width, theme);
+    let name = split_name(theme, name_column_width, item);
     let height = name.len() as u16;
     let size = Line::from(item.size()).alignment(Alignment::Right);
     let row = Row::new(vec![
@@ -93,8 +93,8 @@ pub(super) fn row<'a>(
     (row, height)
 }
 
-fn split_name<'a>(path: &'a HumanPath, width: u16, theme: &Theme) -> Vec<Line<'a>> {
-    let style = name_style(path, &theme.files);
+fn split_name<'a>(theme: &Theme, width: u16, path: &'a HumanPath) -> Vec<Line<'a>> {
+    let style = name_style(&theme.files, path);
     split_with_ellipsis(&path.name(), width)
         .into_iter()
         .map(|part| Line::from(Span::styled(part, style)))

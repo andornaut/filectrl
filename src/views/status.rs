@@ -1,5 +1,6 @@
 mod handler;
-mod view;
+mod render;
+mod widgets;
 
 use std::collections::HashSet;
 

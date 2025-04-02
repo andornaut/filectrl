@@ -1,4 +1,4 @@
-use super::{sort::SortColumn, TableView};
+use super::{columns::SortColumn, TableView};
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::prelude::Rect;

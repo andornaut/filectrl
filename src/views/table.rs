@@ -1,35 +1,27 @@
 mod clipboard;
+mod columns;
 mod double_click;
 mod handler;
-mod line_to_item;
-mod sort;
+mod line_item_map;
+mod render;
 mod style;
-mod view;
 mod widgets;
 
 use self::{
     clipboard::Clipboard,
+    columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
-    sort::{SortColumn, SortDirection},
 };
 use crate::{
     app::config::Config,
     command::{result::CommandResult, Command, PromptKind},
     file_system::human::HumanPath,
 };
-use line_to_item::LineToItemMapper;
-use log::debug;
+use line_item_map::LineItemMap;
 use ratatui::{
     layout::Rect,
-    prelude::Constraint,
     widgets::{ScrollbarState, TableState},
 };
-use std::cmp::min;
-
-const NAME_MIN_LEN: u16 = 39;
-const MODE_LEN: u16 = 10;
-const MODIFIED_LEN: u16 = 12;
-const SIZE_LEN: u16 = 7;
 
 #[derive(Default)]
 pub(super) struct TableView {
@@ -37,19 +29,16 @@ pub(super) struct TableView {
     directory_items: Vec<HumanPath>,
     directory_items_sorted: Vec<HumanPath>,
     filter: String,
-    mapper: LineToItemMapper,
-    name_column_width: u16,
-    sort_column: SortColumn,
-    sort_direction: SortDirection,
 
     scrollbar_rect: Rect,
     scrollbar_state: ScrollbarState,
-
     table_rect: Rect,
     table_state: TableState,
 
     clipboard: Clipboard,
+    columns: Columns,
     double_click: DoubleClick,
+    mapper: LineItemMap,
 }
 
 impl TableView {
@@ -86,8 +75,9 @@ impl TableView {
         }
     }
 
+    // Handle clicks
     fn click_header(&mut self, x: u16) -> CommandResult {
-        if let Some(column) = click_column(x, self.name_column_width) {
+        if let Some(column) = self.columns.sort_column_for_click(x) {
             self.sort_by(column)
         } else {
             CommandResult::none()
@@ -102,7 +92,7 @@ impl TableView {
             return CommandResult::none();
         }
 
-        let clicked_item = self.mapper[clicked_line];
+        let clicked_item = self.mapper.item(clicked_line);
         let clicked_path = &self.directory_items_sorted[clicked_item];
         if self
             .double_click
@@ -115,8 +105,8 @@ impl TableView {
         Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
+    // Navigate
     fn next(&mut self) -> CommandResult {
-        //self.navigate(1)
         let delta = 1;
         if let Some(selected) = self.table_state.selected() {
             if selected + delta >= self.directory_items_sorted.len() {
@@ -137,67 +127,65 @@ impl TableView {
     }
 
     fn last(&mut self) -> CommandResult {
-        self.select(self.directory_items_sorted.len() - 1)
-    }
-
-    fn select(&mut self, item: usize) -> CommandResult {
-        self.table_state.select(Some(item));
-        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+        self.select(self.directory_items_sorted.len().saturating_sub(1))
     }
 
     fn next_page(&mut self) -> CommandResult {
         let selected_item = self.table_state.selected().unwrap_or_default();
-        let old_last_item = self.mapper.last_visible_item();
-        if selected_item != old_last_item {
-            return self.select(old_last_item);
+
+        // If not at the last visible item, then move to it
+        let current_last_item = self.mapper.item(self.mapper.last_visible_line());
+        if selected_item != current_last_item {
+            return self.select(current_last_item);
         }
-        if selected_item == self.directory_items_sorted.len() - 1 {
-            // NOOP if the last item is already selected
+
+        // If already at the last item, then no-op
+        if selected_item == self.directory_items_sorted.len().saturating_sub(1) {
             return CommandResult::none();
         }
 
-        // At this point, the selected_item is the last visible item
-        let old_last_line = self.mapper.get_line(selected_item);
-        let visible_lines = self.table_rect.height as usize - 1; // -1 for table header
-        let last_line = min(
-            old_last_line + visible_lines,
-            self.mapper.total_number_of_lines() - 1,
-        );
-        let mut last_item = self.mapper[last_line];
+        let new_first_line = self.mapper.first_line(selected_item);
+        let new_last_line = self.mapper.last_visible_line_starting_at(new_first_line);
+        let mut new_last_item = self.mapper.item(new_last_line);
 
-        let first_line = self.mapper.get_line(last_item);
-        let first_item = self.mapper[first_line];
-        if old_last_item < first_item {
-            // if old_last_item is offscreen, then shift over so that it is visible
-            last_item -= 1;
+        // Adjust if necessary to keep the selected item visible
+        // If the last item overflows, ratatui will scroll down until it is fully visible,
+        // so we need to "scroll up" `new_last_item`, so that the `current_last_item` remains visible.
+        let new_last_item_last_line = self.mapper.last_line(new_last_item);
+        if new_last_item_last_line > new_last_line {
+            new_last_item -= 1;
         }
-        self.select(last_item)
+        self.select(new_last_item)
     }
 
     fn previous_page(&mut self) -> CommandResult {
         let selected_item = self.table_state.selected().unwrap_or_default();
-        let old_first_item = self.table_state.offset();
-        if selected_item != old_first_item {
-            return self.select(old_first_item);
+
+        // If not at the first visible item, then move to it
+        let current_first_item = self.table_state.offset();
+        if selected_item != current_first_item {
+            return self.select(current_first_item);
         }
+
+        // If already at the first item, then no-op
         if selected_item == 0 {
-            // NOOP if the first item is already selected
             return CommandResult::none();
         }
 
-        // At this point, the selected_item is the first visible item
-        let old_first_line = self.mapper.get_line(old_first_item);
-        let visible_lines = self.table_rect.height as usize - 1; // -1 for table header
-        let first_line = old_first_line.saturating_sub(visible_lines);
-        let mut first_item = self.mapper[first_line];
+        let new_last_item_first_line = self.mapper.first_line(selected_item);
+        let new_first_line = self
+            .mapper
+            .first_visible_line_ending_at(new_last_item_first_line);
+        let mut new_first_item = self.mapper.item(new_first_line);
 
-        let last_line = self.mapper.last_visible_line(first_line);
-        let last_item = self.mapper[last_line];
-        if old_first_item > last_item {
-            // If old_first_item is offscreen, then shift over so that it is visible
-            first_item += 1;
+        // Adjust if necessary to keep the selected item visible
+        // If the first item overflows, ratatui will scroll up until it is fully visible,
+        // so we need to "scroll down" `new_first_item`, so that the `current_first_item` remains visible.
+        let new_first_item_first_line = self.mapper.first_line(new_first_item);
+        if new_first_item_first_line < new_first_line {
+            new_first_item += 1;
         }
-        self.select(first_item)
+        self.select(new_first_item)
     }
 
     // Delete / Open
@@ -230,7 +218,12 @@ impl TableView {
         }
     }
 
-    // Select / Unselect
+    // Select
+    fn select(&mut self, item: usize) -> CommandResult {
+        self.table_state.select(Some(item));
+        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+    }
+
     fn selected(&self) -> Option<&HumanPath> {
         self.table_state
             .selected()
@@ -267,12 +260,12 @@ impl TableView {
     // Sort
     fn sort(&mut self) -> CommandResult {
         let mut items = self.directory_items.clone();
-        match self.sort_column {
+        match self.columns.sort_column() {
             SortColumn::Name => items.sort_by_cached_key(|path| path.name_comparator()),
             SortColumn::Modified => items.sort_by_cached_key(|path| path.modified_comparator()),
             SortColumn::Size => items.sort_by_cached_key(|path| path.size),
         };
-        if self.sort_direction == SortDirection::Descending {
+        if *self.columns.sort_direction() == SortDirection::Descending {
             items.reverse();
         }
 
@@ -284,50 +277,11 @@ impl TableView {
                 .collect();
         }
         self.directory_items_sorted = items;
-
         self.reset_selection()
     }
 
     fn sort_by(&mut self, column: SortColumn) -> CommandResult {
-        if self.sort_column == column {
-            self.sort_direction.toggle();
-        } else {
-            self.sort_column = column;
-        }
+        self.columns.sort_by(column);
         self.sort()
     }
-}
-
-fn click_column(x: u16, name_column_width: u16) -> Option<SortColumn> {
-    if x <= name_column_width {
-        Some(SortColumn::Name)
-    } else if x <= name_column_width + MODIFIED_LEN {
-        Some(SortColumn::Modified)
-    } else if x <= name_column_width + MODIFIED_LEN + SIZE_LEN {
-        Some(SortColumn::Size)
-    } else {
-        None
-    }
-}
-
-fn column_constraints(width: u16) -> (Vec<Constraint>, u16) {
-    let mut constraints = Vec::new();
-    let mut name_column_width = width;
-    let mut len = NAME_MIN_LEN;
-    if width > len {
-        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
-        constraints.push(Constraint::Length(MODIFIED_LEN));
-    }
-    len += MODIFIED_LEN + 1 + SIZE_LEN + 1;
-    if width > len {
-        name_column_width -= SIZE_LEN + 1;
-        constraints.push(Constraint::Length(SIZE_LEN));
-    }
-    len += MODE_LEN + 1;
-    if width > len {
-        name_column_width -= MODE_LEN + 1;
-        constraints.push(Constraint::Length(MODE_LEN));
-    }
-    constraints.insert(0, Constraint::Length(name_column_width));
-    (constraints, name_column_width)
 }
