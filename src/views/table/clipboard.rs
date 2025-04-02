@@ -41,7 +41,7 @@ impl Clipboard {
 
     fn set_clipboard(&mut self, command: ClipboardCommand, from: &str) {
         self.0
-            .set_text(format!("{command} {}", from))
+            .set_text(format!("{command} {from}"))
             .expect("Can write to the clipboard");
     }
 }

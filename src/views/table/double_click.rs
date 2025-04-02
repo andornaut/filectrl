@@ -2,7 +2,7 @@ use crate::file_system::human::HumanPath;
 use log::debug;
 use std::time::Instant;
 
-const DEFAULT_DOUBLE_CLICK_THRESHOLD_MILLISECONDS: u16 = 300;
+const DEFAULT_THRESHOLD_MILLISECONDS: u16 = 300;
 
 #[derive(Default)]
 pub struct DoubleClick {
@@ -13,11 +13,11 @@ pub struct DoubleClick {
 
 impl DoubleClick {
     pub fn new(threshold_milliseconds: Option<u16>) -> Self {
+        let threshold_milliseconds =
+            threshold_milliseconds.unwrap_or(DEFAULT_THRESHOLD_MILLISECONDS);
         Self {
-            start: None,
-            threshold_milliseconds: threshold_milliseconds
-                .unwrap_or(DEFAULT_DOUBLE_CLICK_THRESHOLD_MILLISECONDS),
-            last_path: None,
+            threshold_milliseconds,
+            ..Default::default()
         }
     }
 

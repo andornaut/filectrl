@@ -14,7 +14,7 @@ pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &Sor
     }
 }
 
-pub(super) fn name_style(path: &HumanPath, theme: &FileTheme) -> Style {
+pub(super) fn name_style(theme: &FileTheme, path: &HumanPath) -> Style {
     // Symlinks should be checked first (highest precedence in ls)
     if path.is_symlink_broken() {
         return theme.symlink_broken();
