@@ -24,6 +24,7 @@ impl CommandHandler for TableView {
             (KeyCode::Char('u'), KeyModifiers::CONTROL)
             | (KeyCode::Char('b'), KeyModifiers::CONTROL)
             | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
+            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.last(),
             (KeyCode::Char('d'), KeyModifiers::CONTROL)
             | (KeyCode::Char('f'), KeyModifiers::CONTROL)
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
@@ -36,7 +37,7 @@ impl CommandHandler for TableView {
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                KeyCode::Char('^') | KeyCode::Home => self.first(),
+                KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.first(),
                 KeyCode::Char('$') | KeyCode::End => self.last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),

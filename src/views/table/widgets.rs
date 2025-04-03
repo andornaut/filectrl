@@ -9,16 +9,18 @@ use super::{
     columns::{SortColumn, SortDirection},
     style::{header_style, name_style},
 };
-use crate::{app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis};
+use crate::{
+    app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis,
+};
 
-pub(super) fn table<'a>(
+pub(super) fn table_widget<'a>(
     theme: &Theme,
     column_constraints: Vec<Constraint>,
     rows: Vec<Row<'a>>,
     sort_column: &'a SortColumn,
     sort_direction: &'a SortDirection,
 ) -> Table<'a> {
-    let header = header(theme, sort_column, sort_direction);
+    let header = header_widget(theme, sort_column, sort_direction);
     Table::new(rows, vec![Constraint::Percentage(100)])
         .header(header)
         .row_highlight_style(theme.table_selected())
@@ -26,7 +28,7 @@ pub(super) fn table<'a>(
         .widths(&column_constraints)
 }
 
-fn header<'a>(
+fn header_widget<'a>(
     theme: &Theme,
     sort_column: &'a SortColumn,
     sort_direction: &'a SortDirection,
@@ -75,18 +77,31 @@ fn header_label<'a>(
     }
 }
 
-pub(super) fn row<'a>(theme: &Theme, name_column_width: u16, item: &'a PathInfo) -> (Row<'a>, u16) {
+pub(super) fn row_and_height<'a>(
+    theme: &'a Theme,
+    name_column_width: u16,
+    item: &'a PathInfo,
+) -> (Row<'a>, u16) {
     let name = split_name(theme, name_column_width, item);
     let height = name.len() as u16;
     let size = Line::from(item.size()).alignment(Alignment::Right);
-    let row = Row::new(vec![
+    let row = row_widget(theme, item, name, size).height(height);
+    (row, height)
+}
+
+fn row_widget<'a>(
+    theme: &'a Theme,
+    item: &'a PathInfo,
+    name: Vec<Line<'a>>,
+    size: Line<'a>,
+) -> Row<'a> {
+    Row::new([
         Cell::from(Text::from(name)),
         Cell::from(item.modified().unwrap_or_default()),
         Cell::from(size),
         Cell::from(item.mode()),
     ])
-    .height(height);
-    (row, height)
+    .style(theme.table_body())
 }
 
 fn split_name<'a>(theme: &Theme, width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {

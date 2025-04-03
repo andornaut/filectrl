@@ -1,6 +1,6 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    prelude::{Backend, Rect},
+    prelude::Rect,
     style::Style,
     text::{Line, Span},
     widgets::Paragraph,
@@ -89,7 +89,7 @@ impl CommandHandler for HeaderView {
     }
 }
 
-impl<B: Backend> View<B> for HeaderView {
+impl View for HeaderView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
@@ -151,7 +151,7 @@ fn spans<'a>(
         };
 
         let name = format!("{}{MAIN_SEPARATOR}", name);
-        let name_len = name.width() as u16;
+        let name_len = name.width_cjk() as u16;
         row_len += name_len;
         if row_len > width {
             // Move to the next row

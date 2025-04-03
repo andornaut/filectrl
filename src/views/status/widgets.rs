@@ -21,14 +21,15 @@ pub fn clipboard_widget<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme)
         Clipboard::Cut(path) => ("Cut", path),
         Clipboard::None => unreachable!(),
     };
-    let bold_style = Style::default().add_modifier(Modifier::BOLD);
-    let width = width.saturating_sub(label.width() as u16 + 4); // 2for spaces + 2 for quotation marks
+
+    let width = width.saturating_sub(label.width_cjk() as u16 + 4); // 2 for spaces + 2 for quotation marks
     let path = truncate_left_utf8(&path.path, width);
     let spans = vec![
         Span::raw(format!(" {label} \"")),
-        Span::styled(path, bold_style),
+        Span::styled(path, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("\""),
     ];
+
     Paragraph::new(Line::from(spans)).style(theme.status_clipboard())
 }
 

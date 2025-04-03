@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    prelude::{Backend, Rect},
+    prelude::Rect,
     text::{Line, Text},
     widgets::Paragraph,
     Frame,
@@ -78,7 +78,9 @@ impl CommandHandler for ErrorsView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('e'), KeyModifiers::NONE) => self.clear_errors(),
+            (KeyCode::Char('e'), KeyModifiers::NONE) | (KeyCode::Char('c'), _) => {
+                self.clear_errors()
+            }
             (_, _) => CommandResult::NotHandled,
         }
     }
@@ -98,14 +100,14 @@ impl CommandHandler for ErrorsView {
     }
 }
 
-impl<B: Backend> View<B> for ErrorsView {
+impl View for ErrorsView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
         if !self.should_show() {
             return;
         }
         let style = theme.error();
-        let bordered_rect = bordered::<B>(frame, rect, style, Some("Errors".into()));
+        let bordered_rect = bordered(frame, rect, style, Some("Errors".into()));
         let items = self.list_items(bordered_rect.width);
         frame.render_widget(
             Paragraph::new(Text::from(items)).style(style),
