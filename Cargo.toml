@@ -24,6 +24,7 @@ open = "~5.0"
 ratatui = {version = "0.30.0-alpha.2", features = ["all-widgets", "serde"]}
 regex = "~1.9"
 serde = {version = "1.0.218", features = ["derive"]}
+textwrap = "0.16"
 toml = "0.7"
 tui-input = "0.7"
 unicode-segmentation = "~1.12"

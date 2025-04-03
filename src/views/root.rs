@@ -40,13 +40,14 @@ impl RootView {
 
 impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
-        let errors: &mut dyn CommandHandler = &mut self.errors;
-        let header: &mut dyn CommandHandler = &mut self.header;
-        let help: &mut dyn CommandHandler = &mut self.help;
-        let prompt: &mut dyn CommandHandler = &mut self.prompt;
-        let status: &mut dyn CommandHandler = &mut self.status;
-        let table: &mut dyn CommandHandler = &mut self.table;
-        vec![errors, header, help, prompt, status, table]
+        vec![
+            &mut self.errors,
+            &mut self.header,
+            &mut self.help,
+            &mut self.prompt,
+            &mut self.status,
+            &mut self.table,
+        ]
     }
 }
 
@@ -55,12 +56,7 @@ impl<B: Backend> View<B> for RootView {
         self.last_rendered_rect = rect;
 
         if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
-            frame.render_widget(
-                Paragraph::new(RESIZE_WINDOW)
-                    .style(theme.error())
-                    .wrap(Wrap { trim: true }),
-                rect,
-            );
+            render_resize_message(frame, rect, theme);
             return;
         }
 
@@ -73,6 +69,7 @@ impl<B: Backend> View<B> for RootView {
             Constraint::Length(self.prompt.height(mode)),
         ];
         let handlers: Vec<&mut dyn View<_>> = vec![
+            // The order is significant
             &mut self.errors,
             &mut self.help,
             &mut self.header,
@@ -90,4 +87,13 @@ impl<B: Backend> View<B> for RootView {
                 handler.render(frame, *chunk, mode, theme)
             });
     }
+}
+
+fn render_resize_message(frame: &mut Frame<'_>, rect: Rect, theme: &Theme) {
+    frame.render_widget(
+        Paragraph::new(RESIZE_WINDOW)
+            .style(theme.error())
+            .wrap(Wrap { trim: true }),
+        rect,
+    );
 }
