@@ -1,6 +1,8 @@
-use crate::file_system::human::HumanPath;
-use log::debug;
 use std::time::Instant;
+
+use log::debug;
+
+use crate::file_system::human::HumanPath;
 
 const DEFAULT_THRESHOLD_MILLISECONDS: u16 = 300;
 

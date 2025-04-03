@@ -7,20 +7,21 @@ mod render;
 mod style;
 mod widgets;
 
+use ratatui::{
+    layout::Rect,
+    widgets::{ScrollbarState, TableState},
+};
+
 use self::{
     clipboard::Clipboard,
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
+    line_item_map::LineItemMap,
 };
 use crate::{
     app::config::Config,
     command::{result::CommandResult, Command, PromptKind},
     file_system::human::HumanPath,
-};
-use line_item_map::LineItemMap;
-use ratatui::{
-    layout::Rect,
-    widgets::{ScrollbarState, TableState},
 };
 
 #[derive(Default)]

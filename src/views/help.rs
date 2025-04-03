@@ -1,8 +1,3 @@
-use super::{bordered, View};
-use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
-};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     prelude::{Backend, Rect},
@@ -10,6 +5,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
+};
+
+use super::{bordered, View};
+use crate::{
+    app::config::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
 #[derive(Default)]

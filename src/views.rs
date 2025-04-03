@@ -6,10 +6,6 @@ pub mod root;
 mod status;
 mod table;
 
-use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode},
-};
 use ratatui::{
     backend::Backend,
     layout::{Margin, Rect},
@@ -18,6 +14,11 @@ use ratatui::{
     Frame,
 };
 use unicode_segmentation::UnicodeSegmentation;
+
+use crate::{
+    app::config::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode},
+};
 
 const ELLIPSIS: &str = "…";
 const NEWLINE_ELLIPSIS: &str = "\n…";

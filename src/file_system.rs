@@ -1,3 +1,13 @@
+mod converters;
+mod handler;
+pub mod human;
+mod operations;
+
+use std::{fs, path::PathBuf, sync::mpsc::Sender};
+
+use anyhow::{anyhow, Result};
+use log::info;
+
 use self::{
     handler::TaskCommand,
     human::HumanPath,
@@ -7,14 +17,6 @@ use crate::{
     app::config::Config,
     command::{result::CommandResult, task::Task, Command},
 };
-use anyhow::{anyhow, Result};
-use log::info;
-use std::{fs, path::PathBuf, sync::mpsc::Sender};
-
-mod converters;
-mod handler;
-pub mod human;
-mod operations;
 
 pub struct FileSystem {
     directory: HumanPath,

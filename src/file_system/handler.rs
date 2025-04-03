@@ -1,7 +1,8 @@
-use super::{human::HumanPath, FileSystem};
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 use anyhow::{anyhow, Error};
 use crossterm::event::{KeyCode, KeyModifiers};
+
+use super::{human::HumanPath, FileSystem};
+use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum TaskCommand {

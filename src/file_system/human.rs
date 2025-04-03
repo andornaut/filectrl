@@ -1,7 +1,3 @@
-use super::converters::{path_to_basename, path_to_string};
-use anyhow::{Error, Result};
-use chrono::{DateTime, Datelike, Local, Timelike};
-use nix::unistd::{Gid, Group, Uid, User};
 use std::{
     cmp::{self},
     env,
@@ -11,6 +7,12 @@ use std::{
     path::{Path, PathBuf, MAIN_SEPARATOR},
     time::SystemTime,
 };
+
+use anyhow::{Error, Result};
+use chrono::{DateTime, Datelike, Local, Timelike};
+use nix::unistd::{Gid, Group, Uid, User};
+
+use super::converters::{path_to_basename, path_to_string};
 
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];

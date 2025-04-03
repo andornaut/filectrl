@@ -1,15 +1,15 @@
-use super::columns::{SortColumn, SortDirection};
-use super::style::header_style;
-use super::style::name_style;
-use crate::app::config::theme::Theme;
-use crate::file_system::human::HumanPath;
-use crate::views::split_with_ellipsis;
-use ratatui::symbols::{block, line};
 use ratatui::{
     prelude::{Alignment, Constraint, Stylize},
+    symbols::{block, line},
     text::{Line, Span, Text},
     widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table},
 };
+
+use super::{
+    columns::{SortColumn, SortDirection},
+    style::{header_style, name_style},
+};
+use crate::{app::config::theme::Theme, file_system::human::HumanPath, views::split_with_ellipsis};
 
 pub(super) fn table<'a>(
     theme: &Theme,

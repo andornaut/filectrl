@@ -1,11 +1,3 @@
-use super::{len_utf8, View};
-use crate::{
-    app::config::theme::Theme,
-    command::{
-        handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
-    },
-    file_system::human::HumanPath,
-};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -14,6 +6,15 @@ use ratatui::{
     Frame,
 };
 use tui_input::{backend::crossterm::EventHandler, Input};
+
+use super::{len_utf8, View};
+use crate::{
+    app::config::theme::Theme,
+    command::{
+        handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
+    },
+    file_system::human::HumanPath,
+};
 
 #[derive(Default)]
 pub(super) struct PromptView {

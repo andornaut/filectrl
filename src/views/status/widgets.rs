@@ -1,17 +1,18 @@
+use std::collections::HashSet;
+
+use ratatui::{
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
+};
+
+use super::Clipboard;
 use crate::{
     app::config::theme::Theme,
     command::task::{Progress, Task},
     file_system::human::HumanPath,
     views::{len_utf8, truncate_left_utf8_with_ellipsis},
 };
-use ratatui::{
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::Paragraph,
-};
-use std::collections::HashSet;
-
-use super::Clipboard;
 
 pub fn clipboard_paragraph<'a>(
     clipboard: &'a Clipboard,

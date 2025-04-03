@@ -1,7 +1,9 @@
 use anyhow::Result;
 use argh::FromArgs;
-use filectrl::{app::config::Config, run};
+
 use std::path::PathBuf;
+
+use filectrl::{app::config::Config, run};
 
 #[derive(FromArgs)]
 

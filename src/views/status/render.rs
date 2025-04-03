@@ -3,10 +3,10 @@ use ratatui::{
     Frame,
 };
 
-use super::widgets::{
-    clipboard_paragraph, default_paragraph, filter_paragraph, progress_paragraph,
+use super::{
+    widgets::{clipboard_paragraph, default_paragraph, filter_paragraph, progress_paragraph},
+    StatusView,
 };
-use super::StatusView;
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl<B: Backend> View<B> for StatusView {

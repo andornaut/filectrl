@@ -8,10 +8,9 @@ use std::{fs, io::ErrorKind, path::PathBuf};
 use anyhow::{anyhow, Error, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
 use log::LevelFilter;
-use ls_colors::apply_ls_colors;
 use serde::{Deserialize, Serialize};
 
-use self::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
+use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, theme::Theme};
 
 const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
 

@@ -1,3 +1,10 @@
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    prelude::{Backend, Rect},
+    widgets::{Paragraph, Wrap},
+    Frame,
+};
+
 use super::{
     errors::ErrorsView, header::HeaderView, help::HelpView, prompt::PromptView, status::StatusView,
     table::TableView, View,
@@ -5,12 +12,6 @@ use super::{
 use crate::{
     app::{config::theme::Theme, config::Config},
     command::{handler::CommandHandler, mode::InputMode},
-};
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    prelude::{Backend, Rect},
-    widgets::{Paragraph, Wrap},
-    Frame,
 };
 
 const MIN_HEIGHT: u16 = 6;
