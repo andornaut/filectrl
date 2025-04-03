@@ -5,28 +5,25 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::Clipboard;
 use crate::{
     app::config::theme::Theme,
     command::task::{Progress, Task},
     file_system::human::HumanPath,
-    views::{len_utf8, truncate_left_utf8_with_ellipsis},
+    utf8::truncate_left_utf8,
 };
 
-pub fn clipboard_paragraph<'a>(
-    clipboard: &'a Clipboard,
-    width: u16,
-    theme: &Theme,
-) -> Paragraph<'a> {
+pub fn clipboard_widget<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme) -> Paragraph<'a> {
     let (label, path) = match clipboard {
         Clipboard::Copy(path) => ("Copied", path),
         Clipboard::Cut(path) => ("Cut", path),
         Clipboard::None => unreachable!(),
     };
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
-    let width = width.saturating_sub(len_utf8(label) + 4); // 2for spaces + 2 for quotation marks
-    let path = truncate_left_utf8_with_ellipsis(&path.path, width);
+    let width = width.saturating_sub(label.width() as u16 + 4); // 2for spaces + 2 for quotation marks
+    let path = truncate_left_utf8(&path.path, width);
     let spans = vec![
         Span::raw(format!(" {label} \"")),
         Span::styled(path, bold_style),
@@ -35,7 +32,7 @@ pub fn clipboard_paragraph<'a>(
     Paragraph::new(Line::from(spans)).style(theme.status_clipboard())
 }
 
-pub fn default_paragraph<'a>(
+pub fn default_widget<'a>(
     directory: &'a HumanPath,
     directory_len: usize,
     selected: &Option<HumanPath>,
@@ -50,7 +47,7 @@ pub fn default_paragraph<'a>(
     Paragraph::new(Line::from(spans)).style(theme.status_selected())
 }
 
-pub fn filter_paragraph<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
+pub fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
     let spans = vec![
         Span::raw(" Filtered by \""),
@@ -62,11 +59,7 @@ pub fn filter_paragraph<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
     Paragraph::new(Line::from(spans)).style(theme.status_filter())
 }
 
-pub fn progress_paragraph<'a>(
-    tasks: &'a HashSet<Task>,
-    theme: &Theme,
-    width: u16,
-) -> Paragraph<'a> {
+pub fn progress_widget<'a>(tasks: &'a HashSet<Task>, theme: &Theme, width: u16) -> Paragraph<'a> {
     let mut progress = Progress(0, 0);
     let mut has_error = false;
     for task in tasks {

@@ -1,6 +1,7 @@
 pub mod app;
 mod command;
 mod file_system;
+mod utf8;
 mod views;
 
 use std::{io::Write, path::PathBuf};

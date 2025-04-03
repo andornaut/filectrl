@@ -7,10 +7,11 @@ use ratatui::{
 };
 use std::collections::VecDeque;
 
-use super::{bordered, split_with_ellipsis, View};
+use super::{bordered, View};
 use crate::{
     app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    utf8::split_with_ellipsis,
 };
 
 const MAX_NUMBER_ERRORS: usize = 5;

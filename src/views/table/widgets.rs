@@ -9,7 +9,7 @@ use super::{
     columns::{SortColumn, SortDirection},
     style::{header_style, name_style},
 };
-use crate::{app::config::theme::Theme, file_system::human::HumanPath, views::split_with_ellipsis};
+use crate::{app::config::theme::Theme, file_system::human::HumanPath, utf8::split_with_ellipsis};
 
 pub(super) fn table<'a>(
     theme: &Theme,

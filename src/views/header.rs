@@ -6,10 +6,11 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 use std::path::MAIN_SEPARATOR;
 
-use super::{len_utf8, View};
+use super::View;
 use crate::{
     app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
@@ -150,7 +151,7 @@ fn spans<'a>(
         };
 
         let name = format!("{}{MAIN_SEPARATOR}", name);
-        let name_len = len_utf8(&name);
+        let name_len = name.width() as u16;
         row_len += name_len;
         if row_len > width {
             // Move to the next row

@@ -6,8 +6,9 @@ use ratatui::{
     Frame,
 };
 use tui_input::{backend::crossterm::EventHandler, Input};
+use unicode_width::UnicodeWidthStr;
 
-use super::{len_utf8, View};
+use super::View;
 use crate::{
     app::config::theme::Theme,
     command::{
@@ -116,30 +117,49 @@ impl<B: Backend> View<B> for PromptView {
         }
 
         let label = self.label();
-        let label_width = len_utf8(&label);
-        let chunks = Layout::default()
+        let label_width = label.width() as u16;
+        let rects = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(label_width as u16), Constraint::Min(1)].as_ref())
+            .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .split(rect);
+        let prompt_rect = rects[0];
+        let input_rect = rects[1];
 
-        let input_width = chunks[1].width;
-        let cursor_x_pos = self.input.visual_cursor() as u16;
-        let x_offset = self.input.visual_scroll(input_width as usize) as u16;
-        let x_offset_scroll = if cursor_x_pos >= input_width {
-            // Workaround: when there's scrolling, the cursor would otherwise
-            // be positioned on the last char instead of after the last char
-            // as is the case when there is no scrolling.
-            x_offset + 1
-        } else {
-            x_offset
-        };
+        let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_rect);
 
-        let input_widget = Paragraph::new(self.input.value())
-            .scroll((0, x_offset_scroll))
-            .style(theme.prompt_input());
-        let label_widget = Paragraph::new(label).style(theme.prompt_label());
-        frame.render_widget(label_widget, chunks[0]);
-        frame.render_widget(input_widget, chunks[1]);
-        frame.set_cursor_position((chunks[1].x + cursor_x_pos - x_offset, chunks[1].y));
+        frame.render_widget(prompt_widget(theme, label), prompt_rect);
+        frame.render_widget(
+            input_widget(&self.input, theme, cursor_x_scroll),
+            input_rect,
+        );
+        frame.set_cursor_position((
+            input_rect.x + (cursor_x_pos - cursor_x_scroll) as u16,
+            input_rect.y,
+        ));
     }
+}
+
+fn cursor_position(input: &Input, input_rect: Rect) -> (usize, usize) {
+    let input_width = input_rect.width as usize;
+    let cursor_x_pos = input.visual_cursor();
+    let cursor_x_scroll = input.visual_scroll(input_width);
+    let cursor_x_scroll = if cursor_x_pos >= input_width {
+        // When there's horizontal scrolling in the input field, the cursor
+        // would otherwise be positioned on the last char instead of after
+        // the last char as is the case when there is no scrolling.
+        cursor_x_scroll + 1
+    } else {
+        cursor_x_scroll
+    };
+    (cursor_x_pos, cursor_x_scroll)
+}
+
+fn prompt_widget<'a>(theme: &'a Theme, label: String) -> Paragraph<'a> {
+    Paragraph::new(label).style(theme.prompt_label())
+}
+
+fn input_widget<'a>(input: &'a Input, theme: &'a Theme, x_offset_scroll: usize) -> Paragraph<'a> {
+    Paragraph::new(input.value())
+        .scroll((0, x_offset_scroll as u16))
+        .style(theme.prompt_input())
 }
