@@ -1,10 +1,10 @@
+use ratatui::style::Style;
+
+use super::SortColumn;
 use crate::{
     app::config::theme::{FileTheme, Theme},
     file_system::human::HumanPath,
 };
-use ratatui::style::Style;
-
-use super::SortColumn;
 
 pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
     if sort_column == column {

@@ -1,14 +1,15 @@
+use ratatui::{
+    prelude::{Backend, Constraint, Direction, Layout, Rect},
+    widgets::Block,
+    Frame,
+};
+
 use super::{
     line_item_map::LineItemMap,
     widgets::{row, scrollbar, table},
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
-use ratatui::{
-    prelude::{Backend, Constraint, Direction, Layout, Rect},
-    widgets::Block,
-    Frame,
-};
 
 impl<B: Backend> View<B> for TableView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {

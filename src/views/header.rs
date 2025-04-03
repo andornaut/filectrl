@@ -1,9 +1,3 @@
-use super::{len_utf8, View};
-use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-    file_system::human::HumanPath,
-};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     prelude::{Backend, Rect},
@@ -12,7 +6,15 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+
 use std::path::MAIN_SEPARATOR;
+
+use super::{len_utf8, View};
+use crate::{
+    app::config::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    file_system::human::HumanPath,
+};
 
 #[derive(Default)]
 pub(super) struct HeaderView {

@@ -3,10 +3,12 @@ mod command;
 mod file_system;
 mod views;
 
-use crate::app::{config::Config, terminal::CleanupOnDropTerminal, App};
+use std::{io::Write, path::PathBuf};
+
 use anyhow::Result;
 use env_logger::Env;
-use std::{io::Write, path::PathBuf};
+
+use self::app::{config::Config, terminal::CleanupOnDropTerminal, App};
 
 const PKG_NAME: Option<&str> = option_env!("CARGO_PKG_NAME");
 

@@ -1,9 +1,11 @@
-use crate::command::Command;
-use crossterm::event::read;
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread,
 };
+
+use crossterm::event::read;
+
+use crate::command::Command;
 
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     let mut commands = Vec::new();

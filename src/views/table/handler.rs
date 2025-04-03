@@ -1,7 +1,8 @@
-use super::{columns::SortColumn, TableView};
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::prelude::Rect;
+
+use super::{columns::SortColumn, TableView};
+use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {

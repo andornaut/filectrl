@@ -2,13 +2,13 @@ mod handler;
 mod render;
 mod widgets;
 
+use ratatui::layout::Rect;
 use std::collections::HashSet;
 
 use crate::{
     command::{result::CommandResult, task::Task},
     file_system::human::HumanPath,
 };
-use ratatui::layout::Rect;
 
 #[derive(Default)]
 enum Clipboard {

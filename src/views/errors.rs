@@ -1,8 +1,3 @@
-use super::{bordered, split_with_ellipsis, View};
-use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     prelude::{Backend, Rect},
@@ -11,6 +6,12 @@ use ratatui::{
     Frame,
 };
 use std::collections::VecDeque;
+
+use super::{bordered, split_with_ellipsis, View};
+use crate::{
+    app::config::theme::Theme,
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+};
 
 const MAX_NUMBER_ERRORS: usize = 5;
 

@@ -1,8 +1,6 @@
-use super::{handler::TaskCommand, human::HumanPath};
-use crate::command::task::Task;
-use crate::command::Command;
 use anyhow::{anyhow, Result};
 use log::{info, warn};
+
 use std::{
     cmp::max,
     ffi::OsStr,
@@ -13,6 +11,9 @@ use std::{
     sync::mpsc::Sender,
     thread,
 };
+
+use super::{handler::TaskCommand, human::HumanPath};
+use crate::command::{task::Task, Command};
 
 const MAX_BUFFER_BYTES: u64 = 64_000_000;
 const MIN_DYNAMIC_BUFFER_BYTES: u64 = 64_000;

@@ -2,6 +2,17 @@ pub mod config;
 mod events;
 pub mod terminal;
 
+use std::{
+    path::PathBuf,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+
+use anyhow::{anyhow, Result};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
+use ratatui::{backend::CrosstermBackend, Frame};
+
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
@@ -12,16 +23,7 @@ use crate::{
     file_system::FileSystem,
     views::{root::RootView, View},
 };
-use anyhow::{anyhow, Result};
-use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
-use ratatui::backend::CrosstermBackend;
-use ratatui::Frame;
-use std::{
-    path::PathBuf,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+
 const BROADCAST_CYCLES: u8 = 5;
 const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
 

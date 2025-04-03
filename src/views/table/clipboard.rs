@@ -1,7 +1,9 @@
-use crate::{command::Command, file_system::human::HumanPath};
+use std::fmt::Display;
+
 use anyhow::{anyhow, Error};
 use arboard::Clipboard as Arboard;
-use std::fmt::Display;
+
+use crate::{command::Command, file_system::human::HumanPath};
 
 pub(super) struct Clipboard(Arboard);
 

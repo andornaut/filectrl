@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
 use std::{ffi::OsStr, path::Path};
+
+use anyhow::{anyhow, Result};
 
 pub(super) fn path_to_string(path: &Path) -> Result<String> {
     // Ref. https://stackoverflow.com/a/42579588,

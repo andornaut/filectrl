@@ -1,5 +1,7 @@
-use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    hash::{Hash, Hasher},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Progress(pub u64, pub u64);

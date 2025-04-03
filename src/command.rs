@@ -3,10 +3,11 @@ pub mod mode;
 pub mod result;
 pub mod task;
 
-use self::{result::CommandResult, task::Task};
-use crate::file_system::human::HumanPath;
 use anyhow::{anyhow, Error};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+use self::{result::CommandResult, task::Task};
+use crate::file_system::human::HumanPath;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {

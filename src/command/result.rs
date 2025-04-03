@@ -1,5 +1,6 @@
-use super::Command;
 use anyhow::Error;
+
+use super::Command;
 
 #[derive(Clone, Debug)]
 pub enum CommandResult {
