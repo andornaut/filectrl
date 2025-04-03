@@ -11,7 +11,7 @@ use super::Clipboard;
 use crate::{
     app::config::theme::Theme,
     command::task::{Progress, Task},
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
     utf8::truncate_left_utf8,
 };
 
@@ -33,9 +33,9 @@ pub fn clipboard_widget<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme)
 }
 
 pub fn default_widget<'a>(
-    directory: &'a HumanPath,
+    directory: &'a PathInfo,
     directory_len: usize,
-    selected: &Option<HumanPath>,
+    selected: &Option<PathInfo>,
     theme: &Theme,
 ) -> Paragraph<'a> {
     let mut spans = Vec::new();
@@ -88,7 +88,7 @@ fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize)
     spans.extend(to_entries(fields, default_style, label_style));
 }
 
-fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &HumanPath) {
+fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     spans.push(Span::styled(" Selected ", theme.status_selected_label()));
     let mut fields = Vec::new();
     if let Some(owner) = selected.owner() {
@@ -109,7 +109,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &HumanPath) {
     spans.extend(to_entries(fields, default_style, label_style));
 }
 
-fn kind_field(selected: &HumanPath) -> String {
+fn kind_field(selected: &PathInfo) -> String {
     let mut kind = Vec::new();
     if selected.is_block_device() {
         kind.push("Block");

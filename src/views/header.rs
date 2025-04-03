@@ -14,7 +14,7 @@ use super::View;
 use crate::{
     app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
 };
 
 #[derive(Default)]
@@ -33,12 +33,12 @@ impl HeaderView {
         container.len() as u16
     }
 
-    fn set_directory(&mut self, directory: HumanPath) -> CommandResult {
+    fn set_directory(&mut self, directory: PathInfo) -> CommandResult {
         self.breadcrumbs = directory.breadcrumbs();
         CommandResult::none()
     }
 
-    fn to_path(&self, end_index: usize) -> Option<HumanPath> {
+    fn to_path(&self, end_index: usize) -> Option<PathInfo> {
         if let Some(components) = self.breadcrumbs.get(0..=end_index) {
             let path = if components.len() == 1 {
                 // Clicked on the root element, which is empty string
@@ -46,7 +46,7 @@ impl HeaderView {
             } else {
                 components.join(&MAIN_SEPARATOR.to_string())
             };
-            HumanPath::try_from(path).ok()
+            PathInfo::try_from(path).ok()
         } else {
             None
         }

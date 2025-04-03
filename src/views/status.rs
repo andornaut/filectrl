@@ -7,13 +7,13 @@ use std::collections::HashSet;
 
 use crate::{
     command::{result::CommandResult, task::Task},
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
 };
 
 #[derive(Default)]
 enum Clipboard {
-    Copy(HumanPath),
-    Cut(HumanPath),
+    Copy(PathInfo),
+    Cut(PathInfo),
     #[default]
     None,
 }
@@ -27,28 +27,28 @@ impl Clipboard {
 #[derive(Default)]
 pub(super) struct StatusView {
     clipboard: Clipboard,
-    directory: HumanPath,
+    directory: PathInfo,
     directory_len: usize,
     filter: String,
     rect: Rect,
-    selected: Option<HumanPath>,
+    selected: Option<PathInfo>,
     tasks: HashSet<Task>,
 }
 
 impl StatusView {
-    fn set_clipboard_copy(&mut self, path: HumanPath) -> CommandResult {
+    fn set_clipboard_copy(&mut self, path: PathInfo) -> CommandResult {
         self.clipboard = Clipboard::Copy(path);
         self.clear_progress_if_done();
         CommandResult::none()
     }
 
-    fn set_clipboard_cut(&mut self, path: HumanPath) -> CommandResult {
+    fn set_clipboard_cut(&mut self, path: PathInfo) -> CommandResult {
         self.clipboard = Clipboard::Cut(path);
         self.clear_progress_if_done();
         CommandResult::none()
     }
 
-    fn set_directory(&mut self, directory: HumanPath, children: &Vec<HumanPath>) -> CommandResult {
+    fn set_directory(&mut self, directory: PathInfo, children: &Vec<PathInfo>) -> CommandResult {
         self.clipboard = Clipboard::None;
         self.directory = directory;
         self.directory_len = children.len();
@@ -63,7 +63,7 @@ impl StatusView {
         CommandResult::none()
     }
 
-    fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
+    fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
         self.clipboard = Clipboard::None;
         self.selected = selected;
         self.clear_progress_if_done();

@@ -14,7 +14,7 @@ use crate::{
     command::{
         handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
     },
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
 };
 
 #[derive(Default)]
@@ -22,7 +22,7 @@ pub(super) struct PromptView {
     filter: String,
     input: Input,
     kind: PromptKind,
-    selected: Option<HumanPath>,
+    selected: Option<PathInfo>,
 }
 
 impl PromptView {
@@ -65,7 +65,7 @@ impl PromptView {
         CommandResult::none()
     }
 
-    fn set_selected(&mut self, selected: Option<HumanPath>) -> CommandResult {
+    fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
         self.selected = selected;
         CommandResult::none()
     }

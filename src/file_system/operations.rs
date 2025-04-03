@@ -12,17 +12,17 @@ use std::{
     thread,
 };
 
-use super::{handler::TaskCommand, human::HumanPath};
+use super::{handler::TaskCommand, path_info::PathInfo};
 use crate::command::{task::Task, Command};
 
 const MAX_BUFFER_BYTES: u64 = 64_000_000;
 const MIN_DYNAMIC_BUFFER_BYTES: u64 = 64_000;
 
-pub(super) fn cd(directory: &HumanPath) -> Result<Vec<HumanPath>> {
+pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
     info!("Changing directory to {directory:?}");
     let entries = fs::read_dir(&directory.path)?;
     let (children, errors): (Vec<_>, Vec<_>) = entries
-        .map(|entry| -> Result<HumanPath> { HumanPath::try_from(&entry?.path()) })
+        .map(|entry| -> Result<PathInfo> { PathInfo::try_from(&entry?.path()) })
         .partition(Result::is_ok);
     if !errors.is_empty() {
         return Err(anyhow!("Some paths could not be read: {:?}", errors));
@@ -30,7 +30,7 @@ pub(super) fn cd(directory: &HumanPath) -> Result<Vec<HumanPath>> {
     Ok(children.into_iter().map(Result::unwrap).collect())
 }
 
-pub(super) fn delete(path: &HumanPath) -> Result<()> {
+pub(super) fn delete(path: &PathInfo) -> Result<()> {
     info!("Deleting {path:?}");
     let pathname = &path.path;
     if path.is_directory() {
@@ -66,7 +66,7 @@ pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
     }
 }
 
-pub(super) fn mv(path: &HumanPath, dir: &HumanPath) -> Result<()> {
+pub(super) fn mv(path: &PathInfo, dir: &PathInfo) -> Result<()> {
     let new_path = Path::new(&dir.path).join(&path.basename);
     let old_path = Path::new(&path.path);
     info!("Moving {old_path:?} to {new_path:?}");
@@ -76,7 +76,7 @@ pub(super) fn mv(path: &HumanPath, dir: &HumanPath) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn rename(old_path: &HumanPath, new_basename: &str) -> Result<()> {
+pub(super) fn rename(old_path: &PathInfo, new_basename: &str) -> Result<()> {
     let old_path = Path::new(&old_path.path);
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");
