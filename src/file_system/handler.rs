@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Error};
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use super::{human::HumanPath, FileSystem};
+use super::{path_info::PathInfo, FileSystem};
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum TaskCommand {
-    Copy(HumanPath, HumanPath),
+    Copy(PathInfo, PathInfo),
 }
 
 impl TryFrom<&Command> for TaskCommand {

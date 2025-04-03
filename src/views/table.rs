@@ -21,14 +21,14 @@ use self::{
 use crate::{
     app::config::Config,
     command::{result::CommandResult, Command, PromptKind},
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
 };
 
 #[derive(Default)]
 pub(super) struct TableView {
-    directory: HumanPath,
-    directory_items: Vec<HumanPath>,
-    directory_items_sorted: Vec<HumanPath>,
+    directory: PathInfo,
+    directory_items: Vec<PathInfo>,
+    directory_items_sorted: Vec<PathInfo>,
     filter: String,
 
     scrollbar_rect: Rect,
@@ -225,7 +225,7 @@ impl TableView {
         return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
     }
 
-    fn selected(&self) -> Option<&HumanPath> {
+    fn selected(&self) -> Option<&PathInfo> {
         self.table_state
             .selected()
             .map(|i| &self.directory_items_sorted[i])
@@ -242,7 +242,7 @@ impl TableView {
     }
 
     // Set directory, filter
-    fn set_directory(&mut self, directory: HumanPath, children: Vec<HumanPath>) -> CommandResult {
+    fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
         self.directory = directory;
         self.directory_items = children;
         self.sort()

@@ -9,7 +9,7 @@ use super::{
     columns::{SortColumn, SortDirection},
     style::{header_style, name_style},
 };
-use crate::{app::config::theme::Theme, file_system::human::HumanPath, utf8::split_with_ellipsis};
+use crate::{app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis};
 
 pub(super) fn table<'a>(
     theme: &Theme,
@@ -75,11 +75,7 @@ fn header_label<'a>(
     }
 }
 
-pub(super) fn row<'a>(
-    theme: &Theme,
-    name_column_width: u16,
-    item: &'a HumanPath,
-) -> (Row<'a>, u16) {
+pub(super) fn row<'a>(theme: &Theme, name_column_width: u16, item: &'a PathInfo) -> (Row<'a>, u16) {
     let name = split_name(theme, name_column_width, item);
     let height = name.len() as u16;
     let size = Line::from(item.size()).alignment(Alignment::Right);
@@ -93,7 +89,7 @@ pub(super) fn row<'a>(
     (row, height)
 }
 
-fn split_name<'a>(theme: &Theme, width: u16, path: &'a HumanPath) -> Vec<Line<'a>> {
+fn split_name<'a>(theme: &Theme, width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
     let style = name_style(&theme.files, path);
     split_with_ellipsis(&path.name(), width)
         .into_iter()

@@ -7,7 +7,7 @@ use anyhow::{anyhow, Error};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 use self::{result::CommandResult, task::Task};
-use crate::file_system::human::HumanPath;
+use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {
@@ -19,24 +19,24 @@ pub enum PromptKind {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
     AddError(String),
-    ClipboardCopy(HumanPath),
-    ClipboardCut(HumanPath),
+    ClipboardCopy(PathInfo),
+    ClipboardCut(PathInfo),
     ClosePrompt,
-    Copy(HumanPath, HumanPath),
-    DeletePath(HumanPath),
+    Copy(PathInfo, PathInfo),
+    DeletePath(PathInfo),
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
-    Move(HumanPath, HumanPath),
-    Open(HumanPath),
-    OpenCustom(HumanPath),
+    Move(PathInfo, PathInfo),
+    Open(PathInfo),
+    OpenCustom(PathInfo),
     OpenPrompt(PromptKind),
     Progress(Task),
     Quit,
-    RenamePath(HumanPath, String),
+    RenamePath(PathInfo, String),
     Resize(u16, u16), // w,h
-    SetDirectory(HumanPath, Vec<HumanPath>),
+    SetDirectory(PathInfo, Vec<PathInfo>),
     SetFilter(String),
-    SetSelected(Option<HumanPath>),
+    SetSelected(Option<PathInfo>),
 }
 
 impl Command {

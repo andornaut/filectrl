@@ -3,7 +3,7 @@ use std::fmt::Display;
 use anyhow::{anyhow, Error};
 use arboard::Clipboard as Arboard;
 
-use crate::{command::Command, file_system::human::HumanPath};
+use crate::{command::Command, file_system::path_info::PathInfo};
 
 pub(super) struct Clipboard(Arboard);
 
@@ -22,12 +22,12 @@ impl Clipboard {
         self.set_clipboard(ClipboardCommand::Move, path);
     }
 
-    pub(super) fn maybe_command(&mut self, to: HumanPath) -> Option<Command> {
+    pub(super) fn maybe_command(&mut self, to: PathInfo) -> Option<Command> {
         self.0
             .get_text()
             .map(|message| {
                 split_clipboard_message(&message).and_then(|(command, from)| {
-                    HumanPath::try_from(from)
+                    PathInfo::try_from(from)
                         .map(|from| {
                             ClipboardCommand::try_from(command)
                                 .map(|command| command.as_command(from, to))
@@ -64,7 +64,7 @@ impl Display for ClipboardCommand {
 }
 
 impl ClipboardCommand {
-    fn as_command(&self, from: HumanPath, to: HumanPath) -> Command {
+    fn as_command(&self, from: PathInfo, to: PathInfo) -> Command {
         match self {
             Self::Copy => Command::Copy(from, to),
             Self::Move => Command::Move(from, to),

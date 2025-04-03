@@ -1,7 +1,7 @@
 mod converters;
 mod handler;
-pub mod human;
 mod operations;
+pub mod path_info;
 
 use std::{fs, path::PathBuf, sync::mpsc::Sender};
 
@@ -10,8 +10,8 @@ use log::info;
 
 use self::{
     handler::TaskCommand,
-    human::HumanPath,
     operations::{open_in, run_task},
+    path_info::PathInfo,
 };
 use crate::{
     app::config::Config,
@@ -19,7 +19,7 @@ use crate::{
 };
 
 pub struct FileSystem {
-    directory: HumanPath,
+    directory: PathInfo,
     open_current_directory_template: Option<String>,
     open_new_window_template: Option<String>,
     open_selected_file_template: Option<String>,
@@ -29,7 +29,7 @@ pub struct FileSystem {
 impl FileSystem {
     pub fn new(config: &Config) -> Self {
         Self {
-            directory: HumanPath::default(),
+            directory: PathInfo::default(),
             open_current_directory_template: config.open_current_directory_template.clone(),
             open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
@@ -42,7 +42,7 @@ impl FileSystem {
 
         match directory {
             Some(directory) => match directory.canonicalize() {
-                Ok(directory) => match HumanPath::try_from(&directory) {
+                Ok(directory) => match PathInfo::try_from(&directory) {
                     Ok(directory) => self.cd(directory),
                     Err(error) => {
                         anyhow!("Failed to change to directory {directory:?}: {error:?}").into()
@@ -52,7 +52,7 @@ impl FileSystem {
                     anyhow!("Failed to change to directory {directory:?}: {error:?}").into()
                 }
             },
-            None => self.cd(HumanPath::default()),
+            None => self.cd(PathInfo::default()),
         }
         .try_into()
     }
@@ -64,7 +64,7 @@ impl FileSystem {
         }
     }
 
-    fn cd(&mut self, directory: HumanPath) -> CommandResult {
+    fn cd(&mut self, directory: PathInfo) -> CommandResult {
         (match operations::cd(&directory) {
             Ok(children) => {
                 self.directory = directory.clone();
@@ -75,7 +75,7 @@ impl FileSystem {
         .into()
     }
 
-    fn delete(&mut self, path: &HumanPath) -> CommandResult {
+    fn delete(&mut self, path: &PathInfo) -> CommandResult {
         match operations::delete(path) {
             Err(error) => anyhow!("Failed to delete {path:?}: {error}").into(),
             Ok(_) => self.refresh(),
@@ -90,10 +90,10 @@ impl FileSystem {
         }
     }
 
-    fn open(&mut self, path: &HumanPath) -> CommandResult {
+    fn open(&mut self, path: &PathInfo) -> CommandResult {
         match fs::canonicalize(&path.path)
             .map_err(anyhow::Error::from)
-            .and_then(|path| HumanPath::try_from(&path))
+            .and_then(|path| PathInfo::try_from(&path))
         {
             Ok(path) => {
                 if path.is_directory() {
@@ -118,7 +118,7 @@ impl FileSystem {
         .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
-    fn open_custom(&self, path: &HumanPath) -> CommandResult {
+    fn open_custom(&self, path: &PathInfo) -> CommandResult {
         open_in(self.open_selected_file_template.clone(), &path.path)
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
@@ -128,14 +128,14 @@ impl FileSystem {
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
-    fn mv(&mut self, old_path: &HumanPath, new_path: &HumanPath) -> CommandResult {
+    fn mv(&mut self, old_path: &PathInfo, new_path: &PathInfo) -> CommandResult {
         match operations::mv(old_path, new_path) {
             Err(error) => anyhow!("Failed to move {old_path:?} to {new_path:?}: {error}").into(),
             Ok(_) => self.refresh(),
         }
     }
 
-    fn rename(&mut self, old_path: &HumanPath, new_basename: &str) -> CommandResult {
+    fn rename(&mut self, old_path: &PathInfo, new_basename: &str) -> CommandResult {
         match operations::rename(old_path, new_basename) {
             Err(error) => {
                 anyhow!("Failed to rename {old_path:?} to {new_basename:?}: {error}").into()

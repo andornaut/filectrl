@@ -3,7 +3,7 @@ use ratatui::style::Style;
 use super::SortColumn;
 use crate::{
     app::config::theme::{FileTheme, Theme},
-    file_system::human::HumanPath,
+    file_system::path_info::PathInfo,
 };
 
 pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
@@ -14,7 +14,7 @@ pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &Sor
     }
 }
 
-pub(super) fn name_style(theme: &FileTheme, path: &HumanPath) -> Style {
+pub(super) fn name_style(theme: &FileTheme, path: &PathInfo) -> Style {
     // Symlinks should be checked first (highest precedence in ls)
     if path.is_symlink_broken() {
         return theme.symlink_broken();
