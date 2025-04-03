@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
-use ratatui::{backend::CrosstermBackend, Frame};
+use ratatui::Frame;
 
 use self::{
     config::Config,
@@ -115,14 +115,8 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
-            let window = frame.area();
-            <RootView as View<CrosstermBackend<std::io::Stdout>>>::render(
-                &mut self.root,
-                frame,
-                window,
-                &self.mode,
-                &self.config.theme,
-            );
+            self.root
+                .render(frame, frame.area(), &self.mode, &self.config.theme);
         })?;
         Ok(())
     }

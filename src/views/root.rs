@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    prelude::{Backend, Rect},
+    prelude::Rect,
     widgets::{Paragraph, Wrap},
     Frame,
 };
@@ -51,7 +51,7 @@ impl CommandHandler for RootView {
     }
 }
 
-impl<B: Backend> View<B> for RootView {
+impl View for RootView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         self.last_rendered_rect = rect;
 
@@ -68,7 +68,7 @@ impl<B: Backend> View<B> for RootView {
             Constraint::Length(1),
             Constraint::Length(self.prompt.height(mode)),
         ];
-        let handlers: Vec<&mut dyn View<_>> = vec![
+        let handlers: Vec<&mut dyn View> = vec![
             // The order is significant
             &mut self.errors,
             &mut self.help,
@@ -83,7 +83,7 @@ impl<B: Backend> View<B> for RootView {
             .split(rect)
             .into_iter()
             .zip(handlers.into_iter())
-            .for_each(|(chunk, handler): (&Rect, &mut dyn View<B>)| {
+            .for_each(|(chunk, handler): (&Rect, &mut dyn View)| {
                 handler.render(frame, *chunk, mode, theme)
             });
     }

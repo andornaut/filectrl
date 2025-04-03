@@ -1,7 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    prelude::{Backend, Rect},
+    prelude::Rect,
     widgets::Paragraph,
     Frame,
 };
@@ -110,14 +110,14 @@ impl CommandHandler for PromptView {
     }
 }
 
-impl<B: Backend> View<B> for PromptView {
+impl View for PromptView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
         }
 
         let label = self.label();
-        let label_width = label.width() as u16;
+        let label_width = label.width_cjk() as u16;
         let rects = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())

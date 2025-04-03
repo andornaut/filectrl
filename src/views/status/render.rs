@@ -1,7 +1,4 @@
-use ratatui::{
-    prelude::{Backend, Rect},
-    Frame,
-};
+use ratatui::{prelude::Rect, Frame};
 
 use super::{
     widgets::{clipboard_widget, default_widget, filter_widget, progress_widget},
@@ -9,7 +6,7 @@ use super::{
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
-impl<B: Backend> View<B> for StatusView {
+impl View for StatusView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 

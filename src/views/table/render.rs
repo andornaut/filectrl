@@ -1,17 +1,17 @@
 use ratatui::{
-    prelude::{Backend, Constraint, Direction, Layout, Rect},
+    prelude::{Constraint, Direction, Layout, Rect},
     widgets::Block,
     Frame,
 };
 
 use super::{
     line_item_map::LineItemMap,
-    widgets::{row, scrollbar, table},
+    widgets::{row_and_height, scrollbar, table_widget},
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
-impl<B: Backend> View<B> for TableView {
+impl View for TableView {
     fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
         if rect.height < 2 || rect.width < 8 {
             return;
@@ -66,12 +66,12 @@ impl TableView {
             .directory_items_sorted
             .iter()
             .map(|item| {
-                let (row, height) = row(theme, self.columns.name_width(), item);
+                let (row, height) = row_and_height(theme, self.columns.name_width(), item);
                 (row, height)
             })
             .unzip();
 
-        let table = table(
+        let table = table_widget(
             theme,
             column_constraints,
             rows,
