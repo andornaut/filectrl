@@ -12,34 +12,34 @@ use super::{
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for TableView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
-        if rect.height < 2 || rect.width < 8 {
+    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+        if area.height < 2 || area.width < 8 {
             return;
         }
 
-        let (block_rect, scrollbar_rect, table_rect) = layout(rect);
-        self.table_rect = table_rect;
-        self.scrollbar_rect = scrollbar_rect;
+        let (block_area, scrollbar_area, table_area) = layout(area);
+        self.table_area = table_area;
+        self.scrollbar_area = scrollbar_area;
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
         self.render_table_and_init_mapper(buf, theme);
         // Must be rendered after the table, because it depends on the mapper
         self.render_scrollbar(buf, theme);
-        self.render_1x1_block(buf, theme, block_rect);
+        self.render_1x1_block(buf, theme, block_area);
     }
 }
 
 impl TableView {
-    fn render_1x1_block(&mut self, buf: &mut Buffer, theme: &Theme, rect: Rect) {
+    fn render_1x1_block(&mut self, buf: &mut Buffer, theme: &Theme, area: Rect) {
         // Extend the table header above the scrollbar as a 1x1 block
         let block = Block::default().style(theme.table_header());
-        block.render(Rect { height: 1, ..rect }, buf);
+        block.render(Rect { height: 1, ..area }, buf);
     }
 
     fn render_scrollbar(&mut self, buf: &mut Buffer, theme: &Theme) {
         // Render the scrollbar
         let total_number_of_lines = self.mapper.total_number_of_lines();
-        let has_scroll = total_number_of_lines > self.scrollbar_rect.height as usize;
+        let has_scroll = total_number_of_lines > self.scrollbar_area.height as usize;
         if !has_scroll {
             return;
         }
@@ -56,14 +56,14 @@ impl TableView {
         let scrollbar = scrollbar(theme);
         StatefulWidget::render(
             scrollbar,
-            self.scrollbar_rect,
+            self.scrollbar_area,
             buf,
             &mut self.scrollbar_state,
         );
     }
 
     fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
-        let column_constraints = self.columns.constraints(self.table_rect.width);
+        let column_constraints = self.columns.constraints(self.table_area.width);
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
             .iter()
@@ -80,29 +80,29 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
-        StatefulWidget::render(table, self.table_rect, buf, &mut self.table_state);
+        StatefulWidget::render(table, self.table_area, buf, &mut self.table_state);
 
         // -1 for table header
-        let number_of_visible_lines = self.table_rect.height as usize - 1;
+        let number_of_visible_lines = self.table_area.height as usize - 1;
         // Must occur after rendering the table, because that's when `self.table_state.offset` is updated.
         let first_visible_item = self.table_state.offset();
         self.mapper = LineItemMap::new(item_heights, number_of_visible_lines, first_visible_item);
     }
 }
 
-fn layout(rect: Rect) -> (Rect, Rect, Rect) {
+fn layout(area: Rect) -> (Rect, Rect, Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-        .split(rect);
-    let table_rect = chunks[0];
-    let mut scrollbar_rect = chunks[1];
+        .split(area);
+    let table_area = chunks[0];
+    let mut scrollbar_area = chunks[1];
     // Make room for the 1x1 block
-    let block_rect = Rect {
+    let block_area = Rect {
         height: 1,
-        ..scrollbar_rect
+        ..scrollbar_area
     };
-    scrollbar_rect.y += 1;
-    scrollbar_rect.height -= 1;
-    (block_rect, scrollbar_rect, table_rect)
+    scrollbar_area.y += 1;
+    scrollbar_area.height -= 1;
+    (block_area, scrollbar_area, table_area)
 }

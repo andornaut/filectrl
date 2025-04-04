@@ -43,12 +43,12 @@ impl CommandHandler for HelpView {
 }
 
 impl View for HelpView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;
         }
         let style = theme.help();
-        let bordered_rect = bordered(buf, rect, style, Some("Help".into()));
+        let bordered_rect = bordered(buf, area, style, Some("Help".into()));
         let spans = match *mode {
             InputMode::Prompt => prompt_help(),
             _ => content_help(),

@@ -24,7 +24,7 @@ pub struct RootView {
     header: HeaderView,
     help: HelpView,
     prompt: PromptView,
-    last_rendered_rect: Rect,
+    last_rendered_area: Rect,
     status: StatusView,
     table: TableView,
 }
@@ -59,18 +59,18 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme) {
-        self.last_rendered_rect = rect;
+    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme) {
+        self.last_rendered_area = area;
 
-        if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
-            render_resize_message(buf, rect, theme);
+        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+            render_resize_message(buf, area, theme);
             return;
         }
 
         let constraints = vec![
-            Constraint::Length(self.errors.height(rect.width)),
+            Constraint::Length(self.errors.height(area.width)),
             Constraint::Length(self.help.height()),
-            Constraint::Length(self.header.height(rect.width, theme)),
+            Constraint::Length(self.header.height(area.width, theme)),
             Constraint::Min(3),
             Constraint::Length(1),
             Constraint::Length(self.prompt.height(mode)),
@@ -87,7 +87,7 @@ impl View for RootView {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
-            .split(rect)
+            .split(area)
             .into_iter()
             .zip(handlers.into_iter())
             .for_each(|(chunk, handler): (&Rect, &mut dyn View)| {
@@ -96,9 +96,9 @@ impl View for RootView {
     }
 }
 
-fn render_resize_message(buf: &mut Buffer, rect: Rect, theme: &Theme) {
+fn render_resize_message(buf: &mut Buffer, area: Rect, theme: &Theme) {
     let widget = Paragraph::new(RESIZE_WINDOW)
         .style(theme.error())
         .wrap(Wrap { trim: true });
-    widget.render(rect, buf);
+    widget.render(area, buf);
 }
