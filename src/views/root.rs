@@ -36,6 +36,13 @@ impl RootView {
             ..Self::default()
         }
     }
+
+    fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
+        let cursor_position = self.prompt.cursor_position(&mode);
+        if let Some(position) = cursor_position {
+            frame.set_cursor_position(position);
+        }
+    }
 }
 
 impl CommandHandler for RootView {
@@ -86,6 +93,8 @@ impl View for RootView {
             .for_each(|(chunk, handler): (&Rect, &mut dyn View)| {
                 handler.render(frame, *chunk, mode, theme)
             });
+
+        self.update_cursor(frame, mode);
     }
 }
 
