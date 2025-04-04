@@ -19,7 +19,7 @@ const MAX_NUMBER_ERRORS: usize = 5;
 #[derive(Default)]
 pub(super) struct ErrorsView {
     errors: VecDeque<String>,
-    rect: Rect,
+    area: Rect,
 }
 
 impl ErrorsView {
@@ -96,20 +96,20 @@ impl CommandHandler for ErrorsView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.rect.intersects(Rect::new(x, y, 1, 1))
+        self.area.intersects(Rect::new(x, y, 1, 1))
     }
 }
 
 impl View for ErrorsView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
-        self.rect = rect;
+    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+        self.area = area;
         if !self.should_show() {
             return;
         }
         let style = theme.error();
-        let bordered_rect = bordered(buf, rect, style, Some("Errors".into()));
-        let items = self.list_items(bordered_rect.width);
+        let bordered_area = bordered(buf, area, style, Some("Errors".into()));
+        let items = self.list_items(bordered_area.width);
         let widget = Paragraph::new(Text::from(items)).style(style);
-        widget.render(bordered_rect, buf);
+        widget.render(bordered_area, buf);
     }
 }

@@ -30,7 +30,7 @@ pub(super) struct StatusView {
     directory: PathInfo,
     directory_len: usize,
     filter: String,
-    rect: Rect,
+    area: Rect,
     selected: Option<PathInfo>,
     tasks: HashSet<Task>,
 }

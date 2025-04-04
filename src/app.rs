@@ -115,10 +115,10 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
-            let rect = frame.area();
+            let area = frame.area();
             self.root.render(
                 &mut frame.buffer_mut(),
-                rect,
+                area,
                 &self.mode,
                 &self.config.theme,
             );

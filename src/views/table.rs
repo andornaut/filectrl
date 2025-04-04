@@ -31,9 +31,9 @@ pub(super) struct TableView {
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
 
-    scrollbar_rect: Rect,
+    scrollbar_area: Rect,
     scrollbar_state: ScrollbarState,
-    table_rect: Rect,
+    table_area: Rect,
     table_state: TableState,
 
     clipboard: Clipboard,

@@ -20,7 +20,7 @@ use crate::{
 #[derive(Default)]
 pub(super) struct HeaderView {
     breadcrumbs: Vec<String>,
-    rect: Rect,
+    area: Rect,
     positions: Vec<Vec<Position>>,
 }
 
@@ -64,8 +64,8 @@ impl CommandHandler for HeaderView {
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let x = event.column.saturating_sub(self.rect.x);
-                let y = event.row.saturating_sub(self.rect.y);
+                let x = event.column.saturating_sub(self.area.x);
+                let y = event.row.saturating_sub(self.area.y);
                 let row = &self.positions[y as usize];
                 let clicked_index = row.iter().find_map(|p| {
                     if p.intersects(x) {
@@ -85,25 +85,25 @@ impl CommandHandler for HeaderView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.rect.intersects(Rect::new(x, y, 1, 1))
+        self.area.intersects(Rect::new(x, y, 1, 1))
     }
 }
 
 impl View for HeaderView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
-        self.rect = rect;
+    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+        self.area = area;
 
         let active_style = theme.header_active();
         let inactive_style = theme.header();
         let (mut container, mut positions) = spans(
             &self.breadcrumbs,
-            self.rect.width,
+            self.area.width,
             active_style,
             inactive_style,
         );
 
         // Prioritize displaying the deepest directories
-        let at = positions.len() - self.rect.height as usize;
+        let at = positions.len() - self.area.height as usize;
         let container = container.split_off(at);
         self.positions = positions.split_off(at);
 
@@ -113,7 +113,7 @@ impl View for HeaderView {
             .collect();
 
         let widget = Paragraph::new(text).style(theme.header());
-        widget.render(self.rect, buf);
+        widget.render(self.area, buf);
     }
 }
 

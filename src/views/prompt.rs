@@ -125,35 +125,35 @@ impl CommandHandler for PromptView {
 }
 
 impl View for PromptView {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
         }
 
         let label = self.label();
         let label_width = label.width_cjk() as u16;
-        let rects = Layout::default()
+        let areas = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
-            .split(rect);
-        let prompt_rect = rects[0];
-        let input_rect = rects[1];
+            .split(area);
+        let prompt_area = areas[0];
+        let input_area = areas[1];
 
-        let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_rect);
+        let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
 
         let prompt_widget = prompt_widget(theme, label);
-        prompt_widget.render(prompt_rect, buf);
+        prompt_widget.render(prompt_area, buf);
 
         let input_widget = input_widget(&self.input, theme, cursor_x_scroll);
-        input_widget.render(input_rect, buf);
+        input_widget.render(input_area, buf);
 
-        self.cursor_position.x = input_rect.x + (cursor_x_pos - cursor_x_scroll) as u16;
-        self.cursor_position.y = input_rect.y;
+        self.cursor_position.x = input_area.x + (cursor_x_pos - cursor_x_scroll) as u16;
+        self.cursor_position.y = input_area.y;
     }
 }
 
-fn cursor_position(input: &Input, input_rect: Rect) -> (usize, usize) {
-    let input_width = input_rect.width as usize;
+fn cursor_position(input: &Input, input_area: Rect) -> (usize, usize) {
+    let input_width = input_area.width as usize;
     let cursor_x_pos = input.visual_cursor();
     let cursor_x_scroll = input.visual_scroll(input_width);
     let cursor_x_scroll = if cursor_x_pos >= input_width {

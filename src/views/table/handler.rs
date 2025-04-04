@@ -54,8 +54,8 @@ impl CommandHandler for TableView {
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let x = event.column.saturating_sub(self.table_rect.x);
-                let y = event.row.saturating_sub(self.table_rect.y);
+                let x = event.column.saturating_sub(self.table_area.x);
+                let y = event.row.saturating_sub(self.table_area.y);
                 if y == 0 {
                     self.click_header(x)
                 } else {
@@ -69,6 +69,6 @@ impl CommandHandler for TableView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.table_rect.intersects(Rect::new(x, y, 1, 1))
+        self.table_area.intersects(Rect::new(x, y, 1, 1))
     }
 }

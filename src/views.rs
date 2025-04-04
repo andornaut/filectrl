@@ -19,16 +19,16 @@ use crate::{
 };
 
 pub(super) trait View: CommandHandler {
-    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme);
+    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme);
 }
 
-pub(super) fn bordered(buf: &mut Buffer, rect: Rect, style: Style, title: Option<String>) -> Rect {
+pub(super) fn bordered(buf: &mut Buffer, area: Rect, style: Style, title: Option<String>) -> Rect {
     let mut block = Block::default().borders(Borders::ALL).border_style(style);
     if let Some(title) = title {
         block = block.title(title);
     }
-    block.render(rect, buf);
-    rect.inner(Margin {
+    block.render(area, buf);
+    area.inner(Margin {
         horizontal: 1,
         vertical: 1,
     })
