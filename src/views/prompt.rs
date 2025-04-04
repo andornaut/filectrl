@@ -18,7 +18,14 @@ use crate::{
 };
 
 #[derive(Default)]
+pub(super) struct CursorPosition {
+    x: u16,
+    y: u16,
+}
+
+#[derive(Default)]
 pub(super) struct PromptView {
+    cursor_position: CursorPosition,
     filter: String,
     input: Input,
     kind: PromptKind,
@@ -26,6 +33,14 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
+    pub(super) fn cursor_position(&self, mode: &InputMode) -> Option<(u16, u16)> {
+        if self.should_show(mode) {
+            Some((self.cursor_position.x, self.cursor_position.y))
+        } else {
+            None
+        }
+    }
+
     pub(super) fn height(&self, mode: &InputMode) -> u16 {
         if self.should_show(mode) {
             1
@@ -132,10 +147,9 @@ impl View for PromptView {
             input_widget(&self.input, theme, cursor_x_scroll),
             input_rect,
         );
-        frame.set_cursor_position((
-            input_rect.x + (cursor_x_pos - cursor_x_scroll) as u16,
-            input_rect.y,
-        ));
+
+        self.cursor_position.x = input_rect.x + (cursor_x_pos - cursor_x_scroll) as u16;
+        self.cursor_position.y = input_rect.y;
     }
 }
 
