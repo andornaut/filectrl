@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::{Alignment, Constraint, Stylize},
-    symbols::{block, line, scrollbar},
+    symbols::{block, line},
     text::{Line, Span, Text},
     widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table},
 };

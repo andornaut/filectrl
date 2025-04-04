@@ -30,6 +30,7 @@ tui-input = "0.7"
 unicode-segmentation = "~1.12"
 unicode-width = "0.1"
 unix_mode = "0.1"
+users = "0.11"
 
 [dependencies.nix]
 default-features = false
