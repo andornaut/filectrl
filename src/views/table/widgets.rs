@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::{Alignment, Constraint, Stylize},
-    symbols::{block, line},
+    symbols::{block, line, scrollbar},
     text::{Line, Span, Text},
     widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table},
 };
@@ -113,14 +113,22 @@ fn split_name<'a>(theme: &Theme, width: u16, path: &'a PathInfo) -> Vec<Line<'a>
 }
 
 pub(super) fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
-    Scrollbar::default()
-        .thumb_style(theme.table_scrollbar_thumb())
-        .track_style(theme.table_scrollbar_track())
+    let mut scrollbar = Scrollbar::default()
         .orientation(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
-        .begin_style(theme.table_scrollbar_begin())
         .end_symbol(None)
-        .end_style(theme.table_scrollbar_end())
+        .thumb_style(theme.table_scrollbar_thumb())
         .thumb_symbol(block::FULL)
-        .track_symbol(Some(line::VERTICAL))
+        .track_style(theme.table_scrollbar_track())
+        .track_symbol(Some(line::VERTICAL));
+
+    if theme.table_scrollbar_begin_end_enabled() {
+        scrollbar = scrollbar
+            .begin_symbol(Some("▲"))
+            .begin_style(theme.table_scrollbar_begin())
+            .end_symbol(Some("▼"))
+            .end_style(theme.table_scrollbar_end());
+    }
+
+    scrollbar
 }
