@@ -1,7 +1,7 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
@@ -25,11 +25,9 @@ pub(super) struct HeaderView {
 }
 
 impl HeaderView {
-    pub(super) fn height(&self, width: u16, theme: &Theme) -> u16 {
-        // TODO cache `spans()` result for use in render()
-        let active_style = theme.header_active();
-        let inactive_style = theme.header();
-        let (container, _) = spans(&self.breadcrumbs, width, active_style, inactive_style);
+    pub(super) fn height(&self, width: u16) -> u16 {
+        // Calculate height based on content length and width, without theme styling
+        let (container, _) = spans(&self.breadcrumbs, width, Style::default(), Style::default());
         container.len() as u16
     }
 
@@ -90,6 +88,10 @@ impl CommandHandler for HeaderView {
 }
 
 impl View for HeaderView {
+    fn constraint(&self, area: Rect, _: &InputMode) -> Constraint {
+        Constraint::Length(self.height(area.width))
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         self.area = area;
 

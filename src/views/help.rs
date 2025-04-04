@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
@@ -43,6 +43,10 @@ impl CommandHandler for HelpView {
 }
 
 impl View for HelpView {
+    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+        Constraint::Length(self.height())
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;

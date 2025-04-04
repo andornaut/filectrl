@@ -12,6 +12,10 @@ use super::{
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for TableView {
+    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+        Constraint::Min(3)
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         if area.height < 2 || area.width < 8 {
             return;

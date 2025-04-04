@@ -8,7 +8,7 @@ mod table;
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Margin, Rect},
+    layout::{Constraint, Margin, Rect},
     style::Style,
     widgets::{Block, Borders, Widget},
 };
@@ -19,6 +19,7 @@ use crate::{
 };
 
 pub(super) trait View: CommandHandler {
+    fn constraint(&self, area: Rect, mode: &InputMode) -> Constraint;
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme);
 }
 

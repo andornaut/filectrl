@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Constraint, Rect},
     text::{Line, Text},
     widgets::{Paragraph, Widget},
 };
@@ -101,6 +101,10 @@ impl CommandHandler for ErrorsView {
 }
 
 impl View for ErrorsView {
+    fn constraint(&self, area: Rect, _: &InputMode) -> Constraint {
+        Constraint::Length(self.height(area.width))
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         self.area = area;
         if !self.should_show() {
