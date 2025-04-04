@@ -136,12 +136,10 @@ impl View for PromptView {
 
         let label = self.label();
         let label_width = label.width_cjk() as u16;
-        let areas = Layout::default()
+        let [prompt_area, input_area] = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
-            .split(area);
-        let prompt_area = areas[0];
-        let input_area = areas[1];
+            .areas(area);
 
         let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
 

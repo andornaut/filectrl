@@ -95,12 +95,10 @@ impl TableView {
 }
 
 fn layout(area: Rect) -> (Rect, Rect, Rect) {
-    let chunks = Layout::default()
+    let [table_area, mut scrollbar_area] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-        .split(area);
-    let table_area = chunks[0];
-    let mut scrollbar_area = chunks[1];
+        .areas(area);
     // Make room for the 1x1 block
     let block_area = Rect {
         height: 1,
