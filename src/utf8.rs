@@ -2,17 +2,13 @@ use textwrap::{wrap, Options, WordSplitter};
 use unicode_width::UnicodeWidthStr;
 
 const ELLIPSIS: &str = "…";
-const NEWLINE_ELLIPSIS: &str = "\n…";
+// width_cjk() considers ellipsis to be two characters wide, but we know it's 1,
+const ELLIPSIS_WIDTH: u16 = 1;
 
 pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
-    // width_cjk() considers ellipsis to be two characters wide, but we know it's 1,
-    // so we use width() instead
-    let reserve_width = NEWLINE_ELLIPSIS.width();
+    assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
-    assert!(width > 0, "width > 0");
-    assert!(width > reserve_width as u16, "width > reserve_width");
-
-    let mut parts = split_utf8(line, width, reserve_width as u16);
+    let mut parts = split_utf8(line, width);
     let len = parts.len();
     if len > 1 {
         for part in &mut parts[..len - 1] {
@@ -22,12 +18,12 @@ pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
     parts
 }
 
-fn split_utf8(line: &str, width: u16, reserve_width: u16) -> Vec<String> {
+fn split_utf8(line: &str, width: u16) -> Vec<String> {
     if line.len() <= width as usize {
         return vec![line.into()];
     }
 
-    let width = width.saturating_sub(reserve_width);
+    let width = width.saturating_sub(ELLIPSIS_WIDTH);
     let options = Options::new(width as usize)
         .word_splitter(WordSplitter::NoHyphenation)
         .break_words(true);
@@ -39,19 +35,14 @@ fn split_utf8(line: &str, width: u16, reserve_width: u16) -> Vec<String> {
 }
 
 pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
-    // width_cjk() considers ellipsis to be two characters wide, but we know it's 1,
-    // so we use width() instead
-    let reserve_width = ELLIPSIS.width();
-
-    assert!(width > 0, "width > 0");
-    assert!(width > reserve_width as u16, "width > reserve_width");
+    assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
     let line_width = line.width_cjk();
     if line_width <= width as usize {
         return line.into();
     }
 
-    let remaining_width = width.saturating_sub(reserve_width as u16) as usize;
+    let remaining_width = width.saturating_sub(ELLIPSIS_WIDTH);
     let chars: Vec<char> = line.chars().collect();
 
     // Calculate total width from the end until we exceed the remaining width
@@ -60,7 +51,7 @@ pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
 
     for c in chars.iter().rev() {
         let char_width = c.to_string().width_cjk();
-        if total_width + char_width > remaining_width {
+        if total_width + char_width > remaining_width as usize {
             break;
         }
         chars_to_include.push(*c);
@@ -93,13 +84,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "width > 0")]
-    fn split_with_ellipsis_panics_on_zero_width() {
-        split_with_ellipsis("example", 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "width > reserve_width")]
+    #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn split_with_ellipsis_panics_on_width_equal_to_ellipsis() {
         split_with_ellipsis("example", 1);
     }
@@ -112,13 +97,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "width > 0")]
-    fn truncate_left_utf8_panics_on_zero_width() {
-        truncate_left_utf8("example", 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "width > reserve_width")]
+    #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn truncate_left_utf8_panics_on_width_equal_to_ellipsis() {
         truncate_left_utf8("example", 1);
     }

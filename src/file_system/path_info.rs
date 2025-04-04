@@ -1,6 +1,6 @@
 use std::{
-    cmp::{self},
-    env,
+    cmp, env,
+    ffi::OsStr,
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
@@ -8,14 +8,40 @@ use std::{
     time::SystemTime,
 };
 
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Error, Result};
 use chrono::{DateTime, Datelike, Local, Timelike};
 use nix::unistd::{Gid, Group, Uid, User};
 
-use super::converters::{path_to_basename, path_to_string};
-
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
+
+trait PathExt {
+    fn to_string(&self) -> Result<String>;
+    fn to_basename(&self) -> String;
+}
+
+impl PathExt for Path {
+    fn to_string(&self) -> Result<String> {
+        // Ref. https://stackoverflow.com/a/42579588,
+        // https://stackoverflow.com/a/67205030,
+        // https://stackoverflow.com/a/31667995
+        osstr_to_string(self.as_os_str())
+    }
+
+    fn to_basename(&self) -> String {
+        // file_name() is None for the root dir (eg. `/`)
+        self.file_name()
+            .map_or("".into(), |name| osstr_to_string(name).unwrap_or("".into()))
+    }
+}
+
+fn osstr_to_string(os_str: &OsStr) -> Result<String> {
+    // Ref. https://profpatsch.de/notes/rust-string-conversions
+    os_str
+        .to_os_string()
+        .into_string()
+        .map_err(|orig| anyhow!("Path cannot be converted to a string: {:?}", orig))
+}
 
 #[derive(Clone, Eq, Hash)]
 pub struct PathInfo {
@@ -37,7 +63,7 @@ impl PathInfo {
         let mut breadcrumbs: Vec<_> = PathBuf::from(self.path.clone())
             .ancestors()
             .into_iter()
-            .map(|path| path_to_basename(path))
+            .map(|path| path.to_basename())
             .collect();
         breadcrumbs.reverse();
         breadcrumbs
@@ -234,11 +260,11 @@ impl TryFrom<&Path> for PathInfo {
         let metadata = path.symlink_metadata()?; // Will return an Error if the path doesn't exist
         Ok(Self {
             accessed: maybe_time(metadata.accessed()),
-            basename: path_to_basename(&path),
+            basename: path.to_basename(),
             created: maybe_time(metadata.created()),
             mode: metadata.permissions().mode(),
             modified: maybe_time(metadata.modified()),
-            path: path_to_string(&path)?,
+            path: path.to_string()?,
             size: metadata.len(),
             gid: metadata.gid(),
             uid: metadata.uid(),
@@ -289,6 +315,7 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<L
 fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
     result.ok().map(|time| time.into())
 }
+
 fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> Option<String> {
     time.map(|time| humanize_datetime(time, Local::now()))
 }
