@@ -1,9 +1,9 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    prelude::Rect,
+    buffer::Buffer,
+    layout::Rect,
     text::{Line, Text},
-    widgets::Paragraph,
-    Frame,
+    widgets::{Paragraph, Widget},
 };
 use std::collections::VecDeque;
 
@@ -101,17 +101,15 @@ impl CommandHandler for ErrorsView {
 }
 
 impl View for ErrorsView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
         if !self.should_show() {
             return;
         }
         let style = theme.error();
-        let bordered_rect = bordered(frame, rect, style, Some("Errors".into()));
+        let bordered_rect = bordered(buf, rect, style, Some("Errors".into()));
         let items = self.list_items(bordered_rect.width);
-        frame.render_widget(
-            Paragraph::new(Text::from(items)).style(style),
-            bordered_rect,
-        );
+        let widget = Paragraph::new(Text::from(items)).style(style);
+        widget.render(bordered_rect, buf);
     }
 }

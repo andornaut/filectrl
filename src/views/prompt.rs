@@ -1,9 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    prelude::Rect,
-    widgets::Paragraph,
-    Frame,
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Paragraph, Widget},
 };
 use tui_input::{backend::crossterm::EventHandler, Input};
 use unicode_width::UnicodeWidthStr;
@@ -126,7 +125,7 @@ impl CommandHandler for PromptView {
 }
 
 impl View for PromptView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
         }
@@ -142,11 +141,11 @@ impl View for PromptView {
 
         let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_rect);
 
-        frame.render_widget(prompt_widget(theme, label), prompt_rect);
-        frame.render_widget(
-            input_widget(&self.input, theme, cursor_x_scroll),
-            input_rect,
-        );
+        let prompt_widget = prompt_widget(theme, label);
+        prompt_widget.render(prompt_rect, buf);
+
+        let input_widget = input_widget(&self.input, theme, cursor_x_scroll);
+        input_widget.render(input_rect, buf);
 
         self.cursor_position.x = input_rect.x + (cursor_x_pos - cursor_x_scroll) as u16;
         self.cursor_position.y = input_rect.y;

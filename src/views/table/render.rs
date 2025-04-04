@@ -1,7 +1,7 @@
 use ratatui::{
-    prelude::{Constraint, Direction, Layout, Rect},
-    widgets::Block,
-    Frame,
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Block, StatefulWidget, Widget},
 };
 
 use super::{
@@ -12,7 +12,7 @@ use super::{
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for TableView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
         if rect.height < 2 || rect.width < 8 {
             return;
         }
@@ -22,21 +22,21 @@ impl View for TableView {
         self.scrollbar_rect = scrollbar_rect;
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
-        self.render_table_and_init_mapper(frame, theme);
+        self.render_table_and_init_mapper(buf, theme);
         // Must be rendered after the table, because it depends on the mapper
-        self.render_scrollbar(frame, theme);
-        self.render_1x1_block(frame, theme, block_rect);
+        self.render_scrollbar(buf, theme);
+        self.render_1x1_block(buf, theme, block_rect);
     }
 }
 
 impl TableView {
-    fn render_1x1_block(&mut self, frame: &mut Frame<'_>, theme: &Theme, rect: Rect) {
+    fn render_1x1_block(&mut self, buf: &mut Buffer, theme: &Theme, rect: Rect) {
         // Extend the table header above the scrollbar as a 1x1 block
         let block = Block::default().style(theme.table_header());
-        frame.render_widget(block, Rect { height: 1, ..rect });
+        block.render(Rect { height: 1, ..rect }, buf);
     }
 
-    fn render_scrollbar(&mut self, frame: &mut Frame<'_>, theme: &Theme) {
+    fn render_scrollbar(&mut self, buf: &mut Buffer, theme: &Theme) {
         // Render the scrollbar
         let total_number_of_lines = self.mapper.total_number_of_lines();
         let has_scroll = total_number_of_lines > self.scrollbar_rect.height as usize;
@@ -53,14 +53,16 @@ impl TableView {
             .scrollbar_state
             .content_length(total_number_of_lines)
             .position(selected_line);
-        frame.render_stateful_widget(
-            scrollbar(theme),
+        let scrollbar = scrollbar(theme);
+        StatefulWidget::render(
+            scrollbar,
             self.scrollbar_rect,
+            buf,
             &mut self.scrollbar_state,
         );
     }
 
-    fn render_table_and_init_mapper(&mut self, frame: &mut Frame<'_>, theme: &Theme) {
+    fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
         let column_constraints = self.columns.constraints(self.table_rect.width);
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
@@ -78,7 +80,7 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
-        frame.render_stateful_widget(table, self.table_rect, &mut self.table_state);
+        StatefulWidget::render(table, self.table_rect, buf, &mut self.table_state);
 
         // -1 for table header
         let number_of_visible_lines = self.table_rect.height as usize - 1;

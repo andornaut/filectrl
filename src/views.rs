@@ -7,10 +7,10 @@ mod status;
 mod table;
 
 use ratatui::{
+    buffer::Buffer,
     layout::{Margin, Rect},
     style::Style,
-    widgets::{Block, Borders},
-    Frame,
+    widgets::{Block, Borders, Widget},
 };
 
 use crate::{
@@ -19,15 +19,15 @@ use crate::{
 };
 
 pub(super) trait View: CommandHandler {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme);
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme);
 }
 
-pub(super) fn bordered(frame: &mut Frame, rect: Rect, style: Style, title: Option<String>) -> Rect {
+pub(super) fn bordered(buf: &mut Buffer, rect: Rect, style: Style, title: Option<String>) -> Rect {
     let mut block = Block::default().borders(Borders::ALL).border_style(style);
     if let Some(title) = title {
         block = block.title(title);
     }
-    frame.render_widget(block, rect);
+    block.render(rect, buf);
     rect.inner(Margin {
         horizontal: 1,
         vertical: 1,

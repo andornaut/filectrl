@@ -1,4 +1,4 @@
-use ratatui::{prelude::Rect, Frame};
+use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use super::{
     widgets::{clipboard_widget, default_widget, filter_widget, progress_widget},
@@ -7,7 +7,7 @@ use super::{
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for StatusView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let widget = if !self.tasks.is_empty() {
@@ -19,6 +19,6 @@ impl View for StatusView {
         } else {
             default_widget(&self.directory, self.directory_len, &self.selected, theme)
         };
-        frame.render_widget(widget, rect);
+        widget.render(rect, buf);
     }
 }
