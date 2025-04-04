@@ -59,7 +59,7 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
         self.last_rendered_area = area;
 
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -90,8 +90,8 @@ impl View for RootView {
             .split(area)
             .into_iter()
             .zip(handlers.into_iter())
-            .for_each(|(chunk, handler): (&Rect, &mut dyn View)| {
-                handler.render(buf, *chunk, mode, theme)
+            .for_each(|(area, handler): (&Rect, &mut dyn View)| {
+                handler.render(*area, buf, mode, theme)
             });
     }
 }

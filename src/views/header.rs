@@ -90,7 +90,7 @@ impl CommandHandler for HeaderView {
 }
 
 impl View for HeaderView {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         self.area = area;
 
         let active_style = theme.header_active();

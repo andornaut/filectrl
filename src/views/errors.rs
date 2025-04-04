@@ -101,7 +101,7 @@ impl CommandHandler for ErrorsView {
 }
 
 impl View for ErrorsView {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         self.area = area;
         if !self.should_show() {
             return;

@@ -43,7 +43,7 @@ impl CommandHandler for HelpView {
 }
 
 impl View for HelpView {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
         if !self.should_show {
             return;
         }

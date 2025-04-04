@@ -117,8 +117,8 @@ impl App {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
             self.root.render(
-                &mut frame.buffer_mut(),
                 area,
+                &mut frame.buffer_mut(),
                 &self.mode,
                 &self.config.theme,
             );
