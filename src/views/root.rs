@@ -48,6 +48,7 @@ impl RootView {
 impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
         vec![
+            // The order is NOT significant
             &mut self.errors,
             &mut self.header,
             &mut self.help,
@@ -59,6 +60,10 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
+    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+        unreachable!("RootView is the top-level view that always receives the full terminal area directly from App, so its constraint should never be called")
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
         self.last_rendered_area = area;
 
@@ -67,16 +72,7 @@ impl View for RootView {
             return;
         }
 
-        let constraints = vec![
-            Constraint::Length(self.errors.height(area.width)),
-            Constraint::Length(self.help.height()),
-            Constraint::Length(self.header.height(area.width, theme)),
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(self.prompt.height(mode)),
-        ];
-        let handlers: Vec<&mut dyn View> = vec![
-            // The order is significant
+        let views: Vec<&mut dyn View> = vec![
             &mut self.errors,
             &mut self.help,
             &mut self.header,
@@ -84,15 +80,19 @@ impl View for RootView {
             &mut self.status,
             &mut self.prompt,
         ];
+
+        let constraints: Vec<Constraint> = views
+            .iter()
+            .map(|view| view.constraint(area, mode))
+            .collect();
+
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area)
             .into_iter()
-            .zip(handlers.into_iter())
-            .for_each(|(area, handler): (&Rect, &mut dyn View)| {
-                handler.render(*area, buf, mode, theme)
-            });
+            .zip(views)
+            .for_each(|(area, handler)| handler.render(*area, buf, mode, theme));
     }
 }
 

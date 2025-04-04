@@ -125,6 +125,10 @@ impl CommandHandler for PromptView {
 }
 
 impl View for PromptView {
+    fn constraint(&self, _: Rect, mode: &InputMode) -> Constraint {
+        Constraint::Length(self.height(mode))
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
