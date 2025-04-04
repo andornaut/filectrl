@@ -120,7 +120,7 @@ fn row_widget<'a>(
 }
 
 fn split_name<'a>(theme: &Theme, width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
-    let style = name_style(&theme.files, path);
+    let style = name_style(&theme.file_types, path);
     split_with_ellipsis(&path.name(), width)
         .into_iter()
         .map(|part| Line::from(Span::styled(part, style)))
