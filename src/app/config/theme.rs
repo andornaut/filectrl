@@ -785,6 +785,9 @@ pub struct Theme {
     )]
     table_scrollbar_end_fg: Option<Color>,
 
+    #[serde()]
+    table_scrollbar_begin_end_enabled: bool,
+
     // Table selected
     #[serde(
         deserialize_with = "deserialize_optional_color",
@@ -860,6 +863,10 @@ impl Theme {
         table_header_active_fg,
         table_header_active_bg
     );
+
+    pub fn table_scrollbar_begin_end_enabled(&self) -> bool {
+        self.table_scrollbar_begin_end_enabled
+    }
 
     pub fn pattern_style(&self, name: &str) -> Option<Style> {
         // Extension match
