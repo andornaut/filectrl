@@ -1,7 +1,7 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    prelude::Rect,
-    widgets::{Paragraph, Wrap},
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Paragraph, Widget, Wrap},
     Frame,
 };
 
@@ -37,7 +37,7 @@ impl RootView {
         }
     }
 
-    fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
+    pub fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
         let cursor_position = self.prompt.cursor_position(&mode);
         if let Some(position) = cursor_position {
             frame.set_cursor_position(position);
@@ -59,11 +59,11 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, mode: &InputMode, theme: &Theme) {
         self.last_rendered_rect = rect;
 
         if rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT {
-            render_resize_message(frame, rect, theme);
+            render_resize_message(buf, rect, theme);
             return;
         }
 
@@ -91,18 +91,14 @@ impl View for RootView {
             .into_iter()
             .zip(handlers.into_iter())
             .for_each(|(chunk, handler): (&Rect, &mut dyn View)| {
-                handler.render(frame, *chunk, mode, theme)
+                handler.render(buf, *chunk, mode, theme)
             });
-
-        self.update_cursor(frame, mode);
     }
 }
 
-fn render_resize_message(frame: &mut Frame<'_>, rect: Rect, theme: &Theme) {
-    frame.render_widget(
-        Paragraph::new(RESIZE_WINDOW)
-            .style(theme.error())
-            .wrap(Wrap { trim: true }),
-        rect,
-    );
+fn render_resize_message(buf: &mut Buffer, rect: Rect, theme: &Theme) {
+    let widget = Paragraph::new(RESIZE_WINDOW)
+        .style(theme.error())
+        .wrap(Wrap { trim: true });
+    widget.render(rect, buf);
 }

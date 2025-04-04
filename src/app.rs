@@ -115,8 +115,14 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
-            self.root
-                .render(frame, frame.area(), &self.mode, &self.config.theme);
+            let rect = frame.area();
+            self.root.render(
+                &mut frame.buffer_mut(),
+                rect,
+                &self.mode,
+                &self.config.theme,
+            );
+            self.root.update_cursor(frame, &self.mode);
         })?;
         Ok(())
     }

@@ -1,10 +1,10 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    prelude::Rect,
+    buffer::Buffer,
+    layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::Paragraph,
-    Frame,
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -90,7 +90,7 @@ impl CommandHandler for HeaderView {
 }
 
 impl View for HeaderView {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, buf: &mut Buffer, rect: Rect, _: &InputMode, theme: &Theme) {
         self.rect = rect;
 
         let active_style = theme.header_active();
@@ -112,8 +112,8 @@ impl View for HeaderView {
             .map(|spans| Line::from(spans))
             .collect();
 
-        let paragraph = Paragraph::new(text).style(theme.header());
-        frame.render_widget(paragraph, self.rect);
+        let widget = Paragraph::new(text).style(theme.header());
+        widget.render(self.rect, buf);
     }
 }
 
