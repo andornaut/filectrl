@@ -14,8 +14,8 @@ use crate::{
     command::{handler::CommandHandler, mode::InputMode},
 };
 
-const MIN_HEIGHT: u16 = 6;
 const MIN_WIDTH: u16 = 10;
+const MIN_HEIGHT: u16 = 6;
 const RESIZE_WINDOW: &'static str = "Resize window";
 
 #[derive(Default)]
@@ -42,6 +42,18 @@ impl RootView {
         if let Some(position) = cursor_position {
             frame.set_cursor_position(position);
         }
+    }
+
+    fn views(&mut self) -> Vec<&mut dyn View> {
+        let views: Vec<&mut dyn View> = vec![
+            &mut self.errors,
+            &mut self.help,
+            &mut self.header,
+            &mut self.table,
+            &mut self.status,
+            &mut self.prompt,
+        ];
+        views
     }
 }
 
@@ -72,20 +84,11 @@ impl View for RootView {
             return;
         }
 
-        let views: Vec<&mut dyn View> = vec![
-            &mut self.errors,
-            &mut self.help,
-            &mut self.header,
-            &mut self.table,
-            &mut self.status,
-            &mut self.prompt,
-        ];
-
+        let views = self.views();
         let constraints: Vec<Constraint> = views
             .iter()
             .map(|view| view.constraint(area, mode))
             .collect();
-
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
