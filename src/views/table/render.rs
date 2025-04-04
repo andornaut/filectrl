@@ -12,7 +12,7 @@ use super::{
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for TableView {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         if area.height < 2 || area.width < 8 {
             return;
         }

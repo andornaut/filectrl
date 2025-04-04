@@ -19,7 +19,7 @@ use crate::{
 };
 
 pub(super) trait View: CommandHandler {
-    fn render(&mut self, buf: &mut Buffer, area: Rect, mode: &InputMode, theme: &Theme);
+    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme);
 }
 
 pub(super) fn bordered(buf: &mut Buffer, area: Rect, style: Style, title: Option<String>) -> Rect {
