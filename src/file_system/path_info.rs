@@ -124,7 +124,11 @@ impl PathInfo {
     }
 
     pub fn size(&self) -> String {
-        humanize_bytes(self.size)
+        humanize_bytes(self.size, self.size_unit_index())
+    }
+
+    pub fn size_unit_index(&self) -> usize {
+        unit_index(self.size)
     }
 
     pub fn is_block_device(&self) -> bool {
@@ -272,16 +276,34 @@ impl TryFrom<&Path> for PathInfo {
     }
 }
 
-fn humanize_bytes(bytes: u64) -> String {
+fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     if bytes == 0 {
-        // Avoid panic: "argument of integer logarithm must be positive"
         return "0".to_string();
     }
-    let mut floor = bytes.ilog10() / FACTOR.ilog10();
-    floor = cmp::min(floor, (UNITS.len() - 1) as u32);
-    let rounded = ((bytes as f64) / (FACTOR.pow(floor) as f64)).round();
-    let unit = UNITS[floor as usize];
-    format!("{rounded}{unit}")
+
+    let divisor = FACTOR.pow(unit_index as u32) as f64;
+    let value = (bytes as f64) / divisor;
+    let value = if value >= 10.0 {
+        format!("{:.0}", value)
+    } else {
+        let has_fraction = value.fract() != 0.0;
+        if has_fraction {
+            format!("{:.1}", value)
+        } else {
+            format!("{:.0}", value)
+        }
+    };
+    let unit = UNITS[unit_index];
+    format!("{}{}", value, unit)
+}
+
+fn unit_index(bytes: u64) -> usize {
+    if bytes == 0 {
+        return 0;
+    }
+    let mut unit_index = bytes.ilog10() / FACTOR.ilog10();
+    unit_index = cmp::min(unit_index, (UNITS.len() - 1) as u32);
+    unit_index as usize
 }
 
 fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<Local>) -> String {
@@ -330,14 +352,18 @@ mod tests {
 
     #[test_case("0",  0u64 ; "zero bytes")]
     #[test_case("499",  499u64 ; "between 1 and 999 bytes")]
-    #[test_case("10M",  10_000_000u64 ; "10 million bytes rounds up")]
-    #[test_case("477M",  500 * 1000u64.pow(2) ; "500 million bytes rounds down")]
-    #[test_case("500M",  500 * 1024u64.pow(2) ; "500 MB doesn't round")]
-    #[test_case("1G",  1000_000_000u64 ; "1 billion bytes rounds up")]
-    #[test_case("1P",  1024u64.pow(5); "max unit")]
-    #[test_case("1096P",  1234_000_000_000_000_000u64; "greater than max unit")]
-    fn humanize_bytes_is_correct(expected: &str, bytes: u64) {
-        let result = humanize_bytes(bytes);
+    #[test_case("9.7K",  9900u64 ; "9900 bytes")]
+    #[test_case("10K",  10400u64 ; "10400 bytes")]
+    #[test_case("9.5M",  10_000_000u64 ; "10 million bytes (MB)")]
+    #[test_case("10M",  1024u64.pow(2) * 10; "10 MiB")]
+    #[test_case("1G",  1024u64.pow(3); "1 GiB")]
+    #[test_case("477M",  500 * 1000u64.pow(2) ; "500 million bytes (MB)")]
+    #[test_case("500M",  500 * 1024u64.pow(2) ; "500 MiB")]
+    #[test_case("0.9G",  1000_000_000u64 ; "1 billion bytes (MB)")]
+    #[test_case("1P",  1024u64.pow(5); "1 PiB")]
+    #[test_case("1024P",   1024u64.pow(6); "greater than 1 PiB")]
+    fn humanize_bytes_success_with(expected: &str, bytes: u64) {
+        let result = humanize_bytes(bytes, unit_index(bytes));
 
         assert_eq!(expected, result);
     }

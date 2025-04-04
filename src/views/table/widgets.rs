@@ -95,10 +95,25 @@ fn row_widget<'a>(
     name: Vec<Line<'a>>,
     size: Line<'a>,
 ) -> Row<'a> {
+    let size = Cell::from(
+        Line::styled(
+            size.to_string(),
+            match item.size_unit_index() {
+                0 => theme.size_bytes(),
+                1 => theme.size_kib(),
+                2 => theme.size_mib(),
+                3 => theme.size_gib(),
+                4 => theme.size_tib(),
+                5 => theme.size_pib(),
+                _ => theme.size_pib(),
+            },
+        )
+        .alignment(Alignment::Right),
+    );
     Row::new([
         Cell::from(Text::from(name)),
         Cell::from(item.modified().unwrap_or_default()),
-        Cell::from(size),
+        size,
         Cell::from(item.mode()),
     ])
     .style(theme.table_body())

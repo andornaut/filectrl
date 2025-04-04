@@ -444,13 +444,8 @@ impl FileTheme {
     style_getter!(setgid, setgid_fg, setgid_bg, setgid_modifiers);
     style_getter!(setuid, setuid_fg, setuid_bg, setuid_modifiers);
     style_getter!(socket, socket_fg, socket_bg, socket_modifiers);
-    style_getter!(symlink, symlink_fg, symlink_bg, symlink_modifiers);
-    style_getter!(
-        symlink_broken,
-        symlink_broken_fg,
-        symlink_broken_bg,
-        symlink_broken_modifiers
-    );
+    style_getter!(symlink, symlink_fg, symlink_bg);
+    style_getter!(symlink_broken, symlink_broken_fg, symlink_broken_bg);
 
     style_setter!(
         set_block_device,
@@ -800,6 +795,103 @@ pub struct Theme {
     )]
     table_selected_fg: Option<Color>,
 
+    // Size unit colors
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_bytes_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_bytes_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_bytes_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_kib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_kib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_kib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_mib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_mib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_mib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_gib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_gib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_gib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_tib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_tib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_tib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_pib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    size_pib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    size_pib_modifiers: Modifier,
+
     pub files: FileTheme,
 }
 
@@ -869,40 +961,19 @@ impl Theme {
     }
 
     pub fn pattern_style(&self, name: &str) -> Option<Style> {
-        // Extension match
-        if let Some(ext) = name.rsplit('.').next() {
-            if let Some(&(fg, bg, attrs)) = self.files.extension_styles.get(ext) {
-                let mut style = Style::default();
-
-                if let Some(fg_color) = fg {
-                    style = style.fg(fg_color);
-                }
-
-                if let Some(bg_color) = bg {
-                    style = style.bg(bg_color);
-                }
-
-                return Some(style.add_modifier(attrs));
-            }
-        }
-
-        // Name pattern match
-        for (pattern, &(fg, bg, attrs)) in &self.files.name_styles {
-            if name.contains(pattern) {
-                let mut style = Style::default();
-
-                if let Some(fg_color) = fg {
-                    style = style.fg(fg_color);
-                }
-
-                if let Some(bg_color) = bg {
-                    style = style.bg(bg_color);
-                }
-
-                return Some(style.add_modifier(attrs));
-            }
-        }
-
-        None
+        self.files.pattern_styles(name)
     }
+
+    // Size unit style getters
+    style_getter!(
+        size_bytes,
+        size_bytes_fg,
+        size_bytes_bg,
+        size_bytes_modifiers
+    );
+    style_getter!(size_kib, size_kib_fg, size_kib_bg, size_kib_modifiers);
+    style_getter!(size_mib, size_mib_fg, size_mib_bg, size_mib_modifiers);
+    style_getter!(size_gib, size_gib_fg, size_gib_bg, size_gib_modifiers);
+    style_getter!(size_tib, size_tib_fg, size_tib_bg, size_tib_modifiers);
+    style_getter!(size_pib, size_pib_fg, size_pib_bg, size_pib_modifiers);
 }

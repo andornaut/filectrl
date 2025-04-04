@@ -15,7 +15,7 @@ pub(super) fn apply_ls_colors(theme: &mut FileTheme) {
         }
 
         let (key, value) = (parts[0], parts[1]);
-        let (fg, bg, attrs) = parse_entry(value);
+        let (fg, bg, attrs) = parse(value);
         if fg.is_none() && bg.is_none() && attrs == Modifier::empty() {
             continue;
         }
@@ -49,7 +49,7 @@ pub(super) fn apply_ls_colors(theme: &mut FileTheme) {
     }
 }
 
-fn parse_entry(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
+fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     let mut fg = None;
     let mut bg = None;
     let mut attrs = Modifier::empty();

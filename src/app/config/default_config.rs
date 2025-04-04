@@ -58,6 +58,7 @@ table_header_active_bg = "#9C9977"
 table_header_active_fg = "#1D1F21"
 table_header_bg = "#777755"
 table_header_fg = "#1D1F21"
+# Whether to show the up/down arrows at the beginning and end of the scrollbar
 table_scrollbar_begin_end_enabled = false
 table_scrollbar_begin_bg = "#777755"
 table_scrollbar_begin_fg = "#373424"
@@ -69,6 +70,26 @@ table_scrollbar_track_bg = "#423F2E"
 table_scrollbar_track_fg = "#777755"
 table_selected_bg = "#CCC8B0"
 table_selected_fg = "#1D1F21"
+
+# Size unit colors
+size_bytes_bg = "#373424"
+size_bytes_fg = "#87CEEB"  # Sky Blue
+size_bytes_modifiers = []
+size_kib_bg = "#373424"
+size_kib_fg = "#00FFFF"    # Cyan
+size_kib_modifiers = []
+size_mib_bg = "#373424"
+size_mib_fg = "#00FF00"    # Bright Green
+size_mib_modifiers = []
+size_gib_bg = "#373424"
+size_gib_fg = "#FFFF00"    # Yellow
+size_gib_modifiers = []
+size_tib_bg = "#373424"
+size_tib_fg = "#FF00FF"    # Magenta
+size_tib_modifiers = []
+size_pib_bg = "#373424"
+size_pib_fg = "#FF0000"    # Red
+size_pib_modifiers = []
 
 [theme.files]
 # From https://raw.githubusercontent.com/seebi/dircolors-solarized/refs/heads/master/dircolors.ansi-dark
@@ -157,4 +178,6 @@ setgid_modifiers = []
 setuid_bg = "#FF0000"
 setuid_fg = "#FFFFFF"
 setuid_modifiers = []
+
+# Pattern-based styles
 "##;
