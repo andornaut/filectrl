@@ -51,7 +51,7 @@ impl Config {
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
         if config.apply_ls_colors {
-            apply_ls_colors(&mut config.theme.files);
+            apply_ls_colors(&mut config.theme.file_types);
         }
 
         Ok(config)

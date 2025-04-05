@@ -1,5 +1,5 @@
 pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
-# Whether to apply $LS_COLORS on top of any styles configured in [theme.files]
+# Whether to apply $LS_COLORS on top of any styles configured in [theme.file_types]
 apply_ls_colors = true
 
 # How long to wait to interpret multiple clicks to the same element as a double click
@@ -35,6 +35,10 @@ prompt_label_fg = "#1D1F21"
 
 status_clipboard_bg = "#70C0B1"
 status_clipboard_fg = "#1D1F21"
+status_copied_bg = "#70C0B1"
+status_copied_fg = "#1D1F21"
+status_cut_bg = "#70C0B1"
+status_cut_fg = "#1D1F21"
 status_directory_bg = "#33A999"
 status_directory_fg = "#1D1F21"
 status_directory_label_bg = "#006B6B"
@@ -71,27 +75,30 @@ table_scrollbar_track_fg = "#777755"
 table_selected_bg = "#CCC8B0"
 table_selected_fg = "#1D1F21"
 
+[theme.file_sizes]
 # Size unit colors
-size_bytes_bg = "#373424"
-size_bytes_fg = "#87CEEB"  # Sky Blue
-size_bytes_modifiers = []
-size_kib_bg = "#373424"
-size_kib_fg = "#00FFFF"    # Cyan
-size_kib_modifiers = []
-size_mib_bg = "#373424"
-size_mib_fg = "#00FF00"    # Bright Green
-size_mib_modifiers = []
-size_gib_bg = "#373424"
-size_gib_fg = "#FFFF00"    # Yellow
-size_gib_modifiers = []
-size_tib_bg = "#373424"
-size_tib_fg = "#FF00FF"    # Magenta
-size_tib_modifiers = []
-size_pib_bg = "#373424"
-size_pib_fg = "#FF0000"    # Red
-size_pib_modifiers = []
+bytes_bg = "#373424"
+bytes_fg = "#87CEEB"  # Sky Blue
+bytes_modifiers = []
+kib_bg = "#373424"
+kib_fg = "#00FFFF"    # Cyan
+kib_modifiers = []
+mib_bg = "#373424"
+mib_fg = "#00FF00"    # Bright Green
+mib_modifiers = []
+gib_bg = "#373424"
+gib_fg = "#FFFF00"    # Yellow
+gib_modifiers = []
+tib_bg = "#373424"
+tib_fg = "#FF00FF"    # Magenta
+tib_modifiers = []
+pib_bg = "#373424"
+pib_fg = "#FF0000"    # Red
+pib_modifiers = []
 
-[theme.files]
+[theme.file_types]
+# n.b. When the top-level option `apply_ls_colors` is set to true, these options
+# are superceded by the $LS_COLORS environment variable
 # From https://raw.githubusercontent.com/seebi/dircolors-solarized/refs/heads/master/dircolors.ansi-dark
 
 # Normal file default (rs=0)
@@ -178,6 +185,4 @@ setgid_modifiers = []
 setuid_bg = "#FF0000"
 setuid_fg = "#FFFFFF"
 setuid_modifiers = []
-
-# Pattern-based styles
 "##;

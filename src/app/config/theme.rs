@@ -536,6 +536,114 @@ impl FileTheme {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FileSizes {
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    bytes_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    bytes_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    bytes_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    kib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    kib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    kib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    mib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    mib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    mib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    gib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    gib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    gib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    tib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    tib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    tib_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    pib_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    pib_bg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    pib_modifiers: Modifier,
+}
+
+impl FileSizes {
+    style_getter!(bytes, bytes_fg, bytes_bg, bytes_modifiers);
+    style_getter!(kib, kib_fg, kib_bg, kib_modifiers);
+    style_getter!(mib, mib_fg, mib_bg, mib_modifiers);
+    style_getter!(gib, gib_fg, gib_bg, gib_modifiers);
+    style_getter!(tib, tib_fg, tib_bg, tib_modifiers);
+    style_getter!(pib, pib_fg, pib_bg, pib_modifiers);
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Theme {
     // Error
     #[serde(
@@ -650,11 +758,12 @@ pub struct Theme {
         serialize_with = "serialize_optional_color"
     )]
     status_filter_fg: Option<Color>,
+
+    // Status progress
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    // Status progress
     status_progress_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
@@ -681,11 +790,12 @@ pub struct Theme {
         serialize_with = "serialize_optional_color"
     )]
     status_progress_error_fg: Option<Color>,
+
+    // Status selected
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    // Status selected
     status_selected_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
@@ -795,104 +905,8 @@ pub struct Theme {
     )]
     table_selected_fg: Option<Color>,
 
-    // Size unit colors
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_bytes_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_bytes_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_bytes_modifiers: Modifier,
-
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_kib_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_kib_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_kib_modifiers: Modifier,
-
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_mib_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_mib_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_mib_modifiers: Modifier,
-
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_gib_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_gib_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_gib_modifiers: Modifier,
-
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_tib_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_tib_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_tib_modifiers: Modifier,
-
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_pib_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    size_pib_bg: Option<Color>,
-    #[serde(
-        serialize_with = "serialize_modifier",
-        deserialize_with = "deserialize_modifier"
-    )]
-    size_pib_modifiers: Modifier,
-
-    pub files: FileTheme,
+    pub file_types: FileTheme,
+    pub file_sizes: FileSizes,
 }
 
 impl Theme {
@@ -961,19 +975,31 @@ impl Theme {
     }
 
     pub fn pattern_style(&self, name: &str) -> Option<Style> {
-        self.files.pattern_styles(name)
+        self.file_types.pattern_styles(name)
     }
 
     // Size unit style getters
-    style_getter!(
-        size_bytes,
-        size_bytes_fg,
-        size_bytes_bg,
-        size_bytes_modifiers
-    );
-    style_getter!(size_kib, size_kib_fg, size_kib_bg, size_kib_modifiers);
-    style_getter!(size_mib, size_mib_fg, size_mib_bg, size_mib_modifiers);
-    style_getter!(size_gib, size_gib_fg, size_gib_bg, size_gib_modifiers);
-    style_getter!(size_tib, size_tib_fg, size_tib_bg, size_tib_modifiers);
-    style_getter!(size_pib, size_pib_fg, size_pib_bg, size_pib_modifiers);
+    pub fn size_bytes(&self) -> Style {
+        self.file_sizes.bytes()
+    }
+
+    pub fn size_kib(&self) -> Style {
+        self.file_sizes.kib()
+    }
+
+    pub fn size_mib(&self) -> Style {
+        self.file_sizes.mib()
+    }
+
+    pub fn size_gib(&self) -> Style {
+        self.file_sizes.gib()
+    }
+
+    pub fn size_tib(&self) -> Style {
+        self.file_sizes.tib()
+    }
+
+    pub fn size_pib(&self) -> Style {
+        self.file_sizes.pib()
+    }
 }
