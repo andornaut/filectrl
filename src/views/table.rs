@@ -40,6 +40,9 @@ pub(super) struct TableView {
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
+
+    is_copied: bool,
+    is_cut: bool,
 }
 
 impl TableView {

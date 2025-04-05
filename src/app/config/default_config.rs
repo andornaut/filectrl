@@ -35,10 +35,6 @@ prompt_label_fg = "#1D1F21"
 
 status_clipboard_bg = "#70C0B1"
 status_clipboard_fg = "#1D1F21"
-status_copied_bg = "#70C0B1"
-status_copied_fg = "#1D1F21"
-status_cut_bg = "#70C0B1"
-status_cut_fg = "#1D1F21"
 status_directory_bg = "#33A999"
 status_directory_fg = "#1D1F21"
 status_directory_label_bg = "#006B6B"
@@ -58,6 +54,10 @@ status_selected_label_fg = "#C5C8C6"
 
 table_body_bg = "#373424"
 table_body_fg = "#FFFFFF"
+table_copied_bg = "#33A999"
+table_copied_fg = "#006400"  # Dark Green
+table_cut_bg = "#33A999"
+table_cut_fg = "#800080"  # Purple
 table_header_active_bg = "#9C9977"
 table_header_active_fg = "#1D1F21"
 table_header_bg = "#777755"
@@ -77,22 +77,22 @@ table_selected_fg = "#1D1F21"
 
 [theme.file_sizes]
 # Size unit colors
-bytes_bg = "#373424"
+bytes_bg = ""
 bytes_fg = "#87CEEB"  # Sky Blue
 bytes_modifiers = []
-kib_bg = "#373424"
+kib_bg = ""
 kib_fg = "#00FFFF"    # Cyan
 kib_modifiers = []
-mib_bg = "#373424"
+mib_bg = ""
 mib_fg = "#00FF00"    # Bright Green
 mib_modifiers = []
-gib_bg = "#373424"
+gib_bg = ""
 gib_fg = "#FFFF00"    # Yellow
 gib_modifiers = []
-tib_bg = "#373424"
+tib_bg = ""
 tib_fg = "#FF00FF"    # Magenta
 tib_modifiers = []
-pib_bg = "#373424"
+pib_bg = ""
 pib_fg = "#FF0000"    # Red
 pib_modifiers = []
 

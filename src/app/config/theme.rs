@@ -725,6 +725,30 @@ pub struct Theme {
     )]
     status_clipboard_fg: Option<Color>,
 
+    // Status copied
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_copied_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_copied_fg: Option<Color>,
+
+    // Status cut
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_cut_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    table_cut_fg: Option<Color>,
+
     // Status directory
     #[serde(
         deserialize_with = "deserialize_optional_color",
@@ -917,6 +941,8 @@ impl Theme {
     style_getter!(prompt_input, prompt_input_fg, prompt_input_bg);
     style_getter!(prompt_label, prompt_label_fg, prompt_label_bg);
     style_getter!(status_clipboard, status_clipboard_fg, status_clipboard_bg);
+    style_getter!(table_copied, table_copied_fg, table_copied_bg);
+    style_getter!(table_cut, table_cut_fg, table_cut_bg);
     style_getter!(status_filter, status_filter_fg, status_filter_bg);
     style_getter!(status_directory, status_directory_fg, status_directory_bg);
     style_getter!(
