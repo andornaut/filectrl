@@ -15,7 +15,7 @@ use crate::{
 };
 
 const MIN_WIDTH: u16 = 10;
-const MIN_HEIGHT: u16 = 6;
+const MIN_HEIGHT: u16 = 4;
 const RESIZE_WINDOW: &'static str = "Resize window";
 
 #[derive(Default)]

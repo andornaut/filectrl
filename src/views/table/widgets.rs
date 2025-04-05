@@ -1,5 +1,5 @@
 use ratatui::{
-    prelude::{Alignment, Constraint, Stylize},
+    prelude::{Alignment, Constraint, Style, Stylize},
     symbols::{block, line},
     text::{Line, Span, Text},
     widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table},
@@ -8,6 +8,7 @@ use ratatui::{
 use super::{
     columns::{SortColumn, SortDirection},
     style::{header_style, name_style},
+    Clipboard,
 };
 use crate::{
     app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis,
@@ -77,53 +78,61 @@ fn header_label<'a>(
     }
 }
 
+fn clipboard_or_default_style<'a>(
+    theme: &'a Theme,
+    clipboard: &'a Clipboard,
+    item: &'a PathInfo,
+    default_style: Style,
+) -> Style {
+    if clipboard.is_copied(item) {
+        theme.table_copied()
+    } else if clipboard.is_cut(item) {
+        theme.table_cut()
+    } else {
+        default_style
+    }
+}
+
 pub(super) fn row_and_height<'a>(
     theme: &'a Theme,
+    clipboard: &'a Clipboard,
     name_column_width: u16,
     item: &'a PathInfo,
 ) -> (Row<'a>, u16) {
-    let name = split_name(theme, name_column_width, item);
+    let name_style =
+        clipboard_or_default_style(theme, clipboard, item, name_style(&theme.file_types, item));
+    let size_style = clipboard_or_default_style(theme, clipboard, item, size_style(theme, item));
+    let row_style = clipboard_or_default_style(theme, clipboard, item, theme.table_body());
+
+    let name = split_name(name_column_width, item);
     let height = name.len() as u16;
-    let size = Line::from(item.size()).alignment(Alignment::Right);
-    let row = row_widget(theme, item, name, size).height(height);
+    let row = Row::new([
+        Cell::from(name).style(name_style),
+        Cell::from(item.modified().unwrap_or_default()),
+        Cell::from(item.size()).style(size_style),
+        Cell::from(item.mode()),
+    ])
+    .style(row_style);
     (row, height)
 }
 
-fn row_widget<'a>(
-    theme: &'a Theme,
-    item: &'a PathInfo,
-    name: Vec<Line<'a>>,
-    size: Line<'a>,
-) -> Row<'a> {
-    let size = Cell::from(
-        Line::styled(
-            size.to_string(),
-            match item.size_unit_index() {
-                0 => theme.size_bytes(),
-                1 => theme.size_kib(),
-                2 => theme.size_mib(),
-                3 => theme.size_gib(),
-                4 => theme.size_tib(),
-                5 => theme.size_pib(),
-                _ => theme.size_pib(),
-            },
-        )
-        .alignment(Alignment::Right),
-    );
-    Row::new([
-        Cell::from(Text::from(name)),
-        Cell::from(item.modified().unwrap_or_default()),
-        size,
-        Cell::from(item.mode()),
-    ])
-    .style(theme.table_body())
+fn size_style(theme: &Theme, item: &PathInfo) -> Style {
+    let default_size_style = match item.size_unit_index() {
+        0 => theme.size_bytes(),
+        1 => theme.size_kib(),
+        2 => theme.size_mib(),
+        3 => theme.size_gib(),
+        4 => theme.size_tib(),
+        5 => theme.size_pib(),
+        _ => theme.size_pib(),
+    };
+    default_size_style
 }
 
-fn split_name<'a>(theme: &Theme, width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
-    let style = name_style(&theme.file_types, path);
+fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
     split_with_ellipsis(&path.name(), width)
         .into_iter()
-        .map(|part| Line::from(Span::styled(part, style)))
+        .map(|part| Line::from(part))
         .collect()
 }
 
