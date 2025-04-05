@@ -11,13 +11,15 @@ use super::{
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
+const MIN_HEIGHT: u16 = 3;
+
 impl View for TableView {
     fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
-        Constraint::Min(3)
+        Constraint::Min(MIN_HEIGHT)
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
-        if area.height < 2 || area.width < 8 {
+        if area.height < MIN_HEIGHT || area.width < 8 {
             return;
         }
 
@@ -72,7 +74,8 @@ impl TableView {
             .directory_items_sorted
             .iter()
             .map(|item| {
-                let (row, height) = row_and_height(theme, self.columns.name_width(), item);
+                let (row, height) =
+                    row_and_height(theme, &self.clipboard, self.columns.name_width(), item);
                 (row, height)
             })
             .unzip();

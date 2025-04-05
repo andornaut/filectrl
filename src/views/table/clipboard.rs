@@ -5,15 +5,48 @@ use arboard::Clipboard as Arboard;
 
 use crate::{command::Command, file_system::path_info::PathInfo};
 
-pub(super) struct Clipboard(Arboard);
+/// A clipboard that caches its content to avoid requiring mutable access for read operations.
+///
+/// The clipboard is a shared system resource that requires synchronization when reading.
+/// By caching the content, we can avoid requiring mutable access for read operations
+/// like `is_copied` and `is_cut`, while still maintaining correctness by updating
+/// the cache when writing.
+/// This ensures that is_copied and is_cut can be called without holding a mutable reference to the Clipboard.
+pub(super) struct Clipboard {
+    arboard: Arboard,
+    cached_content: Option<(ClipboardCommand, String)>,
+}
 
 impl Default for Clipboard {
     fn default() -> Self {
-        Self(Arboard::new().expect("Can access the clipboard"))
+        Self {
+            arboard: Arboard::new().expect("Can access the clipboard"),
+            cached_content: None,
+        }
     }
 }
 
 impl Clipboard {
+    pub(super) fn is_copied(&self, path: &PathInfo) -> bool {
+        self.is_command_type(path, ClipboardCommand::Copy)
+    }
+
+    pub(super) fn is_cut(&self, path: &PathInfo) -> bool {
+        self.is_command_type(path, ClipboardCommand::Move)
+    }
+
+    fn is_command_type(&self, path: &PathInfo, expected_command: ClipboardCommand) -> bool {
+        self.cached_content
+            .as_ref()
+            .filter(|(command, _)| *command == expected_command)
+            .and_then(|(_, cached_path)| {
+                PathInfo::try_from(cached_path.as_str())
+                    .ok()
+                    .map(|cached_path| cached_path == *path)
+            })
+            .unwrap_or(false)
+    }
+
     pub(super) fn copy(&mut self, path: &str) {
         self.set_clipboard(ClipboardCommand::Copy, path);
     }
@@ -22,32 +55,23 @@ impl Clipboard {
         self.set_clipboard(ClipboardCommand::Move, path);
     }
 
-    pub(super) fn maybe_command(&mut self, to: PathInfo) -> Option<Command> {
-        self.0
-            .get_text()
-            .map(|message| {
-                split_clipboard_message(&message).and_then(|(command, from)| {
-                    PathInfo::try_from(from)
-                        .map(|from| {
-                            ClipboardCommand::try_from(command)
-                                .map(|command| command.as_command(from, to))
-                                .ok()
-                        })
-                        .ok()
-                        .flatten()
-                })
-            })
-            .ok()
-            .flatten()
+    pub(super) fn maybe_command(&self, to: PathInfo) -> Option<Command> {
+        self.cached_content.as_ref().and_then(|(command, from)| {
+            PathInfo::try_from(from.as_str())
+                .map(|from| command.as_command(from, to))
+                .ok()
+        })
     }
 
     fn set_clipboard(&mut self, command: ClipboardCommand, from: &str) {
-        self.0
+        self.arboard
             .set_text(format!("{command} {from}"))
             .expect("Can write to the clipboard");
+        self.cached_content = Some((command, from.to_string()));
     }
 }
 
+#[derive(PartialEq)]
 enum ClipboardCommand {
     Copy,
     Move,
