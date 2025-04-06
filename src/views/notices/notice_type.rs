@@ -29,7 +29,7 @@ impl<'a> NoticeType<'a> {
             NoticeType::Clipboard((operation, path)) => {
                 clipboard_widget(theme, width, path, operation)
             }
-            NoticeType::Filter(filter) => filter_widget(theme, width, filter),
+            NoticeType::Filter(filter) => filter_widget(theme, filter),
         }
     }
 }

@@ -22,33 +22,35 @@ pub(super) fn clipboard_widget<'a>(
     path: &'a PathInfo,
     operation: &'a ClipboardOperation,
 ) -> Paragraph<'a> {
-    let label = match operation {
-        ClipboardOperation::Cut => "Cut",
-        ClipboardOperation::Copy => "Copied",
-    };
-    let width = width.saturating_sub(label.width_cjk() as u16 + 4); // 2 for spaces + 2 for quotation marks
-    let path = truncate_left_utf8(&path.path, width);
+    let label = format!(
+        " {} \"",
+        match operation {
+            ClipboardOperation::Cut => "Cut",
+            ClipboardOperation::Copy => "Copied",
+        },
+    );
+    let label_width = label.width_cjk() as u16;
+    let available_width = width.saturating_sub(label_width);
+    let truncated_path = truncate_left_utf8(&path.path, available_width);
     let spans = vec![
-        Span::raw(format!(" {label} \"")),
-        Span::styled(path, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(label),
+        Span::styled(
+            truncated_path,
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::raw("\""),
     ];
-
     Paragraph::new(Line::from(spans)).style(theme.notice_clipboard())
 }
 
-pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Paragraph<'a> {
+pub(super) fn filter_widget<'a>(theme: &Theme, filter: &'a str) -> Paragraph<'a> {
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
     let prefix = " Filtered by \"";
     let suffix = "\". Press Esc to exit filtered mode.";
 
-    // TODO this will cause a panic if the viewport is too small, such that the
-    // available_width is 1
-    let available_width = width.saturating_sub((prefix.len() + suffix.len()) as u16);
-    let truncated_filter = truncate_left_utf8(filter, available_width);
     let spans = vec![
         Span::raw(prefix),
-        Span::styled(truncated_filter, bold_style),
+        Span::styled(filter, bold_style),
         Span::raw(suffix),
     ];
     Paragraph::new(Line::from(spans)).style(theme.notice_filter())
