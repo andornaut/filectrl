@@ -1,4 +1,3 @@
-use chrono::{DateTime, Local};
 use ratatui::{
     prelude::{Constraint, Stylize},
     symbols::{block, line},
@@ -16,6 +15,7 @@ use super::{
 use crate::{
     app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis,
 };
+use chrono::{DateTime, Local};
 
 pub(super) fn table_widget<'a>(
     theme: &Theme,
@@ -111,6 +111,7 @@ pub(super) fn row_and_height<'a>(
         Cell::from(item.size()).style(size_style),
         Cell::from(item.mode()),
     ])
+    .height(height)
     .style(row_style);
     (row, height)
 }
