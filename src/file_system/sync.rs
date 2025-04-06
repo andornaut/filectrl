@@ -17,7 +17,7 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
         .map(|entry| -> Result<PathInfo> { PathInfo::try_from(&entry?.path()) })
         .partition(Result::is_ok);
     if !errors.is_empty() {
-        return Err(anyhow!("Some paths could not be read: {:?}", errors));
+        warn!("Some paths could not be read: {:?}", errors);
     }
     Ok(children.into_iter().map(Result::unwrap).collect())
 }

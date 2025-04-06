@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use log::debug;
-
 use crate::file_system::path_info::PathInfo;
 
 const DEFAULT_THRESHOLD_MILLISECONDS: u16 = 300;
@@ -24,7 +22,6 @@ impl DoubleClick {
     }
 
     pub fn click_and_check_for_double_click(&mut self, path: &PathInfo) -> bool {
-        debug!("clicked_path: {:?}", path);
         let item = Some(path.clone());
         if let Some(start) = self.start {
             if start.elapsed().as_millis() <= self.threshold_milliseconds as u128

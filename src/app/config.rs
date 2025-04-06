@@ -7,7 +7,7 @@ use std::{fs, io::ErrorKind, path::PathBuf};
 
 use anyhow::{anyhow, Error, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
-use log::LevelFilter;
+use log::{info, LevelFilter};
 use serde::{Deserialize, Serialize};
 
 use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, theme::Theme};
@@ -70,6 +70,7 @@ impl TryFrom<Option<PathBuf>> for Config {
     fn try_from(value: Option<PathBuf>) -> Result<Self> {
         // Try to use the user-provided path
         if let Some(path) = value {
+            info!("Loading config from user-provided path: {}", path.display());
             return match fs::read_to_string(&path) {
                 Ok(content) => Self::parse(&content),
                 Err(err) => Err(anyhow!(
@@ -82,15 +83,20 @@ impl TryFrom<Option<PathBuf>> for Config {
 
         // No user-provided path provided, so try the default path
         let default_path = Self::default_path();
+        info!(
+            "Attempting to load the config from the default path: {}",
+            default_path.display()
+        );
         match fs::read_to_string(&default_path) {
             Ok(content) => Self::parse(&content),
             Err(err) => {
                 if err.kind() == ErrorKind::NotFound {
+                    info!("No config file found, using the built-in config");
                     // Fallback to the built-in config
                     return Ok(Self::default());
                 }
                 Err(anyhow!(
-                    "could not read config from the default path ({}): {}",
+                    "could not read the config file from the default path ({}): {}",
                     default_path.display(),
                     err
                 ))
