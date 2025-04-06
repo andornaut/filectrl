@@ -29,7 +29,7 @@ impl View for TableView {
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
         self.render_table_and_init_mapper(buf, theme);
-        // Must be rendered after the table, because it depends on the mapper
+        // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
         self.render_scrollbar(buf, theme);
         self.render_1x1_block(buf, theme, block_area);
     }

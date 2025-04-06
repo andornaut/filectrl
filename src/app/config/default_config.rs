@@ -32,7 +32,7 @@ notice_clipboard_bg = "#70C0B1"
 notice_clipboard_fg = "#1D1F21"
 notice_filter_bg = "#33A999"
 notice_filter_fg = "#1D1F21"
-notice_progress_bg = "#373424"
+notice_progress_bg = "#006B6B"
 notice_progress_done_bg = "#373424"
 notice_progress_done_fg = "#73c991"
 notice_progress_error_bg = "#260908"
@@ -63,8 +63,8 @@ table_header_active_bg = "#9C9977"
 table_header_active_fg = "#1D1F21"
 table_header_bg = "#777755"
 table_header_fg = "#1D1F21"
-# Whether to show the up/down arrows at the beginning and end of the scrollbar
 table_scrollbar_begin_bg = "#777755"
+# Whether to show the up/down arrows at the beginning and end of the scrollbar
 table_scrollbar_begin_end_enabled = false
 table_scrollbar_begin_fg = "#373424"
 table_scrollbar_end_bg = "#777755"

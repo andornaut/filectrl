@@ -144,8 +144,6 @@ fn copy_file(
             task.error(format!(
                 "Failed to copy {old_path:?} to {new_path:?}: {error}"
             ));
-            tx.send(Command::Progress(task.clone()))
-                .expect("Can send command");
             false
         }
         Ok((old_file, new_file)) => {
@@ -154,23 +152,24 @@ fn copy_file(
             let mut writer = BufWriter::new(new_file);
             loop {
                 match reader.read(&mut buffer) {
-                    Ok(0) => return true,
+                    Ok(0) => {
+                        task.done();
+                        break true;
+                    }
                     Ok(bytes) => match writer.write_all(&buffer[..bytes]) {
                         Ok(()) => task.increment(bytes as u64),
                         Err(error) => {
                             task.error(format!("Failed to write {new_path:?}: {error}"));
-                            tx.send(Command::Progress(task.clone()))
-                                .expect("Can send command");
-                            return false;
+                            break false;
                         }
                     },
                     Err(error) => {
                         task.error(format!("Failed to read {old_path:?}: {error}"));
-                        tx.send(Command::Progress(task.clone()))
-                            .expect("Can send command");
-                        return false;
+                        break false;
                     }
                 }
+                tx.send(Command::Progress(task.clone()))
+                    .expect("Can send command");
             }
         }
     }

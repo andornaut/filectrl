@@ -14,6 +14,7 @@ impl CommandHandler for NoticesView {
                 self.set_clipboard(path.clone(), ClipboardOperation::Cut)
             }
             Command::Copy(_, _) | Command::Move(_, _) => {
+                // The clipboard was pasted
                 self.clipboard = None;
                 CommandResult::none()
             }

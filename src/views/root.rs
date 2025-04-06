@@ -25,7 +25,6 @@ pub struct RootView {
     help: HelpView,
     notices: NoticesView,
     prompt: PromptView,
-    last_rendered_area: Rect,
     status: StatusView,
     table: TableView,
 }
@@ -46,7 +45,8 @@ impl RootView {
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
-        let views: Vec<&mut dyn View> = vec![
+        vec![
+            // The order is significant
             &mut self.errors,
             &mut self.help,
             &mut self.header,
@@ -54,8 +54,7 @@ impl RootView {
             &mut self.notices,
             &mut self.prompt,
             &mut self.status,
-        ];
-        views
+        ]
     }
 }
 
@@ -80,8 +79,6 @@ impl View for RootView {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
-        self.last_rendered_area = area;
-
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             render_resize_message(buf, area, theme);
             return;
