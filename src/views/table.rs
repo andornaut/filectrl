@@ -71,7 +71,10 @@ impl TableView {
 
     fn paste(&mut self) -> CommandResult {
         match self.clipboard.maybe_command(self.directory.clone()) {
-            Some(command) => command.into(),
+            Some(command) => {
+                self.clipboard.clear();
+                command.into()
+            }
             None => CommandResult::none(),
         }
     }
@@ -257,7 +260,6 @@ impl TableView {
         self.filter = filter;
         self.sort()
     }
-
     // Sort
     fn sort(&mut self) -> CommandResult {
         let mut items = self.directory_items.clone();

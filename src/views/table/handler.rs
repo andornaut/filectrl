@@ -12,6 +12,7 @@ impl CommandHandler for TableView {
             }
             // self.handle_key() and PromptView may emit SetFilter()
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
+
             _ => CommandResult::NotHandled,
         }
     }

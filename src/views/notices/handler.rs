@@ -1,8 +1,9 @@
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::prelude::Rect;
 
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
-use super::{ClipboardOperation, NoticesView};
+use super::{ClipboardOperation, NoticeType, NoticesView};
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -30,5 +31,30 @@ impl CommandHandler for NoticesView {
             (KeyCode::Char('c'), KeyModifiers::NONE) => self.clear_clipboard(),
             (_, _) => CommandResult::NotHandled,
         }
+    }
+
+    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Clear the notice that was clicked based on its position
+                let y = event.row.saturating_sub(self.area.y);
+
+                // Get all active notices in their display order
+                let notices: Vec<_> = self.active_notices().collect();
+
+                // Find which notice was clicked based on y position
+                match notices.get(y as usize) {
+                    Some(NoticeType::Progress) => self.clear_progress(),
+                    Some(NoticeType::Clipboard(_)) => self.clear_clipboard(),
+                    Some(NoticeType::Filter(_)) => self.clear_filter(),
+                    None => CommandResult::none(),
+                }
+            }
+            _ => CommandResult::none(),
+        }
+    }
+
+    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
+        self.area.intersects(Rect::new(x, y, 1, 1))
     }
 }
