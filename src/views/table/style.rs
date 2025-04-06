@@ -1,9 +1,10 @@
+use chrono::{DateTime, Local};
 use ratatui::style::Style;
 
-use super::SortColumn;
+use super::{Clipboard, SortColumn};
 use crate::{
     app::config::theme::{FileTheme, Theme},
-    file_system::path_info::PathInfo,
+    file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
 
 pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
@@ -78,4 +79,49 @@ pub(super) fn name_style(theme: &FileTheme, path: &PathInfo) -> Style {
 
     // Normal files (no) - default fallback for anything else
     theme.normal_file()
+}
+
+pub(super) fn modified_date_style(
+    theme: &Theme,
+    item: &PathInfo,
+    relative_to_datetime: DateTime<Local>,
+) -> Style {
+    let modified = item.modified.unwrap_or(relative_to_datetime);
+    let age = datetime_age(modified, relative_to_datetime);
+
+    match age {
+        DateTimeAge::LessThanMinute => theme.modified_less_than_minute(),
+        DateTimeAge::LessThanDay => theme.modified_less_than_day(),
+        DateTimeAge::LessThanMonth => theme.modified_less_than_month(),
+        DateTimeAge::LessThanYear => theme.modified_less_than_year(),
+        DateTimeAge::GreaterThanYear => theme.modified_greater_than_year(),
+    }
+}
+
+pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
+    let default_size_style = match item.size_unit_index() {
+        0 => theme.size_bytes(),
+        1 => theme.size_kib(),
+        2 => theme.size_mib(),
+        3 => theme.size_gib(),
+        4 => theme.size_tib(),
+        5 => theme.size_pib(),
+        _ => theme.size_pib(),
+    };
+    default_size_style
+}
+
+pub(super) fn clipboard_or_default_style<'a>(
+    theme: &'a Theme,
+    clipboard: &'a Clipboard,
+    item: &'a PathInfo,
+    default_style: Style,
+) -> Style {
+    if clipboard.is_copied(item) {
+        theme.table_copied()
+    } else if clipboard.is_cut(item) {
+        theme.table_cut()
+    } else {
+        default_style
+    }
 }

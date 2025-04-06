@@ -76,8 +76,24 @@ table_scrollbar_track_fg = "#777755"
 table_selected_bg = "#CCC8B0"
 table_selected_fg = "#1D1F21"
 
+[theme.file_modified_date]
+less_than_minute_bg = ""
+less_than_minute_fg = "#00FFFF"  # Sky Blue
+less_than_minute_modifiers = []
+less_than_day_bg = ""
+less_than_day_fg = "#00FF00"    # Bright Green
+less_than_day_modifiers = []
+less_than_month_bg = ""
+less_than_month_fg = "#FFFF00"  # Yellow
+less_than_month_modifiers = []
+less_than_year_bg = ""
+less_than_year_fg = "#FF00FF"   # Magenta
+less_than_year_modifiers = []
+greater_than_year_bg = ""
+greater_than_year_fg = "#FF0000" # Red
+greater_than_year_modifiers = []
+
 [theme.file_sizes]
-# Size unit colors
 bytes_bg = ""
 bytes_fg = "#87CEEB"  # Sky Blue
 bytes_modifiers = []

@@ -10,6 +10,7 @@ use super::{
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
+use chrono::Local;
 
 const MIN_HEIGHT: u16 = 3;
 
@@ -70,12 +71,18 @@ impl TableView {
 
     fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
         let column_constraints = self.columns.constraints(self.table_area.width);
+        let relative_to_datetime = Local::now();
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
             .iter()
             .map(|item| {
-                let (row, height) =
-                    row_and_height(theme, &self.clipboard, self.columns.name_width(), item);
+                let (row, height) = row_and_height(
+                    theme,
+                    &self.clipboard,
+                    self.columns.name_width(),
+                    item,
+                    relative_to_datetime,
+                );
                 (row, height)
             })
             .unzip();

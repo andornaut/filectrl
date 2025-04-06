@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Error, Result};
-use chrono::{DateTime, Datelike, Local, Timelike};
+use chrono::{DateTime, Datelike, Local};
 use nix::unistd::{Gid, Group, Uid, User};
 
 const FACTOR: u64 = 1024;
@@ -46,6 +46,7 @@ fn osstr_to_string(os_str: &OsStr) -> Result<String> {
 #[derive(Clone, Eq, Hash)]
 pub struct PathInfo {
     pub basename: String,
+    pub modified: Option<DateTime<Local>>,
     pub path: String,
     pub size: u64,
 
@@ -54,7 +55,6 @@ pub struct PathInfo {
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
-    modified: Option<DateTime<Local>>,
 }
 
 impl PathInfo {
@@ -81,8 +81,9 @@ impl PathInfo {
         unix_mode::to_string(self.mode)
     }
 
-    pub fn modified(&self) -> Option<String> {
-        maybe_time_to_string(&self.modified)
+    pub fn modified_relative_to(&self, relative_to: DateTime<Local>) -> Option<String> {
+        self.modified
+            .map(|datetime| humanize_datetime(datetime, relative_to))
     }
 
     pub fn modified_comparator(&self) -> i64 {
@@ -306,27 +307,47 @@ fn unit_index(bytes: u64) -> usize {
     unit_index as usize
 }
 
-fn humanize_datetime(datetime: DateTime<Local>, relative_to_datetime: DateTime<Local>) -> String {
-    let naive_relative_to_date = relative_to_datetime
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
-    let naive_date = datetime.date_naive().and_hms_opt(0, 0, 0).unwrap();
-    let format = if naive_date == naive_relative_to_date {
-        // Formats: https://docs.rs/chrono/latest/chrono/format/strftime/index.html
-        if datetime.hour() == relative_to_datetime.hour()
-            && datetime.minute() == relative_to_datetime.minute()
-        {
-            "%I:%M:%S%P"
-        } else {
-            "%I:%M%P"
-        }
-    } else if naive_date.year() == naive_relative_to_date.year() {
-        "%b %d"
+#[derive(Debug, PartialEq)]
+pub enum DateTimeAge {
+    LessThanMinute,
+    LessThanDay,
+    LessThanMonth,
+    LessThanYear,
+    GreaterThanYear,
+}
+
+pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
+    let duration = relative_to.signed_duration_since(datetime);
+
+    if duration.num_minutes() == 0 {
+        DateTimeAge::LessThanMinute
+    } else if duration.num_days() == 0 {
+        DateTimeAge::LessThanDay
+    } else if duration.num_days() < 30 {
+        DateTimeAge::LessThanMonth
+    } else if duration.num_days() < 365 {
+        DateTimeAge::LessThanYear
     } else {
-        "%b %d, %Y"
+        DateTimeAge::GreaterThanYear
+    }
+}
+
+fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> String {
+    let age = datetime_age(datetime, relative_to);
+    let format = match age {
+        DateTimeAge::LessThanMinute => "%I:%M:%S%P",
+        DateTimeAge::LessThanDay => "%I:%M%P",
+        DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
+            // Show year if dates are from different calendar years
+            if datetime.year() != relative_to.year() {
+                "%b %d, %Y"
+            } else {
+                "%b %d"
+            }
+        }
+        DateTimeAge::GreaterThanYear => "%b %d, %Y",
     };
-    // Return eg. "6:00am" instead of "06:00am"
+    // Return eg. "6:00:00am" instead of "06:00:00am"
     let mut datetime = format!("{}", datetime.format(format));
     if datetime.starts_with('0') {
         datetime.remove(0);
