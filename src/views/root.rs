@@ -14,8 +14,8 @@ use crate::{
     command::{handler::CommandHandler, mode::InputMode},
 };
 
-const MIN_WIDTH: u16 = 10;
-const MIN_HEIGHT: u16 = 8;
+const MIN_WIDTH: u16 = 14; // Must be 11 or larger to prevent clipboard notices from causing a panic
+const MIN_HEIGHT: u16 = 5;
 const RESIZE_WINDOW: &'static str = "Resize window";
 
 #[derive(Default)]
