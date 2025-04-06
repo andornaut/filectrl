@@ -4,10 +4,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use super::{
-    widgets::{clipboard_widget, filter_widget, progress_widget},
-    NoticesView,
-};
+use super::NoticesView;
 use crate::views::View;
 use crate::{app::config::theme::Theme, command::mode::InputMode};
 
@@ -19,36 +16,20 @@ impl View for NoticesView {
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
         self.area = area;
 
-        let mut widgets = Vec::new();
-        let mut constraints = Vec::new();
-
-        if !self.tasks.is_empty() {
-            let widget = progress_widget(&self.tasks, theme, area.width);
-            widgets.push(widget);
-            constraints.push(Constraint::Length(1));
+        let notices: Vec<_> = self.active_notices().collect();
+        if notices.is_empty() {
+            return;
         }
 
-        if let Some((is_cut, path)) = &self.clipboard {
-            let widget = clipboard_widget(path, is_cut, area.width, theme);
-            widgets.push(widget);
-            constraints.push(Constraint::Length(1));
-        }
+        let constraints = vec![Constraint::Length(1); notices.len()];
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
 
-        if !self.filter.is_empty() {
-            let widget = filter_widget(&self.filter, theme);
-            widgets.push(widget);
-            constraints.push(Constraint::Length(1));
-        }
-
-        if !widgets.is_empty() {
-            let layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(area);
-
-            for (area, widget) in layout.into_iter().zip(widgets) {
-                widget.render(*area, buf);
-            }
+        for (notice, area) in notices.iter().zip(layout.iter()) {
+            let widget = notice.create_widget(theme, area.width, &self.tasks);
+            widget.render(*area, buf);
         }
     }
 }

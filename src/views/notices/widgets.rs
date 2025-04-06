@@ -17,10 +17,10 @@ use crate::{
 use super::ClipboardOperation;
 
 pub(super) fn clipboard_widget<'a>(
+    theme: &Theme,
+    width: u16,
     path: &'a PathInfo,
     operation: &'a ClipboardOperation,
-    width: u16,
-    theme: &Theme,
 ) -> Paragraph<'a> {
     let label = match operation {
         ClipboardOperation::Cut => "Cut",
@@ -37,22 +37,27 @@ pub(super) fn clipboard_widget<'a>(
     Paragraph::new(Line::from(spans)).style(theme.notice_clipboard())
 }
 
-pub(super) fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
+pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Paragraph<'a> {
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
+    let prefix = " Filtered by \"";
+    let suffix = "\". Press Esc to exit filtered mode.";
+
+    // TODO this will cause a panic if the viewport is too small, such that the
+    // available_width is 1
+    let available_width = width.saturating_sub((prefix.len() + suffix.len()) as u16);
+    let truncated_filter = truncate_left_utf8(filter, available_width);
     let spans = vec![
-        Span::raw(" Filtered by \""),
-        Span::styled(filter, bold_style),
-        Span::raw("\". Press "),
-        Span::styled("Esc", bold_style),
-        Span::raw(" to exit filtered mode."),
+        Span::raw(prefix),
+        Span::styled(truncated_filter, bold_style),
+        Span::raw(suffix),
     ];
     Paragraph::new(Line::from(spans)).style(theme.notice_filter())
 }
 
 pub(super) fn progress_widget<'a>(
-    tasks: &'a HashSet<Task>,
     theme: &Theme,
     width: u16,
+    tasks: &'a HashSet<Task>,
 ) -> Paragraph<'a> {
     let mut progress = Progress(0, 0);
     for task in tasks {

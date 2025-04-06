@@ -1,5 +1,4 @@
 use crossterm::event::{KeyCode, KeyModifiers};
-use log::debug;
 
 use super::{r#async::TaskCommand, FileSystem};
 use crate::command::{handler::CommandHandler, result::CommandResult, task::Task, Command};
@@ -11,7 +10,7 @@ impl CommandHandler for FileSystem {
             Err(_) => match command {
                 Command::Open(path) => self.open(path),
                 Command::OpenCustom(path) => self.open_custom(path),
-                Command::Progress(task) => self.failed_task_to_error(task),
+                Command::Progress(task) => self.handle_error_and_done_status(task),
                 Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
                 _ => CommandResult::NotHandled,
             },
@@ -37,12 +36,13 @@ impl CommandHandler for FileSystem {
 }
 
 impl FileSystem {
-    fn failed_task_to_error(&self, task: &Task) -> CommandResult {
-        debug!("FileSystem task: {:?}", task);
+    fn handle_error_and_done_status(&mut self, task: &Task) -> CommandResult {
         if let Some(message) = task.error_message() {
-            Command::AddError(message).into()
-        } else {
-            CommandResult::NotHandled
+            return Command::AddError(message).into();
         }
+        if task.is_done() {
+            return self.refresh();
+        }
+        CommandResult::NotHandled
     }
 }

@@ -63,6 +63,10 @@ impl Clipboard {
         })
     }
 
+    pub(super) fn clear(&mut self) {
+        self.cached_content = None;
+    }
+
     fn set_clipboard(&mut self, command: ClipboardCommand, from: &str) {
         self.arboard
             .set_text(format!("{command} {from}"))

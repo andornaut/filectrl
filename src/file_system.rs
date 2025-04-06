@@ -11,7 +11,7 @@ use log::info;
 use self::{path_info::PathInfo, sync::open_in};
 use crate::{
     app::config::Config,
-    command::{result::CommandResult, task::Task, Command},
+    command::{result::CommandResult, Command},
 };
 
 pub struct FileSystem {

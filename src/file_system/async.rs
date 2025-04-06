@@ -89,17 +89,17 @@ impl TaskCommand {
     }
 
     fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
-        let path = PathBuf::from(&path.path);
-        let mut task = Task::new(1);
+        let path_buf = PathBuf::from(&path.path);
+        let mut task = Task::new(path.size);
         let original_task = task.clone();
 
-        thread::spawn(move || match fs::remove_file(&path) {
+        thread::spawn(move || match fs::remove_file(&path_buf) {
             Ok(_) => {
                 task.done();
                 tx.send(Command::Progress(task)).expect("Can send command");
             }
             Err(error) => {
-                task.error(format!("Failed to delete {path:?}: {error}"));
+                task.error(format!("Failed to delete {path_buf:?}: {error}"));
                 tx.send(Command::Progress(task)).expect("Can send command");
             }
         });
