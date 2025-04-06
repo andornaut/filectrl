@@ -1,5 +1,6 @@
 use ratatui::{
     style::{Modifier, Style},
+    symbols::block,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -20,7 +21,7 @@ pub(super) fn clipboard_widget<'a>(
     operation: &'a ClipboardOperation,
     width: u16,
     theme: &Theme,
-) -> Option<Paragraph<'a>> {
+) -> Paragraph<'a> {
     let label = match operation {
         ClipboardOperation::Cut => "Cut",
         ClipboardOperation::Copy => "Copied",
@@ -33,10 +34,10 @@ pub(super) fn clipboard_widget<'a>(
         Span::raw("\""),
     ];
 
-    Some(Paragraph::new(Line::from(spans)).style(theme.notice_clipboard()))
+    Paragraph::new(Line::from(spans)).style(theme.notice_clipboard())
 }
 
-pub(super) fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Option<Paragraph<'a>> {
+pub(super) fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
     let spans = vec![
         Span::raw(" Filtered by \""),
@@ -45,30 +46,30 @@ pub(super) fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Option<Paragr
         Span::styled("Esc", bold_style),
         Span::raw(" to exit filtered mode."),
     ];
-    Some(Paragraph::new(Line::from(spans)).style(theme.notice_filter()))
+    Paragraph::new(Line::from(spans)).style(theme.notice_filter())
 }
 
 pub(super) fn progress_widget<'a>(
     tasks: &'a HashSet<Task>,
     theme: &Theme,
     width: u16,
-) -> Option<Paragraph<'a>> {
+) -> Paragraph<'a> {
     let mut progress = Progress(0, 0);
-    let mut has_error = false;
     for task in tasks {
         progress = task.combine_progress(&progress);
-        if task.is_error() {
-            has_error = true;
-        }
     }
-    let current = progress.scaled(width);
-    let text = "█".repeat(current as usize);
-    let style = if has_error {
-        theme.notice_progress_error()
-    } else if progress.is_done() {
-        theme.notice_progress_done()
-    } else {
-        theme.notice_progress()
-    };
-    Some(Paragraph::new(text).style(style))
+
+    let percent = (progress.0 as f64 / progress.1.max(1) as f64 * 100.0).round() as u32;
+    let percent_text = format!("{}%", percent);
+    let percent_width = percent_text.width_cjk() as u16;
+
+    let bar_width = width.saturating_sub(percent_width);
+    let progress_width = progress.scaled(bar_width);
+    let padding_width = bar_width - progress_width;
+
+    let progress_text = block::FULL.repeat(progress_width as usize);
+    let padding_text = " ".repeat(padding_width as usize);
+    let text = format!("{}{}{}", progress_text, padding_text, percent_text);
+
+    Paragraph::new(text).style(theme.notice_progress())
 }

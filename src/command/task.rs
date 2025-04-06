@@ -93,11 +93,7 @@ impl Task {
     }
 
     pub fn is_done(&self) -> bool {
-        self.status != TaskStatus::InProgress
-    }
-
-    pub fn is_error(&self) -> bool {
-        matches!(self.status, TaskStatus::Error(_))
+        self.status == TaskStatus::Done
     }
 
     pub fn is_new(&self) -> bool {

@@ -23,24 +23,21 @@ impl View for NoticesView {
         let mut constraints = Vec::new();
 
         if !self.tasks.is_empty() {
-            if let Some(widget) = progress_widget(&self.tasks, theme, area.width) {
-                widgets.push(widget);
-                constraints.push(Constraint::Length(1));
-            }
+            let widget = progress_widget(&self.tasks, theme, area.width);
+            widgets.push(widget);
+            constraints.push(Constraint::Length(1));
         }
 
         if let Some((is_cut, path)) = &self.clipboard {
-            if let Some(widget) = clipboard_widget(path, is_cut, area.width, theme) {
-                widgets.push(widget);
-                constraints.push(Constraint::Length(1));
-            }
+            let widget = clipboard_widget(path, is_cut, area.width, theme);
+            widgets.push(widget);
+            constraints.push(Constraint::Length(1));
         }
 
         if !self.filter.is_empty() {
-            if let Some(widget) = filter_widget(&self.filter, theme) {
-                widgets.push(widget);
-                constraints.push(Constraint::Length(1));
-            }
+            let widget = filter_widget(&self.filter, theme);
+            widgets.push(widget);
+            constraints.push(Constraint::Length(1));
         }
 
         if !widgets.is_empty() {

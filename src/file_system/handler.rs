@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyModifiers};
+use log::debug;
 
 use super::{r#async::TaskCommand, FileSystem};
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::command::{handler::CommandHandler, result::CommandResult, task::Task, Command};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -31,6 +32,17 @@ impl CommandHandler for FileSystem {
                 _ => CommandResult::NotHandled,
             },
             (_, _) => CommandResult::NotHandled,
+        }
+    }
+}
+
+impl FileSystem {
+    fn failed_task_to_error(&self, task: &Task) -> CommandResult {
+        debug!("FileSystem task: {:?}", task);
+        if let Some(message) = task.error_message() {
+            Command::AddError(message).into()
+        } else {
+            CommandResult::NotHandled
         }
     }
 }

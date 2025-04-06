@@ -2,6 +2,7 @@ mod handler;
 mod render;
 mod widgets;
 
+use log::debug;
 use ratatui::layout::Rect;
 use std::collections::HashSet;
 
@@ -35,12 +36,6 @@ impl NoticesView {
         CommandResult::none()
     }
 
-    pub(super) fn clear_progress_if_done(&mut self) {
-        if self.tasks.iter().all(|task| task.is_done()) {
-            self.clear_progress();
-        }
-    }
-
     pub(super) fn set_clipboard(
         &mut self,
         path: PathInfo,
@@ -56,12 +51,23 @@ impl NoticesView {
     }
 
     pub(super) fn update_tasks(&mut self, task: Task) -> CommandResult {
-        // If we're starting a new task (eg. from a clipboard paste), then we should reset the progress bar
-        if task.is_new() {
-            self.clear_progress_if_done();
+        debug!("Updating task: {:?}", task);
+        debug!("Current tasks: {:?}", self.tasks);
+        // If the task is not new and not in our set, it means we previously cleared it.
+        // In this case, we should ignore the update to prevent resurrecting cleared tasks.
+        if !task.is_new() && !self.tasks.contains(&task) {
+            debug!("Ignoring update: {:?}", task);
+            return CommandResult::none();
         }
 
-        self.tasks.replace(task);
+        if task.is_done() {
+            debug!("Removing done task: {:?}", task);
+            self.tasks.remove(&task);
+        } else {
+            debug!("Adding/updating task: {:?}", task);
+            self.tasks.replace(task);
+        }
+        debug!("Tasks after update: {:?}", self.tasks);
         CommandResult::none()
     }
 

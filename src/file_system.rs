@@ -71,14 +71,6 @@ impl FileSystem {
         .into()
     }
 
-    fn failed_task_to_error(&mut self, task: &Task) -> CommandResult {
-        if let Some(message) = task.error_message() {
-            Command::AddError(message).into()
-        } else {
-            CommandResult::none()
-        }
-    }
-
     fn open(&mut self, path: &PathInfo) -> CommandResult {
         match fs::canonicalize(&path.path)
             .map_err(anyhow::Error::from)
