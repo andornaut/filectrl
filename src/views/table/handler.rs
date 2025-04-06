@@ -7,6 +7,9 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            // May be emitted by self.handle_key() or NoticesView
+            Command::CancelClipboard => self.cancel_clipboard(),
+
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
             }
@@ -41,6 +44,7 @@ impl CommandHandler for TableView {
                 KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.first(),
                 KeyCode::Char('$') | KeyCode::End => self.last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
+                KeyCode::Char('c') => Command::CancelClipboard.into(), // Will be handled by by self.handle_command()
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),

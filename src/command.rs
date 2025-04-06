@@ -19,6 +19,7 @@ pub enum PromptKind {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
     AddError(String),
+    CancelClipboard,
     ClipboardCopy(PathInfo),
     ClipboardCut(PathInfo),
     ClosePrompt,

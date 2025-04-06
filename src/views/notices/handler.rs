@@ -8,6 +8,7 @@ use super::{ClipboardOperation, NoticeType, NoticesView};
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::CancelClipboard => self.clear_clipboard(),
             Command::ClipboardCopy(path) => {
                 self.set_clipboard(path.clone(), ClipboardOperation::Copy)
             }
@@ -28,7 +29,7 @@ impl CommandHandler for NoticesView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('p'), KeyModifiers::NONE) => self.clear_progress(),
-            (KeyCode::Char('c'), KeyModifiers::NONE) => self.clear_clipboard(),
+            (KeyCode::Char('c'), KeyModifiers::NONE) => Command::CancelClipboard.into(),
             (_, _) => CommandResult::NotHandled,
         }
     }
@@ -39,13 +40,12 @@ impl CommandHandler for NoticesView {
                 // Clear the notice that was clicked based on its position
                 let y = event.row.saturating_sub(self.area.y);
 
-                // Get all active notices in their display order
                 let notices: Vec<_> = self.active_notices().collect();
 
                 // Find which notice was clicked based on y position
                 match notices.get(y as usize) {
                     Some(NoticeType::Progress) => self.clear_progress(),
-                    Some(NoticeType::Clipboard(_)) => self.clear_clipboard(),
+                    Some(NoticeType::Clipboard(_)) => Command::CancelClipboard.into(),
                     Some(NoticeType::Filter(_)) => self.clear_filter(),
                     None => CommandResult::none(),
                 }
