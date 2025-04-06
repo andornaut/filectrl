@@ -644,6 +644,122 @@ impl FileSizes {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FileModifiedDate {
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_minute_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_minute_fg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    less_than_minute_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_day_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_day_fg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    less_than_day_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_month_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_month_fg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    less_than_month_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_year_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    less_than_year_fg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    less_than_year_modifiers: Modifier,
+
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    greater_than_year_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    greater_than_year_fg: Option<Color>,
+    #[serde(
+        serialize_with = "serialize_modifier",
+        deserialize_with = "deserialize_modifier"
+    )]
+    greater_than_year_modifiers: Modifier,
+}
+
+impl FileModifiedDate {
+    style_getter!(
+        less_than_minute,
+        less_than_minute_fg,
+        less_than_minute_bg,
+        less_than_minute_modifiers
+    );
+    style_getter!(
+        less_than_day,
+        less_than_day_fg,
+        less_than_day_bg,
+        less_than_day_modifiers
+    );
+    style_getter!(
+        less_than_month,
+        less_than_month_fg,
+        less_than_month_bg,
+        less_than_month_modifiers
+    );
+    style_getter!(
+        less_than_year,
+        less_than_year_fg,
+        less_than_year_bg,
+        less_than_year_modifiers
+    );
+    style_getter!(
+        greater_than_year,
+        greater_than_year_fg,
+        greater_than_year_bg,
+        greater_than_year_modifiers
+    );
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Theme {
     // Error
     #[serde(
@@ -911,6 +1027,7 @@ pub struct Theme {
 
     pub file_types: FileTheme,
     pub file_sizes: FileSizes,
+    pub file_modified_date: FileModifiedDate,
 }
 
 impl Theme {
@@ -997,5 +1114,25 @@ impl Theme {
 
     pub fn size_pib(&self) -> Style {
         self.file_sizes.pib()
+    }
+
+    pub fn modified_less_than_minute(&self) -> Style {
+        self.file_modified_date.less_than_minute()
+    }
+
+    pub fn modified_less_than_day(&self) -> Style {
+        self.file_modified_date.less_than_day()
+    }
+
+    pub fn modified_less_than_month(&self) -> Style {
+        self.file_modified_date.less_than_month()
+    }
+
+    pub fn modified_less_than_year(&self) -> Style {
+        self.file_modified_date.less_than_year()
+    }
+
+    pub fn modified_greater_than_year(&self) -> Style {
+        self.file_modified_date.greater_than_year()
     }
 }

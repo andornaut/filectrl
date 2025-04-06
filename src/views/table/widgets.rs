@@ -1,5 +1,6 @@
+use chrono::{DateTime, Local};
 use ratatui::{
-    prelude::{Constraint, Style, Stylize},
+    prelude::{Constraint, Stylize},
     symbols::{block, line},
     text::{Line, Span},
     widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table},
@@ -7,7 +8,9 @@ use ratatui::{
 
 use super::{
     columns::{SortColumn, SortDirection},
-    style::{header_style, name_style},
+    style::{
+        clipboard_or_default_style, header_style, modified_date_style, name_style, size_style,
+    },
     Clipboard,
 };
 use crate::{
@@ -78,55 +81,38 @@ fn header_label<'a>(
     }
 }
 
-fn clipboard_or_default_style<'a>(
-    theme: &'a Theme,
-    clipboard: &'a Clipboard,
-    item: &'a PathInfo,
-    default_style: Style,
-) -> Style {
-    if clipboard.is_copied(item) {
-        theme.table_copied()
-    } else if clipboard.is_cut(item) {
-        theme.table_cut()
-    } else {
-        default_style
-    }
-}
-
 pub(super) fn row_and_height<'a>(
     theme: &'a Theme,
     clipboard: &'a Clipboard,
     name_column_width: u16,
     item: &'a PathInfo,
+    relative_to_datetime: DateTime<Local>,
 ) -> (Row<'a>, u16) {
     let name_style =
         clipboard_or_default_style(theme, clipboard, item, name_style(&theme.file_types, item));
     let size_style = clipboard_or_default_style(theme, clipboard, item, size_style(theme, item));
+    let date_style = clipboard_or_default_style(
+        theme,
+        clipboard,
+        item,
+        modified_date_style(theme, item, relative_to_datetime),
+    );
     let row_style = clipboard_or_default_style(theme, clipboard, item, theme.table_body());
 
     let name = split_name(name_column_width, item);
     let height = name.len() as u16;
     let row = Row::new([
         Cell::from(name).style(name_style),
-        Cell::from(item.modified().unwrap_or_default()),
+        Cell::from(
+            item.modified_relative_to(relative_to_datetime)
+                .unwrap_or_default(),
+        )
+        .style(date_style),
         Cell::from(item.size()).style(size_style),
         Cell::from(item.mode()),
     ])
     .style(row_style);
     (row, height)
-}
-
-fn size_style(theme: &Theme, item: &PathInfo) -> Style {
-    let default_size_style = match item.size_unit_index() {
-        0 => theme.size_bytes(),
-        1 => theme.size_kib(),
-        2 => theme.size_mib(),
-        3 => theme.size_gib(),
-        4 => theme.size_tib(),
-        5 => theme.size_pib(),
-        _ => theme.size_pib(),
-    };
-    default_size_style
 }
 
 fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
