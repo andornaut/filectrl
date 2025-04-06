@@ -285,6 +285,7 @@ impl TableView {
                 .collect();
         }
 
+        // TODO: Put this back once paging works!
         // set_directory(), which is called when navigating or refreshing, set_filter(), and sort_by() all
         // call this method. Sometimes, we won't be able to retain the currently selected item, b/c it
         // may no longer be present in the `items`, but other times it is present, though possibly at a

@@ -3,9 +3,10 @@ use std::{cmp::min, iter::repeat};
 #[derive(Default)]
 pub(super) struct LineItemMap {
     first_visible_item: usize,
+    number_of_visible_lines: usize,
+
     /// Maps each line index (y offset) to its corresponding item index
     lines_to_items: Vec<usize>,
-    number_of_visible_lines: usize,
 }
 
 impl LineItemMap {
@@ -34,6 +35,7 @@ impl LineItemMap {
         self.lines_to_items[line]
     }
     pub(super) fn first_line(&self, item: usize) -> usize {
+        // TODO This should probably return Option<None> if the item is not found
         self.lines_to_items
             .iter()
             .position(|&i| i == item)
@@ -41,6 +43,7 @@ impl LineItemMap {
     }
 
     pub(super) fn last_line(&self, item: usize) -> usize {
+        // TODO This should probably return Option<None> if the item is not found
         self.lines_to_items
             .iter()
             .rposition(|&i| i == item)
