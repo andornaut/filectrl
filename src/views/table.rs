@@ -279,7 +279,24 @@ impl TableView {
                 .filter(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase))
                 .collect();
         }
+
+        // set_directory(), which is called when navigating or refreshing, set_filter(), and sort_by() all
+        // call this method. Sometimes, we won't be able to retain the currently selected item, b/c it
+        // may no longer be present in the `items`, but other times it is present, though possibly at a
+        // different position. We handle these cases by storing the currently selected item before assigning
+        // the new items, and then attempting to restore the selection afterward.
+        let selected_path = self.selected().cloned();
         self.directory_items_sorted = items;
+        if let Some(selected_path) = selected_path {
+            if let Some(new_index) = self
+                .directory_items_sorted
+                .iter()
+                .position(|p| p == &selected_path)
+            {
+                self.table_state.select(Some(new_index));
+                return Command::SetSelected(Some(selected_path)).into();
+            }
+        }
         self.reset_selection()
     }
 
