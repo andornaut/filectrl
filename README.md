@@ -49,7 +49,7 @@ CTRL+r, F5 | Refresh
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
-c | Clear copy/cut
+c | Cancel copy/cut
 e | Clear error messages
 p | Clear progress bar
 ? | Toggle help

@@ -45,6 +45,7 @@ impl NoticesView {
 
         notices.into_iter()
     }
+
     pub(super) fn clear_clipboard(&mut self) -> CommandResult {
         self.clipboard = None;
         CommandResult::none()

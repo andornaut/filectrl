@@ -794,26 +794,6 @@ pub struct Theme {
         serialize_with = "serialize_optional_color"
     )]
     notice_progress_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    notice_progress_done_bg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    notice_progress_done_fg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    notice_progress_error_bg: Option<Color>,
-    #[serde(
-        deserialize_with = "deserialize_optional_color",
-        serialize_with = "serialize_optional_color"
-    )]
-    notice_progress_error_fg: Option<Color>,
 
     // Notice selected
     #[serde(
@@ -951,16 +931,6 @@ impl Theme {
         status_directory_label_bg
     );
     style_getter!(notice_progress, notice_progress_fg, notice_progress_bg);
-    style_getter!(
-        notice_progress_done,
-        notice_progress_done_fg,
-        notice_progress_done_bg
-    );
-    style_getter!(
-        notice_progress_error,
-        notice_progress_error_fg,
-        notice_progress_error_bg
-    );
     style_getter!(status_selected, status_selected_fg, status_selected_bg);
     style_getter!(
         status_selected_label,

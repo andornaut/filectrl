@@ -51,6 +51,11 @@ impl TableView {
     }
 
     // Copy / Cut / Paste
+    fn cancel_clipboard(&mut self) -> CommandResult {
+        self.clipboard.clear();
+        CommandResult::none()
+    }
+
     fn copy(&mut self) -> CommandResult {
         if let Some(path) = self.selected() {
             let path = path.clone();
