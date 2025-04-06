@@ -28,12 +28,12 @@ impl CommandHandler for TableView {
             (KeyCode::Char('d'), KeyModifiers::CONTROL)
             | (KeyCode::Char('f'), KeyModifiers::CONTROL)
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
-            (KeyCode::Esc, _) => Command::SetFilter("".into()).into(),
             (_, KeyModifiers::NONE) => match code {
                 KeyCode::Delete => self.delete(),
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
                     self.open_selected()
                 }
+                KeyCode::Esc => Command::SetFilter("".into()).into(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.next(),
                 KeyCode::Up | KeyCode::Char('k') => self.previous(),

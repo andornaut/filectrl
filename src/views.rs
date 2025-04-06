@@ -1,6 +1,7 @@
 mod errors;
 mod header;
 mod help;
+mod notices;
 mod prompt;
 pub mod root;
 mod status;

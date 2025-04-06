@@ -713,19 +713,19 @@ pub struct Theme {
     )]
     prompt_label_fg: Option<Color>,
 
-    // Status clipboard
+    // Notice clipboard
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_clipboard_bg: Option<Color>,
+    notice_clipboard_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_clipboard_fg: Option<Color>,
+    notice_clipboard_fg: Option<Color>,
 
-    // Status copied
+    // Notice copied
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
@@ -737,7 +737,7 @@ pub struct Theme {
     )]
     table_copied_fg: Option<Color>,
 
-    // Status cut
+    // Notice cut
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
@@ -749,7 +749,7 @@ pub struct Theme {
     )]
     table_cut_fg: Option<Color>,
 
-    // Status directory
+    // Notice directory
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
@@ -771,51 +771,51 @@ pub struct Theme {
     )]
     status_directory_label_fg: Option<Color>,
 
-    // Status filter
+    // Notice filter
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_filter_bg: Option<Color>,
+    notice_filter_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_filter_fg: Option<Color>,
+    notice_filter_fg: Option<Color>,
 
-    // Status progress
+    // Notice progress
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_bg: Option<Color>,
+    notice_progress_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_fg: Option<Color>,
+    notice_progress_fg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_done_bg: Option<Color>,
+    notice_progress_done_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_done_fg: Option<Color>,
+    notice_progress_done_fg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_error_bg: Option<Color>,
+    notice_progress_error_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    status_progress_error_fg: Option<Color>,
+    notice_progress_error_fg: Option<Color>,
 
-    // Status selected
+    // Notice selected
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
@@ -940,26 +940,26 @@ impl Theme {
     style_getter!(help, help_fg, help_bg);
     style_getter!(prompt_input, prompt_input_fg, prompt_input_bg);
     style_getter!(prompt_label, prompt_label_fg, prompt_label_bg);
-    style_getter!(status_clipboard, status_clipboard_fg, status_clipboard_bg);
+    style_getter!(notice_clipboard, notice_clipboard_fg, notice_clipboard_bg);
     style_getter!(table_copied, table_copied_fg, table_copied_bg);
     style_getter!(table_cut, table_cut_fg, table_cut_bg);
-    style_getter!(status_filter, status_filter_fg, status_filter_bg);
+    style_getter!(notice_filter, notice_filter_fg, notice_filter_bg);
     style_getter!(status_directory, status_directory_fg, status_directory_bg);
     style_getter!(
         status_directory_label,
         status_directory_label_fg,
         status_directory_label_bg
     );
-    style_getter!(status_progress, status_progress_fg, status_progress_bg);
+    style_getter!(notice_progress, notice_progress_fg, notice_progress_bg);
     style_getter!(
-        status_progress_done,
-        status_progress_done_fg,
-        status_progress_done_bg
+        notice_progress_done,
+        notice_progress_done_fg,
+        notice_progress_done_bg
     );
     style_getter!(
-        status_progress_error,
-        status_progress_error_fg,
-        status_progress_error_bg
+        notice_progress_error,
+        notice_progress_error_fg,
+        notice_progress_error_bg
     );
     style_getter!(status_selected, status_selected_fg, status_selected_bg);
     style_getter!(

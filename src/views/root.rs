@@ -6,8 +6,8 @@ use ratatui::{
 };
 
 use super::{
-    errors::ErrorsView, header::HeaderView, help::HelpView, prompt::PromptView, status::StatusView,
-    table::TableView, View,
+    errors::ErrorsView, header::HeaderView, help::HelpView, notices::NoticesView,
+    prompt::PromptView, status::StatusView, table::TableView, View,
 };
 use crate::{
     app::{config::theme::Theme, config::Config},
@@ -15,7 +15,7 @@ use crate::{
 };
 
 const MIN_WIDTH: u16 = 10;
-const MIN_HEIGHT: u16 = 4;
+const MIN_HEIGHT: u16 = 8;
 const RESIZE_WINDOW: &'static str = "Resize window";
 
 #[derive(Default)]
@@ -23,6 +23,7 @@ pub struct RootView {
     errors: ErrorsView,
     header: HeaderView,
     help: HelpView,
+    notices: NoticesView,
     prompt: PromptView,
     last_rendered_area: Rect,
     status: StatusView,
@@ -50,8 +51,9 @@ impl RootView {
             &mut self.help,
             &mut self.header,
             &mut self.table,
-            &mut self.status,
+            &mut self.notices,
             &mut self.prompt,
+            &mut self.status,
         ];
         views
     }
@@ -64,6 +66,7 @@ impl CommandHandler for RootView {
             &mut self.errors,
             &mut self.header,
             &mut self.help,
+            &mut self.notices,
             &mut self.prompt,
             &mut self.status,
             &mut self.table,
