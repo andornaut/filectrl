@@ -82,6 +82,17 @@ fn kind_field(selected: &PathInfo) -> String {
     if selected.is_symlink() {
         kind.push("Symlink");
     }
+    if selected.is_symlink_broken() {
+        kind.push("Broken Symlink");
+    }
+    if selected.is_other_writable() {
+        kind.push("Other Writable");
+    }
+    if selected.is_executable() {
+        kind.push("Executable");
+    }
+    // Note: is_door() is not included as it's a Solaris-specific IPC mechanism
+    // and would only be relevant on Solaris systems
     kind.join(",")
 }
 

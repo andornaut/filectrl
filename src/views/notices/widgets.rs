@@ -38,7 +38,7 @@ pub(super) fn clipboard_widget<'a>(
             truncated_path,
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::raw("\""),
+        Span::raw("\". Press c to cancel."),
     ];
     Paragraph::new(Line::from(spans)).style(theme.notice_clipboard())
 }
