@@ -70,7 +70,7 @@ fn content_help() -> Vec<Span<'static>> {
         Span::styled("h/j/k/l", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Open: "),
         Span::styled("f", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Navigate up: "),
+        Span::raw(" Navigate back: "),
         Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" Refresh: "),
         Span::styled("CTRL+r", Style::default().add_modifier(Modifier::BOLD)),

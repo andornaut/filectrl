@@ -78,9 +78,7 @@ impl CommandHandler for ErrorsView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('e'), KeyModifiers::NONE) | (KeyCode::Char('c'), _) => {
-                self.clear_errors()
-            }
+            (KeyCode::Char('e'), KeyModifiers::NONE) => self.clear_errors(),
             (_, _) => CommandResult::NotHandled,
         }
     }

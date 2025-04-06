@@ -1,39 +1,12 @@
-use std::collections::HashSet;
-
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
-use unicode_width::UnicodeWidthStr;
 
-use super::Clipboard;
-use crate::{
-    app::config::theme::Theme,
-    command::task::{Progress, Task},
-    file_system::path_info::PathInfo,
-    utf8::truncate_left_utf8,
-};
+use crate::{app::config::theme::Theme, file_system::path_info::PathInfo};
 
-pub fn clipboard_widget<'a>(clipboard: &'a Clipboard, width: u16, theme: &Theme) -> Paragraph<'a> {
-    let (label, path) = match clipboard {
-        Clipboard::Copy(path) => ("Copied", path),
-        Clipboard::Cut(path) => ("Cut", path),
-        Clipboard::None => unreachable!(),
-    };
-
-    let width = width.saturating_sub(label.width_cjk() as u16 + 4); // 2 for spaces + 2 for quotation marks
-    let path = truncate_left_utf8(&path.path, width);
-    let spans = vec![
-        Span::raw(format!(" {label} \"")),
-        Span::styled(path, Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("\""),
-    ];
-
-    Paragraph::new(Line::from(spans)).style(theme.status_clipboard())
-}
-
-pub fn default_widget<'a>(
+pub(super) fn default_widget<'a>(
     directory: &'a PathInfo,
     directory_len: usize,
     selected: &Option<PathInfo>,
@@ -46,39 +19,6 @@ pub fn default_widget<'a>(
         add_selected(&mut spans, theme, selected);
     }
     Paragraph::new(Line::from(spans)).style(theme.status_selected())
-}
-
-pub fn filter_widget<'a>(filter: &'a str, theme: &Theme) -> Paragraph<'a> {
-    let bold_style = Style::default().add_modifier(Modifier::BOLD);
-    let spans = vec![
-        Span::raw(" Filtered by \""),
-        Span::styled(filter, bold_style),
-        Span::raw("\". Press "),
-        Span::styled("Esc", bold_style),
-        Span::raw(" to exit filtered mode."),
-    ];
-    Paragraph::new(Line::from(spans)).style(theme.status_filter())
-}
-
-pub fn progress_widget<'a>(tasks: &'a HashSet<Task>, theme: &Theme, width: u16) -> Paragraph<'a> {
-    let mut progress = Progress(0, 0);
-    let mut has_error = false;
-    for task in tasks {
-        progress = task.combine_progress(&progress);
-        if task.is_error() {
-            has_error = true;
-        }
-    }
-    let current = progress.scaled(width);
-    let text = "█".repeat(current as usize);
-    let style = if has_error {
-        theme.status_progress_error()
-    } else if progress.is_done() {
-        theme.status_progress_done()
-    } else {
-        theme.status_progress()
-    };
-    Paragraph::new(text).style(style)
 }
 
 fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {

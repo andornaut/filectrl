@@ -107,13 +107,3 @@ impl TryFrom<&str> for ClipboardCommand {
         }
     }
 }
-
-fn split_clipboard_message(message: &str) -> Option<(ClipboardCommand, &str)> {
-    match message.split_once(' ') {
-        Some((command, path)) => match ClipboardCommand::try_from(command) {
-            Err(_) => None,
-            Ok(command) => Some((command, path)),
-        },
-        None => Some((ClipboardCommand::Copy, message)),
-    }
-}

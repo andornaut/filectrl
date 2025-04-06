@@ -3,10 +3,15 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+// Progress (x,y) means "x progress" of "y total"
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Progress(pub u64, pub u64);
 
 impl Progress {
+    pub fn done(&mut self) {
+        self.0 = self.1;
+    }
+
     pub fn is_done(&self) -> bool {
         // `Progress(n, 0)` is considered done
         self.1 == 0 || self.0 == self.1
@@ -59,6 +64,11 @@ impl Task {
 
     pub fn combine_progress(&self, progress: &Progress) -> Progress {
         self.progress.combine(progress)
+    }
+
+    pub fn done(&mut self) {
+        self.progress.done();
+        self.status = TaskStatus::Done;
     }
 
     pub fn error(&mut self, message: String) {

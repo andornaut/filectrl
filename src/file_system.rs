@@ -1,17 +1,14 @@
+mod r#async;
 mod handler;
-mod operations;
 pub mod path_info;
+mod sync;
 
 use std::{fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
 use log::info;
 
-use self::{
-    handler::TaskCommand,
-    operations::{open_in, run_task},
-    path_info::PathInfo,
-};
+use self::{path_info::PathInfo, sync::open_in};
 use crate::{
     app::config::Config,
     command::{result::CommandResult, task::Task, Command},
@@ -64,7 +61,7 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo) -> CommandResult {
-        (match operations::cd(&directory) {
+        (match sync::cd(&directory) {
             Ok(children) => {
                 self.directory = directory.clone();
                 Command::SetDirectory(directory, children)
@@ -72,13 +69,6 @@ impl FileSystem {
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
         })
         .into()
-    }
-
-    fn delete(&mut self, path: &PathInfo) -> CommandResult {
-        match operations::delete(path) {
-            Err(error) => anyhow!("Failed to delete {path:?}: {error}").into(),
-            Ok(_) => self.refresh(),
-        }
     }
 
     fn failed_task_to_error(&mut self, task: &Task) -> CommandResult {
@@ -127,15 +117,8 @@ impl FileSystem {
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
-    fn mv(&mut self, old_path: &PathInfo, new_path: &PathInfo) -> CommandResult {
-        match operations::mv(old_path, new_path) {
-            Err(error) => anyhow!("Failed to move {old_path:?} to {new_path:?}: {error}").into(),
-            Ok(_) => self.refresh(),
-        }
-    }
-
     fn rename(&mut self, old_path: &PathInfo, new_basename: &str) -> CommandResult {
-        match operations::rename(old_path, new_basename) {
+        match sync::rename(old_path, new_basename) {
             Err(error) => {
                 anyhow!("Failed to rename {old_path:?} to {new_basename:?}: {error}").into()
             }
@@ -145,13 +128,5 @@ impl FileSystem {
 
     fn refresh(&mut self) -> CommandResult {
         self.cd(self.directory.clone())
-    }
-
-    fn run_task(&mut self, task_command: TaskCommand) -> CommandResult {
-        let tx = self.tx.as_ref().expect("Sender is set");
-        match run_task(tx.clone(), task_command) {
-            Err(error) => error.into(),
-            Ok(task) => Command::Progress(task).into(),
-        }
     }
 }
