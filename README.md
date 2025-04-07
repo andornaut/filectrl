@@ -37,9 +37,6 @@ If you then paste into a second FileCTRL window, this instance of FileCTRL will 
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar using the Rust standard library.
 
-n.b. On [Wayland](https://wayland.freedesktop.org/), you must install [wl-copy](https://github.com/bugaevc/wl-clipboard)
-in order to copy content into your clipboard buffer.
-
 ### Keyboard controls
 
 ***Normal mode***
