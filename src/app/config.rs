@@ -34,7 +34,7 @@ impl Config {
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(&path, &content)
             .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
-        println!("Wrote the default config to {path:?}");
+        info!("Wrote the default config to {path:?}");
         Ok(())
     }
 

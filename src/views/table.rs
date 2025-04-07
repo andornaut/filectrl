@@ -18,7 +18,7 @@ use self::{
 };
 use crate::{
     app::config::Config,
-    clipboard::Clipboard,
+    clipboard::{Clipboard, ClipboardPasteContext},
     command::{result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
@@ -74,12 +74,13 @@ impl TableView {
     }
 
     fn paste(&mut self) -> CommandResult {
-        match self.clipboard.maybe_command(self.directory.clone()) {
-            Some(command) => {
+        let context = ClipboardPasteContext::new(&mut self.clipboard, self.directory.clone());
+        match Command::try_from(context) {
+            Ok(command) => {
                 self.clipboard.clear();
                 command.into()
             }
-            None => CommandResult::none(),
+            Err(_) => CommandResult::none(),
         }
     }
 
