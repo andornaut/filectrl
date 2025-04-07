@@ -7,7 +7,6 @@ on:
     tags:
       - "*"
 
-# Add permissions block to request necessary access
 permissions:
   contents: write
 
@@ -21,6 +20,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,48 +45,52 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+
+      - name: Delete existing release and tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          gh release delete latest --yes || true
+          git push origin :refs/tags/latest || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List downloaded artifacts
-        run: ls -la artifacts/
-
       - name: Create Release
-        uses: actions/github-script@v7
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
+          tag_name: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
+          release_name: ${{ github.ref == 'refs/heads/main' && 'Latest Release' || github.ref_name }}
+          draft: false
+          prerelease: false
 
-            // Get the tag name
-            const tag = context.ref === 'refs/heads/main' ? 'latest' : context.ref.replace('refs/tags/', '');
-            const releaseName = context.ref === 'refs/heads/main' ? 'Latest Release' : tag;
+      - name: Upload Linux Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/filectrl-ubuntu-latest/filectrl
+          asset_name: filectrl-linux
+          asset_content_type: application/octet-stream
 
-            // Create the release
-            const release = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: releaseName,
-              generate_release_notes: true,
-              draft: false,
-              prerelease: false
-            });
-
-            // Upload artifacts
-            const uploadArtifact = async (filePath, name) => {
-              const file = fs.readFileSync(filePath);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: release.data.id,
-                name: name,
-                data: file
-              });
-            };
-
-            // Upload both binaries
-            await uploadArtifact('artifacts/filectrl-ubuntu-latest/filectrl', 'filectrl-linux');
-            await uploadArtifact('artifacts/filectrl-macos-latest/filectrl', 'filectrl-macos');
+      - name: Upload macOS Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/filectrl-macos-latest/filectrl
+          asset_name: filectrl-macos
+          asset_content_type: application/octet-stream
