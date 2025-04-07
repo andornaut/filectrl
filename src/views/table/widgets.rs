@@ -10,10 +10,10 @@ use super::{
     style::{
         clipboard_or_default_style, header_style, modified_date_style, name_style, size_style,
     },
-    Clipboard,
 };
 use crate::{
-    app::config::theme::Theme, file_system::path_info::PathInfo, utf8::split_with_ellipsis,
+    app::config::theme::Theme, clipboard::Clipboard, file_system::path_info::PathInfo,
+    utf8::split_with_ellipsis,
 };
 use chrono::{DateTime, Local};
 

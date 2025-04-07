@@ -9,6 +9,10 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 1. `git clone` and `cd` into this repository
 1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
 
+On [Wayland](https://wayland.freedesktop.org/), FileCTRL requires
+[wl-copy](https://github.com/bugaevc/wl-clipboard) to be installed
+in order to support pasting of copied content in other windows.
+
 ## Usage
 
 Run `filectrl --help` to view the available command line arguments and options:
@@ -79,8 +83,8 @@ Run `filectrl --write-config` to write the [default configuration](./src/app/def
 
 ### Opening in other applications
 
-* [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
-* [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
+- [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
+- [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
 Keyboard key | Description
 --- | ---
@@ -109,7 +113,7 @@ You can see all of the available theme variables in the [default configuration](
 
 ### Desktop entry
 
-* ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html)
+- ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html)
 
 You can make `filectrl` the default application for opening directories. Start by copying the [`filectrl.desktop` file](./filectrl.desktop) to `~/.local/share/applications/`:
 
@@ -121,8 +125,8 @@ update-desktop-database ~/.local/share/applications/
 
 ## Developing
 
-* [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
-* See [Cargo.toml](./Cargo.toml) for dependencies.
+- [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
+- See [Cargo.toml](./Cargo.toml) for dependencies.
 
 ```bash
 cargo clippy
@@ -138,7 +142,7 @@ RUST_LOG=debug cargo run 2>err
 
 ### Git hooks
 
-* [cargo-husky](https://github.com/rhysd/cargo-husky)
+- [cargo-husky](https://github.com/rhysd/cargo-husky)
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 

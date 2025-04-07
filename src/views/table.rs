@@ -1,4 +1,3 @@
-mod clipboard;
 mod columns;
 mod double_click;
 mod handler;
@@ -13,13 +12,13 @@ use ratatui::{
 };
 
 use self::{
-    clipboard::Clipboard,
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
     line_item_map::LineItemMap,
 };
 use crate::{
     app::config::Config,
+    clipboard::Clipboard,
     command::{result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
