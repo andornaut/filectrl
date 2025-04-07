@@ -116,90 +116,92 @@ pib_modifiers = []
 [theme.file_types]
 # n.b. When the top-level option `apply_ls_colors` is set to true, these options
 # are superceded by the $LS_COLORS environment variable
-# From https://raw.githubusercontent.com/seebi/dircolors-solarized/refs/heads/master/dircolors.ansi-dark
+# Using Solarized 256-dark theme colors
 
 # Normal file default (rs=0)
 normal_file_bg = ""
-normal_file_fg = ""
+# Solarized 256-dark: normal_file_fg = "#808080"  # 244
+normal_file_fg = "#E4E4E4"  # 254
 normal_file_modifiers = []
 
 # Regular file (fi)
 regular_file_bg = ""
-regular_file_fg = ""
+# Solarized 256-dark: regular_file_fg = "#808080"  # 244
+regular_file_fg = "#E4E4E4"  # 254
 regular_file_modifiers = []
 
-# Directory (di=01;34)
+# Directory (di=00;38;5;33)
 directory_bg = ""
-directory_fg = "#0000FF"
-directory_modifiers = ["bold"]
+directory_fg = "#0087FF"  # 33
+directory_modifiers = []
 
-# Other-writable directory (ow=34;42)
-directory_other_writable_bg = "#00FF00"
-directory_other_writable_fg = "#0000FF"
+# Other-writable directory (ow=48;5;235;38;5;33)
+directory_other_writable_bg = "#262626"  # 235
+directory_other_writable_fg = "#0087FF"  # 33
 directory_other_writable_modifiers = []
 
-# Symlink (ln=01;36)
+# Symlink (ln=01;38;5;37)
 symlink_bg = ""
-symlink_fg = "#00FFFF"
+symlink_fg = "#00AFAF"  # 37
 symlink_modifiers = ["bold"]
 
-# Pipe/FIFO (pi=40;33)
-pipe_bg = "#FFFF00"
-pipe_fg = "#000000"
-pipe_modifiers = []
+# Pipe/FIFO (pi=48;5;230;38;5;136;01)
+pipe_bg = "#FFFFD7"  # 230
+pipe_fg = "#AF8700"  # 136
+pipe_modifiers = ["bold"]
 
-# Socket (so=01;35)
-socket_bg = ""
-socket_fg = "#FF00FF"
+# Socket (so=48;5;230;38;5;136;01)
+socket_bg = "#FFFFD7"  # 230
+socket_fg = "#AF8700"  # 136
 socket_modifiers = ["bold"]
 
-# Door (do=01;35)
-door_bg = ""
-door_fg = "#FF00FF"
+# Door (do=48;5;230;38;5;136;01)
+door_bg = "#FFFFD7"  # 230
+door_fg = "#AF8700"  # 136
 door_modifiers = ["bold"]
 
-# Block device (bd=40;33;01)
-block_device_bg = "#FFFF00"
-block_device_fg = "#000000"
+# Block device (bd=48;5;230;38;5;244;01)
+block_device_bg = "#FFFFD7"  # 230
+block_device_fg = "#808080"  # 244
 block_device_modifiers = ["bold"]
 
-# Character device (cd=40;33;01)
-character_device_bg = "#FFFF00"
-character_device_fg = "#000000"
+# Character device (cd=48;5;230;38;5;244;01)
+character_device_bg = "#FFFFD7"  # 230
+character_device_fg = "#808080"  # 244
 character_device_modifiers = ["bold"]
 
-# Broken symlink (or=40;31;01)
-symlink_broken_bg = "#FF0000"
-symlink_broken_fg = "#000000"
-symlink_broken_modifiers = ["bold"]
+# Broken symlink (or=48;5;235;38;5;160)
+symlink_broken_bg = "#262626"  # 235
+symlink_broken_fg = "#D70000"  # 160
+symlink_broken_modifiers = []
 
 # Missing file (mi=00)
 missing_bg = ""
 missing_fg = ""
 missing_modifiers = []
 
-# Executable (ex=01;32)
+# Executable (ex=01;38;5;64)
 executable_bg = ""
-executable_fg = "#00FF00"
+executable_fg = "#5F8700"  # 64
 executable_modifiers = ["bold"]
 
-# Sticky directory (st=37;44)
-directory_sticky_bg = "#0000FF"
-directory_sticky_fg = "#FFFFFF"
+# Sticky directory (st=48;5;33;38;5;230)
+directory_sticky_bg = "#0087FF"  # 33
+directory_sticky_fg = "#FFFFD7"  # 230
 directory_sticky_modifiers = []
 
-# Sticky and other-writable directory (tw=30;42)
-directory_sticky_other_writable_bg = "#00FF00"
-directory_sticky_other_writable_fg = "#000000"
+# Sticky and other-writable directory (tw=48;5;64;38;5;230)
+directory_sticky_other_writable_bg = "#5F8700"  # 64
+directory_sticky_other_writable_fg = "#FFFFD7"  # 230
 directory_sticky_other_writable_modifiers = []
 
-# Setgid (sg=30;43)
-setgid_bg = "#FFFF00"
-setgid_fg = "#000000"
+# Setgid (sg=48;5;136;38;5;230)
+setgid_bg = "#AF8700"  # 136
+setgid_fg = "#FFFFD7"  # 230
 setgid_modifiers = []
 
-# Setuid (su=37;41)
-setuid_bg = "#FF0000"
-setuid_fg = "#FFFFFF"
+# Setuid (su=48;5;160;38;5;230)
+setuid_bg = "#D70000"  # 160
+setuid_fg = "#FFFFD7"  # 230
 setuid_modifiers = []
 "##;
