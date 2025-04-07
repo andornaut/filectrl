@@ -7,7 +7,7 @@ double_click_threshold_milliseconds = 300
 
 # One of: off, error, warn, info, debug, or trace
 # Logs are written to stderr
-log_level = "info"
+log_level = "off"
 
 # Programs to use to open files or directories:
 # %s will be replaced by the path to the current working directory:
