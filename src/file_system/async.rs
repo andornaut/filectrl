@@ -154,10 +154,16 @@ fn copy_file(
                 match reader.read(&mut buffer) {
                     Ok(0) => {
                         task.done();
+                        tx.send(Command::Progress(task.clone()))
+                            .expect("Can send command");
                         break true;
                     }
                     Ok(bytes) => match writer.write_all(&buffer[..bytes]) {
-                        Ok(()) => task.increment(bytes as u64),
+                        Ok(()) => {
+                            task.increment(bytes as u64);
+                            tx.send(Command::Progress(task.clone()))
+                                .expect("Can send command");
+                        }
                         Err(error) => {
                             task.error(format!("Failed to write {new_path:?}: {error}"));
                             break false;
@@ -168,8 +174,6 @@ fn copy_file(
                         break false;
                     }
                 }
-                tx.send(Command::Progress(task.clone()))
-                    .expect("Can send command");
             }
         }
     }

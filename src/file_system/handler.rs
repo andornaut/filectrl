@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::{r#async::TaskCommand, FileSystem};
 use crate::command::{handler::CommandHandler, result::CommandResult, task::Task, Command};

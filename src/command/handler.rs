@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 
 use super::{mode::InputMode, result::CommandResult, Command};
 

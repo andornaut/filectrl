@@ -13,40 +13,30 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "~1.0"
-arboard = {version = "3.2.1", default-features = false}
 argh = "0.1"
 chrono = {version = "0.4", default-features = false, features = ["clock", "time"]}
-crossterm = "0.26"
+clipboard = "0.5"
 env_logger = {version = "0.10.0", default-features = false}
 etcetera = "0.8"
 log = {version = "0.4.20", default-features = false, features = ["serde"]}
+nix = {version = "0", default-features = false, features = ["user"]}
 open = "~5.0"
 ratatui = {version = "0.30.0-alpha.2", features = ["all-widgets", "serde"]}
-regex = "~1.9"
 serde = {version = "1.0.218", features = ["derive"]}
 textwrap = "0.16"
 toml = "0.7"
-tui-input = "0.7"
+tui-input = "0.11.1"
 unicode-segmentation = "~1.12"
 unicode-width = "0.1"
 unix_mode = "0.1"
 
-[dependencies.nix]
-default-features = false
-features = ["user"]
-version = "0"
-
 [dev-dependencies]
+cargo-husky = {version = "1", default-features = false, features = ["precommit-hook", "run-cargo-test", "run-cargo-check"]}
 test-case = "~3.1"
-
-[dev-dependencies.cargo-husky]
-default-features = false # Disable features which are enabled by default
-features = ["precommit-hook", "run-cargo-test", "run-cargo-check"] 
-version = "1" 
 
 [profile.release]
 codegen-units = 1 # Reduce number of codegen units to increase optimizations.
 lto = true # Enable Link Time Optimization
-opt-level = 'z' # Optimize for size.
+opt-level = 3 # Optimize for performance
 panic = 'abort' # Abort on panic
 strip = true # Symbols from Binary

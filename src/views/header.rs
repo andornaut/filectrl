@@ -1,6 +1,6 @@
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
+    crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},

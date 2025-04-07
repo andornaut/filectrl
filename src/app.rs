@@ -10,8 +10,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
-use ratatui::Frame;
+use ratatui::{
+    crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
+    Frame,
+};
 
 use self::{
     config::Config,

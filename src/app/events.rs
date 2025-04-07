@@ -3,7 +3,7 @@ use std::{
     thread,
 };
 
-use crossterm::event::read;
+use ratatui::crossterm::event::read;
 
 use crate::command::Command;
 

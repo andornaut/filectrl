@@ -33,7 +33,7 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: filectrl-${{ matrix.os }}
@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ github.ref }}
 
-      - name: Delete existing release and tag
+      - name: Delete any existing "latest" release and tag
         if: github.ref == 'refs/heads/main'
         run: |
           gh release delete latest --yes || true
@@ -64,7 +64,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release
+      - name: Create release
         id: create_release
         uses: actions/create-release@v1
         env:
@@ -75,7 +75,7 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload Linux Binary
+      - name: Upload Linux artifact
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,7 +85,7 @@ jobs:
           asset_name: filectrl-linux
           asset_content_type: application/octet-stream
 
-      - name: Upload macOS Binary
+      - name: Upload macOS artifact
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

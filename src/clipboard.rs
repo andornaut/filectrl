@@ -1,74 +1,10 @@
 use std::fmt::Display;
-use std::process::Command;
 
 use anyhow::{anyhow, Error};
-use arboard::Clipboard as Arboard;
-use log::{debug, warn};
+use clipboard::{ClipboardContext, ClipboardProvider};
+use log::warn;
 
 use crate::{command::Command as FileCommand, file_system::path_info::PathInfo};
-
-trait ClipboardBackend {
-    fn set_text(&mut self, text: &str) -> Result<(), Error>;
-    fn clear(&mut self) -> Result<(), Error>;
-}
-
-struct ArboardBackend {
-    clipboard: Arboard,
-}
-
-impl ArboardBackend {
-    fn new() -> Result<Self, Error> {
-        Ok(Self {
-            clipboard: Arboard::new()?,
-        })
-    }
-}
-
-impl ClipboardBackend for ArboardBackend {
-    fn set_text(&mut self, text: &str) -> Result<(), Error> {
-        self.clipboard.set_text(text)?;
-        Ok(())
-    }
-
-    fn clear(&mut self) -> Result<(), Error> {
-        self.clipboard.clear()?;
-        Ok(())
-    }
-}
-
-struct WlCopyBackend;
-
-impl WlCopyBackend {
-    fn new() -> Result<Self, Error> {
-        Ok(Self)
-    }
-}
-
-impl ClipboardBackend for WlCopyBackend {
-    fn set_text(&mut self, text: &str) -> Result<(), Error> {
-        let mut child = Command::new("wl-copy")
-            .arg(text)
-            .spawn()
-            .map_err(|e| anyhow!("Failed to spawn wl-copy: {}", e))?;
-
-        child
-            .wait()
-            .map_err(|e| anyhow!("Failed to wait for wl-copy: {}", e))?;
-        Ok(())
-    }
-
-    fn clear(&mut self) -> Result<(), Error> {
-        let mut child = Command::new("wl-copy")
-            .arg("--clear")
-            .spawn()
-            .map_err(|e| anyhow!("Failed to spawn wl-copy --clear: {}", e))?;
-
-        child
-            .wait()
-            .map_err(|e| anyhow!("Failed to wait for wl-copy --clear: {}", e))?;
-        Ok(())
-    }
-}
 
 /// A clipboard that caches its content to avoid requiring mutable access for read operations.
 ///
@@ -78,30 +14,14 @@ impl ClipboardBackend for WlCopyBackend {
 /// the cache when writing.
 /// This ensures that is_copied and is_cut can be called without holding a mutable reference to the Clipboard.
 pub(super) struct Clipboard {
-    backend: Box<dyn ClipboardBackend>,
+    backend: ClipboardBackend,
     cached_content: Option<(ClipboardCommand, String)>,
 }
 
 impl Default for Clipboard {
     fn default() -> Self {
-        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-        debug!("Running under Wayland: {}", is_wayland);
-
-        // Try wl-copy first if running under Wayland
-        let backend: Box<dyn ClipboardBackend> = if is_wayland {
-            match WlCopyBackend::new() {
-                Ok(backend) => Box::new(backend),
-                Err(e) => {
-                    warn!("Failed to initialize wl-copy backend: {}", e);
-                    Box::new(ArboardBackend::new().expect("Can access the clipboard"))
-                }
-            }
-        } else {
-            Box::new(ArboardBackend::new().expect("Can access the clipboard"))
-        };
-
         Self {
-            backend,
+            backend: ClipboardBackend::new().expect("Can access the clipboard"),
             cached_content: None,
         }
     }
@@ -196,5 +116,30 @@ impl TryFrom<&str> for ClipboardCommand {
             "mv" => Ok(Self::Move),
             _ => Err(anyhow!("Invalid ClipboardCommand")),
         }
+    }
+}
+
+struct ClipboardBackend {
+    clipboard: ClipboardContext,
+}
+
+impl ClipboardBackend {
+    fn new() -> Result<Self, Error> {
+        Ok(Self {
+            clipboard: ClipboardProvider::new()
+                .map_err(|e| anyhow!("Failed to initialize clipboard: {}", e))?,
+        })
+    }
+
+    fn set_text(&mut self, text: &str) -> Result<(), Error> {
+        self.clipboard
+            .set_contents(text.to_string())
+            .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))
+    }
+
+    fn clear(&mut self) -> Result<(), Error> {
+        self.clipboard
+            .set_contents("".to_string())
+            .map_err(|e| anyhow!("Failed to clear clipboard: {}", e))
     }
 }
