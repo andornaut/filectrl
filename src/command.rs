@@ -4,7 +4,9 @@ pub mod result;
 pub mod task;
 
 use anyhow::{anyhow, Error};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 use self::{result::CommandResult, task::Task};
 use crate::file_system::path_info::PathInfo;

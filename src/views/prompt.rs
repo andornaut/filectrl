@@ -1,6 +1,6 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
+    crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Paragraph, Widget},
 };

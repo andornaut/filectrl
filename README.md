@@ -9,10 +9,6 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 1. `git clone` and `cd` into this repository
 1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
 
-On [Wayland](https://wayland.freedesktop.org/), FileCTRL requires
-[wl-copy](https://github.com/bugaevc/wl-clipboard) to be installed
-in order to support pasting of copied content in other windows.
-
 ## Usage
 
 Run `filectrl --help` to view the available command line arguments and options:
@@ -33,6 +29,17 @@ Options:
   --help            display usage information
 ```
 
+### Copy / paste
+
+When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` -
+where `operation` is "cp" or "mv" - into your clipboard buffer.
+If you then paste into a second FileCTRL window, this instance of FileCTRL will perform the equivalent of:
+`${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
+Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar using the Rust standard library.
+
+n.b. On [Wayland](https://wayland.freedesktop.org/), you must install [wl-copy](https://github.com/bugaevc/wl-clipboard)
+in order to copy content into your clipboard buffer.
+
 ### Keyboard controls
 
 ***Normal mode***
@@ -46,7 +53,7 @@ Enter, Right, f, l | Open the selected file or navigate to the selected director
 CTRL+f, CTRL+d PgDn | Move selection and scroll down one page
 CTRL+b, CTRL+u, PgUp | Move selection and scroll up one page
 Home, g, ^ | Select the first item
-End, , G, $ | Select the last item
+End, G, $ | Select the last item
 Delete | Delete the selected file or directory
 r, F2 | Rename the selected file or directory
 CTRL+r, F5 | Refresh

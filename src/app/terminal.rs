@@ -3,12 +3,15 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, PopKeyboardEnhancementFlags},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use ratatui::{
+    backend::CrosstermBackend,
+    crossterm::{
+        event::{DisableMouseCapture, EnableMouseCapture, PopKeyboardEnhancementFlags},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    },
+    Terminal,
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 
