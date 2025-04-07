@@ -35,6 +35,7 @@ pub enum Command {
     OpenPrompt(PromptKind),
     Progress(Task),
     Quit,
+    Refresh,
     RenamePath(PathInfo, String),
     Resize(u16, u16), // w,h
     SetDirectory(PathInfo, Vec<PathInfo>),

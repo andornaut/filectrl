@@ -2,13 +2,14 @@ mod r#async;
 mod handler;
 pub mod path_info;
 mod sync;
+mod watcher;
 
 use std::{fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
-use log::info;
+use log::{error, info};
 
-use self::{path_info::PathInfo, sync::open_in};
+use self::{path_info::PathInfo, sync::open_in, watcher::DirectoryWatcher};
 use crate::{
     app::config::Config,
     command::{result::CommandResult, Command},
@@ -20,6 +21,7 @@ pub struct FileSystem {
     open_new_window_template: Option<String>,
     open_selected_file_template: Option<String>,
     tx: Option<Sender<Command>>,
+    watcher: Option<DirectoryWatcher>,
 }
 
 impl FileSystem {
@@ -30,11 +32,13 @@ impl FileSystem {
             open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
             tx: None,
+            watcher: None,
         }
     }
 
     pub fn init(&mut self, directory: Option<PathBuf>, tx: Sender<Command>) -> Result<Command> {
-        self.tx = Some(tx);
+        self.tx = Some(tx.clone());
+        self.watcher = Some(DirectoryWatcher::try_new(tx)?);
 
         match directory {
             Some(directory) => match directory.canonicalize() {
@@ -61,9 +65,24 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo) -> CommandResult {
+        // Unwatch the current directory if we're watching it
+        if let Some(watcher) = &mut self.watcher {
+            if let Err(e) = watcher.unwatch_directory(PathBuf::from(&self.directory.path)) {
+                error!("Failed to unwatch directory: {}", e);
+            }
+        }
+
         (match sync::cd(&directory) {
             Ok(children) => {
                 self.directory = directory.clone();
+
+                // Watch the new directory
+                if let Some(watcher) = &mut self.watcher {
+                    if let Err(e) = watcher.watch_directory(PathBuf::from(&directory.path)) {
+                        error!("Failed to watch directory: {}", e);
+                    }
+                }
+
                 Command::SetDirectory(directory, children)
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),

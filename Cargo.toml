@@ -20,6 +20,7 @@ env_logger = {version = "0.10.0", default-features = false}
 etcetera = "0.8"
 log = {version = "0.4.20", default-features = false, features = ["serde"]}
 nix = {version = "0", default-features = false, features = ["user"]}
+notify = "8.0.0"
 open = "~5.0"
 ratatui = {version = "0.30.0-alpha.2", features = ["all-widgets", "serde"]}
 serde = {version = "1.0.218", features = ["derive"]}

@@ -11,6 +11,7 @@ impl CommandHandler for FileSystem {
                 Command::Open(path) => self.open(path),
                 Command::OpenCustom(path) => self.open_custom(path),
                 Command::Progress(task) => self.handle_error_and_done_status(task),
+                Command::Refresh => self.refresh(),
                 Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
                 _ => CommandResult::NotHandled,
             },

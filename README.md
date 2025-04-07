@@ -6,6 +6,22 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 ## Installation
 
+You can [download and install a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux or macOS:
+
+```bash
+curl -L https://github.com/andornaut/filectrl/releases/download/latest/filectrl-linux -o filectrl
+chmod +x filectrl
+sudo mv filectrl /usr/local/bin/
+```
+
+On macOS, allow the _unsigned_ `filectrl` binary be executed:
+
+```bash
+sudo xattr -d com.apple.quarantine filectrl
+```
+
+## Building from source
+
 1. `git clone` and `cd` into this repository
 1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
 
@@ -39,7 +55,7 @@ Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements si
 
 ### Keyboard controls
 
-***Normal mode***
+_**Normal mode**_
 
 Keys | Description
 --- | ---
@@ -62,13 +78,13 @@ e | Clear error messages
 p | Clear progress bar
 ? | Toggle help
 
-***Filtered mode***
+_**Filtered mode**_
 
 Keys | Description
 --- | ---
 Esc | Exit filtered mode
 
-***Input mode***
+_**Input mode**_
 
 Keys | Description
 --- | ---
