@@ -1,4 +1,5 @@
 pub mod app;
+mod clipboard;
 mod command;
 mod file_system;
 mod utf8;

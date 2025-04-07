@@ -1,9 +1,10 @@
 use chrono::{DateTime, Local};
 use ratatui::style::Style;
 
-use super::{Clipboard, SortColumn};
+use super::SortColumn;
 use crate::{
     app::config::theme::{FileTheme, Theme},
+    clipboard::Clipboard,
     file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
 
