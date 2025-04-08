@@ -46,7 +46,7 @@ impl CommandHandler for NoticesView {
                 match notices.get(y as usize) {
                     Some(NoticeType::Progress) => self.clear_progress(),
                     Some(NoticeType::Clipboard(_)) => Command::CancelClipboard.into(),
-                    Some(NoticeType::Filter(_)) => self.clear_filter(),
+                    Some(NoticeType::Filter(_)) => Command::SetFilter("".into()).into(),
                     None => CommandResult::none(),
                 }
             }

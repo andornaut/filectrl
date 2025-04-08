@@ -18,7 +18,7 @@ open_selected_file_template = "pcmanfm %s"
 
 [theme]
 alert_bg = "#373424"
-alert_fg = "#CCC8B0"
+alert_fg = "#9f8800"
 
 alert_error_bg = "#373424"
 alert_error_fg = "#DC322F"
@@ -35,7 +35,7 @@ header_bg = "#373424"
 header_fg = "#CCC8B0"
 
 help_bg = "#373424"
-help_fg = "#CCC8B0"
+help_fg = "#9C9977"
 
 notice_clipboard_bg = "#70C0B1"
 notice_clipboard_fg = "#1D1F21"

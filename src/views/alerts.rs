@@ -16,12 +16,23 @@ use crate::{
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
+const MIN_HEIGHT: u16 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AlertKind {
     Info,
     Warn,
     Error,
+}
+
+impl AlertKind {
+    fn to_style(&self, theme: &Theme) -> Style {
+        match self {
+            AlertKind::Info => theme.alert_info(),
+            AlertKind::Warn => theme.alert_warning(),
+            AlertKind::Error => theme.alert_error(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -31,22 +42,11 @@ pub(super) struct AlertsView {
 }
 
 impl AlertsView {
-    pub(super) fn height(&self, width: u16) -> u16 {
-        if self.should_show() {
-            // TODO cache `self.list_items()` result for use in render()
-            let width = width.saturating_sub(2); // -2 for horizontal borders
-            let items = self.list_items(width);
-            items.len() as u16 + 2 // +2 for vertical borders
-        } else {
-            0
-        }
-    }
-
     fn add_alert(&mut self, kind: AlertKind, message: String) -> CommandResult {
         if self.alerts.len() == MAX_NUMBER_ALERTS {
-            self.alerts.pop_front();
+            self.alerts.pop_back();
         }
-        self.alerts.push_back((kind, message));
+        self.alerts.push_front((kind, message));
         CommandResult::none()
     }
 
@@ -55,32 +55,35 @@ impl AlertsView {
         CommandResult::none()
     }
 
-    fn list_items(&self, width: u16) -> Vec<(Line<'_>, AlertKind)> {
+    fn height(&self, area: &Rect) -> u16 {
+        if !self.should_show(area) {
+            return 0;
+        }
+        // First subtract borders from the outer area
+        let inner_width = area.width.saturating_sub(2);
+        let items = self.alerts(inner_width);
+        items.len() as u16 + 2 // +2 for vertical borders
+    }
+
+    fn alerts(&self, width_without_borders: u16) -> Vec<(AlertKind, Line<'_>)> {
+        let width_without_prefix = width_without_borders.saturating_sub(2);
+
         self.alerts
             .iter()
-            .rev() // Newest alert messages near the top
             .flat_map(|(kind, message)| {
-                split_with_ellipsis(message, width.saturating_sub(2))
+                split_with_ellipsis(message, width_without_prefix)
                     .into_iter()
                     .enumerate()
                     .map(|(i, line)| {
                         let prefix = if i == 0 { "•" } else { " " };
-                        (Line::from(format!("{prefix} {line}")), kind.clone())
+                        (kind.clone(), Line::from(format!("{prefix} {line}")))
                     })
             })
             .collect()
     }
 
-    fn should_show(&self) -> bool {
-        !self.alerts.is_empty()
-    }
-
-    fn get_style(&self, kind: &AlertKind, theme: &Theme) -> Style {
-        match kind {
-            AlertKind::Info => theme.alert_info(),
-            AlertKind::Warn => theme.alert_warning(),
-            AlertKind::Error => theme.alert_error(),
-        }
+    fn should_show(&self, area: &Rect) -> bool {
+        !self.alerts.is_empty() && area.height >= MIN_HEIGHT
     }
 }
 
@@ -103,7 +106,6 @@ impl CommandHandler for AlertsView {
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // `self.should_receive_mouse()` guards this method to ensure that the click intersects with this view.
                 self.clear_alerts();
                 CommandResult::none()
             }
@@ -118,25 +120,27 @@ impl CommandHandler for AlertsView {
 
 impl View for AlertsView {
     fn constraint(&self, area: Rect, _: &InputMode) -> Constraint {
-        Constraint::Length(self.height(area.width))
+        Constraint::Length(self.height(&area))
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
-        self.area = area;
-        if !self.should_show() {
+        if !self.should_show(&area) {
             return;
         }
-
-        let bordered_area = bordered(buf, area, theme.alert(), Some("Alerts".into()));
-        let items = self.list_items(bordered_area.width);
-        let mut text: Text<'_> = Text::default();
-
-        for (line, kind) in items {
-            let style = self.get_style(&kind, theme);
-            text.lines.push(Line::from(line.spans).style(style));
-        }
-
-        let widget = Paragraph::new(text);
+        self.area = area;
+        let bordered_area = bordered(
+            buf,
+            area,
+            theme.alert(),
+            Some("Alerts (Press \"a\" to clear)".into()),
+        );
+        let text = Text::from(
+            self.alerts(bordered_area.width)
+                .into_iter()
+                .map(|(kind, line)| line.style(kind.to_style(theme)))
+                .collect::<Vec<_>>(),
+        );
+        let widget = Paragraph::new(text).style(theme.alert());
         widget.render(bordered_area, buf);
     }
 }
