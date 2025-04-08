@@ -20,7 +20,9 @@ pub enum PromptKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
-    AddError(String),
+    AlertInfo(String),
+    AlertWarn(String),
+    AlertError(String),
     CancelClipboard,
     ClipboardCopy(PathInfo),
     ClipboardCut(PathInfo),
@@ -69,7 +71,7 @@ impl Command {
 
 impl From<Error> for Command {
     fn from(value: Error) -> Self {
-        Self::AddError(value.to_string())
+        Self::AlertError(value.to_string())
     }
 }
 

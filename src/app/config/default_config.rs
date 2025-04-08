@@ -1,4 +1,4 @@
-pub(super) const DEFAULT_CONFIG_TOML: &'static str = r##"
+pub(super) const DEFAULT_CONFIG_TOML: &str = r##"
 # Whether to apply $LS_COLORS on top of any styles configured in [theme.file_types]
 apply_ls_colors = true
 
@@ -17,8 +17,17 @@ open_new_window_template = "alacritty --command filectrl %s"
 open_selected_file_template = "pcmanfm %s"
 
 [theme]
-error_bg = "#373424"
-error_fg = "#DC322F"
+alert_bg = "#373424"
+alert_fg = "#CCC8B0"
+
+alert_error_bg = "#373424"
+alert_error_fg = "#DC322F"
+
+alert_info_bg = "#373424"
+alert_info_fg = "#73c991"
+
+alert_warning_bg = "#373424"
+alert_warning_fg = "#E6DB74"
 
 header_active_bg = "#CCC8B0"
 header_active_fg = "#1D1F21"

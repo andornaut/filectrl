@@ -1,4 +1,4 @@
-use std::{cmp::min, iter::repeat};
+use std::cmp::min;
 
 #[derive(Default)]
 pub(super) struct LineItemMap {
@@ -18,7 +18,7 @@ impl LineItemMap {
         let lines_to_items = item_heights
             .iter()
             .enumerate()
-            .flat_map(|(i, &height)| repeat(i).take(height as usize))
+            .flat_map(|(i, &height)| std::iter::repeat_n(i, height as usize))
             .collect();
         Self {
             first_visible_item,

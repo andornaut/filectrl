@@ -761,17 +761,53 @@ impl FileModifiedDate {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Theme {
+    // Alert
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_fg: Option<Color>,
+
     // Error
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    error_bg: Option<Color>,
+    alert_error_bg: Option<Color>,
     #[serde(
         deserialize_with = "deserialize_optional_color",
         serialize_with = "serialize_optional_color"
     )]
-    error_fg: Option<Color>,
+    alert_error_fg: Option<Color>,
+
+    // Info
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_info_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_info_fg: Option<Color>,
+
+    // Warning
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_warning_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    alert_warning_fg: Option<Color>,
 
     // Header
     #[serde(
@@ -1031,7 +1067,10 @@ pub struct Theme {
 }
 
 impl Theme {
-    style_getter!(error, error_fg, error_bg);
+    style_getter!(alert, alert_fg, alert_bg);
+    style_getter!(alert_error, alert_error_fg, alert_error_bg);
+    style_getter!(alert_info, alert_info_fg, alert_info_bg);
+    style_getter!(alert_warning, alert_warning_fg, alert_warning_bg);
     style_getter!(header, header_fg, header_bg);
     style_getter!(header_active, header_active_fg, header_active_bg);
     style_getter!(help, help_fg, help_bg);

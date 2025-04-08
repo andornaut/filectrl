@@ -180,7 +180,7 @@ fn copy_file(
 }
 
 fn open_files(source: &PathBuf, target: &PathBuf) -> Result<(File, File)> {
-    let source = File::open(&source)?;
-    let target = File::create(&target)?;
+    let source = File::open(source)?;
+    let target = File::create(target)?;
     Ok((source, target))
 }

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, theme::Theme};
 
-const CONFIG_RELATIVE_PATH: &'static str = "filectrl/config.toml";
+const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {

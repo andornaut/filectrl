@@ -100,7 +100,8 @@ pub(super) fn modified_date_style(
 }
 
 pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
-    let default_size_style = match item.size_unit_index() {
+    
+    match item.size_unit_index() {
         0 => theme.size_bytes(),
         1 => theme.size_kib(),
         2 => theme.size_mib(),
@@ -108,8 +109,7 @@ pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
         4 => theme.size_tib(),
         5 => theme.size_pib(),
         _ => theme.size_pib(),
-    };
-    default_size_style
+    }
 }
 
 pub(super) fn clipboard_or_default_style<'a>(

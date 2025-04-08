@@ -42,7 +42,7 @@ impl HeaderView {
                 // Clicked on the root element, which is empty string
                 MAIN_SEPARATOR.to_string()
             } else {
-                components.join(&MAIN_SEPARATOR.to_string())
+                components.join(std::path::MAIN_SEPARATOR_STR)
             };
             PathInfo::try_from(path).ok()
         } else {
@@ -72,7 +72,7 @@ impl CommandHandler for HeaderView {
                         None
                     }
                 });
-                if let Some(path) = clicked_index.map(|i| self.to_path(i)).flatten() {
+                if let Some(path) = clicked_index.and_then(|i| self.to_path(i)) {
                     Command::Open(path).into()
                 } else {
                     CommandResult::none()
@@ -111,7 +111,7 @@ impl View for HeaderView {
 
         let text: Vec<_> = container
             .into_iter()
-            .map(|spans| Line::from(spans))
+            .map(Line::from)
             .collect();
 
         let widget = Paragraph::new(text).style(theme.header());
@@ -140,7 +140,7 @@ fn spans<'a>(
 ) -> (Vec<Vec<Span<'a>>>, Vec<Vec<Position>>) {
     let mut container = vec![Vec::new()];
     let mut row_len = 0;
-    let mut it = breadcrumbs.into_iter().enumerate().peekable();
+    let mut it = breadcrumbs.iter().enumerate().peekable();
 
     let mut positions: Vec<Vec<Position>> = vec![Vec::new()];
 
