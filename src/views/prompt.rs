@@ -66,10 +66,7 @@ impl PromptView {
 
         match &self.kind {
             PromptKind::Filter => self.input = Input::new(self.filter.clone()),
-            PromptKind::Rename => match &self.selected {
-                Some(selected) => self.input = Input::new(selected.basename.clone()),
-                None => (),
-            },
+            PromptKind::Rename => if let Some(selected) = &self.selected { self.input = Input::new(selected.basename.clone()) },
         }
         CommandResult::none()
     }

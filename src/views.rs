@@ -1,4 +1,4 @@
-mod errors;
+mod alerts;
 mod header;
 mod help;
 mod notices;

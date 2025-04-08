@@ -119,7 +119,7 @@ pub(super) fn row_and_height<'a>(
 fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
     split_with_ellipsis(&path.name(), width)
         .into_iter()
-        .map(|part| Line::from(part))
+        .map(Line::from)
         .collect()
 }
 

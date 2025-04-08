@@ -53,7 +53,8 @@ fn background_watcher(
                 _ => {}
             },
             Err(e) => {
-                let error_command = Command::AddError(format!("Failed to watch directory: {}", e));
+                let error_command =
+                    Command::AlertError(format!("Failed to watch directory: {}", e));
                 if let Err(e) = command_tx.send(error_command) {
                     error!("Failed to send error command: {}", e);
                 }

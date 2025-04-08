@@ -14,13 +14,13 @@ chmod +x filectrl
 sudo mv filectrl /usr/local/bin/
 ```
 
-On macOS, allow the _unsigned_ `filectrl` binary be executed:
+On macOS, allow the _unsigned_ `filectrl` binary to be executed:
 
 ```bash
 sudo xattr -d com.apple.quarantine filectrl
 ```
 
-## Building from source
+## Building
 
 1. `git clone` and `cd` into this repository
 1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
@@ -47,11 +47,11 @@ Options:
 
 ### Copy / paste
 
-When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` -
-where `operation` is "cp" or "mv" - into your clipboard buffer.
-If you then paste into a second FileCTRL window, this instance of FileCTRL will perform the equivalent of:
+When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` into your clipboard buffer
+(where `operation` is "cp" or "mv").
+If you then paste into a second FileCTRL window, this second instance of FileCTRL will perform the equivalent of:
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
-Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar using the Rust standard library.
+Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
 
 ### Keyboard controls
 
@@ -74,7 +74,7 @@ n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
 c | Cancel copy/cut
-e | Clear error messages
+a | Clear alert messages
 p | Clear progress bar
 ? | Toggle help
 

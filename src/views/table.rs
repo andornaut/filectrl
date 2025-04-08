@@ -123,12 +123,12 @@ impl TableView {
             }
         }
         self.table_state.scroll_down_by(delta as u16);
-        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
     fn previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
-        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
     fn first(&mut self) -> CommandResult {
@@ -230,7 +230,7 @@ impl TableView {
     // Select
     fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
-        return Command::SetSelected(Some(self.selected().unwrap().clone())).into();
+        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
     }
 
     fn selected(&self) -> Option<&PathInfo> {
@@ -242,10 +242,10 @@ impl TableView {
     fn reset_selection(&mut self) -> CommandResult {
         if self.directory_items_sorted.is_empty() {
             self.table_state.select(None);
-            return Command::SetSelected(None).into();
+            Command::SetSelected(None).into()
         } else {
             self.table_state.select(Some(0));
-            return Command::SetSelected(Some(self.directory_items_sorted[0].clone())).into();
+            Command::SetSelected(Some(self.directory_items_sorted[0].clone())).into()
         }
     }
 
@@ -279,10 +279,7 @@ impl TableView {
 
         if !self.filter.is_empty() {
             let filter_lowercase = self.filter.to_ascii_lowercase();
-            items = items
-                .into_iter()
-                .filter(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase))
-                .collect();
+            items.retain(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase));
         }
 
         // TODO: Put this back once paging works!

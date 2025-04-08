@@ -39,7 +39,7 @@ impl CommandHandler for FileSystem {
 impl FileSystem {
     fn handle_error_and_done_status(&mut self, task: &Task) -> CommandResult {
         if let Some(message) = task.error_message() {
-            return Command::AddError(message).into();
+            return Command::AlertError(message).into();
         }
         if task.is_done() {
             return self.refresh();

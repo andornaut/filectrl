@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use super::{
-    errors::ErrorsView, header::HeaderView, help::HelpView, notices::NoticesView,
+    alerts::AlertsView, header::HeaderView, help::HelpView, notices::NoticesView,
     prompt::PromptView, status::StatusView, table::TableView, View,
 };
 use crate::{
@@ -16,11 +16,11 @@ use crate::{
 
 const MIN_WIDTH: u16 = 14; // Must be 11 or larger to prevent clipboard notices from causing a panic
 const MIN_HEIGHT: u16 = 5;
-const RESIZE_WINDOW: &'static str = "Resize window";
+const RESIZE_WINDOW: &str = "Resize window";
 
 #[derive(Default)]
 pub struct RootView {
-    errors: ErrorsView,
+    alerts: AlertsView,
     header: HeaderView,
     help: HelpView,
     notices: NoticesView,
@@ -38,7 +38,7 @@ impl RootView {
     }
 
     pub fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
-        let cursor_position = self.prompt.cursor_position(&mode);
+        let cursor_position = self.prompt.cursor_position(mode);
         if let Some(position) = cursor_position {
             frame.set_cursor_position(position);
         }
@@ -47,7 +47,7 @@ impl RootView {
     fn views(&mut self) -> Vec<&mut dyn View> {
         vec![
             // The order is significant
-            &mut self.errors,
+            &mut self.alerts,
             &mut self.help,
             &mut self.header,
             &mut self.table,
@@ -62,7 +62,7 @@ impl CommandHandler for RootView {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
         vec![
             // The order is NOT significant
-            &mut self.errors,
+            &mut self.alerts,
             &mut self.header,
             &mut self.help,
             &mut self.notices,
@@ -93,7 +93,7 @@ impl View for RootView {
             .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area)
-            .into_iter()
+            .iter()
             .zip(views)
             .for_each(|(area, handler)| handler.render(*area, buf, mode, theme));
     }
@@ -101,7 +101,7 @@ impl View for RootView {
 
 fn render_resize_message(buf: &mut Buffer, area: Rect, theme: &Theme) {
     let widget = Paragraph::new(RESIZE_WINDOW)
-        .style(theme.error())
+        .style(theme.alert_error())
         .wrap(Wrap { trim: true });
     widget.render(area, buf);
 }

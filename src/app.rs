@@ -120,7 +120,7 @@ impl App {
             let area = frame.area();
             self.root.render(
                 area,
-                &mut frame.buffer_mut(),
+                frame.buffer_mut(),
                 &self.mode,
                 &self.config.theme,
             );
@@ -156,6 +156,15 @@ impl CommandHandler for App {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
+            (KeyCode::Char('1'), KeyModifiers::NONE) => {
+                Command::AlertInfo("Test info alert".into()).into()
+            }
+            (KeyCode::Char('2'), KeyModifiers::NONE) => {
+                Command::AlertWarn("Test warning alert".into()).into()
+            }
+            (KeyCode::Char('3'), KeyModifiers::NONE) => {
+                Command::AlertError("Test error alert".into()).into()
+            }
             (_, _) => CommandResult::NotHandled,
         }
     }
@@ -206,7 +215,7 @@ fn recursively_handle_command(
 fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
     // Ignore unhandled Key or Mouse commands
     let unhandled_count = commands
-        .into_iter()
+        .iter()
         .filter(|command| {
             !matches!(command, Command::Key(_, _)) && !matches!(command, Command::Mouse(_))
         })
