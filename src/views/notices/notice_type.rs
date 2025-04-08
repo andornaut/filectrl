@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::Block;
 
 use super::{
     widgets::{clipboard_widget, filter_widget, progress_widget},
@@ -23,13 +23,13 @@ impl<'a> NoticeType<'a> {
         theme: &'b Theme,
         width: u16,
         tasks: &'b HashSet<Task>,
-    ) -> Paragraph<'b> {
+    ) -> Block<'b> {
         match self {
             NoticeType::Progress => progress_widget(theme, width, tasks),
             NoticeType::Clipboard((operation, path)) => {
                 clipboard_widget(theme, width, path, operation)
             }
-            NoticeType::Filter(filter) => filter_widget(theme, filter),
+            NoticeType::Filter(filter) => filter_widget(theme, width, filter),
         }
     }
 }

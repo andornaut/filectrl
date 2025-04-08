@@ -9,8 +9,9 @@ mod table;
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Margin, Rect},
+    layout::{Alignment, Constraint, Margin, Rect},
     style::Style,
+    text::Line,
     widgets::{Block, Borders, Widget},
 };
 
@@ -24,10 +25,19 @@ pub(super) trait View: CommandHandler {
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme);
 }
 
-pub(super) fn bordered(buf: &mut Buffer, area: Rect, style: Style, title: Option<String>) -> Rect {
+pub(super) fn bordered(
+    buf: &mut Buffer,
+    area: Rect,
+    style: Style,
+    title_left: Option<&str>,
+    title_right: Option<&str>,
+) -> Rect {
     let mut block = Block::default().borders(Borders::ALL).border_style(style);
-    if let Some(title) = title {
-        block = block.title(title);
+    if let Some(title) = title_left {
+        block = block.title(Line::from(title));
+    }
+    if let Some(title) = title_right {
+        block = block.title(Line::from(title).alignment(Alignment::Right));
     }
     block.render(area, buf);
     area.inner(Margin {

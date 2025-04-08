@@ -6,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::{bordered, View};
 use crate::{
@@ -14,6 +15,17 @@ use crate::{
 };
 
 const MIN_HEIGHT: u16 = 2;
+
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 7] = [
+    ("Left/Down/Up/Right: ", "h/j/k/l"),
+    ("Open: ", "f"),
+    ("Navigate back: ", "b"),
+    ("Refresh: ", "CTRL+r"),
+    ("Rename: ", "r"),
+    ("Delete: ", "Delete"),
+    ("Quit: ", "q"),
+];
+const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 2] = [("Submit: ", "Enter"), ("Cancel: ", "Esc")];
 
 #[derive(Default)]
 pub(super) struct HelpView {
@@ -71,42 +83,41 @@ impl View for HelpView {
         self.area = area;
 
         let style = theme.help();
-        let bordered_rect = bordered(buf, area, style, Some("Help (Press \"?\" to close)".into()));
-        let spans = match *mode {
-            InputMode::Prompt => prompt_help(),
-            _ => content_help(),
+        let title_left = "Help";
+        let title_right = "(Press \"?\" to close)";
+        let title_left_width = title_left.width_cjk() as u16;
+        let title_right_width = title_right.width_cjk() as u16;
+        let has_extra_width = area.width > title_left_width + title_right_width + 2; // +2 for the borders
+
+        let title_right = if has_extra_width {
+            Some(title_right)
+        } else {
+            None
         };
+        let bordered_rect = bordered(buf, area, style, Some(title_left), title_right);
+        let keyboard_shortcuts = match *mode {
+            InputMode::Prompt => &PROMPT_KEYBOARD_SHORTCUTS[..],
+            _ => &DEFAULT_KEYBOARD_SHORTCUTS[..],
+        };
+
+        let key_style = Style::default().add_modifier(Modifier::BOLD);
+        let spans: Vec<Span> = keyboard_shortcuts
+            .iter()
+            .enumerate()
+            .flat_map(|(index, &(description, key))| {
+                let mut spans = Vec::with_capacity(3);
+                if index > 0 {
+                    spans.push(" ".into());
+                }
+                spans.push(description.into());
+                spans.push(Span::styled(key, key_style));
+                spans
+            })
+            .collect();
+
         let widget = Paragraph::new(Line::from(spans))
             .style(style)
             .wrap(Wrap { trim: true });
         widget.render(bordered_rect, buf);
     }
-}
-
-fn content_help() -> Vec<Span<'static>> {
-    vec![
-        Span::raw("Left/Down/Up/Right: "),
-        Span::styled("h/j/k/l", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Open: "),
-        Span::styled("f", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Navigate back: "),
-        Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Refresh: "),
-        Span::styled("CTRL+r", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Rename: "),
-        Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Delete: "),
-        Span::styled("Delete", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Quit: "),
-        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-    ]
-}
-
-fn prompt_help() -> Vec<Span<'static>> {
-    vec![
-        Span::raw("Submit: "),
-        Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" Cancel: "),
-        Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-    ]
 }
