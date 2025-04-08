@@ -46,7 +46,7 @@ pub(super) fn clipboard_widget<'a>(
 pub(super) fn filter_widget<'a>(theme: &Theme, filter: &'a str) -> Paragraph<'a> {
     let bold_style = Style::default().add_modifier(Modifier::BOLD);
     let prefix = " Filtered by \"";
-    let suffix = "\". Press Esc to exit filtered mode.";
+    let suffix = "\" (Press \"Esc\" to clear)";
 
     let spans = vec![
         Span::raw(prefix),

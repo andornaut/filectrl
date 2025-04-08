@@ -1,4 +1,4 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -13,22 +13,25 @@ use crate::{
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
+const MIN_HEIGHT: u16 = 2;
+
 #[derive(Default)]
 pub(super) struct HelpView {
-    should_show: bool,
+    area: Rect,
+    is_visible: bool,
 }
 
 impl HelpView {
     pub(super) fn height(&self) -> u16 {
-        if self.should_show {
-            4 // 2 + 2 for borders
+        if self.is_visible {
+            4 // 2 lines of text + 2 borders
         } else {
             0
         }
     }
 
-    fn toggle_show_help(&mut self) -> CommandResult {
-        self.should_show = !self.should_show;
+    fn toggle_visibility(&mut self) -> CommandResult {
+        self.is_visible = !self.is_visible;
         CommandResult::none()
     }
 }
@@ -36,9 +39,23 @@ impl HelpView {
 impl CommandHandler for HelpView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => self.toggle_show_help(),
+            (KeyCode::Char('?'), KeyModifiers::NONE) => self.toggle_visibility(),
             (_, _) => CommandResult::NotHandled,
         }
+    }
+
+    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.is_visible = false;
+                CommandResult::none()
+            }
+            _ => CommandResult::none(),
+        }
+    }
+
+    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
+        self.is_visible && self.area.intersects(Rect::new(x, y, 1, 1))
     }
 }
 
@@ -48,11 +65,13 @@ impl View for HelpView {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
-        if !self.should_show {
+        if !self.is_visible || area.height < MIN_HEIGHT {
             return;
         }
+        self.area = area;
+
         let style = theme.help();
-        let bordered_rect = bordered(buf, area, style, Some("Help".into()));
+        let bordered_rect = bordered(buf, area, style, Some("Help (Press \"?\" to close)".into()));
         let spans = match *mode {
             InputMode::Prompt => prompt_help(),
             _ => content_help(),

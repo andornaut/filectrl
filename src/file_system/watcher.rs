@@ -12,6 +12,7 @@ use crate::command::Command;
 
 pub struct DirectoryWatcher {
     watcher: RecommendedWatcher,
+    currently_watched: Option<PathBuf>,
 }
 
 impl DirectoryWatcher {
@@ -21,17 +22,22 @@ impl DirectoryWatcher {
         let watcher = recommended_watcher(tx)?;
 
         thread::spawn(move || background_watcher(command_tx, rx));
-        Ok(Self { watcher })
+        Ok(Self {
+            watcher,
+            currently_watched: None,
+        })
     }
 
     pub fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
+        if let Some(old_path) = &self.currently_watched {
+            if let Err(e) = self.watcher.unwatch(old_path.as_path()) {
+                error!("Failed to unwatch directory: {}", e);
+            }
+        }
+
         self.watcher
             .watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
-        Ok(())
-    }
-
-    pub fn unwatch_directory(&mut self, path: PathBuf) -> Result<()> {
-        self.watcher.unwatch(path.as_path())?;
+        self.currently_watched = Some(path);
         Ok(())
     }
 }
@@ -53,8 +59,10 @@ fn background_watcher(
                 _ => {}
             },
             Err(e) => {
-                let error_command =
-                    Command::AlertError(format!("Failed to watch directory: {}", e));
+                let error_command = Command::AlertError(format!(
+                    "Failed to run the directory watcher in the background: {}",
+                    e
+                ));
                 if let Err(e) = command_tx.send(error_command) {
                     error!("Failed to send error command: {}", e);
                 }

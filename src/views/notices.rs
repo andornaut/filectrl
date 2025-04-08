@@ -56,11 +56,6 @@ impl NoticesView {
         CommandResult::none()
     }
 
-    pub(super) fn clear_filter(&mut self) -> CommandResult {
-        self.filter.clear();
-        CommandResult::none()
-    }
-
     pub(super) fn set_clipboard(
         &mut self,
         path: PathInfo,

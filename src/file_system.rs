@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub struct FileSystem {
-    directory: PathInfo,
+    directory: Option<PathInfo>,
     open_current_directory_template: Option<String>,
     open_new_window_template: Option<String>,
     open_selected_file_template: Option<String>,
@@ -27,7 +27,7 @@ pub struct FileSystem {
 impl FileSystem {
     pub fn new(config: &Config) -> Self {
         Self {
-            directory: PathInfo::default(),
+            directory: None,
             open_current_directory_template: config.open_current_directory_template.clone(),
             open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
@@ -58,31 +58,22 @@ impl FileSystem {
     }
 
     fn back(&mut self) -> CommandResult {
-        match self.directory.parent() {
+        let directory = self.directory.as_ref().unwrap();
+        match directory.parent() {
             Some(parent) => self.cd(parent),
             None => CommandResult::none(),
         }
     }
-
     fn cd(&mut self, directory: PathInfo) -> CommandResult {
-        // Unwatch the current directory if we're watching it
-        if let Some(watcher) = &mut self.watcher {
-            if let Err(e) = watcher.unwatch_directory(PathBuf::from(&self.directory.path)) {
-                error!("Failed to unwatch directory: {}", e);
-            }
-        }
+        let watcher = self.watcher.as_mut().expect("Watcher not initialized");
 
         (match sync::cd(&directory) {
             Ok(children) => {
-                self.directory = directory.clone();
+                self.directory = Some(directory.clone());
 
-                // Watch the new directory
-                if let Some(watcher) = &mut self.watcher {
-                    if let Err(e) = watcher.watch_directory(PathBuf::from(&directory.path)) {
-                        error!("Failed to watch directory: {}", e);
-                    }
+                if let Err(e) = watcher.watch_directory(PathBuf::from(&directory.path)) {
+                    error!("Failed to watch directory: {}", e);
                 }
-
                 Command::SetDirectory(directory, children)
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
@@ -111,9 +102,10 @@ impl FileSystem {
     }
 
     fn open_current_directory(&self) -> CommandResult {
+        let directory = self.directory.as_ref().unwrap();
         open_in(
             self.open_current_directory_template.clone(),
-            &self.directory.path,
+            &directory.path,
         )
         .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
@@ -124,7 +116,8 @@ impl FileSystem {
     }
 
     fn open_new_window(&self) -> CommandResult {
-        open_in(self.open_new_window_template.clone(), &self.directory.path)
+        let directory = self.directory.as_ref().unwrap();
+        open_in(self.open_new_window_template.clone(), &directory.path)
             .map_or_else(|error| error.into(), |_| CommandResult::none())
     }
 
@@ -138,6 +131,7 @@ impl FileSystem {
     }
 
     fn refresh(&mut self) -> CommandResult {
-        self.cd(self.directory.clone())
+        let directory = self.directory.as_ref().unwrap();
+        self.cd(directory.clone())
     }
 }
