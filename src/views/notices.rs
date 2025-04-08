@@ -28,7 +28,7 @@ pub(super) struct NoticesView {
 }
 
 impl NoticesView {
-    pub(super) fn active_notices(&self) -> impl Iterator<Item = NoticeType<'_>> {
+    fn active_notices(&self) -> impl Iterator<Item = NoticeType<'_>> {
         let mut notices = Vec::new();
 
         if !self.tasks.is_empty() {
@@ -46,31 +46,27 @@ impl NoticesView {
         notices.into_iter()
     }
 
-    pub(super) fn clear_clipboard(&mut self) -> CommandResult {
+    fn clear_clipboard(&mut self) -> CommandResult {
         self.clipboard = None;
         CommandResult::none()
     }
 
-    pub(super) fn clear_progress(&mut self) -> CommandResult {
+    fn clear_progress(&mut self) -> CommandResult {
         self.tasks.clear();
         CommandResult::none()
     }
 
-    pub(super) fn set_clipboard(
-        &mut self,
-        path: PathInfo,
-        operation: ClipboardOperation,
-    ) -> CommandResult {
+    fn set_clipboard(&mut self, path: PathInfo, operation: ClipboardOperation) -> CommandResult {
         self.clipboard = Some((operation, path));
         CommandResult::none()
     }
 
-    pub(super) fn set_filter(&mut self, filter: String) -> CommandResult {
+    fn set_filter(&mut self, filter: String) -> CommandResult {
         self.filter = filter;
         CommandResult::none()
     }
 
-    pub(super) fn update_tasks(&mut self, task: Task) -> CommandResult {
+    fn update_tasks(&mut self, task: Task) -> CommandResult {
         // If the task is not new and not in our set, it means we previously cleared it.
         // In this case, we should ignore the update to prevent resurrecting cleared tasks.
         if !task.is_new() && !self.tasks.contains(&task) {
@@ -85,7 +81,7 @@ impl NoticesView {
         CommandResult::none()
     }
 
-    pub(super) fn height(&self) -> u16 {
+    fn height(&self) -> u16 {
         self.active_notices().count() as u16
     }
 }

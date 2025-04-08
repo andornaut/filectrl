@@ -25,7 +25,7 @@ pub(super) struct HeaderView {
 }
 
 impl HeaderView {
-    pub(super) fn height(&self, width: u16) -> u16 {
+    fn height(&self, width: u16) -> u16 {
         // Calculate height based on content length and width, without theme styling
         let (container, _) = spans(&self.breadcrumbs, width, Style::default(), Style::default());
         container.len() as u16
@@ -109,10 +109,7 @@ impl View for HeaderView {
         let container = container.split_off(at);
         self.positions = positions.split_off(at);
 
-        let text: Vec<_> = container
-            .into_iter()
-            .map(Line::from)
-            .collect();
+        let text: Vec<_> = container.into_iter().map(Line::from).collect();
 
         let widget = Paragraph::new(text).style(theme.header());
         widget.render(self.area, buf);

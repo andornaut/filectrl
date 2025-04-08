@@ -40,7 +40,7 @@ impl PromptView {
         }
     }
 
-    pub(super) fn height(&self, mode: &InputMode) -> u16 {
+    fn height(&self, mode: &InputMode) -> u16 {
         if self.should_show(mode) {
             1
         } else {
@@ -66,7 +66,11 @@ impl PromptView {
 
         match &self.kind {
             PromptKind::Filter => self.input = Input::new(self.filter.clone()),
-            PromptKind::Rename => if let Some(selected) = &self.selected { self.input = Input::new(selected.basename.clone()) },
+            PromptKind::Rename => {
+                if let Some(selected) = &self.selected {
+                    self.input = Input::new(selected.basename.clone())
+                }
+            }
         }
         CommandResult::none()
     }
