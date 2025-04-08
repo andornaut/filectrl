@@ -22,7 +22,7 @@ pub(super) struct HelpView {
 }
 
 impl HelpView {
-    pub(super) fn height(&self) -> u16 {
+    fn height(&self) -> u16 {
         if self.is_visible {
             4 // 2 lines of text + 2 borders
         } else {
