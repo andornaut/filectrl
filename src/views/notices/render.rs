@@ -5,8 +5,7 @@ use ratatui::{
 };
 
 use super::NoticesView;
-use crate::views::View;
-use crate::{app::config::theme::Theme, command::mode::InputMode};
+use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {

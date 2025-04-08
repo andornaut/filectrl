@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use log::debug;
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
     Frame,
@@ -118,18 +119,15 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            self.root.render(
-                area,
-                frame.buffer_mut(),
-                &self.mode,
-                &self.config.theme,
-            );
+            self.root
+                .render(area, frame.buffer_mut(), &self.mode, &self.config.theme);
             self.root.update_cursor(frame, &self.mode);
         })?;
         Ok(())
     }
 
     fn set_mode(&mut self, mode: InputMode) -> CommandResult {
+        debug!("Setting mode to: {:?}", mode);
         self.mode = mode;
         CommandResult::none()
     }
@@ -202,13 +200,14 @@ fn recursively_handle_command(
         derived_commands.push(derived_command);
     }
 
-    let child_derived = handler.children().into_iter().flat_map(|child| {
-        let (child_derived, child_handled) = recursively_handle_command(child, command, mode);
+    let child_derived_commands = handler.children().into_iter().flat_map(|child| {
+        let (child_derived_commands, child_handled) =
+            recursively_handle_command(child, command, mode);
         handled |= child_handled;
-        child_derived
+        child_derived_commands
     });
 
-    derived_commands.extend(child_derived);
+    derived_commands.extend(child_derived_commands);
     (derived_commands, handled)
 }
 

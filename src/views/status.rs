@@ -8,7 +8,7 @@ use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 #[derive(Default)]
 pub(super) struct StatusView {
-    directory: PathInfo,
+    directory: Option<PathInfo>,
     directory_len: usize,
     area: Rect,
     selected: Option<PathInfo>,
@@ -16,7 +16,7 @@ pub(super) struct StatusView {
 
 impl StatusView {
     fn set_directory(&mut self, directory: PathInfo, children: &Vec<PathInfo>) -> CommandResult {
-        self.directory = directory;
+        self.directory = Some(directory);
         self.directory_len = children.len();
         CommandResult::none()
     }
