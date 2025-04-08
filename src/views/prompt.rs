@@ -2,6 +2,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
+    text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
 use tui_input::{backend::crossterm::EventHandler, Input};
@@ -136,16 +137,16 @@ impl View for PromptView {
         }
 
         let label = self.label();
-        let label_width = label.width_cjk() as u16;
-        let [prompt_area, input_area] = Layout::default()
+        let label_width = label.width_cjk() as u16 + 1; // +1 for the space between label and input
+        let [label_area, input_area] = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .areas(area);
 
         let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
 
-        let prompt_widget = prompt_widget(theme, label);
-        prompt_widget.render(prompt_area, buf);
+        let label_widget = prompt_widget(theme, label);
+        label_widget.render(label_area, buf);
 
         let input_widget = input_widget(&self.input, theme, cursor_x_scroll);
         input_widget.render(input_area, buf);
@@ -171,7 +172,11 @@ fn cursor_position(input: &Input, input_area: Rect) -> (usize, usize) {
 }
 
 fn prompt_widget<'a>(theme: &'a Theme, label: String) -> Paragraph<'a> {
-    Paragraph::new(label).style(theme.prompt_label())
+    let line = Line::from(vec![
+        Span::styled(label, theme.prompt_label()),
+        Span::styled(" ", theme.prompt_input()),
+    ]);
+    Paragraph::new(line)
 }
 
 fn input_widget<'a>(input: &'a Input, theme: &'a Theme, x_offset_scroll: usize) -> Paragraph<'a> {

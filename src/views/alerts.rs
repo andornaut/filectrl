@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 use std::collections::VecDeque;
+use unicode_width::UnicodeWidthStr;
 
 use super::{bordered, View};
 use crate::{
@@ -128,19 +129,27 @@ impl View for AlertsView {
             return;
         }
         self.area = area;
-        let bordered_area = bordered(
-            buf,
-            area,
-            theme.alert(),
-            Some("Alerts (Press \"a\" to clear)".into()),
-        );
+
+        let style = theme.alert();
+        let title_left = "Alerts";
+        let title_right = "(Press \"a\" to clear)";
+        let title_left_width = title_left.width_cjk() as u16;
+        let title_right_width = title_right.width_cjk() as u16;
+        let has_extra_width = area.width > title_left_width + title_right_width + 2; // +2 for the borders
+
+        let title_right = if has_extra_width {
+            Some(title_right)
+        } else {
+            None
+        };
+        let bordered_area = bordered(buf, area, style, Some(title_left), title_right);
         let text = Text::from(
             self.alerts(bordered_area.width)
                 .into_iter()
                 .map(|(kind, line)| line.style(kind.to_style(theme)))
                 .collect::<Vec<_>>(),
         );
-        let widget = Paragraph::new(text).style(theme.alert());
+        let widget = Paragraph::new(text).style(style);
         widget.render(bordered_area, buf);
     }
 }
