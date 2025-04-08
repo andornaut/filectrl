@@ -107,9 +107,8 @@ pub(super) fn progress_widget<'a>(
         " ".repeat(padding_width as usize)
     );
 
-    let left_title = Line::from(Span::raw(progress_bar_text));
-    let right_title = Line::from(Span::raw(percent_text)).alignment(Alignment::Right);
-
+    let left_title = Line::from(progress_bar_text);
+    let right_title = Line::from(percent_text).alignment(Alignment::Right);
     Block::default()
         .borders(Borders::NONE)
         .title(left_title)

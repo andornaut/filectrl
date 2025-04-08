@@ -52,8 +52,8 @@ impl RootView {
             &mut self.header,
             &mut self.table,
             &mut self.notices,
-            &mut self.prompt,
             &mut self.status,
+            &mut self.prompt,
         ]
     }
 }

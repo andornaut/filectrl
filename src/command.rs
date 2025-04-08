@@ -20,9 +20,9 @@ pub enum PromptKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
+    AlertError(String),
     AlertInfo(String),
     AlertWarn(String),
-    AlertError(String),
     CancelClipboard,
     ClipboardCopy(PathInfo),
     ClipboardCut(PathInfo),

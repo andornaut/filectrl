@@ -25,7 +25,7 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct TableView {
-    directory: PathInfo,
+    directory: Option<PathInfo>,
     directory_items: Vec<PathInfo>,
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
@@ -74,7 +74,8 @@ impl TableView {
     }
 
     fn paste(&mut self) -> CommandResult {
-        let context = ClipboardPasteContext::new(&mut self.clipboard, self.directory.clone());
+        let destination = self.directory.as_ref().expect("Directory not set").clone();
+        let context = ClipboardPasteContext::new(&mut self.clipboard, destination);
         match Command::try_from(context) {
             Ok(command) => {
                 self.clipboard.clear();
@@ -251,7 +252,7 @@ impl TableView {
 
     // Set directory, filter
     fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
-        self.directory = directory;
+        self.directory = Some(directory);
         self.directory_items = children;
         self.sort()
     }

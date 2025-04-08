@@ -64,6 +64,7 @@ impl FileSystem {
             None => CommandResult::none(),
         }
     }
+
     fn cd(&mut self, directory: PathInfo) -> CommandResult {
         let watcher = self.watcher.as_mut().expect("Watcher not initialized");
 

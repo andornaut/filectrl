@@ -1,3 +1,4 @@
+use log::debug;
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
@@ -26,6 +27,7 @@ pub(super) struct CursorPosition {
 #[derive(Default)]
 pub(super) struct PromptView {
     cursor_position: CursorPosition,
+    directory: Option<PathInfo>,
     filter: String,
     input: Input,
     kind: PromptKind,
@@ -105,8 +107,17 @@ impl PromptView {
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::SetDirectory(directory, _) => {
+                if let Some(previous_directory) = &self.directory {
+                    if previous_directory.path != directory.path {
+                        self.directory = Some(directory.clone());
+                        debug!("Setting filter to empty string");
+                        return Command::SetFilter("".into()).into();
+                    }
+                }
+                CommandResult::none()
+            }
             Command::OpenPrompt(kind) => self.open(kind),
-            Command::SetDirectory(_, _) => Command::SetFilter("".into()).into(),
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
