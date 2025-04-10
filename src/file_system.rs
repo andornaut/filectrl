@@ -1,8 +1,12 @@
-mod r#async;
-mod handler;
+// The r# prefix is a "raw identifier" syntax in Rust that allows using reserved keywords
+// as identifiers. Here we use r#async because 'async' is a reserved keyword that we want
+// to use as a module name.
+pub mod r#async;
+pub mod debounce;
+pub mod handler;
 pub mod path_info;
-mod sync;
-mod watcher;
+pub mod sync;
+pub mod watcher;
 
 use std::{fs, path::PathBuf, sync::mpsc::Sender};
 
