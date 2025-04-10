@@ -11,7 +11,7 @@ use super::path_info::PathInfo;
 use crate::command::{result::CommandResult, task::Task, Command};
 
 const MAX_BUFFER_BYTES: u64 = 64_000_000;
-const MIN_DYNAMIC_BUFFER_BYTES: u64 = 64_000;
+const MIN_BUFFER_BYTES: u64 = 64_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum TaskCommand {
@@ -122,14 +122,23 @@ impl TryFrom<&Command> for TaskCommand {
 }
 
 fn buffer_bytes(len: u64) -> usize {
-    let bytes = if len <= MIN_DYNAMIC_BUFFER_BYTES {
-        len
-    } else if len >= (MAX_BUFFER_BYTES * 10) {
-        MAX_BUFFER_BYTES
+    // 1) For files ≤ 64KB:
+    //    Use len of the file as the buffer size
+    // 2) For files ≥ 1.28GB:
+    //    Use 64MB buffer
+    // 3) For files > 64KB and < 1.28GB:
+    //    Use the maximum of 64KB or len / 20
+    //    This ensures we never go below 64KB
+    //    Example: 1MB file → 64KB buffer (since 1MB/20 = 50KB < 64KB)
+    //    Example: 100MB file → 5MB buffer (since 100MB/20 = 5MB > 64KB)
+    //    Example: 1.27GB file → 63.5MB buffer (since 1.27GB/20 = 63.5MB > 64KB)
+    if len <= MIN_BUFFER_BYTES {
+        len as usize
+    } else if len >= (MAX_BUFFER_BYTES * 20) {
+        MAX_BUFFER_BYTES as usize
     } else {
-        std::cmp::max(MIN_DYNAMIC_BUFFER_BYTES, len / 10)
-    };
-    bytes as usize
+        std::cmp::max(MIN_BUFFER_BYTES, len / 20) as usize
+    }
 }
 
 fn copy_file(
@@ -146,6 +155,7 @@ fn copy_file(
             ));
             false
         }
+
         Ok((old_file, new_file)) => {
             let mut buffer = vec![0; buffer_size];
             let mut reader = BufReader::new(old_file);
