@@ -1,6 +1,6 @@
 mod handler;
 mod notice_type;
-mod render;
+mod view;
 mod widgets;
 
 use ratatui::layout::Rect;
@@ -56,6 +56,10 @@ impl NoticesView {
         CommandResult::none()
     }
 
+    fn height(&self) -> u16 {
+        self.active_notices().count() as u16
+    }
+
     fn set_clipboard(&mut self, path: PathInfo, operation: ClipboardOperation) -> CommandResult {
         self.clipboard = Some((operation, path));
         CommandResult::none()
@@ -79,9 +83,5 @@ impl NoticesView {
             self.tasks.replace(task);
         }
         CommandResult::none()
-    }
-
-    fn height(&self) -> u16 {
-        self.active_notices().count() as u16
     }
 }

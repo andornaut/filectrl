@@ -6,7 +6,7 @@ use ratatui::{
 
 use super::{
     line_item_map::LineItemMap,
-    widgets::{row_and_height, scrollbar, table_widget},
+    widgets::{row_and_height, table_widget},
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
@@ -26,7 +26,7 @@ impl View for TableView {
 
         let (block_area, scrollbar_area, table_area) = layout(area);
         self.table_area = table_area;
-        self.scrollbar_area = scrollbar_area;
+        self.scrollbar_view.set_area(scrollbar_area);
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
         self.render_table_and_init_mapper(buf, theme);
@@ -44,29 +44,14 @@ impl TableView {
     }
 
     fn render_scrollbar(&mut self, buf: &mut Buffer, theme: &Theme) {
-        // Render the scrollbar
-        let total_number_of_lines = self.mapper.total_number_of_lines();
-        let has_scroll = total_number_of_lines > self.scrollbar_area.height as usize;
-        if !has_scroll {
-            return;
-        }
-
         let selected_line = self
             .table_state
             .selected()
             .map_or(0, |item_index| self.mapper.first_line(item_index));
+        let total_lines_count = self.mapper.total_lines_count();
 
-        self.scrollbar_state = self
-            .scrollbar_state
-            .content_length(total_number_of_lines)
-            .position(selected_line);
-        let scrollbar = scrollbar(theme);
-        StatefulWidget::render(
-            scrollbar,
-            self.scrollbar_area,
-            buf,
-            &mut self.scrollbar_state,
-        );
+        self.scrollbar_view
+            .render(buf, theme, selected_line, total_lines_count);
     }
 
     fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
@@ -97,10 +82,10 @@ impl TableView {
         StatefulWidget::render(table, self.table_area, buf, &mut self.table_state);
 
         // -1 for table header
-        let number_of_visible_lines = self.table_area.height as usize - 1;
+        let visible_lines_count = self.table_area.height as usize - 1;
         // Must occur after rendering the table, because that's when `self.table_state.offset` is updated.
         let first_visible_item = self.table_state.offset();
-        self.mapper = LineItemMap::new(item_heights, number_of_visible_lines, first_visible_item);
+        self.mapper = LineItemMap::new(item_heights, visible_lines_count, first_visible_item);
     }
 }
 
