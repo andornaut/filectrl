@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Error, Result};
+use log::info;
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, ErrorKind, Read, Write},
@@ -10,8 +11,11 @@ use std::{
 use super::path_info::PathInfo;
 use crate::command::{result::CommandResult, task::Task, Command};
 
+use crate::file_system::debounce;
+
 const MAX_BUFFER_BYTES: u64 = 64_000_000;
 const MIN_BUFFER_BYTES: u64 = 64_000;
+const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum TaskCommand {
@@ -40,7 +44,9 @@ impl TaskCommand {
         let original_task = task.clone();
         let buffer_size = buffer_bytes(path.size);
 
-        thread::spawn(move || copy_file(&old_path, &new_path, &mut task, &tx, buffer_size));
+        thread::spawn(move || {
+            copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size)
+        });
 
         Command::Progress(original_task).into()
     }
@@ -64,7 +70,7 @@ impl TaskCommand {
             Err(error) => match error.kind() {
                 // If the file is on a different device/mount-point, we must copy-then-delete it instead
                 ErrorKind::CrossesDevices => {
-                    if copy_file(&old_path, &new_path, &mut task, &tx, buffer_size) {
+                    if copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size) {
                         if let Err(error) = fs::remove_file(&old_path) {
                             task.error(format!(
                                 "Copy succeeded, but failed to delete original file {old_path:?}: {error}"
@@ -147,6 +153,7 @@ fn copy_file(
     task: &mut Task,
     tx: &Sender<Command>,
     buffer_size: usize,
+    total_size: u64,
 ) -> bool {
     match open_files(old_path, new_path) {
         Err(error) => {
@@ -160,6 +167,9 @@ fn copy_file(
             let mut buffer = vec![0; buffer_size];
             let mut reader = BufReader::new(old_file);
             let mut writer = BufWriter::new(new_file);
+            let mut debouncer =
+                debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
@@ -171,8 +181,12 @@ fn copy_file(
                     Ok(bytes) => match writer.write_all(&buffer[..bytes]) {
                         Ok(()) => {
                             task.increment(bytes as u64);
-                            tx.send(Command::Progress(task.clone()))
-                                .expect("Can send command");
+
+                            if debouncer.should_trigger(bytes as u64) {
+                                info!("Sending progress command");
+                                tx.send(Command::Progress(task.clone()))
+                                    .expect("Can send command");
+                            }
                         }
                         Err(error) => {
                             task.error(format!("Failed to write {new_path:?}: {error}"));
