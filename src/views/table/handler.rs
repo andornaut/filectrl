@@ -57,15 +57,28 @@ impl CommandHandler for TableView {
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+        let x = event.column.saturating_sub(self.table_area.x);
+        let y = event.row.saturating_sub(self.table_area.y);
+
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let x = event.column.saturating_sub(self.table_area.x);
-                let y = event.row.saturating_sub(self.table_area.y);
-                if y == 0 {
-                    self.click_header(x)
-                } else {
-                    self.click_table(y)
+                // Check for scrollbar click first
+                if self.scrollbar_view.is_clicked(event.column, event.row) {
+                    return self.handle_scroll(event);
                 }
+
+                // Then handle table clicks
+                if y == 0 {
+                    return self.click_header(x);
+                }
+                return self.click_table(y);
+            }
+            MouseEventKind::Up(MouseButton::Left) => self.handle_scroll(event),
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.scrollbar_view.is_dragging() {
+                    return self.handle_scroll(event);
+                }
+                CommandResult::none()
             }
             MouseEventKind::ScrollUp => self.previous(),
             MouseEventKind::ScrollDown => self.next(),
@@ -74,6 +87,6 @@ impl CommandHandler for TableView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.table_area.intersects(Rect::new(x, y, 1, 1))
+        self.table_area.intersects(Rect::new(x, y, 1, 1)) || self.scrollbar_view.is_clicked(x, y)
     }
 }

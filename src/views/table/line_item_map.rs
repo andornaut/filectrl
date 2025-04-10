@@ -3,7 +3,7 @@ use std::cmp::min;
 #[derive(Default)]
 pub(super) struct LineItemMap {
     first_visible_item: usize,
-    number_of_visible_lines: usize,
+    visible_lines_count: usize,
 
     /// Maps each line index (y offset) to its corresponding item index
     lines_to_items: Vec<usize>,
@@ -12,7 +12,7 @@ pub(super) struct LineItemMap {
 impl LineItemMap {
     pub(super) fn new(
         item_heights: Vec<u16>,
-        number_of_visible_lines: usize,
+        visible_lines_count: usize,
         first_visible_item: usize,
     ) -> Self {
         let lines_to_items = item_heights
@@ -23,7 +23,7 @@ impl LineItemMap {
         Self {
             first_visible_item,
             lines_to_items,
-            number_of_visible_lines,
+            visible_lines_count,
         }
     }
 
@@ -55,7 +55,7 @@ impl LineItemMap {
     }
 
     pub(super) fn first_visible_line_ending_at(&self, last_line: usize) -> usize {
-        last_line.saturating_sub(self.number_of_visible_lines.saturating_sub(1))
+        last_line.saturating_sub(self.visible_lines_count.saturating_sub(1))
     }
 
     pub(super) fn last_visible_line(&self) -> usize {
@@ -64,12 +64,16 @@ impl LineItemMap {
 
     pub(super) fn last_visible_line_starting_at(&self, first_line: usize) -> usize {
         min(
-            first_line + self.number_of_visible_lines.saturating_sub(1),
-            self.total_number_of_lines().saturating_sub(1),
+            first_line + self.visible_lines_count.saturating_sub(1),
+            self.total_lines_count().saturating_sub(1),
         )
     }
 
-    pub(super) fn total_number_of_lines(&self) -> usize {
+    pub(super) fn total_lines_count(&self) -> usize {
         self.lines_to_items.len()
+    }
+
+    pub(super) fn visible_lines_count(&self) -> usize {
+        self.visible_lines_count
     }
 }

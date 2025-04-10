@@ -2,19 +2,19 @@ mod columns;
 mod double_click;
 mod handler;
 mod line_item_map;
+mod pager;
 mod render;
+mod scrollbar;
 mod style;
 mod widgets;
 
-use ratatui::{
-    layout::Rect,
-    widgets::{ScrollbarState, TableState},
-};
+use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
 
 use self::{
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
     line_item_map::LineItemMap,
+    scrollbar::ScrollbarView,
 };
 use crate::{
     app::config::Config,
@@ -30,8 +30,6 @@ pub(super) struct TableView {
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
 
-    scrollbar_area: Rect,
-    scrollbar_state: ScrollbarState,
     table_area: Rect,
     table_state: TableState,
 
@@ -39,6 +37,7 @@ pub(super) struct TableView {
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
+    scrollbar_view: ScrollbarView,
 }
 
 impl TableView {
@@ -56,7 +55,7 @@ impl TableView {
     }
 
     fn copy(&mut self) -> CommandResult {
-        if let Some(path) = self.selected() {
+        if let Some(path) = self.selected_path() {
             let path = path.clone();
             self.clipboard.copy(path.path.as_str());
             return Command::ClipboardCopy(path).into();
@@ -65,7 +64,7 @@ impl TableView {
     }
 
     fn cut(&mut self) -> CommandResult {
-        if let Some(path) = self.selected() {
+        if let Some(path) = self.selected_path() {
             let path = path.clone();
             self.clipboard.cut(path.path.as_str());
             return Command::ClipboardCut(path).into();
@@ -85,7 +84,7 @@ impl TableView {
         }
     }
 
-    // Handle clicks
+    // Handle events
     fn click_header(&mut self, x: u16) -> CommandResult {
         if let Some(column) = self.columns.sort_column_for_click(x) {
             self.sort_by(column)
@@ -97,7 +96,7 @@ impl TableView {
     fn click_table(&mut self, y: u16) -> CommandResult {
         let y = y as usize - 1; // -1 for the header
         let clicked_line = self.mapper.first_visible_line() + y;
-        if clicked_line >= self.mapper.total_number_of_lines() {
+        if clicked_line >= self.mapper.total_lines_count() {
             // Clicked past the table
             return CommandResult::none();
         }
@@ -112,7 +111,18 @@ impl TableView {
         }
 
         self.table_state.select(Some(clicked_item));
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+        Command::SetSelected(Some(self.selected_path().unwrap().clone())).into()
+    }
+
+    fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
+        if let Some(new_selected_item) = self.scrollbar_view.handle_mouse(
+            event,
+            self.mapper.total_lines_count(),
+            self.mapper.visible_lines_count(),
+        ) {
+            return self.select(self.mapper.item(new_selected_item));
+        }
+        CommandResult::none()
     }
 
     // Navigate
@@ -124,12 +134,12 @@ impl TableView {
             }
         }
         self.table_state.scroll_down_by(delta as u16);
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+        Command::SetSelected(Some(self.selected_path().unwrap().clone())).into()
     }
 
     fn previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+        Command::SetSelected(Some(self.selected_path().unwrap().clone())).into()
     }
 
     fn first(&mut self) -> CommandResult {
@@ -142,65 +152,27 @@ impl TableView {
 
     fn next_page(&mut self) -> CommandResult {
         let selected_item = self.table_state.selected().unwrap_or_default();
+        let items_count = self.directory_items_sorted.len();
 
-        // If not at the last visible item, then move to it
-        let current_last_item = self.mapper.item(self.mapper.last_visible_line());
-        if selected_item != current_last_item {
-            return self.select(current_last_item);
+        if let Some(new_selected_item) = pager::next_page(&self.mapper, selected_item, items_count)
+        {
+            return self.select(new_selected_item);
         }
-
-        // If already at the last item, then no-op
-        if selected_item == self.directory_items_sorted.len().saturating_sub(1) {
-            return CommandResult::none();
-        }
-
-        let new_first_line = self.mapper.first_line(selected_item);
-        let new_last_line = self.mapper.last_visible_line_starting_at(new_first_line);
-        let mut new_last_item = self.mapper.item(new_last_line);
-
-        // Adjust if necessary to keep the selected item visible
-        // If the last item overflows, ratatui will scroll down until it is fully visible,
-        // so we need to "scroll up" `new_last_item`, so that the `current_last_item` remains visible.
-        let new_last_item_last_line = self.mapper.last_line(new_last_item);
-        if new_last_item_last_line > new_last_line {
-            new_last_item -= 1;
-        }
-        self.select(new_last_item)
+        CommandResult::none()
     }
 
     fn previous_page(&mut self) -> CommandResult {
         let selected_item = self.table_state.selected().unwrap_or_default();
+        let offset = self.table_state.offset();
 
-        // If not at the first visible item, then move to it
-        let current_first_item = self.table_state.offset();
-        if selected_item != current_first_item {
-            return self.select(current_first_item);
+        if let Some(new_selected_item) = pager::previous_page(&self.mapper, selected_item, offset) {
+            return self.select(new_selected_item);
         }
-
-        // If already at the first item, then no-op
-        if selected_item == 0 {
-            return CommandResult::none();
-        }
-
-        let new_last_item_first_line = self.mapper.first_line(selected_item);
-        let new_first_line = self
-            .mapper
-            .first_visible_line_ending_at(new_last_item_first_line);
-        let mut new_first_item = self.mapper.item(new_first_line);
-
-        // Adjust if necessary to keep the selected item visible
-        // If the first item overflows, ratatui will scroll up until it is fully visible,
-        // so we need to "scroll down" `new_first_item`, so that the `current_first_item` remains visible.
-        let new_first_item_first_line = self.mapper.first_line(new_first_item);
-        if new_first_item_first_line < new_first_line {
-            new_first_item += 1;
-        }
-        self.select(new_first_item)
+        CommandResult::none()
     }
 
-    // Delete / Open
     fn delete(&self) -> CommandResult {
-        match self.selected() {
+        match self.selected_path() {
             Some(path) => Command::DeletePath(path.clone()).into(),
             None => CommandResult::none(),
         }
@@ -215,42 +187,41 @@ impl TableView {
     }
 
     fn open_selected(&mut self) -> CommandResult {
-        match self.selected() {
+        match self.selected_path() {
             Some(path) => Command::Open(path.clone()).into(),
             None => CommandResult::none(),
         }
     }
 
     fn open_selected_in_custom_program(&mut self) -> CommandResult {
-        match self.selected() {
+        match self.selected_path() {
             Some(path) => Command::OpenCustom(path.clone()).into(),
             None => CommandResult::none(),
         }
     }
 
-    // Select
     fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
-        Command::SetSelected(Some(self.selected().unwrap().clone())).into()
+        Command::SetSelected(Some(self.selected_path().unwrap().clone())).into()
     }
 
-    fn selected(&self) -> Option<&PathInfo> {
+    fn selected_path(&self) -> Option<&PathInfo> {
         self.table_state
             .selected()
             .map(|i| &self.directory_items_sorted[i])
     }
 
     fn reset_selection(&mut self) -> CommandResult {
-        if self.directory_items_sorted.is_empty() {
+        let selected = if self.directory_items_sorted.is_empty() {
             self.table_state.select(None);
-            Command::SetSelected(None).into()
+            None
         } else {
             self.table_state.select(Some(0));
-            Command::SetSelected(Some(self.directory_items_sorted[0].clone())).into()
-        }
+            Some(self.directory_items_sorted[0].clone())
+        };
+        Command::SetSelected(selected).into()
     }
 
-    // Set directory, filter
     fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
         self.directory = Some(directory);
         self.directory_items = children;
@@ -266,7 +237,7 @@ impl TableView {
         self.filter = filter;
         self.sort()
     }
-    // Sort
+
     fn sort(&mut self) -> CommandResult {
         let mut items = self.directory_items.clone();
         match self.columns.sort_column() {
@@ -289,7 +260,7 @@ impl TableView {
         // may no longer be present in the `items`, but other times it is present, though possibly at a
         // different position. We handle these cases by storing the currently selected item before assigning
         // the new items, and then attempting to restore the selection afterward.
-        let selected_path = self.selected().cloned();
+        let selected_path = self.selected_path().cloned();
         self.directory_items_sorted = items;
         if let Some(selected_path) = selected_path {
             if let Some(new_index) = self

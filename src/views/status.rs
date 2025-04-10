@@ -1,5 +1,5 @@
 mod handler;
-mod render;
+mod view;
 mod widgets;
 
 use ratatui::layout::Rect;
