@@ -28,6 +28,9 @@ impl View for TableView {
         self.table_area = table_area;
         self.scrollbar_area = scrollbar_area;
 
+        // Update the scrollbar controller with the current area
+        self.scrollbar_controller.set_area(scrollbar_area);
+
         // We must render the table first to initialize the mapper, which is used by the scrollbar
         self.render_table_and_init_mapper(buf, theme);
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
@@ -60,6 +63,11 @@ impl TableView {
             .scrollbar_state
             .content_length(total_number_of_lines)
             .position(selected_line);
+
+        // Update the scrollbar controller with the current state
+        self.scrollbar_controller
+            .set_state(self.scrollbar_state.clone());
+
         let scrollbar = scrollbar(theme);
         StatefulWidget::render(
             scrollbar,

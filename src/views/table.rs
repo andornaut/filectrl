@@ -3,6 +3,7 @@ mod double_click;
 mod handler;
 mod line_item_map;
 mod render;
+mod scrollbar;
 mod style;
 mod widgets;
 
@@ -15,6 +16,7 @@ use self::{
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
     line_item_map::LineItemMap,
+    scrollbar::ScrollbarController,
 };
 use crate::{
     app::config::Config,
@@ -22,7 +24,6 @@ use crate::{
     command::{result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
-use log::debug;
 
 #[derive(Default)]
 pub(super) struct TableView {
@@ -41,12 +42,14 @@ pub(super) struct TableView {
     double_click: DoubleClick,
     mapper: LineItemMap,
     is_scrollbar_dragging: bool,
+    scrollbar_controller: ScrollbarController,
 }
 
 impl TableView {
     pub fn new(config: &Config) -> Self {
         Self {
             double_click: DoubleClick::new(config.double_click_threshold_milliseconds),
+            scrollbar_controller: ScrollbarController::default(),
             ..Self::default()
         }
     }
@@ -312,94 +315,28 @@ impl TableView {
     }
 
     fn is_scrollbar_click(&self, x: u16, y: u16) -> bool {
-        // Check if click is within the scrollbar area
-        self.scrollbar_area.intersects(Rect::new(x, y, 1, 1))
+        self.scrollbar_controller.is_clicked(x, y)
     }
 
     fn update_scrollbar_position(&mut self, y: u16) {
         let total_lines = self.mapper.total_number_of_lines();
         let visible_height = self.table_area.height as usize;
-
-        if total_lines <= visible_height {
-            return;
-        }
-
-        // Calculate the scroll position based on the click/drag position
-        let scrollbar_height = self.scrollbar_area.height;
-        let scrollbar_y = self.scrollbar_area.y;
-        let relative_y = y.saturating_sub(scrollbar_y);
-
-        // Use a slightly reduced height to ensure we can reach the bottom when dragging
-        let effective_height = scrollbar_height.saturating_sub(2);
-
-        // Calculate percentage of scrollbar that was clicked/dragged
-        let percentage = if relative_y >= effective_height {
-            1.0 // At bottom
-        } else {
-            relative_y as f32 / effective_height as f32
-        };
-
-        // Map percentage to content position
-        let selected_pos = (percentage * (total_lines - 1) as f32).round() as usize;
-
-        // Ensure selected_pos is within valid bounds
-        let max_index = self.directory_items_sorted.len().saturating_sub(1);
-        let selected_pos = selected_pos.min(max_index);
-
-        // Determine current state for checking scroll direction
-        let current_selected = self.table_state.selected().unwrap_or(0);
         let current_offset = self.table_state.offset();
-        let scrolling_up = selected_pos < current_selected;
+        let item_count = self.directory_items_sorted.len();
 
-        debug!("Scrollbar Debug:");
-        debug!("  total_lines: {}", total_lines);
-        debug!("  visible_height: {}", visible_height);
-        debug!("  current_offset: {}", current_offset);
-        debug!("  current_selected: {}", current_selected);
-        debug!("  selected_pos: {}", selected_pos);
-        debug!("  scrolling_up: {}", scrolling_up);
-
-        // Calculate new offset using similar logic as page up/down
-        let offset = if scrolling_up {
-            // When scrolling up:
-            // - If selected position is not the first visible item, keep offset
-            // - If selected position is at or above first visible item, adjust offset
-            if selected_pos > current_offset {
-                debug!("  case: scrolling up, selection not yet at top");
-                current_offset
-            } else {
-                debug!("  case: scrolling up, bringing selection to top");
-                selected_pos
-            }
-        } else {
-            // When scrolling down:
-            // - Always position the selected item at the bottom of the window
-            // - But don't go below 0 (for items near the beginning)
-            if selected_pos == 0 {
-                debug!("  case: scrolling to first item");
-                0
-            } else {
-                let new_offset = selected_pos.saturating_sub(visible_height.saturating_sub(1));
-                debug!(
-                    "  case: scrolling down, item at bottom, offset: {}",
-                    new_offset
-                );
-                new_offset
-            }
-        };
-
-        debug!("  final offset: {}", offset);
-
-        // Update scrollbar visual state
-        self.scrollbar_state = self
-            .scrollbar_state
-            .content_length(total_lines)
-            .position(selected_pos);
-
-        // Update the table scroll position
-        *self.table_state.offset_mut() = offset;
-
-        // Update the selection to match
-        self.table_state.select(Some(selected_pos));
+        // Use the scrollbar controller to compute the new scroll position
+        if let Some(result) = self.scrollbar_controller.handle_drag(
+            y,
+            total_lines,
+            visible_height,
+            current_offset,
+            item_count,
+            |line| self.mapper.item(line),
+        ) {
+            // Update the table state with the result
+            *self.table_state.offset_mut() = result.new_offset;
+            self.table_state.select(Some(result.selected_item));
+            self.scrollbar_state = result.scrollbar_state;
+        }
     }
 }
