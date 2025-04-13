@@ -2,10 +2,8 @@ mod handler;
 mod view;
 mod widgets;
 
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use tui_input::{backend::crossterm::EventHandler, Input};
+use tui_textarea::TextArea;
 
 use super::View;
 use crate::{
@@ -14,51 +12,22 @@ use crate::{
 };
 
 #[derive(Default)]
-pub(super) struct CursorPosition {
-    x: u16,
-    y: u16,
-}
-
-#[derive(Default)]
-pub(super) struct SelectionState {
-    active: bool,
-    start: usize,
-    end: usize,
-}
-
-#[derive(Default)]
 pub(super) struct PromptView {
-    cursor_position: CursorPosition,
     directory: Option<PathInfo>,
     filter: String,
-    input: Input,
-    area: Rect,
+    input: TextArea<'static>,
+    input_widget_area: Rect, // Unlike other views, the input area is not the entire area of the view, but of the input widget
     kind: PromptKind,
     selected: Option<PathInfo>,
-    selection: SelectionState,
 }
 
 impl PromptView {
-    pub(super) fn cursor_position(&self, mode: &InputMode) -> Option<(u16, u16)> {
-        if self.should_show(mode) {
-            Some((self.cursor_position.x, self.cursor_position.y))
-        } else {
-            None
-        }
-    }
-
     fn height(&self, mode: &InputMode) -> u16 {
         if self.should_show(mode) {
             1
         } else {
             0
         }
-    }
-
-    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        let key_event = KeyEvent::new(code, modifiers);
-        self.input.handle_event(&Event::Key(key_event));
-        CommandResult::none()
     }
 
     fn label(&self) -> String {
@@ -71,14 +40,14 @@ impl PromptView {
     fn open(&mut self, kind: &PromptKind) -> CommandResult {
         self.kind = kind.clone();
 
-        match &self.kind {
-            PromptKind::Filter => self.input = Input::new(self.filter.clone()),
-            PromptKind::Rename => {
-                if let Some(selected) = &self.selected {
-                    self.input = Input::new(selected.basename.clone())
-                }
-            }
-        }
+        let initial_text = match &self.kind {
+            PromptKind::Filter => self.filter.clone(),
+            PromptKind::Rename => self
+                .selected
+                .as_ref()
+                .map_or(String::new(), |s| s.basename.clone()),
+        };
+        self.input = TextArea::new(vec![initial_text]);
         CommandResult::none()
     }
 
@@ -97,7 +66,7 @@ impl PromptView {
     }
 
     fn submit(&mut self) -> CommandResult {
-        let value = self.input.value().to_string();
+        let value = self.input.lines().join("\n");
         match self.kind {
             PromptKind::Filter => Command::SetFilter(value).into(),
             PromptKind::Rename => match &self.selected {

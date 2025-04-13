@@ -2,6 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, StatefulWidget, Widget},
+    Frame,
 };
 
 use super::{
@@ -19,7 +20,7 @@ impl View for TableView {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
         if area.height < MIN_HEIGHT || area.width < 8 {
             return;
         }
@@ -29,10 +30,10 @@ impl View for TableView {
         self.scrollbar_view.set_area(scrollbar_area);
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
-        self.render_table_and_init_mapper(buf, theme);
+        self.render_table_and_init_mapper(frame.buffer_mut(), theme);
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
-        self.render_scrollbar(buf, theme);
-        self.render_1x1_block(buf, theme, block_area);
+        self.render_scrollbar(frame.buffer_mut(), theme);
+        self.render_1x1_block(frame.buffer_mut(), theme, block_area);
     }
 }
 

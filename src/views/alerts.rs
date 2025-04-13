@@ -1,10 +1,10 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Rect},
     style::Style,
     text::{Line, Text},
     widgets::{Paragraph, Widget},
+    Frame,
 };
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthStr;
@@ -124,7 +124,7 @@ impl View for AlertsView {
         Constraint::Length(self.height(&area))
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
         if !self.should_show(&area) {
             return;
         }
@@ -142,7 +142,13 @@ impl View for AlertsView {
         } else {
             None
         };
-        let bordered_area = bordered(buf, area, style, Some(title_left), title_right);
+        let bordered_area = bordered(
+            frame.buffer_mut(),
+            area,
+            style,
+            Some(title_left),
+            title_right,
+        );
         let text = Text::from(
             self.alerts(bordered_area.width)
                 .into_iter()
@@ -150,6 +156,6 @@ impl View for AlertsView {
                 .collect::<Vec<_>>(),
         );
         let widget = Paragraph::new(text).style(style);
-        widget.render(bordered_area, buf);
+        widget.render(bordered_area, frame.buffer_mut());
     }
 }

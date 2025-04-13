@@ -120,7 +120,7 @@ impl App {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
             self.root
-                .render(area, frame.buffer_mut(), &self.mode, &self.config.theme);
+                .render(area, frame, &self.mode, &self.config.theme);
             self.root.update_cursor(frame, &self.mode);
         })?;
         Ok(())

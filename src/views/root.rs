@@ -37,11 +37,19 @@ impl RootView {
         }
     }
 
-    pub fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
-        let cursor_position = self.prompt.cursor_position(mode);
-        if let Some(position) = cursor_position {
-            frame.set_cursor_position(position);
-        }
+    pub fn update_cursor(&mut self, _frame: &mut Frame<'_>, mode: &InputMode) {
+        // Remove logic related to prompt.cursor_position and setting frame cursor
+        // let cursor_position = self.prompt.cursor_position(mode);
+        // if let Some(position) = cursor_position {
+        //     _frame.set_cursor_position(position);
+        //     debug!("ROOT:update_cursor: {:?}", position);
+        // }
+
+        // Instead, maybe delegate cursor handling to the view itself if needed,
+        // or rely on the terminal backend to show the cursor based on tui-textarea's state.
+        // For now, let's remove the explicit setting.
+        // If tui-textarea needs explicit cursor setting, we might need to fetch
+        // the cursor position differently.
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
@@ -78,9 +86,9 @@ impl View for RootView {
         unreachable!("RootView is the top-level view that always receives the full terminal area directly from App, so its constraint should never be called")
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            render_resize_message(buf, area, theme);
+            render_resize_message(frame.buffer_mut(), area, theme);
             return;
         }
 
@@ -95,7 +103,7 @@ impl View for RootView {
             .split(area)
             .iter()
             .zip(views)
-            .for_each(|(area, handler)| handler.render(*area, buf, mode, theme));
+            .for_each(|(area, handler)| handler.render(*area, frame, mode, theme));
     }
 }
 

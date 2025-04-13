@@ -1,7 +1,7 @@
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::Widget,
+    Frame,
 };
 
 use super::NoticesView;
@@ -12,7 +12,7 @@ impl View for NoticesView {
         Constraint::Length(self.height())
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
         self.area = area;
 
         let notices: Vec<_> = self.active_notices().collect();
@@ -28,7 +28,7 @@ impl View for NoticesView {
 
         for (notice, area) in notices.iter().zip(layout.iter()) {
             let widget = notice.create_widget(theme, area.width, &self.tasks);
-            widget.render(*area, buf);
+            widget.render(*area, frame.buffer_mut());
         }
     }
 }
