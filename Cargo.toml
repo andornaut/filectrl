@@ -14,7 +14,7 @@ version = "0.1.0"
 [dependencies]
 anyhow = "~1.0"
 argh = "0.1"
-chrono = {version = "0.4", default-features = false, features = ["clock", "time"]}
+chrono = {version = "0.4.40", default-features = false, features = ["clock"]}
 clipboard = "0.5"
 env_logger = {version = "0.10.0", default-features = false}
 etcetera = "0.8"
@@ -22,11 +22,14 @@ log = {version = "0.4.20", default-features = false, features = ["serde"]}
 nix = {version = "0", default-features = false, features = ["user"]}
 notify = "8.0.0"
 open = "~5.0"
+# Add required rat-* dependencies
+rat-event = "1.2.3"
+rat-focus = "1.0.1"
+rat-widget = "1.0.5"
 ratatui = {version = "0.29.0", features = ["all-widgets", "serde"]}
 serde = {version = "1.0.218", features = ["derive"]}
 textwrap = "0.16"
 toml = "0.7"
-tui-textarea = {version = "0.7.0", default-features = false, features = ["crossterm", "ratatui"]}
 unicode-segmentation = "~1.12"
 unicode-width = "0.1"
 unix_mode = "0.1"
