@@ -864,6 +864,26 @@ pub struct Theme {
         serialize_with = "serialize_optional_color"
     )]
     prompt_label_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    prompt_cursor_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    prompt_cursor_fg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    prompt_selection_bg: Option<Color>,
+    #[serde(
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color"
+    )]
+    prompt_selection_fg: Option<Color>,
 
     // Notice clipboard
     #[serde(
@@ -1173,5 +1193,33 @@ impl Theme {
 
     pub fn modified_greater_than_year(&self) -> Style {
         self.file_modified_date.greater_than_year()
+    }
+
+    pub fn prompt_cursor(&self) -> Style {
+        let mut style = Style::default();
+
+        if let Some(fg) = self.prompt_cursor_fg {
+            style = style.fg(fg);
+        }
+
+        if let Some(bg) = self.prompt_cursor_bg {
+            style = style.bg(bg);
+        }
+
+        style
+    }
+
+    pub fn prompt_selection(&self) -> Style {
+        let mut style = Style::default();
+
+        if let Some(fg) = self.prompt_selection_fg {
+            style = style.fg(fg);
+        }
+
+        if let Some(bg) = self.prompt_selection_bg {
+            style = style.bg(bg);
+        }
+
+        style
     }
 }

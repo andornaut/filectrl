@@ -37,19 +37,10 @@ impl RootView {
         }
     }
 
-    pub fn update_cursor(&mut self, _frame: &mut Frame<'_>, mode: &InputMode) {
-        // Remove logic related to prompt.cursor_position and setting frame cursor
-        // let cursor_position = self.prompt.cursor_position(mode);
-        // if let Some(position) = cursor_position {
-        //     _frame.set_cursor_position(position);
-        //     debug!("ROOT:update_cursor: {:?}", position);
-        // }
-
-        // Instead, maybe delegate cursor handling to the view itself if needed,
-        // or rely on the terminal backend to show the cursor based on tui-textarea's state.
-        // For now, let's remove the explicit setting.
-        // If tui-textarea needs explicit cursor setting, we might need to fetch
-        // the cursor position differently.
+    pub fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
+        if let Some(position) = self.prompt.cursor_position(mode) {
+            //frame.set_cursor_position(position);
+        }
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {

@@ -2,8 +2,10 @@ mod handler;
 mod view;
 mod widgets;
 
-use ratatui::layout::Rect;
-use tui_textarea::TextArea;
+use log::debug;
+use rat_widget::text::TextPosition;
+use rat_widget::textarea::TextAreaState;
+use ratatui::layout::{Position, Rect};
 
 use super::View;
 use crate::{
@@ -13,15 +15,24 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct PromptView {
+    cursor_position: Position,
     directory: Option<PathInfo>,
     filter: String,
-    input: TextArea<'static>,
-    input_widget_area: Rect, // Unlike other views, the input area is not the entire area of the view, but of the input widget
+    input_area: Rect,
+    input_state: TextAreaState,
     kind: PromptKind,
     selected: Option<PathInfo>,
 }
 
 impl PromptView {
+    pub(super) fn cursor_position(&self, mode: &InputMode) -> Option<(u16, u16)> {
+        if self.should_show(mode) {
+            Some((self.cursor_position.x, self.cursor_position.y))
+        } else {
+            None
+        }
+    }
+
     fn height(&self, mode: &InputMode) -> u16 {
         if self.should_show(mode) {
             1
@@ -40,14 +51,26 @@ impl PromptView {
     fn open(&mut self, kind: &PromptKind) -> CommandResult {
         self.kind = kind.clone();
 
-        let initial_text = match &self.kind {
+        let text = match &self.kind {
             PromptKind::Filter => self.filter.clone(),
             PromptKind::Rename => self
                 .selected
                 .as_ref()
                 .map_or(String::new(), |s| s.basename.clone()),
         };
-        self.input = TextArea::new(vec![initial_text]);
+
+        debug!(
+            "Opening prompt with kind={:?}, text=\"{}\", text_len={}",
+            kind,
+            text,
+            text.len()
+        );
+        self.input_state = TextAreaState::new();
+        self.input_state.set_text(&text);
+        let last_position_x = TextPosition::new(text.len() as u32 - 1, 0);
+        self.input_state.set_cursor(last_position_x, false);
+        debug!("Setting initial cursor to {:?}", last_position_x);
+
         CommandResult::none()
     }
 
@@ -66,7 +89,7 @@ impl PromptView {
     }
 
     fn submit(&mut self) -> CommandResult {
-        let value = self.input.lines().join("\n");
+        let value = self.input_state.text().to_string();
         match self.kind {
             PromptKind::Filter => Command::SetFilter(value).into(),
             PromptKind::Rename => match &self.selected {
