@@ -7,7 +7,7 @@ use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    widgets::{input_widget, prompt_widget},
+    widgets::{input_widget, input_widget_with_selection, prompt_widget},
     PromptView, View,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode};
@@ -29,12 +29,20 @@ impl View for PromptView {
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .areas(area);
 
+        // Store the input area for mouse event handling
+        self.area = input_area;
+
         let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
 
         let label_widget = prompt_widget(theme, label);
         label_widget.render(label_area, buf);
 
-        let input_widget = input_widget(&self.input, theme, cursor_x_scroll);
+        // Get selection bounds if active
+        let selection = self.get_selection_bounds();
+
+        // Use the selection-aware input widget
+        let input_widget =
+            input_widget_with_selection(&self.input, theme, cursor_x_scroll, selection);
         input_widget.render(input_area, buf);
 
         self.cursor_position.x = input_area.x + (cursor_x_pos - cursor_x_scroll) as u16;
