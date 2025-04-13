@@ -3,6 +3,8 @@ mod view;
 mod widgets;
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
 use tui_input::{backend::crossterm::EventHandler, Input};
 
 use super::View;
@@ -18,13 +20,22 @@ pub(super) struct CursorPosition {
 }
 
 #[derive(Default)]
+pub(super) struct SelectionState {
+    active: bool,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Default)]
 pub(super) struct PromptView {
     cursor_position: CursorPosition,
     directory: Option<PathInfo>,
     filter: String,
     input: Input,
+    area: Rect,
     kind: PromptKind,
     selected: Option<PathInfo>,
+    selection: SelectionState,
 }
 
 impl PromptView {
