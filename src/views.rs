@@ -13,6 +13,7 @@ use ratatui::{
     style::Style,
     text::Line,
     widgets::{Block, Borders, Widget},
+    Frame,
 };
 
 use crate::{
@@ -22,7 +23,7 @@ use crate::{
 
 pub(super) trait View: CommandHandler {
     fn constraint(&self, area: Rect, mode: &InputMode) -> Constraint;
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme);
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme);
 }
 
 pub(super) fn bordered(

@@ -1,10 +1,10 @@
 use ratatui::{
-    buffer::Buffer,
     crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
+    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -92,7 +92,7 @@ impl View for HeaderView {
         Constraint::Length(self.height(area.width))
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
         self.area = area;
 
         let active_style = theme.header_active();
@@ -112,7 +112,7 @@ impl View for HeaderView {
         let text: Vec<_> = container.into_iter().map(Line::from).collect();
 
         let widget = Paragraph::new(text).style(theme.header());
-        widget.render(self.area, buf);
+        widget.render(self.area, frame.buffer_mut());
     }
 }
 

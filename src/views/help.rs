@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::Frame;
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -76,7 +76,7 @@ impl View for HelpView {
         Constraint::Length(self.height())
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
         if !self.is_visible || area.height < MIN_HEIGHT {
             return;
         }
@@ -94,7 +94,13 @@ impl View for HelpView {
         } else {
             None
         };
-        let bordered_rect = bordered(buf, area, style, Some(title_left), title_right);
+        let bordered_area = bordered(
+            frame.buffer_mut(),
+            area,
+            style,
+            Some(title_left),
+            title_right,
+        );
         let keyboard_shortcuts = match *mode {
             InputMode::Prompt => &PROMPT_KEYBOARD_SHORTCUTS[..],
             _ => &DEFAULT_KEYBOARD_SHORTCUTS[..],
@@ -118,6 +124,6 @@ impl View for HelpView {
         let widget = Paragraph::new(Line::from(spans))
             .style(style)
             .wrap(Wrap { trim: true });
-        widget.render(bordered_rect, buf);
+        widget.render(bordered_area, frame.buffer_mut());
     }
 }

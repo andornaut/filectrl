@@ -1,7 +1,7 @@
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Rect},
     widgets::Widget,
+    Frame,
 };
 
 use super::{widgets::default_widget, StatusView};
@@ -12,10 +12,10 @@ impl View for StatusView {
         Constraint::Length(1)
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
         self.area = area;
         let directory = &self.directory.as_ref().expect("Directory not set");
         let widget = default_widget(directory, self.directory_len, &self.selected, theme);
-        widget.render(area, buf);
+        widget.render(area, frame.buffer_mut());
     }
 }

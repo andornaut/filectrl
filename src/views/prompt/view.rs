@@ -1,15 +1,12 @@
+// use log::debug;
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::Widget,
+    Frame,
 };
-use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
-use super::{
-    widgets::{input_widget, input_widget_with_selection, prompt_widget},
-    PromptView, View,
-};
+use super::{widgets::prompt_widget, PromptView, View};
 use crate::{app::config::theme::Theme, command::mode::InputMode};
 
 impl View for PromptView {
@@ -17,50 +14,24 @@ impl View for PromptView {
         Constraint::Length(self.height(mode))
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
         if !self.should_show(mode) {
             return;
         }
 
         let label = self.label();
-        let label_width = label.width_cjk() as u16 + 1; // +1 for the space between label and input
-        let [label_area, input_area] = Layout::default()
+        let label_width = label.width_cjk() as u16;
+        let [label_area, input_widget_area] = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .areas(area);
-
-        // Store the input area for mouse event handling
-        self.area = input_area;
-
-        let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
+        self.input_widget_area = input_widget_area;
 
         let label_widget = prompt_widget(theme, label);
-        label_widget.render(label_area, buf);
+        label_widget.render(label_area, frame.buffer_mut());
 
-        // Get selection bounds if active
-        let selection = self.get_selection_bounds();
+        self.input.set_style(theme.prompt_input());
 
-        // Use the selection-aware input widget
-        let input_widget =
-            input_widget_with_selection(&self.input, theme, cursor_x_scroll, selection);
-        input_widget.render(input_area, buf);
-
-        self.cursor_position.x = input_area.x + (cursor_x_pos - cursor_x_scroll) as u16;
-        self.cursor_position.y = input_area.y;
+        frame.render_widget(&self.input, input_widget_area);
     }
-}
-
-fn cursor_position(input: &Input, input_area: Rect) -> (usize, usize) {
-    let input_width = input_area.width as usize;
-    let cursor_x_pos = input.visual_cursor();
-    let cursor_x_scroll = input.visual_scroll(input_width);
-    let cursor_x_scroll = if cursor_x_pos >= input_width {
-        // When there's horizontal scrolling in the input field, the cursor
-        // would otherwise be positioned on the last char instead of after
-        // the last char as is the case when there is no scrolling.
-        cursor_x_scroll + 1
-    } else {
-        cursor_x_scroll
-    };
-    (cursor_x_pos, cursor_x_scroll)
 }
