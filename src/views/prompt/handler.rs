@@ -42,7 +42,7 @@ impl CommandHandler for PromptView {
                     state.set_cursor(cursor_position, false);
                 }
 
-                // Workaround https://github.com/thscharler/rat-salsa/issues/5
+                // Workaround https://github.com/thscharler/rat-salsa/issues/6
                 let area_width = state.area.width;
                 if *code == KeyCode::Right && cursor_position.x >= area_width as u32 {
                     let hscroll = state.hscroll.offset();
