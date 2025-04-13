@@ -1,20 +1,13 @@
-use log::debug;
-use ratatui::{
-    buffer::Buffer,
-    crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
-    layout::{Constraint, Direction, Layout, Rect},
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
-};
+mod handler;
+mod view;
+mod widgets;
+
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{backend::crossterm::EventHandler, Input};
-use unicode_width::UnicodeWidthStr;
 
 use super::View;
 use crate::{
-    app::config::theme::Theme,
-    command::{
-        handler::CommandHandler, mode::InputMode, result::CommandResult, Command, PromptKind,
-    },
+    command::{mode::InputMode, result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
 
@@ -102,96 +95,4 @@ impl PromptView {
             },
         }
     }
-}
-
-impl CommandHandler for PromptView {
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
-            Command::SetDirectory(directory, _) => {
-                if let Some(previous_directory) = &self.directory {
-                    if previous_directory.path != directory.path {
-                        self.directory = Some(directory.clone());
-                        debug!("Setting filter to empty string");
-                        return Command::SetFilter("".into()).into();
-                    }
-                }
-                CommandResult::none()
-            }
-            Command::OpenPrompt(kind) => self.open(kind),
-            Command::SetFilter(filter) => self.set_filter(filter.clone()),
-            Command::SetSelected(selected) => self.set_selected(selected.clone()),
-            _ => CommandResult::NotHandled,
-        }
-    }
-
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match *code {
-            KeyCode::Esc => Command::ClosePrompt.into(),
-            KeyCode::Enter => self.submit(),
-            _ => self.handle_key(*code, *modifiers),
-        }
-    }
-
-    fn should_receive_key(&self, mode: &InputMode) -> bool {
-        matches!(mode, InputMode::Prompt)
-    }
-}
-
-impl View for PromptView {
-    fn constraint(&self, _: Rect, mode: &InputMode) -> Constraint {
-        Constraint::Length(self.height(mode))
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: &InputMode, theme: &Theme) {
-        if !self.should_show(mode) {
-            return;
-        }
-
-        let label = self.label();
-        let label_width = label.width_cjk() as u16 + 1; // +1 for the space between label and input
-        let [label_area, input_area] = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
-            .areas(area);
-
-        let (cursor_x_pos, cursor_x_scroll) = cursor_position(&self.input, input_area);
-
-        let label_widget = prompt_widget(theme, label);
-        label_widget.render(label_area, buf);
-
-        let input_widget = input_widget(&self.input, theme, cursor_x_scroll);
-        input_widget.render(input_area, buf);
-
-        self.cursor_position.x = input_area.x + (cursor_x_pos - cursor_x_scroll) as u16;
-        self.cursor_position.y = input_area.y;
-    }
-}
-
-fn cursor_position(input: &Input, input_area: Rect) -> (usize, usize) {
-    let input_width = input_area.width as usize;
-    let cursor_x_pos = input.visual_cursor();
-    let cursor_x_scroll = input.visual_scroll(input_width);
-    let cursor_x_scroll = if cursor_x_pos >= input_width {
-        // When there's horizontal scrolling in the input field, the cursor
-        // would otherwise be positioned on the last char instead of after
-        // the last char as is the case when there is no scrolling.
-        cursor_x_scroll + 1
-    } else {
-        cursor_x_scroll
-    };
-    (cursor_x_pos, cursor_x_scroll)
-}
-
-fn prompt_widget<'a>(theme: &'a Theme, label: String) -> Paragraph<'a> {
-    let line = Line::from(vec![
-        Span::styled(label, theme.prompt_label()),
-        Span::styled(" ", theme.prompt_input()),
-    ]);
-    Paragraph::new(line)
-}
-
-fn input_widget<'a>(input: &'a Input, theme: &'a Theme, x_offset_scroll: usize) -> Paragraph<'a> {
-    Paragraph::new(input.value())
-        .scroll((0, x_offset_scroll as u16))
-        .style(theme.prompt_input())
 }
