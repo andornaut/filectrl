@@ -37,12 +37,6 @@ impl RootView {
         }
     }
 
-    pub fn update_cursor(&mut self, frame: &mut Frame<'_>, mode: &InputMode) {
-        if let Some(position) = self.prompt.cursor_position(mode) {
-            //frame.set_cursor_position(position);
-        }
-    }
-
     fn views(&mut self) -> Vec<&mut dyn View> {
         vec![
             // The order is significant

@@ -121,7 +121,6 @@ impl App {
             let area = frame.area();
             self.root
                 .render(area, frame, &self.mode, &self.config.theme);
-            self.root.update_cursor(frame, &self.mode);
         })?;
         Ok(())
     }
