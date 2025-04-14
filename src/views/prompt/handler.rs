@@ -33,23 +33,13 @@ impl CommandHandler for PromptView {
             KeyCode::Enter => self.submit(),
             _ => {
                 text_area::handle_events(text_area_state, true, &event);
-                let mut cursor_position = text_area_state.cursor();
-                let line_width = text_area_state.line_width(0);
-
-                // Don't allow the cursor to move past the end of the text
-                if cursor_position.x == line_width {
-                    cursor_position.x -= 1;
-                    text_area_state.set_cursor(cursor_position, false);
-                }
-
                 // Workaround https://github.com/thscharler/rat-salsa/issues/6
-                let area_width = text_area_state.area.width;
-                if *code == KeyCode::Right && cursor_position.x >= area_width as u32 {
-                    let hscroll_offset = text_area_state.hscroll.offset();
-                    let last_position = line_width as usize - hscroll_offset - 1;
-                    if cursor_position.x <= last_position as u32 {
-                        text_area_state.hscroll.set_offset(hscroll_offset + 1);
-                    }
+                let cursor_position_x = text_area_state.cursor().x;
+                let hscroll_offset = text_area_state.hscroll.offset();
+                let is_position_after_right_edge =
+                    cursor_position_x == text_area_state.area.width as u32 + hscroll_offset as u32;
+                if *code == KeyCode::Right && is_position_after_right_edge {
+                    text_area_state.hscroll.set_offset(hscroll_offset + 1);
                 }
                 CommandResult::none()
             }

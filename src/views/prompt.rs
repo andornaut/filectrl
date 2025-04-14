@@ -4,7 +4,7 @@ mod widgets;
 
 use rat_widget::text::TextPosition;
 use rat_widget::textarea::TextAreaState;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 
 use super::View;
 use crate::{
@@ -14,7 +14,6 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct PromptView {
-    cursor_position: Position,
     directory: Option<PathInfo>,
     filter: String,
     input_area: Rect,
@@ -24,14 +23,6 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub(super) fn cursor_position(&self, mode: &InputMode) -> Option<(u16, u16)> {
-        if self.should_show(mode) {
-            Some((self.cursor_position.x, self.cursor_position.y))
-        } else {
-            None
-        }
-    }
-
     fn height(&self, mode: &InputMode) -> u16 {
         if self.should_show(mode) {
             1
@@ -61,15 +52,17 @@ impl PromptView {
         let mut text_area_state = TextAreaState::new();
         text_area_state.set_text(&text);
 
-        let line_width = text_area_state.line_width(0);
-        let last_position = TextPosition::new(line_width - 1, 0);
-        text_area_state.set_cursor(last_position, false);
+        // Move to 1 position after the last character
+        let text_width_plus_1 = text_area_state.line_width(0) + 1;
+        let position_after_last_char = TextPosition::new(text_width_plus_1 - 1, 0);
+        text_area_state.set_cursor(position_after_last_char, false);
 
         // Workaround https://github.com/thscharler/rat-salsa/issues/5
         // `text_area_state.area` is not set yet, because `TextArea` hasn't been rendered yet, so
-        // we need to keep track of `self.input_area` and set the hscroll offset manually.
-        let hscroll_offset = line_width as usize - self.input_area.width as usize;
-        text_area_state.hscroll.set_offset(hscroll_offset);
+        // we need to keep track of the `self.input_area` that would have applied, and then set the
+        // hscroll offset manually.
+        let hscroll_offset = text_width_plus_1.saturating_sub(self.input_area.width as u32);
+        text_area_state.hscroll.set_offset(hscroll_offset as usize);
 
         self.input_state = text_area_state;
         CommandResult::none()
