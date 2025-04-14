@@ -2,7 +2,6 @@ mod handler;
 mod view;
 mod widgets;
 
-use log::debug;
 use rat_widget::text::TextPosition;
 use rat_widget::textarea::TextAreaState;
 use ratatui::layout::{Position, Rect};
@@ -59,18 +58,20 @@ impl PromptView {
                 .map_or(String::new(), |s| s.basename.clone()),
         };
 
-        debug!(
-            "Opening prompt with kind={:?}, text=\"{}\", text_len={}",
-            kind,
-            text,
-            text.len()
-        );
-        self.input_state = TextAreaState::new();
-        self.input_state.set_text(&text);
-        let last_position_x = TextPosition::new(text.len() as u32 - 1, 0);
-        self.input_state.set_cursor(last_position_x, false);
-        debug!("Setting initial cursor to {:?}", last_position_x);
+        let mut text_area_state = TextAreaState::new();
+        text_area_state.set_text(&text);
 
+        let line_width = text_area_state.line_width(0);
+        let last_position = TextPosition::new(line_width - 1, 0);
+        text_area_state.set_cursor(last_position, false);
+
+        // Workaround https://github.com/thscharler/rat-salsa/issues/5
+        // `text_area_state.area` is not set yet, because `TextArea` hasn't been rendered yet, so
+        // we need to keep track of `self.input_area` and set the hscroll offset manually.
+        let hscroll_offset = line_width as usize - self.input_area.width as usize;
+        text_area_state.hscroll.set_offset(hscroll_offset);
+
+        self.input_state = text_area_state;
         CommandResult::none()
     }
 
