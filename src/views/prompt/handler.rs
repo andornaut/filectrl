@@ -1,4 +1,3 @@
-use log::debug;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 
 use super::PromptView;
@@ -28,27 +27,28 @@ impl CommandHandler for PromptView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         let key_event = KeyEvent::new(*code, *modifiers);
         let event = Event::Key(key_event);
-        let mut state = &mut self.input_state;
+        let text_area_state = &mut self.input_state;
         match *code {
             KeyCode::Esc => Command::ClosePrompt.into(),
             KeyCode::Enter => self.submit(),
             _ => {
-                text_area::handle_events(&mut state, true, &event);
-                let mut cursor_position = state.cursor();
+                text_area::handle_events(text_area_state, true, &event);
+                let mut cursor_position = text_area_state.cursor();
+                let line_width = text_area_state.line_width(0);
 
                 // Don't allow the cursor to move past the end of the text
-                if cursor_position.x == state.text().len() as u32 {
-                    cursor_position.x = cursor_position.x - 1;
-                    state.set_cursor(cursor_position, false);
+                if cursor_position.x == line_width {
+                    cursor_position.x -= 1;
+                    text_area_state.set_cursor(cursor_position, false);
                 }
 
                 // Workaround https://github.com/thscharler/rat-salsa/issues/6
-                let area_width = state.area.width;
+                let area_width = text_area_state.area.width;
                 if *code == KeyCode::Right && cursor_position.x >= area_width as u32 {
-                    let hscroll = state.hscroll.offset();
-                    let last_position = state.text().len() - hscroll - 1;
+                    let hscroll_offset = text_area_state.hscroll.offset();
+                    let last_position = line_width as usize - hscroll_offset - 1;
                     if cursor_position.x <= last_position as u32 {
-                        state.hscroll.set_offset(hscroll + 1);
+                        text_area_state.hscroll.set_offset(hscroll_offset + 1);
                     }
                 }
                 CommandResult::none()
@@ -57,11 +57,9 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        let mut state = &mut self.input_state;
-        debug!("mouse_event: {:?}, column: {:?}", event, event.column);
         let event = Event::Mouse(*event);
-        let event_result = text_area::handle_readonly_events(&mut state, true, &event);
-        debug!("mouse result: {:?}", event_result);
+        let text_area_state = &mut self.input_state;
+        text_area::handle_readonly_events(text_area_state, true, &event);
         CommandResult::none()
     }
 
