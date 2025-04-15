@@ -1,7 +1,7 @@
 use rat_widget::textarea::TextArea;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
-    widgets::Widget,
+    widgets::{StatefulWidget, Widget},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -16,7 +16,7 @@ impl View for PromptView {
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
         let label = self.label();
-        let label_width = label.width_cjk() as u16;
+        let label_width = label.width() as u16;
         let [label_area, input_area] = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
@@ -32,7 +32,7 @@ impl View for PromptView {
 
         let textarea_widget = TextArea::new().style(theme.prompt_input());
         let cursor = self.input_state.cursor();
-        frame.render_stateful_widget(textarea_widget, input_area, &mut self.input_state);
+        textarea_widget.render(input_area, frame.buffer_mut(), &mut self.input_state);
 
         // Panics if called before render_stateful_widget()
         self.input_state.scroll_cursor_to_visible();

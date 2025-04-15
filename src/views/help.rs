@@ -85,8 +85,8 @@ impl View for HelpView {
         let style = theme.help();
         let title_left = "Help";
         let title_right = "(Press \"?\" to close)";
-        let title_left_width = title_left.width_cjk() as u16;
-        let title_right_width = title_right.width_cjk() as u16;
+        let title_left_width = title_left.width() as u16;
+        let title_right_width = title_right.width() as u16;
         let has_extra_width = area.width > title_left_width + title_right_width + 2; // +2 for the borders
 
         let title_right = if has_extra_width {

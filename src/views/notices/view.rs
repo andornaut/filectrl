@@ -26,9 +26,12 @@ impl View for NoticesView {
             .constraints(constraints)
             .split(area);
 
-        for (notice, area) in notices.iter().zip(layout.iter()) {
-            let widget = notice.create_widget(theme, area.width, &self.tasks);
-            widget.render(*area, frame.buffer_mut());
-        }
+        notices
+            .into_iter()
+            .zip(layout.iter())
+            .for_each(|(notice, area)| {
+                let widget = notice.create_widget(theme, area.width, &self.tasks);
+                widget.render(*area, frame.buffer_mut());
+            });
     }
 }

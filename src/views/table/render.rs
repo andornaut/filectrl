@@ -58,16 +58,18 @@ impl TableView {
     fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
+        let clipboard_command = self.clipboard.get_clipboard_command();
+
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
             .iter()
             .map(|item| {
                 let (row, height) = row_and_height(
                     theme,
-                    &self.clipboard,
+                    &clipboard_command,
                     self.columns.name_width(),
-                    item,
                     relative_to_datetime,
+                    item,
                 );
                 (row, height)
             })
