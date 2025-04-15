@@ -2,7 +2,7 @@ use textwrap::{wrap, Options, WordSplitter};
 use unicode_width::UnicodeWidthStr;
 
 const ELLIPSIS: &str = "…";
-// width_cjk() considers ellipsis to be two characters wide, but we know it's 1,
+// width() considers ellipsis to be two characters wide, but we know it's 1,
 const ELLIPSIS_WIDTH: u16 = 1;
 
 pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
@@ -37,7 +37,7 @@ fn split_utf8(line: &str, width: u16) -> Vec<String> {
 pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
-    let line_width = line.width_cjk();
+    let line_width = line.width();
     if line_width <= width as usize {
         return line.into();
     }
@@ -50,7 +50,7 @@ pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
     let mut chars_to_include = Vec::new();
 
     for c in chars.iter().rev() {
-        let char_width = c.to_string().width_cjk();
+        let char_width = c.to_string().width();
         if total_width + char_width > remaining_width as usize {
             break;
         }

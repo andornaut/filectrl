@@ -1,136 +1,109 @@
-use std::fmt::{Display, Formatter};
-
-use anyhow::{anyhow, Error};
-use clipboard::{ClipboardContext, ClipboardProvider};
-use log::warn;
+use std::{
+    fmt::{Display, Formatter},
+    sync::{Arc, Mutex},
+};
 
 use crate::{command::Command, file_system::path_info::PathInfo};
+use anyhow::{anyhow, Error};
+use cli_clipboard::{ClipboardContext, ClipboardProvider};
+use log::warn;
+use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
+use std::fmt::Debug;
 
-/// A clipboard that caches its content to avoid requiring mutable access for read operations.
-///
-/// The clipboard is a shared system resource that requires synchronization when reading.
-/// By caching the content, we can avoid requiring mutable access for read operations
-/// like `is_copied` and `is_cut`, while still maintaining correctness by updating
-/// the cache when writing.
-/// This ensures that is_copied and is_cut can be called without holding a mutable reference to the Clipboard.
-/// n.b. maybe_command is not cached, and therefore requires mutable access to the Clipboard.
+impl RatClipboard for Clipboard {
+    fn get_string(&self) -> Result<String, ClipboardError> {
+        self.backend.get_string().map_err(|_| ClipboardError)
+    }
+
+    fn set_string(&self, s: &str) -> Result<(), ClipboardError> {
+        self.backend.set_string(s).map_err(|_| ClipboardError)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Clipboard {
     backend: ClipboardBackend,
-    cached_content: Option<(ClipboardCommand, String)>,
 }
 
 impl Default for Clipboard {
     fn default() -> Self {
         Self {
-            backend: ClipboardBackend::new().expect("Can access the clipboard"),
-            cached_content: None,
+            backend: ClipboardBackend::try_new().expect("Can access the clipboard"),
         }
     }
 }
 
 impl Clipboard {
-    pub(super) fn is_copied(&self, path: &PathInfo) -> bool {
-        self.is_command_type(path, ClipboardCommand::Copy)
+    pub(super) fn as_rat_clipboard(self) -> Box<dyn RatClipboard> {
+        Box::new(self) as Box<dyn RatClipboard>
     }
 
-    pub(super) fn is_cut(&self, path: &PathInfo) -> bool {
-        self.is_command_type(path, ClipboardCommand::Move)
+    pub(super) fn copy_file(&self, path: &str) {
+        if let Ok(path_info) = PathInfo::try_from(path) {
+            self.set_clipboard_command(ClipboardCommand::Copy(path_info));
+        }
     }
 
-    fn is_command_type(&self, path: &PathInfo, expected_command: ClipboardCommand) -> bool {
-        self.cached_content
-            .as_ref()
-            .filter(|(command, _)| *command == expected_command)
-            .and_then(|(_, cached_path)| {
-                PathInfo::try_from(cached_path.as_str())
-                    .ok()
-                    .map(|cached_path| cached_path == *path)
-            })
-            .unwrap_or(false)
+    pub(super) fn cut_file(&self, path: &str) {
+        if let Ok(path_info) = PathInfo::try_from(path) {
+            self.set_clipboard_command(ClipboardCommand::Move(path_info));
+        }
     }
 
-    pub(super) fn copy(&mut self, path: &str) {
-        self.set_clipboard(ClipboardCommand::Copy, path);
-    }
-
-    pub(super) fn cut(&mut self, path: &str) {
-        self.set_clipboard(ClipboardCommand::Move, path);
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.cached_content = None;
+    pub(super) fn clear(&self) {
         if let Err(e) = self.backend.clear() {
             warn!("Failed to clear clipboard: {}", e);
         }
     }
 
-    fn set_clipboard(&mut self, command: ClipboardCommand, from: &str) {
-        let text = format!("{command} {from}");
-        if let Err(e) = self.backend.set_text(&text) {
+    fn set_clipboard_command(&self, command: ClipboardCommand) {
+        let text = command.to_string();
+        if let Err(e) = self.backend.set_string(&text) {
             warn!("Failed to set clipboard text: {}", e);
         }
-        self.cached_content = Some((command, from.to_string()));
+    }
+
+    pub fn get_clipboard_command(&self) -> Option<ClipboardCommand> {
+        self.backend
+            .get_string()
+            .ok()
+            .and_then(|text| ClipboardCommand::try_from(text.as_str()).ok())
+    }
+
+    pub fn try_to_command(&self, destination: PathInfo) -> Result<Command, Error> {
+        self.get_clipboard_command()
+            .map(|command| command.to_command(destination))
+            .ok_or_else(|| anyhow!("Failed to convert clipboard content into a command"))
     }
 }
 
-pub(super) struct ClipboardPasteContext<'a> {
-    clipboard: &'a mut Clipboard,
-    destination: PathInfo,
-}
-
-impl<'a> ClipboardPasteContext<'a> {
-    pub(super) fn new(clipboard: &'a mut Clipboard, destination: PathInfo) -> Self {
-        Self {
-            clipboard,
-            destination,
-        }
-    }
-}
-
-impl TryFrom<ClipboardPasteContext<'_>> for Command {
-    type Error = Error;
-
-    fn try_from(context: ClipboardPasteContext) -> Result<Self, Self::Error> {
-        if let Ok(text) = context.clipboard.backend.get_text() {
-            if let Some((command, from)) = parse_clipboard_text(&text) {
-                if let Ok(from_path) = PathInfo::try_from(from.as_str()) {
-                    return Ok(command.as_command(from_path, context.destination));
-                }
-            }
-        }
-        Err(anyhow!("No valid command in clipboard"))
-    }
-}
-
-fn parse_clipboard_text(text: &str) -> Option<(ClipboardCommand, String)> {
-    let mut parts = text.splitn(2, ' ');
-    let command_str = parts.next()?;
-    let path = parts.next()?.to_string();
-    let command = ClipboardCommand::try_from(command_str).ok()?;
-    Some((command, path))
-}
-
-#[derive(PartialEq)]
-enum ClipboardCommand {
-    Copy,
-    Move,
+#[derive(Clone, Debug)]
+pub enum ClipboardCommand {
+    Copy(PathInfo),
+    Move(PathInfo),
 }
 
 impl Display for ClipboardCommand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::Copy => "cp",
-            Self::Move => "mv",
+        let (name, path) = match self {
+            Self::Copy(path) => ("cp", path),
+            Self::Move(path) => ("mv", path),
         };
-        write!(f, "{}", name)
+        write!(f, "{} {}", name, path)
     }
 }
 
-impl ClipboardCommand {
-    fn as_command(&self, from: PathInfo, to: PathInfo) -> Command {
-        match self {
-            Self::Copy => Command::Copy(from, to),
-            Self::Move => Command::Move(from, to),
+impl TryFrom<&Command> for ClipboardCommand {
+    type Error = anyhow::Error;
+
+    fn try_from(command: &Command) -> Result<Self, Self::Error> {
+        match command {
+            Command::CopiedToClipboard(path) => Ok(Self::Copy(path.clone())),
+            Command::CutToClipboard(path) => Ok(Self::Move(path.clone())),
+            _ => Err(anyhow::anyhow!(
+                "Cannot convert {:?} to ClipboardCommand",
+                command
+            )),
         }
     }
 }
@@ -139,41 +112,69 @@ impl TryFrom<&str> for ClipboardCommand {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "cp" => Ok(Self::Copy),
-            "mv" => Ok(Self::Move),
+        let mut parts = value.splitn(2, ' ');
+        let command_str = parts.next().ok_or_else(|| anyhow!("Missing command"))?;
+        let path_str = parts.next().ok_or_else(|| anyhow!("Missing path"))?;
+        let path = PathInfo::try_from(path_str)?;
+
+        match command_str {
+            "cp" => Ok(Self::Copy(path)),
+            "mv" => Ok(Self::Move(path)),
             _ => Err(anyhow!("Invalid ClipboardCommand")),
         }
     }
 }
 
+impl ClipboardCommand {
+    fn to_command(&self, to: PathInfo) -> Command {
+        match self {
+            Self::Copy(path) => Command::Copy(path.clone(), to),
+            Self::Move(path) => Command::Move(path.clone(), to),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ClipboardBackend {
-    clipboard: ClipboardContext,
+    clipboard: Arc<Mutex<ClipboardContext>>,
+}
+
+impl Debug for ClipboardBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipboardBackend")
+            .field("clipboard", &"<ClipboardContext>")
+            .finish()
+    }
 }
 
 impl ClipboardBackend {
-    fn new() -> Result<Self, Error> {
+    fn try_new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
-            clipboard: ClipboardProvider::new()
-                .map_err(|e| anyhow!("Failed to initialize clipboard: {}", e))?,
+            clipboard: Arc::new(Mutex::new(ClipboardProvider::new()?)),
         })
     }
 
-    fn get_text(&mut self) -> Result<String, Error> {
-        self.clipboard
+    fn get_string(&self) -> Result<String, Error> {
+        let mut clipboard = self
+            .clipboard
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
+        clipboard
             .get_contents()
             .map_err(|e| anyhow!("Failed to get clipboard contents: {}", e))
     }
 
-    fn set_text(&mut self, text: &str) -> Result<(), Error> {
-        self.clipboard
+    fn set_string(&self, text: &str) -> Result<(), Error> {
+        let mut clipboard = self
+            .clipboard
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
+        clipboard
             .set_contents(text.to_string())
             .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))
     }
 
-    fn clear(&mut self) -> Result<(), Error> {
-        self.clipboard
-            .set_contents("".to_string())
-            .map_err(|e| anyhow!("Failed to clear clipboard: {}", e))
+    fn clear(&self) -> Result<(), Error> {
+        self.set_string("")
     }
 }

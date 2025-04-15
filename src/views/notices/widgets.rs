@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::{
     layout::Alignment,
     style::{Modifier, Style},
@@ -5,82 +7,64 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders},
 };
-use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::config::theme::Theme,
+    clipboard::ClipboardCommand,
     command::task::{Progress, Task},
-    file_system::path_info::PathInfo,
     utf8::truncate_left_utf8,
 };
 
-use super::ClipboardOperation;
+const MOVE_PREFIX: &str = " Cut ";
+const COPY_PREFIX: &str = " Copied ";
+const CLIPBOARD_SUFFIX: &str = "(Press c to cancel)";
+const FILTER_PREFIX: &str = " Filtered by ";
+const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Theme,
     width: u16,
-    path: &'a PathInfo,
-    operation: &'a ClipboardOperation,
+    clipboard_command: &'a ClipboardCommand,
 ) -> Block<'a> {
-    let operation_label = match operation {
-        ClipboardOperation::Cut => " Cut ",
-        ClipboardOperation::Copy => " Copied ",
+    let (prefix, path) = match clipboard_command {
+        ClipboardCommand::Move(path) => (MOVE_PREFIX, path),
+        ClipboardCommand::Copy(path) => (COPY_PREFIX, path),
     };
-    let prefix = operation_label;
-    let middle = &path.path;
-    let middle_width = middle.width_cjk() as u16;
-    let suffix = "(Press c to cancel)";
-    let prefix_width = prefix.width_cjk() as u16;
-    let suffix_width = suffix.width_cjk() as u16;
 
-    let has_extra_width = width > prefix_width + middle_width + suffix_width;
-    let mut available_path_width = width.saturating_sub(prefix_width);
-    if has_extra_width {
-        available_path_width = available_path_width.saturating_sub(prefix_width)
-    };
-    let truncated_path = truncate_left_utf8(middle, available_path_width);
-    let left_title = Line::from(vec![
+    let available_width = width.saturating_sub(prefix.width() as u16);
+    let truncated_path = truncate_left_utf8(&path.path, available_width);
+
+    let left = Line::from(vec![
         Span::raw(prefix),
         Span::styled(
             truncated_path,
-            Style::default().add_modifier(Modifier::BOLD),
+            theme.notice_clipboard().add_modifier(Modifier::BOLD),
         ),
     ]);
 
-    let mut block = Block::default()
-        .borders(Borders::NONE)
-        .title(left_title)
-        .style(theme.notice_clipboard());
+    let right = if width > (prefix.width() + path.path.width() + CLIPBOARD_SUFFIX.width()) as u16 {
+        Some(Line::from(CLIPBOARD_SUFFIX))
+    } else {
+        None
+    };
 
-    if has_extra_width {
-        let right_title = Line::from(suffix).alignment(Alignment::Right);
-        block = block.title(right_title);
-    }
-    block
+    create_notice_block(left, right, theme.notice_clipboard())
 }
 
 pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Block<'a> {
-    let bold_style = Style::default().add_modifier(Modifier::BOLD);
+    let left = Line::from(vec![
+        FILTER_PREFIX.into(),
+        Span::styled(filter, theme.notice_filter().add_modifier(Modifier::BOLD)),
+    ]);
 
-    let prefix = " Filtered by ";
-    let suffix = "(Press \"Esc\" to clear)";
-    let filter_width = filter.width_cjk() as u16;
-    let prefix_width = prefix.width_cjk() as u16;
-    let suffix_width = suffix.width_cjk() as u16;
+    let right = if width > (FILTER_PREFIX.width() + filter.width() + FILTER_SUFFIX.width()) as u16 {
+        Some(Line::from(FILTER_SUFFIX))
+    } else {
+        None
+    };
 
-    let has_extra_width = width > prefix_width + filter_width + suffix_width;
-    let left_title = Line::from(vec![prefix.into(), Span::styled(filter, bold_style)]);
-    let mut block = Block::default()
-        .borders(Borders::NONE)
-        .title(left_title)
-        .style(theme.notice_filter());
-
-    if has_extra_width {
-        let right_title = Line::from(Span::raw(suffix)).alignment(Alignment::Right);
-        block = block.title(right_title);
-    }
-    block
+    create_notice_block(left, right, theme.notice_filter())
 }
 
 pub(super) fn progress_widget<'a>(
@@ -88,30 +72,32 @@ pub(super) fn progress_widget<'a>(
     width: u16,
     tasks: &'a HashSet<Task>,
 ) -> Block<'a> {
-    let mut progress = Progress(0, 0);
-    for task in tasks {
-        progress = task.combine_progress(&progress);
-    }
-
+    let progress = tasks
+        .iter()
+        .fold(Progress(0, 0), |acc, task| task.combine_progress(&acc));
     let percent = (progress.0 as f64 / progress.1.max(1) as f64 * 100.0).round() as u32;
     let percent_text = format!(" {}%", percent);
-    let percent_width = percent_text.width_cjk() as u16;
-
-    let bar_width = width.saturating_sub(percent_width);
+    let bar_width = width.saturating_sub(percent_text.width() as u16);
     let progress_width = progress.scaled(bar_width);
-    let padding_width = bar_width.saturating_sub(progress_width);
-
-    let progress_bar_text = format!(
+    let progress_bar = format!(
         "{}{}",
-        block::FULL.repeat(progress_width as usize),
-        " ".repeat(padding_width as usize)
+        block::FULL.repeat(progress_width.into()),
+        " ".repeat((bar_width - progress_width).into())
     );
 
-    let left_title = Line::from(progress_bar_text);
-    let right_title = Line::from(percent_text).alignment(Alignment::Right);
-    Block::default()
+    let left = Line::from(progress_bar);
+    let right = Some(Line::from(percent_text));
+
+    create_notice_block(left, right, theme.notice_progress())
+}
+fn create_notice_block<'a>(left: Line<'a>, right: Option<Line<'a>>, style: Style) -> Block<'a> {
+    let mut block = Block::default()
         .borders(Borders::NONE)
-        .title(left_title)
-        .title(right_title)
-        .style(theme.notice_progress())
+        .title(left)
+        .style(style);
+
+    if let Some(right) = right {
+        block = block.title(right.alignment(Alignment::Right));
+    }
+    block
 }

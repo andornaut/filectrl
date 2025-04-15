@@ -1,23 +1,23 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::prelude::Rect;
 
+use super::{NoticeKind, NoticesView};
+use crate::clipboard::ClipboardCommand;
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
-
-use super::{ClipboardOperation, NoticeType, NoticesView};
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::CancelClipboard => self.clear_clipboard(),
-            Command::ClipboardCopy(path) => {
-                self.set_clipboard(path.clone(), ClipboardOperation::Copy)
-            }
-            Command::ClipboardCut(path) => {
-                self.set_clipboard(path.clone(), ClipboardOperation::Cut)
+            Command::CopiedToClipboard(_) | Command::CutToClipboard(_) => {
+                let clipboard_command = ClipboardCommand::try_from(command)
+                    .expect("We already checked that the command is a clipboard command");
+                self.clipboard_command = Some(clipboard_command);
+                CommandResult::none()
             }
             Command::Copy(_, _) | Command::Move(_, _) => {
                 // The clipboard was pasted
-                self.clipboard = None;
+                self.clipboard_command = None;
                 CommandResult::none()
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
@@ -44,9 +44,9 @@ impl CommandHandler for NoticesView {
 
                 // Find which notice was clicked based on y position
                 match notices.get(y as usize) {
-                    Some(NoticeType::Progress) => self.clear_progress(),
-                    Some(NoticeType::Clipboard(_)) => Command::CancelClipboard.into(),
-                    Some(NoticeType::Filter(_)) => Command::SetFilter("".into()).into(),
+                    Some(NoticeKind::Clipboard(_)) => Command::CancelClipboard.into(),
+                    Some(NoticeKind::Filter(_)) => Command::SetFilter("".into()).into(),
+                    Some(NoticeKind::Progress) => self.clear_progress(),
                     None => CommandResult::none(),
                 }
             }

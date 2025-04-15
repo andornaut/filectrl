@@ -4,7 +4,6 @@ use ratatui::style::Style;
 use super::SortColumn;
 use crate::{
     app::config::theme::{FileTheme, Theme},
-    clipboard::Clipboard,
     file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
 
@@ -100,7 +99,6 @@ pub(super) fn modified_date_style(
 }
 
 pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
-    
     match item.size_unit_index() {
         0 => theme.size_bytes(),
         1 => theme.size_kib(),
@@ -109,20 +107,5 @@ pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
         4 => theme.size_tib(),
         5 => theme.size_pib(),
         _ => theme.size_pib(),
-    }
-}
-
-pub(super) fn clipboard_or_default_style<'a>(
-    theme: &'a Theme,
-    clipboard: &'a Clipboard,
-    item: &'a PathInfo,
-    default_style: Style,
-) -> Style {
-    if clipboard.is_copied(item) {
-        theme.table_copied()
-    } else if clipboard.is_cut(item) {
-        theme.table_cut()
-    } else {
-        default_style
     }
 }

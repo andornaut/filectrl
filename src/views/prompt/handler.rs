@@ -2,7 +2,6 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEve
 
 use super::PromptView;
 use crate::command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command};
-use rat_focus::HasFocus;
 use rat_widget::textarea::{self as text_area};
 
 impl CommandHandler for PromptView {
@@ -27,12 +26,13 @@ impl CommandHandler for PromptView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         let key_event = KeyEvent::new(*code, *modifiers);
         let event = Event::Key(key_event);
-        let text_area_state = &mut self.input_state;
         match *code {
             KeyCode::Esc => Command::ClosePrompt.into(),
             KeyCode::Enter => self.submit(),
             _ => {
+                let text_area_state = &mut self.input_state;
                 text_area::handle_events(text_area_state, true, &event);
+
                 // Workaround https://github.com/thscharler/rat-salsa/issues/6
                 let cursor_position_x = text_area_state.cursor().x;
                 let hscroll_offset = text_area_state.hscroll.offset();
@@ -47,9 +47,7 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        let event = Event::Mouse(*event);
-        let text_area_state = &mut self.input_state;
-        text_area::handle_readonly_events(text_area_state, true, &event);
+        text_area::handle_mouse_events(&mut self.input_state, &Event::Mouse(*event));
         CommandResult::none()
     }
 
@@ -58,7 +56,7 @@ impl CommandHandler for PromptView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        let area = self.input_state.area();
+        let area = self.input_area;
         x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
     }
 }

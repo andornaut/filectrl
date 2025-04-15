@@ -1,53 +1,46 @@
 mod handler;
-mod notice_type;
+mod notice_kind;
 mod view;
 mod widgets;
 
+use notice_kind::NoticeKind;
 use ratatui::layout::Rect;
 use std::collections::HashSet;
 
 use crate::{
+    clipboard::ClipboardCommand,
     command::{result::CommandResult, task::Task},
-    file_system::path_info::PathInfo,
 };
-
-pub(super) use notice_type::NoticeType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ClipboardOperation {
-    Cut,
-    Copy,
-}
 
 #[derive(Default)]
 pub(super) struct NoticesView {
-    pub(super) area: Rect,
-    pub(super) clipboard: Option<(ClipboardOperation, PathInfo)>,
-    pub(super) filter: String,
-    pub(super) tasks: HashSet<Task>,
+    area: Rect,
+    clipboard_command: Option<ClipboardCommand>,
+    filter: String,
+    tasks: HashSet<Task>,
 }
 
 impl NoticesView {
-    fn active_notices(&self) -> impl Iterator<Item = NoticeType<'_>> {
+    fn active_notices(&self) -> impl Iterator<Item = NoticeKind<'_>> {
         let mut notices = Vec::new();
 
         if !self.tasks.is_empty() {
-            notices.push(NoticeType::Progress);
+            notices.push(NoticeKind::Progress);
         }
 
-        if let Some((operation, path)) = &self.clipboard {
-            notices.push(NoticeType::Clipboard((operation, path)));
+        if let Some(command) = &self.clipboard_command {
+            notices.push(NoticeKind::Clipboard(command));
         }
 
         if !self.filter.is_empty() {
-            notices.push(NoticeType::Filter(&self.filter));
+            notices.push(NoticeKind::Filter(&self.filter));
         }
 
         notices.into_iter()
     }
 
     fn clear_clipboard(&mut self) -> CommandResult {
-        self.clipboard = None;
+        self.clipboard_command = None;
         CommandResult::none()
     }
 
@@ -58,11 +51,6 @@ impl NoticesView {
 
     fn height(&self) -> u16 {
         self.active_notices().count() as u16
-    }
-
-    fn set_clipboard(&mut self, path: PathInfo, operation: ClipboardOperation) -> CommandResult {
-        self.clipboard = Some((operation, path));
-        CommandResult::none()
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
@@ -80,7 +68,7 @@ impl NoticesView {
         if task.is_done() {
             self.tasks.remove(&task);
         } else {
-            self.tasks.replace(task);
+            self.tasks.replace(task); // upsert
         }
         CommandResult::none()
     }

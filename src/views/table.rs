@@ -18,7 +18,7 @@ use self::{
 };
 use crate::{
     app::config::Config,
-    clipboard::{Clipboard, ClipboardPasteContext},
+    clipboard::Clipboard,
     command::{result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
@@ -43,7 +43,7 @@ pub(super) struct TableView {
 impl TableView {
     pub fn new(config: &Config) -> Self {
         Self {
-            double_click: DoubleClick::new(config.double_click_threshold_milliseconds),
+            double_click: DoubleClick::new(config),
             ..Self::default()
         }
     }
@@ -57,8 +57,8 @@ impl TableView {
     fn copy(&mut self) -> CommandResult {
         if let Some(path) = self.selected_path() {
             let path = path.clone();
-            self.clipboard.copy(path.path.as_str());
-            return Command::ClipboardCopy(path).into();
+            self.clipboard.copy_file(path.path.as_str());
+            return Command::CopiedToClipboard(path).into();
         }
         CommandResult::none()
     }
@@ -66,16 +66,15 @@ impl TableView {
     fn cut(&mut self) -> CommandResult {
         if let Some(path) = self.selected_path() {
             let path = path.clone();
-            self.clipboard.cut(path.path.as_str());
-            return Command::ClipboardCut(path).into();
+            self.clipboard.cut_file(path.path.as_str());
+            return Command::CutToClipboard(path).into();
         }
         CommandResult::none()
     }
 
     fn paste(&mut self) -> CommandResult {
-        let destination = self.directory.as_ref().expect("Directory not set").clone();
-        let context = ClipboardPasteContext::new(&mut self.clipboard, destination);
-        match Command::try_from(context) {
+        let destination = self.directory.as_ref().expect("Directory not set");
+        match self.clipboard.try_to_command(destination.clone()) {
             Ok(command) => {
                 self.clipboard.clear();
                 command.into()
@@ -103,10 +102,7 @@ impl TableView {
 
         let clicked_item = self.mapper.item(clicked_line);
         let clicked_path = &self.directory_items_sorted[clicked_item];
-        if self
-            .double_click
-            .click_and_check_for_double_click(clicked_path)
-        {
+        if self.double_click.click_and_is_double_click(clicked_path) {
             return self.open_selected();
         }
 

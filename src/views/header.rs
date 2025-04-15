@@ -150,7 +150,7 @@ fn spans<'a>(
         };
 
         let name = format!("{}{MAIN_SEPARATOR}", name);
-        let name_len = name.width_cjk() as u16;
+        let name_len = name.width() as u16;
         row_len += name_len;
         if row_len > width {
             // Move to the next row

@@ -1,4 +1,5 @@
 use ratatui::prelude::Constraint;
+use smart_default::SmartDefault;
 
 pub const NAME_MIN_LEN: u16 = 39;
 pub const MODE_LEN: u16 = 10;
@@ -29,8 +30,9 @@ pub(super) enum SortColumn {
     Size,
 }
 
-#[derive(Default)]
+#[derive(SmartDefault)]
 pub(super) struct Columns {
+    #[default(NAME_MIN_LEN)]
     name_width: u16,
     sort_column: SortColumn,
     sort_direction: SortDirection,

@@ -2,12 +2,15 @@ mod handler;
 mod view;
 mod widgets;
 
-use rat_widget::text::TextPosition;
-use rat_widget::textarea::TextAreaState;
+use rat_widget::{
+    text::TextPosition,
+    textarea::TextAreaState,
+};
 use ratatui::layout::Rect;
 
 use super::View;
 use crate::{
+    clipboard::Clipboard,
     command::{mode::InputMode, result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };
@@ -50,6 +53,7 @@ impl PromptView {
         };
 
         let mut text_area_state = TextAreaState::new();
+        text_area_state.set_clipboard(Some(Clipboard::default().as_rat_clipboard()));
         text_area_state.set_text(&text);
 
         // Move to 1 position after the last character

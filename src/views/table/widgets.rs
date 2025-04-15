@@ -1,20 +1,19 @@
+use chrono::{DateTime, Local};
 use ratatui::{
     prelude::{Constraint, Stylize},
+    style::Style,
     text::{Line, Span},
     widgets::{Cell, Row, Table},
 };
 
 use super::{
     columns::{SortColumn, SortDirection},
-    style::{
-        clipboard_or_default_style, header_style, modified_date_style, name_style, size_style,
-    },
+    style::{header_style, modified_date_style, name_style, size_style},
 };
 use crate::{
-    app::config::theme::Theme, clipboard::Clipboard, file_system::path_info::PathInfo,
+    app::config::theme::Theme, clipboard::ClipboardCommand, file_system::path_info::PathInfo,
     utf8::split_with_ellipsis,
 };
-use chrono::{DateTime, Local};
 
 pub(super) fn table_widget<'a>(
     theme: &Theme,
@@ -82,21 +81,27 @@ fn header_label<'a>(
 
 pub(super) fn row_and_height<'a>(
     theme: &'a Theme,
-    clipboard: &'a Clipboard,
+    clipboard_command: &Option<ClipboardCommand>,
     name_column_width: u16,
-    item: &'a PathInfo,
     relative_to_datetime: DateTime<Local>,
+    item: &'a PathInfo,
 ) -> (Row<'a>, u16) {
-    let name_style =
-        clipboard_or_default_style(theme, clipboard, item, name_style(&theme.file_types, item));
-    let size_style = clipboard_or_default_style(theme, clipboard, item, size_style(theme, item));
-    let date_style = clipboard_or_default_style(
-        theme,
-        clipboard,
-        item,
-        modified_date_style(theme, item, relative_to_datetime),
-    );
-    let row_style = clipboard_or_default_style(theme, clipboard, item, theme.table_body());
+    let (name_style, date_style, size_style, row_style) =
+        if let Some(clipboard_style) = clipboard_style(theme, clipboard_command, item) {
+            (
+                clipboard_style,
+                clipboard_style,
+                clipboard_style,
+                clipboard_style,
+            )
+        } else {
+            (
+                name_style(&theme.file_types, item),
+                modified_date_style(theme, item, relative_to_datetime),
+                size_style(theme, item),
+                theme.table_body(),
+            )
+        };
 
     let name = split_name(name_column_width, item);
     let height = name.len() as u16;
@@ -120,4 +125,16 @@ fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
         .into_iter()
         .map(Line::from)
         .collect()
+}
+
+fn clipboard_style(
+    theme: &Theme,
+    clipboard_command: &Option<ClipboardCommand>,
+    item: &PathInfo,
+) -> Option<Style> {
+    match clipboard_command {
+        Some(ClipboardCommand::Copy(ref path)) if path == item => Some(theme.table_copied()),
+        Some(ClipboardCommand::Move(ref path)) if path == item => Some(theme.table_cut()),
+        _ => None,
+    }
 }
