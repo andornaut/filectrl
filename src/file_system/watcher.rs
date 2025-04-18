@@ -16,25 +16,28 @@ const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(1000);
 const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(500);
 
 pub struct DirectoryWatcher {
+    watched_directory: Option<PathBuf>,
     watcher: RecommendedWatcher,
-    currently_watched: Option<PathBuf>,
 }
 
 impl DirectoryWatcher {
-    pub fn try_new(command_tx: Sender<Command>) -> Result<Self> {
-        let command_tx = command_tx;
+    pub fn try_new_and_run(command_tx: Sender<Command>) -> Result<Self> {
         let (tx, rx) = channel();
-        let watcher = recommended_watcher(tx)?;
+        let (delayed_tx, delayed_rx) = channel();
+        let command_tx_clone = command_tx.clone();
 
-        thread::spawn(move || background_watcher(command_tx, rx));
+        thread::spawn(move || watch_for_delayed_commands(command_tx_clone, delayed_rx));
+        thread::spawn(move || watch_for_notify_events(command_tx, delayed_tx, rx));
+
+        let watcher = recommended_watcher(tx)?;
         Ok(Self {
             watcher,
-            currently_watched: None,
+            watched_directory: None,
         })
     }
 
     pub fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
-        if let Some(old_path) = &self.currently_watched {
+        if let Some(old_path) = &self.watched_directory {
             if let Err(e) = self.watcher.unwatch(old_path.as_path()) {
                 error!("Failed to unwatch directory: {}", e);
             }
@@ -42,7 +45,7 @@ impl DirectoryWatcher {
 
         self.watcher
             .watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
-        self.currently_watched = Some(path);
+        self.watched_directory = Some(path);
         Ok(())
     }
 }
@@ -58,24 +61,12 @@ impl DirectoryWatcher {
 /// The debouncing is implemented using a timer thread that sleeps for the debounce period
 /// before sending the refresh command. This ensures we don't miss the last update in a series
 /// of rapid changes.
-fn background_watcher(
+fn watch_for_notify_events(
     command_tx: Sender<Command>,
+    delayed_tx: Sender<Command>,
     rx: Receiver<std::result::Result<Event, notify::Error>>,
 ) {
     let mut debouncer = debounce::TimeDebouncer::new(DEBOUNCE_THRESHOLD);
-    let (timer_tx, timer_rx) = channel();
-    let command_tx_clone = command_tx.clone();
-
-    // Spawn a thread that periodically checks if we need to send a delayed refresh command
-    thread::spawn(move || {
-        while let Ok(()) = timer_rx.recv() {
-            thread::sleep(CHECK_DELAYED_THRESHOLD);
-            if let Err(e) = command_tx_clone.send(Command::Refresh) {
-                error!("Failed to send delayed refresh command: {}", e);
-            }
-        }
-    });
-
     for result in rx {
         match result {
             Ok(event) => match event.kind {
@@ -87,7 +78,7 @@ fn background_watcher(
                             error!("Failed to send refresh command: {}", e);
                         }
                     } else if !debouncer.has_delayed_event() {
-                        if let Err(e) = timer_tx.send(()) {
+                        if let Err(e) = delayed_tx.send(Command::Refresh) {
                             error!("Failed to schedule delayed refresh: {}", e);
                         }
                     }
@@ -103,6 +94,15 @@ fn background_watcher(
                     error!("Failed to send error command: {}", e);
                 }
             }
+        }
+    }
+}
+
+fn watch_for_delayed_commands(command_tx: Sender<Command>, timer_rx: Receiver<Command>) {
+    while let Ok(command) = timer_rx.recv() {
+        thread::sleep(CHECK_DELAYED_THRESHOLD);
+        if let Err(e) = command_tx.send(command) {
+            error!("Failed to send delayed refresh command: {}", e);
         }
     }
 }

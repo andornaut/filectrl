@@ -42,7 +42,7 @@ impl FileSystem {
 
     pub fn init(&mut self, directory: Option<PathBuf>, tx: Sender<Command>) -> Result<Command> {
         self.tx = Some(tx.clone());
-        self.watcher = Some(DirectoryWatcher::try_new(tx)?);
+        self.watcher = Some(DirectoryWatcher::try_new_and_run(tx)?);
 
         match directory {
             Some(directory) => match directory.canonicalize() {
