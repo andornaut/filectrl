@@ -89,7 +89,7 @@ mod tests {
     #[test_case("/a/aa", "/b", "/a/aa"; "/b to /a/aa absolute")]
     #[test_case("/b", "/", "/b"; "root to /b absolute")]
     #[test_case("/b", "", "/b"; "empty to /b absolute")]
-    fn join_is_correct(expected: &str, left: &str, right: &str) {
+    fn join_is_correct_when(expected: &str, left: &str, right: &str) {
         let old_path = Path::new(left);
         let result = join_parent(&old_path, right);
 
