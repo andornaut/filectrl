@@ -7,6 +7,7 @@ use rat_widget::textarea::{self as text_area};
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::OpenPrompt(kind) => self.open(kind),
             Command::SetDirectory(directory, _) => {
                 if let Some(previous_directory) = &self.directory {
                     if previous_directory.path != directory.path {
@@ -16,7 +17,6 @@ impl CommandHandler for PromptView {
                 }
                 CommandResult::Handled
             }
-            Command::OpenPrompt(kind) => self.open(kind),
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,

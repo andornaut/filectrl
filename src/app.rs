@@ -4,7 +4,7 @@ pub mod terminal;
 
 use std::{
     path::PathBuf,
-    sync::mpsc,
+    sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, Instant},
 };
@@ -27,8 +27,8 @@ use crate::{
     views::{root::RootView, View},
 };
 
-const BROADCAST_CYCLES: u8 = 5;
-const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
+const BROADCASTS_COUNT: u8 = 5;
+const MAIN_LOOP_MAX_SLEEP: Duration = Duration::from_millis(30);
 
 pub struct App {
     config: Config,
@@ -36,11 +36,14 @@ pub struct App {
     mode: InputMode,
     root: RootView,
     terminal: CleanupOnDropTerminal,
+    rx: Receiver<Command>,
+    tx: Sender<Command>,
 }
 
 impl App {
     pub fn new(config: Config, terminal: CleanupOnDropTerminal) -> Self {
-        let file_system = FileSystem::new(&config);
+        let (tx, rx) = mpsc::channel();
+        let file_system = FileSystem::new(&config, tx.clone());
         let root = RootView::new(&config);
         Self {
             config,
@@ -48,23 +51,24 @@ impl App {
             mode: InputMode::default(),
             root,
             terminal,
+            rx,
+            tx,
         }
     }
 
-    pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
-        let (tx, rx) = mpsc::channel();
-
+    pub fn run_once(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
         // An initial command is required to start the main loop
-        tx.send(self.file_system.init(initial_directory, tx.clone())?)?;
-        spawn_command_sender(tx);
+        self.tx
+            .send(self.file_system.run_once(initial_directory)?)?;
 
-        let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
+        spawn_command_sender(self.tx.clone());
+
         loop {
             let start = Instant::now();
-            let commands = receive_commands(&rx);
+            let commands = receive_commands(&self.rx);
 
             if commands.is_empty() {
-                thread::sleep(max_sleep);
+                thread::sleep(MAIN_LOOP_MAX_SLEEP);
                 continue;
             }
 
@@ -77,7 +81,8 @@ impl App {
             must_not_contain_unhandled(&remaining_commands)?;
             self.render()?;
 
-            let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
+            let actual_sleep =
+                MAIN_LOOP_MAX_SLEEP.saturating_sub(Instant::now().duration_since(start));
             thread::sleep(actual_sleep);
         }
     }
@@ -92,7 +97,7 @@ impl App {
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
         let mode = self.mode.clone();
         let mut commands: Vec<Command> = vec![command];
-        for _ in 0..BROADCAST_CYCLES {
+        for _ in 0..BROADCASTS_COUNT {
             commands = commands
                 .into_iter()
                 .flat_map(|command| {
@@ -153,6 +158,7 @@ impl CommandHandler for App {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
+            // TODO remove
             (KeyCode::Char('1'), KeyModifiers::NONE) => {
                 Command::AlertInfo("Test info alert".into()).into()
             }

@@ -143,8 +143,8 @@ impl View for AlertsView {
             None
         };
         let bordered_area = bordered(
-            frame.buffer_mut(),
             area,
+            frame.buffer_mut(),
             style,
             Some(title_left),
             title_right,

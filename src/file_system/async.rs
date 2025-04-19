@@ -25,8 +25,7 @@ pub(super) enum TaskCommand {
 }
 
 impl TaskCommand {
-    pub(super) fn run(self, tx: Option<Sender<Command>>) -> CommandResult {
-        let tx = tx.expect("Sender is set");
+    pub(super) fn run(self, tx: Sender<Command>) -> CommandResult {
         match self {
             TaskCommand::Copy(path, dir) => Self::run_copy_task(tx, path, dir),
             TaskCommand::DeletePath(path) => Self::run_delete_task(tx, path),

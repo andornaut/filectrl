@@ -12,53 +12,44 @@ use std::{fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
 use log::{error, info};
+use r#async::TaskCommand;
 
 use self::{path_info::PathInfo, sync::open_in, watcher::DirectoryWatcher};
 use crate::{
     app::config::Config,
-    command::{result::CommandResult, Command},
+    command::{result::CommandResult, task::Task, Command},
 };
 
 pub struct FileSystem {
+    command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     open_current_directory_template: Option<String>,
     open_new_window_template: Option<String>,
     open_selected_file_template: Option<String>,
-    tx: Option<Sender<Command>>,
-    watcher: Option<DirectoryWatcher>,
+    watcher: DirectoryWatcher,
 }
 
 impl FileSystem {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, command_tx: Sender<Command>) -> Self {
         Self {
+            command_tx,
             directory: None,
             open_current_directory_template: config.open_current_directory_template.clone(),
             open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
-            tx: None,
-            watcher: None,
+            watcher: DirectoryWatcher::try_new().expect("Can initialize watcher"),
         }
     }
 
-    pub fn init(&mut self, directory: Option<PathBuf>, tx: Sender<Command>) -> Result<Command> {
-        self.tx = Some(tx.clone());
-        self.watcher = Some(DirectoryWatcher::try_new_and_run(tx)?);
+    pub fn run_once(&mut self, directory: Option<PathBuf>) -> Result<Command> {
+        self.watcher.run_once(&self.command_tx);
 
-        match directory {
-            Some(directory) => match directory.canonicalize() {
-                Ok(directory) => match PathInfo::try_from(&directory) {
-                    Ok(directory) => self.cd(directory),
-                    Err(error) => {
-                        anyhow!("Failed to change to directory {directory:?}: {error:?}").into()
-                    }
-                },
-                Err(error) => {
-                    anyhow!("Failed to change to directory {directory:?}: {error:?}").into()
-                }
-            },
-            None => self.cd(PathInfo::default()),
-        }
-        .try_into()
+        let directory = match directory {
+            Some(dir) => PathInfo::try_from(&dir.canonicalize()?)?,
+            None => PathInfo::default(),
+        };
+
+        self.cd(directory).try_into()
     }
 
     fn back(&mut self) -> CommandResult {
@@ -70,13 +61,11 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo) -> CommandResult {
-        let watcher = self.watcher.as_mut().expect("Watcher not initialized");
-
         (match sync::cd(&directory) {
             Ok(children) => {
                 self.directory = Some(directory.clone());
 
-                if let Err(e) = watcher.watch_directory(PathBuf::from(&directory.path)) {
+                if let Err(e) = self.watcher.watch_directory(PathBuf::from(&directory.path)) {
                     error!("Failed to watch directory: {}", e);
                 }
                 Command::SetDirectory(directory, children)
@@ -84,6 +73,13 @@ impl FileSystem {
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
         })
         .into()
+    }
+
+    fn handle_progress(&mut self, task: &Task) -> CommandResult {
+        task.error_message()
+            .map_or(CommandResult::NotHandled, |msg| {
+                Command::AlertError(msg).into()
+            })
     }
 
     fn open(&mut self, path: &PathInfo) -> CommandResult {
@@ -138,5 +134,9 @@ impl FileSystem {
     fn refresh(&mut self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
         self.cd(directory.clone())
+    }
+
+    fn run_task(&mut self, task: TaskCommand) -> CommandResult {
+        task.run(self.command_tx.clone())
     }
 }
