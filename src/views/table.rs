@@ -51,7 +51,7 @@ impl TableView {
     // Copy / Cut / Paste
     fn cancel_clipboard(&mut self) -> CommandResult {
         self.clipboard.clear();
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn copy(&mut self) -> CommandResult {
@@ -60,7 +60,7 @@ impl TableView {
             self.clipboard.copy_file(path.path.as_str());
             return Command::CopiedToClipboard(path).into();
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn cut(&mut self) -> CommandResult {
@@ -69,7 +69,7 @@ impl TableView {
             self.clipboard.cut_file(path.path.as_str());
             return Command::CutToClipboard(path).into();
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn paste(&mut self) -> CommandResult {
@@ -79,7 +79,7 @@ impl TableView {
                 self.clipboard.clear();
                 command.into()
             }
-            Err(_) => CommandResult::none(),
+            Err(_) => CommandResult::Handled,
         }
     }
 
@@ -88,7 +88,7 @@ impl TableView {
         if let Some(column) = self.columns.sort_column_for_click(x) {
             self.sort_by(column)
         } else {
-            CommandResult::none()
+            CommandResult::Handled
         }
     }
 
@@ -97,7 +97,7 @@ impl TableView {
         let clicked_line = self.mapper.first_visible_line() + y;
         if clicked_line >= self.mapper.total_lines_count() {
             // Clicked past the table
-            return CommandResult::none();
+            return CommandResult::Handled;
         }
 
         let clicked_item = self.mapper.item(clicked_line);
@@ -118,7 +118,7 @@ impl TableView {
         ) {
             return self.select(self.mapper.item(new_selected_item));
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     // Navigate
@@ -126,7 +126,7 @@ impl TableView {
         let delta = 1;
         if let Some(selected) = self.table_state.selected() {
             if selected + delta >= self.directory_items_sorted.len() {
-                return CommandResult::none();
+                return CommandResult::Handled;
             }
         }
         self.table_state.scroll_down_by(delta as u16);
@@ -154,7 +154,7 @@ impl TableView {
         {
             return self.select(new_selected_item);
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn previous_page(&mut self) -> CommandResult {
@@ -164,13 +164,13 @@ impl TableView {
         if let Some(new_selected_item) = pager::previous_page(&self.mapper, selected_item, offset) {
             return self.select(new_selected_item);
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn delete(&self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::DeletePath(path.clone()).into(),
-            None => CommandResult::none(),
+            None => CommandResult::Handled,
         }
     }
 
@@ -185,14 +185,14 @@ impl TableView {
     fn open_selected(&mut self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::Open(path.clone()).into(),
-            None => CommandResult::none(),
+            None => CommandResult::Handled,
         }
     }
 
     fn open_selected_in_custom_program(&mut self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::OpenCustom(path.clone()).into(),
-            None => CommandResult::none(),
+            None => CommandResult::Handled,
         }
     }
 
@@ -228,7 +228,7 @@ impl TableView {
         // Avoid performing an extra SetFilter(None)
         // set_directory() -> sort() -> SetFilter(None) -> set_filter() -> sort() -> SetFilter(None)
         if self.filter.is_empty() && filter.is_empty() {
-            return CommandResult::none();
+            return CommandResult::Handled;
         }
         self.filter = filter;
         self.sort()

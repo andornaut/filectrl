@@ -78,11 +78,11 @@ impl CommandHandler for TableView {
                 if self.scrollbar_view.is_dragging() {
                     return self.handle_scroll(event);
                 }
-                CommandResult::none()
+                CommandResult::Handled
             }
             MouseEventKind::ScrollUp => self.previous(),
             MouseEventKind::ScrollDown => self.next(),
-            _ => CommandResult::none(),
+            _ => CommandResult::Handled,
         }
     }
 

@@ -33,7 +33,7 @@ impl HeaderView {
 
     fn set_directory(&mut self, directory: PathInfo) -> CommandResult {
         self.breadcrumbs = directory.breadcrumbs();
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn to_path(&self, end_index: usize) -> Option<PathInfo> {
@@ -75,10 +75,10 @@ impl CommandHandler for HeaderView {
                 if let Some(path) = clicked_index.and_then(|i| self.to_path(i)) {
                     Command::Open(path).into()
                 } else {
-                    CommandResult::none()
+                    CommandResult::Handled
                 }
             }
-            _ => CommandResult::none(),
+            _ => CommandResult::Handled,
         }
     }
 

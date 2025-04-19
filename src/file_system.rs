@@ -65,7 +65,7 @@ impl FileSystem {
         let directory = self.directory.as_ref().unwrap();
         match directory.parent() {
             Some(parent) => self.cd(parent),
-            None => CommandResult::none(),
+            None => CommandResult::Handled,
         }
     }
 
@@ -98,7 +98,7 @@ impl FileSystem {
                     info!("Opening path:\"{path}\"");
                     match open::that_detached(&path.path) {
                         Err(error) => anyhow!("Failed to open {path:?}: {error}").into(),
-                        Ok(_) => CommandResult::none(),
+                        Ok(_) => CommandResult::Handled,
                     }
                 }
             }
@@ -112,18 +112,18 @@ impl FileSystem {
             self.open_current_directory_template.clone(),
             &directory.path,
         )
-        .map_or_else(|error| error.into(), |_| CommandResult::none())
+        .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
     fn open_custom(&self, path: &PathInfo) -> CommandResult {
         open_in(self.open_selected_file_template.clone(), &path.path)
-            .map_or_else(|error| error.into(), |_| CommandResult::none())
+            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
     fn open_new_window(&self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
         open_in(self.open_new_window_template.clone(), &directory.path)
-            .map_or_else(|error| error.into(), |_| CommandResult::none())
+            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
     fn rename(&mut self, old_path: &PathInfo, new_basename: &str) -> CommandResult {

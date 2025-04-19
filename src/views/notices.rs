@@ -41,12 +41,12 @@ impl NoticesView {
 
     fn clear_clipboard(&mut self) -> CommandResult {
         self.clipboard_command = None;
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn clear_progress(&mut self) -> CommandResult {
         self.tasks.clear();
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn height(&self) -> u16 {
@@ -55,14 +55,14 @@ impl NoticesView {
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
         self.filter = filter;
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn update_tasks(&mut self, task: Task) -> CommandResult {
         // If the task is not new and not in our set, it means we previously cleared it.
         // In this case, we should ignore the update to prevent resurrecting cleared tasks.
         if !task.is_new() && !self.tasks.contains(&task) {
-            return CommandResult::none();
+            return CommandResult::Handled;
         }
 
         if task.is_done() {
@@ -70,6 +70,6 @@ impl NoticesView {
         } else {
             self.tasks.replace(task); // upsert
         }
-        CommandResult::none()
+        CommandResult::Handled
     }
 }

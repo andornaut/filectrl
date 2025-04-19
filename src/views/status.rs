@@ -18,11 +18,11 @@ impl StatusView {
     fn set_directory(&mut self, directory: PathInfo, children: &Vec<PathInfo>) -> CommandResult {
         self.directory = Some(directory);
         self.directory_len = children.len();
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
         self.selected = selected;
-        CommandResult::none()
+        CommandResult::Handled
     }
 }

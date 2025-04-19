@@ -14,7 +14,7 @@ impl CommandHandler for PromptView {
                         return Command::SetFilter("".into()).into();
                     }
                 }
-                CommandResult::none()
+                CommandResult::Handled
             }
             Command::OpenPrompt(kind) => self.open(kind),
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
@@ -41,14 +41,14 @@ impl CommandHandler for PromptView {
                 if *code == KeyCode::Right && is_position_after_right_edge {
                     text_area_state.hscroll.set_offset(hscroll_offset + 1);
                 }
-                CommandResult::none()
+                CommandResult::Handled
             }
         }
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         text_area::handle_mouse_events(&mut self.input_state, &Event::Mouse(*event));
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn should_receive_key(&self, mode: &InputMode) -> bool {
