@@ -1,9 +1,13 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::prelude::Rect;
+use ratatui::{
+    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    prelude::Rect,
+};
 
 use super::{NoticeKind, NoticesView};
-use crate::clipboard::ClipboardCommand;
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::{
+    clipboard::ClipboardCommand,
+    command::{handler::CommandHandler, result::CommandResult, Command},
+};
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {

@@ -1,5 +1,3 @@
-use anyhow::{anyhow, Error, Result};
-use log::info;
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, ErrorKind, Read, Write},
@@ -8,10 +6,14 @@ use std::{
     thread,
 };
 
-use super::path_info::PathInfo;
-use crate::command::{result::CommandResult, task::Task, Command};
+use anyhow::{anyhow, Error, Result};
+use log::info;
 
-use crate::file_system::debounce;
+use super::path_info::PathInfo;
+use crate::{
+    command::{result::CommandResult, task::Task, Command},
+    file_system::debounce,
+};
 
 const MAX_BUFFER_BYTES: u64 = 64_000_000;
 const MIN_BUFFER_BYTES: u64 = 64_000;
@@ -182,7 +184,7 @@ fn copy_file(
                             task.increment(bytes as u64);
 
                             if debouncer.should_trigger(bytes as u64) {
-                                info!("Sending progress command");
+                                info!("Sending progress command: {:?}", task);
                                 tx.send(Command::Progress(task.clone()))
                                     .expect("Can send command");
                             }

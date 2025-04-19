@@ -1,12 +1,12 @@
 use rat_widget::textarea::TextArea;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
-    widgets::{StatefulWidget, Widget},
+    widgets::{Paragraph, StatefulWidget, Widget},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::{widgets::prompt_widget, PromptView, View};
+use super::{PromptView, View};
 use crate::{app::config::theme::Theme, command::mode::InputMode};
 
 impl View for PromptView {
@@ -27,7 +27,7 @@ impl View for PromptView {
             return;
         }
 
-        let label_widget = prompt_widget(theme, label);
+        let label_widget = Paragraph::new(label).style(theme.prompt_label());
         label_widget.render(label_area, frame.buffer_mut());
 
         let textarea_widget = TextArea::new().style(theme.prompt_input());

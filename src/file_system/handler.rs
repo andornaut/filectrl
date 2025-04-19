@@ -10,7 +10,7 @@ impl CommandHandler for FileSystem {
             Err(_) => match command {
                 Command::Open(path) => self.open(path),
                 Command::OpenCustom(path) => self.open_custom(path),
-                Command::Progress(task) => self.handle_progress(task),
+                Command::Progress(task) => self.check_progress_for_error(task),
                 Command::Refresh => self.refresh(),
                 Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
                 _ => CommandResult::NotHandled,

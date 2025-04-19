@@ -1,5 +1,7 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::prelude::Rect;
+use ratatui::{
+    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    prelude::Rect,
+};
 
 use super::{columns::SortColumn, TableView};
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
@@ -8,6 +10,7 @@ impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::ClearClipboard => self.clear_clipboard(),
+            Command::Copy(_, _) | Command::Move(_, _) => Command::ClearClipboard.into(),
             Command::SetDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.clone())
             }
@@ -20,9 +23,9 @@ impl CommandHandler for TableView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy(),
-            (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut(),
-            (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste(),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy_to_clipboard(),
+            (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut_to_clipboard(),
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste_from_clipboard(),
             (KeyCode::Char('u'), KeyModifiers::CONTROL)
             | (KeyCode::Char('b'), KeyModifiers::CONTROL)
             | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),

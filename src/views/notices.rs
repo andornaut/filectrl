@@ -3,9 +3,10 @@ mod notice_kind;
 mod view;
 mod widgets;
 
+use std::collections::HashSet;
+
 use notice_kind::NoticeKind;
 use ratatui::layout::Rect;
-use std::collections::HashSet;
 
 use crate::{
     clipboard::ClipboardCommand,
@@ -65,7 +66,7 @@ impl NoticesView {
             return CommandResult::Handled;
         }
 
-        if task.is_done() {
+        if task.is_done_or_error() {
             self.tasks.remove(&task);
         } else {
             self.tasks.replace(task); // upsert

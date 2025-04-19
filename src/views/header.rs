@@ -1,3 +1,5 @@
+use std::path::MAIN_SEPARATOR;
+
 use ratatui::{
     crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Rect},
@@ -7,8 +9,6 @@ use ratatui::{
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
-
-use std::path::MAIN_SEPARATOR;
 
 use super::View;
 use crate::{

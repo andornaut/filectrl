@@ -17,7 +17,7 @@ sudo mv filectrl /usr/local/bin/
 On macOS, allow the _unsigned_ `filectrl` binary to be executed:
 
 ```bash
-sudo xattr -d com.apple.quarantine filectrl
+xattr -d com.apple.quarantine filectrl
 ```
 
 ## Building

@@ -65,12 +65,15 @@ impl TimeDebouncer {
             self.has_delayed_event = false;
             true
         } else {
-            self.has_delayed_event = true;
             false
         }
     }
 
     pub fn has_delayed_event(&self) -> bool {
         self.has_delayed_event
+    }
+
+    pub fn set_delayed_event(&mut self) {
+        self.has_delayed_event = true;
     }
 }
