@@ -1,14 +1,13 @@
 use chrono::{DateTime, Local};
 use ratatui::{
     prelude::{Constraint, Stylize},
-    style::Style,
     text::{Line, Span},
     widgets::{Cell, Row, Table},
 };
 
 use super::{
     columns::{SortColumn, SortDirection},
-    style::{header_style, modified_date_style, name_style, size_style},
+    style::{clipboard_style, header_style, modified_date_style, name_style, size_style},
 };
 use crate::{
     app::config::theme::Theme, clipboard::ClipboardCommand, file_system::path_info::PathInfo,
@@ -16,13 +15,13 @@ use crate::{
 };
 
 pub(super) fn table_widget<'a>(
-    theme: &Theme,
+    theme: &'a Theme,
     column_constraints: Vec<Constraint>,
     rows: Vec<Row<'a>>,
     sort_column: &'a SortColumn,
     sort_direction: &'a SortDirection,
 ) -> Table<'a> {
-    let header = header_widget(theme, sort_column, sort_direction);
+    let header = header_row_widget(theme, sort_column, sort_direction);
     Table::new(rows, vec![Constraint::Percentage(100)])
         .header(header)
         .row_highlight_style(theme.table_selected())
@@ -30,31 +29,26 @@ pub(super) fn table_widget<'a>(
         .widths(&column_constraints)
 }
 
-fn header_widget<'a>(
-    theme: &Theme,
+fn header_row_widget<'a>(
+    theme: &'a Theme,
     sort_column: &'a SortColumn,
     sort_direction: &'a SortDirection,
 ) -> Row<'a> {
     let mut cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
         .into_iter()
-        .map(|header| {
-            Cell::from(header_label(sort_column, sort_direction, &header)).style(header_style(
-                theme,
-                sort_column,
-                &header,
-            ))
-        })
+        .map(|column| header_cell_widget(theme, sort_column, sort_direction, column))
         .collect();
     cells.push(Cell::from("Mode").style(theme.table_header())); // Mode cannot be sorted
     Row::new(cells).style(theme.table_header())
 }
 
-fn header_label<'a>(
-    sort_column: &SortColumn,
-    sort_direction: &SortDirection,
-    column: &SortColumn,
-) -> Span<'a> {
-    let is_sorted = sort_column == column;
+fn header_cell_widget<'a>(
+    theme: &'a Theme,
+    sort_column: &'a SortColumn,
+    sort_direction: &'a SortDirection,
+    column: SortColumn,
+) -> Cell<'a> {
+    let is_sorted = *sort_column == column;
     let text = match (is_sorted, sort_direction) {
         (true, SortDirection::Ascending) => match column {
             SortColumn::Name => "[N]ame⌃",
@@ -72,16 +66,17 @@ fn header_label<'a>(
             SortColumn::Size => "[S]ize",
         },
     };
-    if is_sorted {
+    let label = if is_sorted {
         text.bold()
     } else {
         Span::raw(text)
-    }
+    };
+    Cell::from(label.style(header_style(theme, sort_column, &column)))
 }
 
-pub(super) fn row_and_height<'a>(
+pub(super) fn row_widget_and_height<'a>(
     theme: &'a Theme,
-    clipboard_command: &Option<ClipboardCommand>,
+    clipboard_command: &'a Option<ClipboardCommand>,
     name_column_width: u16,
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
@@ -125,16 +120,4 @@ fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
         .into_iter()
         .map(Line::from)
         .collect()
-}
-
-fn clipboard_style(
-    theme: &Theme,
-    clipboard_command: &Option<ClipboardCommand>,
-    item: &PathInfo,
-) -> Option<Style> {
-    match clipboard_command {
-        Some(ClipboardCommand::Copy(ref path)) if path == item => Some(theme.table_copied()),
-        Some(ClipboardCommand::Move(ref path)) if path == item => Some(theme.table_cut()),
-        _ => None,
-    }
 }

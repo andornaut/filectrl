@@ -27,8 +27,8 @@ use crate::{
     views::{root::RootView, View},
 };
 
-const BROADCAST_CYCLES: u8 = 5;
-const MAIN_LOOP_MAX_SLEEP_MS: u64 = 30;
+const BROADCASTS_COUNT: u8 = 5;
+const MAIN_LOOP_MAX_SLEEP: Duration = Duration::from_millis(30);
 
 pub struct App {
     config: Config,
@@ -58,13 +58,12 @@ impl App {
         tx.send(self.file_system.init(initial_directory, tx.clone())?)?;
         spawn_command_sender(tx);
 
-        let max_sleep = Duration::from_millis(MAIN_LOOP_MAX_SLEEP_MS);
         loop {
             let start = Instant::now();
             let commands = receive_commands(&rx);
 
             if commands.is_empty() {
-                thread::sleep(max_sleep);
+                thread::sleep(MAIN_LOOP_MAX_SLEEP);
                 continue;
             }
 
@@ -77,7 +76,8 @@ impl App {
             must_not_contain_unhandled(&remaining_commands)?;
             self.render()?;
 
-            let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
+            let actual_sleep =
+                MAIN_LOOP_MAX_SLEEP.saturating_sub(Instant::now().duration_since(start));
             thread::sleep(actual_sleep);
         }
     }
@@ -92,7 +92,7 @@ impl App {
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
         let mode = self.mode.clone();
         let mut commands: Vec<Command> = vec![command];
-        for _ in 0..BROADCAST_CYCLES {
+        for _ in 0..BROADCASTS_COUNT {
             commands = commands
                 .into_iter()
                 .flat_map(|command| {
@@ -153,6 +153,7 @@ impl CommandHandler for App {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
+            // TODO remove
             (KeyCode::Char('1'), KeyModifiers::NONE) => {
                 Command::AlertInfo("Test info alert".into()).into()
             }

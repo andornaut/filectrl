@@ -1,21 +1,21 @@
 use std::{
-    fmt::{Display, Formatter},
+    fmt::{Debug, Display, Formatter},
     sync::{Arc, Mutex},
 };
 
-use crate::{command::Command, file_system::path_info::PathInfo};
 use anyhow::{anyhow, Error};
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
-use std::fmt::Debug;
 
-impl RatClipboard for Clipboard {
+use crate::{command::Command, file_system::path_info::PathInfo};
+
+impl RatClipboard for ClipboardBackend {
     fn get_string(&self) -> Result<String, ClipboardError> {
-        self.backend.get_string().map_err(|_| ClipboardError)
+        self.get_string().map_err(|_| ClipboardError)
     }
 
     fn set_string(&self, s: &str) -> Result<(), ClipboardError> {
-        self.backend.set_string(s).map_err(|_| ClipboardError)
+        self.set_string(s).map_err(|_| ClipboardError)
     }
 }
 
@@ -34,7 +34,7 @@ impl Default for Clipboard {
 
 impl Clipboard {
     pub(super) fn as_rat_clipboard(self) -> Box<dyn RatClipboard> {
-        Box::new(self) as Box<dyn RatClipboard>
+        Box::new(self.backend) as Box<dyn RatClipboard>
     }
 
     pub(super) fn copy_file(&self, path: &str) -> Result<(), Error> {

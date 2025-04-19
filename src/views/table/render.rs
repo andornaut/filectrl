@@ -7,7 +7,7 @@ use ratatui::{
 
 use super::{
     line_item_map::LineItemMap,
-    widgets::{row_and_height, table_widget},
+    widgets::{row_widget_and_height, table_widget},
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
@@ -38,7 +38,7 @@ impl View for TableView {
 }
 
 impl TableView {
-    fn render_1x1_block(&mut self, buf: &mut Buffer, theme: &Theme, area: Rect) {
+    fn render_1x1_block(&self, buf: &mut Buffer, theme: &Theme, area: Rect) {
         // Extend the table header above the scrollbar as a 1x1 block
         let block = Block::default().style(theme.table_header());
         block.render(Rect { height: 1, ..area }, buf);
@@ -64,7 +64,7 @@ impl TableView {
             .directory_items_sorted
             .iter()
             .map(|item| {
-                let (row, height) = row_and_height(
+                let (row, height) = row_widget_and_height(
                     theme,
                     &clipboard_command,
                     self.columns.name_width(),
