@@ -8,18 +8,13 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::CancelClipboard => self.clear_clipboard(),
+            Command::ClearedClipboard => self.clear_clipboard(),
             Command::CopiedToClipboard(path) => {
                 self.clipboard_command = Some(ClipboardCommand::Copy(path.clone()));
                 CommandResult::Handled
             }
             Command::CutToClipboard(path) => {
                 self.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
-                CommandResult::Handled
-            }
-            Command::Copy(_, _) | Command::Move(_, _) => {
-                // The clipboard was pasted
-                self.clipboard_command = None;
                 CommandResult::Handled
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
@@ -31,7 +26,7 @@ impl CommandHandler for NoticesView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('p'), KeyModifiers::NONE) => self.clear_progress(),
-            (KeyCode::Char('c'), KeyModifiers::NONE) => Command::CancelClipboard.into(),
+            (KeyCode::Char('c'), KeyModifiers::NONE) => Command::ClearClipboard.into(),
             _ => CommandResult::NotHandled,
         }
     }
@@ -46,7 +41,7 @@ impl CommandHandler for NoticesView {
 
                 // Find which notice was clicked based on y position
                 match notices.get(y as usize) {
-                    Some(NoticeKind::Clipboard(_)) => Command::CancelClipboard.into(),
+                    Some(NoticeKind::Clipboard(_)) => Command::ClearClipboard.into(),
                     Some(NoticeKind::Filter(_)) => Command::SetFilter("".into()).into(),
                     Some(NoticeKind::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
