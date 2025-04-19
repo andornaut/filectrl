@@ -48,12 +48,12 @@ impl AlertsView {
             self.alerts.pop_back();
         }
         self.alerts.push_front((kind, message));
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn clear_alerts(&mut self) -> CommandResult {
         self.alerts.clear();
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn height(&self, area: &Rect) -> u16 {
@@ -108,9 +108,9 @@ impl CommandHandler for AlertsView {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.clear_alerts();
-                CommandResult::none()
+                CommandResult::Handled
             }
-            _ => CommandResult::none(),
+            _ => CommandResult::Handled,
         }
     }
 

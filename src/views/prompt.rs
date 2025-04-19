@@ -2,10 +2,7 @@ mod handler;
 mod view;
 mod widgets;
 
-use rat_widget::{
-    text::TextPosition,
-    textarea::TextAreaState,
-};
+use rat_widget::{text::TextPosition, textarea::TextAreaState};
 use ratatui::layout::Rect;
 
 use super::View;
@@ -69,17 +66,17 @@ impl PromptView {
         text_area_state.hscroll.set_offset(hscroll_offset as usize);
 
         self.input_state = text_area_state;
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
         self.filter = filter;
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
         self.selected = selected;
-        CommandResult::none()
+        CommandResult::Handled
     }
 
     fn should_show(&self, mode: &InputMode) -> bool {
@@ -92,7 +89,7 @@ impl PromptView {
             PromptKind::Filter => Command::SetFilter(value).into(),
             PromptKind::Rename => match &self.selected {
                 Some(selected_path) => Command::RenamePath(selected_path.clone(), value).into(),
-                None => CommandResult::none(),
+                None => CommandResult::Handled,
             },
         }
     }

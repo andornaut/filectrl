@@ -128,7 +128,7 @@ impl App {
     fn set_mode(&mut self, mode: InputMode) -> CommandResult {
         debug!("Setting mode to: {:?}", mode);
         self.mode = mode;
-        CommandResult::none()
+        CommandResult::Handled
     }
 }
 
@@ -144,7 +144,7 @@ impl CommandHandler for App {
             Command::ClosePrompt => self.set_mode(InputMode::Normal),
             Command::OpenPrompt(_) => self.set_mode(InputMode::Prompt),
             Command::RenamePath(_, _) => self.set_mode(InputMode::Normal),
-            Command::Resize(_, _) => CommandResult::none(), // TODO can probably remove Command::Resize
+            Command::Resize(_, _) => CommandResult::Handled, // TODO can probably remove Command::Resize
             Command::SetFilter(_) => self.set_mode(InputMode::Normal),
             _ => CommandResult::NotHandled,
         }
@@ -195,7 +195,7 @@ fn recursively_handle_command(
 
     let mut handled = !matches!(result, CommandResult::NotHandled);
 
-    if let CommandResult::Handled(Some(derived_command)) = result {
+    if let CommandResult::HandledWith(derived_command) = result {
         derived_commands.push(derived_command);
     }
 

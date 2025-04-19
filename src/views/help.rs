@@ -44,7 +44,7 @@ impl HelpView {
 
     fn toggle_visibility(&mut self) -> CommandResult {
         self.is_visible = !self.is_visible;
-        CommandResult::none()
+        CommandResult::Handled
     }
 }
 
@@ -60,9 +60,9 @@ impl CommandHandler for HelpView {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.is_visible = false;
-                CommandResult::none()
+                CommandResult::Handled
             }
-            _ => CommandResult::none(),
+            _ => CommandResult::Handled,
         }
     }
 

@@ -13,12 +13,12 @@ impl CommandHandler for NoticesView {
                 let clipboard_command = ClipboardCommand::try_from(command)
                     .expect("We already checked that the command is a clipboard command");
                 self.clipboard_command = Some(clipboard_command);
-                CommandResult::none()
+                CommandResult::Handled
             }
             Command::Copy(_, _) | Command::Move(_, _) => {
                 // The clipboard was pasted
                 self.clipboard_command = None;
-                CommandResult::none()
+                CommandResult::Handled
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
@@ -47,10 +47,10 @@ impl CommandHandler for NoticesView {
                     Some(NoticeKind::Clipboard(_)) => Command::CancelClipboard.into(),
                     Some(NoticeKind::Filter(_)) => Command::SetFilter("".into()).into(),
                     Some(NoticeKind::Progress) => self.clear_progress(),
-                    None => CommandResult::none(),
+                    None => CommandResult::Handled,
                 }
             }
-            _ => CommandResult::none(),
+            _ => CommandResult::Handled,
         }
     }
 

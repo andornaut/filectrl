@@ -80,14 +80,12 @@ impl TryFrom<CommandResult> for Command {
 
     fn try_from(value: CommandResult) -> Result<Self, Self::Error> {
         match value {
-            CommandResult::Handled(option) => match option {
-                Some(command) => Ok(command.clone()),
-                None => Err(anyhow!(
-                    "Cannot convert to Command, because CommandResult::Handled is None"
-                )),
-            },
-            _ => Err(anyhow!(
-                "Cannot convert to Command, because CommandResult is not Handled"
+            CommandResult::HandledWith(command) => Ok(command.clone()),
+            CommandResult::Handled => Err(anyhow!(
+                "Cannot convert to Command, because CommandResult is Handled without a command"
+            )),
+            CommandResult::NotHandled => Err(anyhow!(
+                "Cannot convert to Command, because CommandResult is NotHandled"
             )),
         }
     }
