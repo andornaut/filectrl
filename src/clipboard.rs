@@ -93,21 +93,6 @@ impl Display for ClipboardCommand {
     }
 }
 
-impl TryFrom<&Command> for ClipboardCommand {
-    type Error = anyhow::Error;
-
-    fn try_from(command: &Command) -> Result<Self, Self::Error> {
-        match command {
-            Command::CopiedToClipboard(path) => Ok(Self::Copy(path.clone())),
-            Command::CutToClipboard(path) => Ok(Self::Move(path.clone())),
-            _ => Err(anyhow::anyhow!(
-                "Cannot convert {:?} to ClipboardCommand",
-                command
-            )),
-        }
-    }
-}
-
 impl TryFrom<&str> for ClipboardCommand {
     type Error = Error;
 
