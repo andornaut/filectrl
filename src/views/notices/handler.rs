@@ -9,10 +9,12 @@ impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::CancelClipboard => self.clear_clipboard(),
-            Command::CopiedToClipboard(_) | Command::CutToClipboard(_) => {
-                let clipboard_command = ClipboardCommand::try_from(command)
-                    .expect("We already checked that the command is a clipboard command");
-                self.clipboard_command = Some(clipboard_command);
+            Command::CopiedToClipboard(path) => {
+                self.clipboard_command = Some(ClipboardCommand::Copy(path.clone()));
+                CommandResult::Handled
+            }
+            Command::CutToClipboard(path) => {
+                self.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
                 CommandResult::Handled
             }
             Command::Copy(_, _) | Command::Move(_, _) => {
@@ -30,7 +32,7 @@ impl CommandHandler for NoticesView {
         match (*code, *modifiers) {
             (KeyCode::Char('p'), KeyModifiers::NONE) => self.clear_progress(),
             (KeyCode::Char('c'), KeyModifiers::NONE) => Command::CancelClipboard.into(),
-            (_, _) => CommandResult::NotHandled,
+            _ => CommandResult::NotHandled,
         }
     }
 
