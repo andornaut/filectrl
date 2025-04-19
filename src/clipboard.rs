@@ -6,7 +6,6 @@ use std::{
 use crate::{command::Command, file_system::path_info::PathInfo};
 use anyhow::{anyhow, Error};
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
-use log::warn;
 use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
 use std::fmt::Debug;
 
@@ -38,29 +37,23 @@ impl Clipboard {
         Box::new(self) as Box<dyn RatClipboard>
     }
 
-    pub(super) fn copy_file(&self, path: &str) {
-        if let Ok(path_info) = PathInfo::try_from(path) {
-            self.set_clipboard_command(ClipboardCommand::Copy(path_info));
-        }
+    pub(super) fn copy_file(&self, path: &str) -> Result<(), Error> {
+        let path = PathInfo::try_from(path)?;
+        self.set_clipboard_command(ClipboardCommand::Copy(path))
     }
 
-    pub(super) fn cut_file(&self, path: &str) {
-        if let Ok(path_info) = PathInfo::try_from(path) {
-            self.set_clipboard_command(ClipboardCommand::Move(path_info));
-        }
+    pub(super) fn cut_file(&self, path: &str) -> Result<(), Error> {
+        let path = PathInfo::try_from(path)?;
+        self.set_clipboard_command(ClipboardCommand::Move(path))
     }
 
-    pub(super) fn clear(&self) {
-        if let Err(e) = self.backend.clear() {
-            warn!("Failed to clear clipboard: {}", e);
-        }
+    pub(super) fn clear(&self) -> Result<(), Error> {
+        self.backend.clear()
     }
 
-    fn set_clipboard_command(&self, command: ClipboardCommand) {
+    fn set_clipboard_command(&self, command: ClipboardCommand) -> Result<(), Error> {
         let text = command.to_string();
-        if let Err(e) = self.backend.set_string(&text) {
-            warn!("Failed to set clipboard text: {}", e);
-        }
+        self.backend.set_string(&text)
     }
 
     pub fn get_clipboard_command(&self) -> Option<ClipboardCommand> {
