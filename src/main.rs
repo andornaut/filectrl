@@ -1,7 +1,7 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use argh::FromArgs;
-
-use std::path::PathBuf;
 
 use filectrl::{app::config::Config, run};
 

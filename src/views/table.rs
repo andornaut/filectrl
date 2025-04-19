@@ -48,7 +48,6 @@ impl TableView {
         }
     }
 
-    // Copy / Cut / Paste
     fn clear_clipboard(&mut self) -> CommandResult {
         self.clipboard
             .clear()
@@ -57,45 +56,43 @@ impl TableView {
             .unwrap_or_else(|error_command| error_command.into())
     }
 
-    fn copy(&mut self) -> CommandResult {
+    fn copy_to_clipboard(&mut self) -> CommandResult {
         self.selected_path().map_or(
             Command::AlertWarn("No file selected".into()).into(),
             |path| {
                 self.clipboard
                     .copy_file(path.path.as_str())
-                    .map_err(|e| Command::AlertError(format!("Failed to copy file: {}", e)))
+                    .map_err(|e| Command::AlertError(format!("Failed to copy: {}", e)))
                     .map(|_| Command::CopiedToClipboard(path.clone()).into())
                     .unwrap_or_else(|error_command| error_command.into())
             },
         )
     }
 
-    fn cut(&mut self) -> CommandResult {
+    fn cut_to_clipboard(&mut self) -> CommandResult {
         self.selected_path().map_or(
             Command::AlertWarn("No file selected".into()).into(),
             |path| {
                 self.clipboard
                     .cut_file(path.path.as_str())
-                    .map_err(|e| Command::AlertError(format!("Failed to cut file: {}", e)))
+                    .map_err(|e| Command::AlertError(format!("Failed to cut: {}", e)))
                     .map(|_| Command::CutToClipboard(path.clone()).into())
                     .unwrap_or_else(|error_command| error_command.into())
             },
         )
     }
 
-    fn paste(&mut self) -> CommandResult {
+    fn paste_from_clipboard(&mut self) -> CommandResult {
         let destination = self
             .directory
             .as_ref()
             .expect("Directory should always be set");
-        self.clipboard
-            .try_to_command(destination.clone())
-            .map_err(|e| Command::AlertError(format!("Failed to paste: {}", e).into()))
-            .map(|_| Command::ClearClipboard.into())
-            .unwrap_or_else(|error_command| error_command.into())
+        match self.clipboard.get_command(destination.clone()) {
+            Some(command) => command.into(),
+            None => CommandResult::Handled,
+        }
     }
 
-    // Handle events
     fn click_header(&mut self, x: u16) -> CommandResult {
         self.columns
             .sort_column_for_click(x)

@@ -1,8 +1,8 @@
+use rat_widget::textarea::{self as text_area};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 
 use super::PromptView;
 use crate::command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command};
-use rat_widget::textarea::{self as text_area};
 
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {

@@ -9,8 +9,7 @@ use anyhow::Result;
 use log::error;
 use notify::{recommended_watcher, Event, RecommendedWatcher, Watcher};
 
-use crate::command::Command;
-use crate::file_system::debounce;
+use crate::{command::Command, file_system::debounce};
 
 const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(1000);
 const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(500);
@@ -91,12 +90,15 @@ fn watch_for_notify_events(
                     } else if !debouncer.has_delayed_event() {
                         if let Err(e) = delayed_tx.send(Command::Refresh) {
                             error!("Failed to schedule delayed refresh: {}", e);
+                        } else {
+                            debouncer.set_delayed_event();
                         }
                     }
                 }
                 _ => (),
             },
             Err(e) => {
+                error!("File system watcher error: {}", e);
                 let error_command = Command::AlertError(format!(
                     "Failed to run the directory watcher in the background: {}",
                     e

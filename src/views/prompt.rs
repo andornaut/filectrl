@@ -1,6 +1,5 @@
 mod handler;
 mod view;
-mod widgets;
 
 use rat_widget::{text::TextPosition, textarea::TextAreaState};
 use ratatui::layout::Rect;

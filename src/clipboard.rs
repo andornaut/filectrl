@@ -63,10 +63,9 @@ impl Clipboard {
             .and_then(|text| ClipboardCommand::try_from(text.as_str()).ok())
     }
 
-    pub fn try_to_command(&self, destination: PathInfo) -> Result<Command, Error> {
+    pub fn get_command(&self, destination: PathInfo) -> Option<Command> {
         self.get_clipboard_command()
             .map(|command| command.to_command(destination))
-            .ok_or_else(|| anyhow!("Failed to convert clipboard content into a command"))
     }
 }
 

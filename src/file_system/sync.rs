@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
-use log::{info, warn};
-
 use std::{
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::Stdio,
 };
+
+use anyhow::{anyhow, Result};
+use log::{info, warn};
 
 use super::path_info::PathInfo;
 

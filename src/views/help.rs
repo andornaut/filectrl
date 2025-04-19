@@ -1,10 +1,10 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::Frame;
 use ratatui::{
+    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
+    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 

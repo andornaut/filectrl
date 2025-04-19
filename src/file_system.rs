@@ -1,6 +1,3 @@
-// The r# prefix is a "raw identifier" syntax in Rust that allows using reserved keywords
-// as identifiers. Here we use r#async because 'async' is a reserved keyword that we want
-// to use as a module name.
 pub mod r#async;
 pub mod debounce;
 pub mod handler;
@@ -8,10 +5,10 @@ pub mod path_info;
 pub mod sync;
 pub mod watcher;
 
-use std::{fs, path::PathBuf, sync::mpsc::Sender};
+use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
-use log::{error, info};
+use log::info;
 use r#async::TaskCommand;
 
 use self::{path_info::PathInfo, sync::open_in, watcher::DirectoryWatcher};
@@ -37,21 +34,28 @@ impl FileSystem {
             open_current_directory_template: config.open_current_directory_template.clone(),
             open_new_window_template: config.open_new_window_template.clone(),
             open_selected_file_template: config.open_selected_file_template.clone(),
-            watcher: DirectoryWatcher::try_new().expect("Can initialize watcher"),
+            watcher: DirectoryWatcher::try_new().expect("Can initialize DirectoryWatcher"),
         }
     }
 
     pub fn run_once(&mut self, directory: Option<PathBuf>) -> Result<Command> {
         self.watcher.run_once(&self.command_tx);
 
-        let directory = match directory {
-            Some(dir) => PathInfo::try_from(&dir.canonicalize()?)?,
-            None => PathInfo::default(),
-        };
+        let directory = directory
+            .and_then(|path| {
+                path.canonicalize()
+                    .inspect_err(|error| self.send_directory_error(&path, error))
+                    .ok()
+            })
+            .and_then(|path| {
+                PathInfo::try_from(&path)
+                    .inspect_err(|error| self.send_directory_error(&path, error))
+                    .ok()
+            })
+            .unwrap_or_default();
 
         self.cd(directory).try_into()
     }
-
     fn back(&mut self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
         match directory.parent() {
@@ -65,8 +69,8 @@ impl FileSystem {
             Ok(children) => {
                 self.directory = Some(directory.clone());
 
-                if let Err(e) = self.watcher.watch_directory(PathBuf::from(&directory.path)) {
-                    error!("Failed to watch directory: {}", e);
+                if let Err(e) = self.watcher.watch_directory(directory.path.clone().into()) {
+                    self.send_directory_error(&directory.path.clone().into(), e);
                 }
                 Command::SetDirectory(directory, children)
             }
@@ -75,7 +79,7 @@ impl FileSystem {
         .into()
     }
 
-    fn handle_progress(&mut self, task: &Task) -> CommandResult {
+    fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
         task.error_message()
             .map_or(CommandResult::NotHandled, |msg| {
                 Command::AlertError(msg).into()
@@ -91,7 +95,7 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path)
                 } else {
-                    info!("Opening path:\"{path}\"");
+                    info!("Opening path: {path:?}");
                     match open::that_detached(&path.path) {
                         Err(error) => anyhow!("Failed to open {path:?}: {error}").into(),
                         Ok(_) => CommandResult::Handled,
@@ -138,5 +142,13 @@ impl FileSystem {
 
     fn run_task(&mut self, task: TaskCommand) -> CommandResult {
         task.run(self.command_tx.clone())
+    }
+
+    fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {
+        self.command_tx
+            .send(Command::AlertError(format!(
+                "Failed to read directory {dir:?}: {error}"
+            )))
+            .expect("Can send command messages");
     }
 }

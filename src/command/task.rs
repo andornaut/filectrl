@@ -8,15 +8,6 @@ use std::{
 pub struct Progress(pub u64, pub u64);
 
 impl Progress {
-    pub fn done(&mut self) {
-        self.0 = self.1;
-    }
-
-    pub fn is_done(&self) -> bool {
-        // `Progress(n, 0)` is considered done
-        self.1 == 0 || self.0 == self.1
-    }
-
     pub fn scaled(&self, factor: u16) -> u16 {
         if self.is_done() {
             return factor;
@@ -27,6 +18,15 @@ impl Progress {
 
     fn combine(&self, progress: &Progress) -> Self {
         Progress(self.0 + progress.0, self.1 + progress.1)
+    }
+
+    fn done(&mut self) {
+        self.0 = self.1;
+    }
+
+    fn is_done(&self) -> bool {
+        // `Progress(n, 0)` is considered done
+        self.1 == 0 || self.0 == self.1
     }
 
     fn increment(&mut self, additional: u64) {
@@ -67,23 +67,27 @@ impl Task {
     }
 
     pub fn done(&mut self) {
+        // Calling .increment() may also set the status to done.
         self.progress.done();
         self.status = TaskStatus::Done;
     }
 
     pub fn error(&mut self, message: String) {
+        assert!(!self.is_done_or_error());
+
         self.status = TaskStatus::Error(message)
     }
 
     pub fn error_message(&self) -> Option<String> {
-        if let TaskStatus::Error(message) = &self.status {
-            Some(message.clone())
-        } else {
-            None
+        match &self.status {
+            TaskStatus::Error(message) => Some(message.clone()),
+            _ => None,
         }
     }
 
     pub fn increment(&mut self, additional: u64) {
+        assert!(!self.is_done_or_error());
+
         self.progress.increment(additional);
         self.status = if self.progress.is_done() {
             TaskStatus::Done
@@ -92,8 +96,8 @@ impl Task {
         };
     }
 
-    pub fn is_done(&self) -> bool {
-        self.status == TaskStatus::Done
+    pub fn is_done_or_error(&self) -> bool {
+        matches!(self.status, TaskStatus::Done | TaskStatus::Error(_))
     }
 
     pub fn is_new(&self) -> bool {

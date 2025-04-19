@@ -1,3 +1,4 @@
+use chrono::Local;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -11,7 +12,6 @@ use super::{
     TableView,
 };
 use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
-use chrono::Local;
 
 const MIN_HEIGHT: u16 = 3;
 
