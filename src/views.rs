@@ -27,8 +27,8 @@ pub(super) trait View: CommandHandler {
 }
 
 pub(super) fn bordered(
-    buf: &mut Buffer,
     area: Rect,
+    buf: &mut Buffer,
     style: Style,
     title_left: Option<&str>,
     title_right: Option<&str>,

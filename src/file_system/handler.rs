@@ -1,16 +1,16 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::{r#async::TaskCommand, FileSystem};
-use crate::command::{handler::CommandHandler, result::CommandResult, task::Task, Command};
+use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match TaskCommand::try_from(command) {
-            Ok(task) => task.run(self.tx.clone()),
+            Ok(task) => self.run_task(task),
             Err(_) => match command {
                 Command::Open(path) => self.open(path),
                 Command::OpenCustom(path) => self.open_custom(path),
-                Command::Progress(task) => self.handle_error_and_done_status(task),
+                Command::Progress(task) => self.handle_progress(task),
                 Command::Refresh => self.refresh(),
                 Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
                 _ => CommandResult::NotHandled,
@@ -33,17 +33,5 @@ impl CommandHandler for FileSystem {
             },
             (_, _) => CommandResult::NotHandled,
         }
-    }
-}
-
-impl FileSystem {
-    fn handle_error_and_done_status(&mut self, task: &Task) -> CommandResult {
-        if let Some(message) = task.error_message() {
-            return Command::AlertError(message).into();
-        }
-        if task.is_done() {
-            return self.refresh();
-        }
-        CommandResult::NotHandled
     }
 }

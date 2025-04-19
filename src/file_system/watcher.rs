@@ -16,27 +16,38 @@ const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(1000);
 const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(500);
 
 pub struct DirectoryWatcher {
+    notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched_directory: Option<PathBuf>,
     watcher: RecommendedWatcher,
 }
 
 impl DirectoryWatcher {
-    pub fn try_new_and_run(command_tx: Sender<Command>) -> Result<Self> {
-        let (tx, rx) = channel();
-        let (delayed_tx, delayed_rx) = channel();
-        let command_tx_clone = command_tx.clone();
-
-        thread::spawn(move || watch_for_delayed_commands(command_tx_clone, delayed_rx));
-        thread::spawn(move || watch_for_notify_events(command_tx, delayed_tx, rx));
-
-        let watcher = recommended_watcher(tx)?;
+    pub fn try_new() -> Result<Self> {
+        let (notify_tx, notify_rx) = channel();
+        let watcher = recommended_watcher(notify_tx)?;
         Ok(Self {
+            notify_rx: Some(notify_rx),
             watcher,
             watched_directory: None,
         })
     }
 
-    pub fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
+    pub fn run_once(&mut self, command_tx: &Sender<Command>) {
+        let notify_rx = match self.notify_rx.take() {
+            Some(rx) => rx,
+            None => return, // Already running, do nothing
+        };
+
+        let (delayed_tx, delayed_rx) = channel();
+        let command_tx_for_delayed = command_tx.clone();
+        let command_tx_for_notify = command_tx.clone();
+        thread::spawn(move || watch_for_delayed_commands(command_tx_for_delayed, delayed_rx));
+        thread::spawn(move || {
+            watch_for_notify_events(command_tx_for_notify, delayed_tx, notify_rx)
+        });
+    }
+
+    pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
         if let Some(old_path) = &self.watched_directory {
             if let Err(e) = self.watcher.unwatch(old_path.as_path()) {
                 error!("Failed to unwatch directory: {}", e);
@@ -64,10 +75,10 @@ impl DirectoryWatcher {
 fn watch_for_notify_events(
     command_tx: Sender<Command>,
     delayed_tx: Sender<Command>,
-    rx: Receiver<std::result::Result<Event, notify::Error>>,
+    notify_rx: Receiver<std::result::Result<Event, notify::Error>>,
 ) {
     let mut debouncer = debounce::TimeDebouncer::new(DEBOUNCE_THRESHOLD);
-    for result in rx {
+    for result in notify_rx {
         match result {
             Ok(event) => match event.kind {
                 notify::EventKind::Create(_)
@@ -98,8 +109,8 @@ fn watch_for_notify_events(
     }
 }
 
-fn watch_for_delayed_commands(command_tx: Sender<Command>, timer_rx: Receiver<Command>) {
-    while let Ok(command) = timer_rx.recv() {
+fn watch_for_delayed_commands(command_tx: Sender<Command>, delayed_rx: Receiver<Command>) {
+    while let Ok(command) = delayed_rx.recv() {
         thread::sleep(CHECK_DELAYED_THRESHOLD);
         if let Err(e) = command_tx.send(command) {
             error!("Failed to send delayed refresh command: {}", e);

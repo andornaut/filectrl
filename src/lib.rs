@@ -31,7 +31,7 @@ pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> 
     }
 
     let terminal = CleanupOnDropTerminal::try_new()?;
-    App::new(config, terminal).run(initial_directory)
+    App::new(config, terminal).run_once(initial_directory)
 }
 
 fn configure_logging() {

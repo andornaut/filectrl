@@ -31,12 +31,12 @@ impl View for PromptView {
         label_widget.render(label_area, frame.buffer_mut());
 
         let textarea_widget = TextArea::new().style(theme.prompt_input());
-        let cursor = self.input_state.cursor();
         textarea_widget.render(input_area, frame.buffer_mut(), &mut self.input_state);
 
         // Panics if called before render_stateful_widget()
         self.input_state.scroll_cursor_to_visible();
 
+        let cursor = self.input_state.cursor();
         let cursor_position = Position::new(
             input_area.x + cursor.x as u16 - self.input_state.hscroll.offset() as u16,
             input_area.y + cursor.y as u16,

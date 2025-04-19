@@ -18,22 +18,6 @@ pub(super) fn split_with_ellipsis(line: &str, width: u16) -> Vec<String> {
     parts
 }
 
-fn split_utf8(line: &str, width: u16) -> Vec<String> {
-    if line.len() <= width as usize {
-        return vec![line.into()];
-    }
-
-    let width = width.saturating_sub(ELLIPSIS_WIDTH);
-    let options = Options::new(width as usize)
-        .word_splitter(WordSplitter::NoHyphenation)
-        .break_words(true);
-
-    wrap(line, options)
-        .into_iter()
-        .map(|s| s.into_owned())
-        .collect()
-}
-
 pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
@@ -68,6 +52,22 @@ pub(super) fn truncate_left_utf8(line: &str, width: u16) -> String {
     }
 
     result
+}
+
+fn split_utf8(line: &str, width: u16) -> Vec<String> {
+    if line.len() <= width as usize {
+        return vec![line.into()];
+    }
+
+    let width = width.saturating_sub(ELLIPSIS_WIDTH);
+    let options = Options::new(width as usize)
+        .word_splitter(WordSplitter::NoHyphenation)
+        .break_words(true);
+
+    wrap(line, options)
+        .into_iter()
+        .map(|s| s.into_owned())
+        .collect()
 }
 
 #[cfg(test)]

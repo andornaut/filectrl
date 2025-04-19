@@ -95,8 +95,8 @@ impl View for HelpView {
             None
         };
         let bordered_area = bordered(
-            frame.buffer_mut(),
             area,
+            frame.buffer_mut(),
             style,
             Some(title_left),
             title_right,
