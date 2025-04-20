@@ -46,6 +46,7 @@ fn osstr_to_string(os_str: &OsStr) -> Result<String> {
 #[derive(Clone, Eq, Hash)]
 pub struct PathInfo {
     pub basename: String,
+    pub inode: u64, // Unique identifier for the file on the system
     pub modified: Option<DateTime<Local>>,
     pub path: String,
     pub size: u64,
@@ -201,6 +202,10 @@ impl PathInfo {
             false
         }
     }
+
+    pub fn is_same_inode(&self, other: &Self) -> bool {
+        self.inode == other.inode
+    }
 }
 
 impl fmt::Debug for PathInfo {
@@ -228,6 +233,39 @@ impl PartialEq for PathInfo {
     }
 }
 
+impl TryFrom<&Path> for PathInfo {
+    type Error = Error;
+
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+        // Only hold on to the data we care about, and drop DirEntry to avoid consuming File Handles on Unix.
+        // Ref: https://doc.rust-lang.org/std/fs/struct.DirEntry.html#platform-specific-behavior
+        //   On Unix, the DirEntry struct contains an internal reference to the open directory.
+        //   Holding DirEntry objects will consume a file handle even after the ReadDir iterator is dropped.
+        let metadata = path.symlink_metadata()?;
+
+        Ok(Self {
+            accessed: maybe_time(metadata.accessed()),
+            basename: path.to_basename(),
+            created: maybe_time(metadata.created()),
+            inode: metadata.ino(),
+            mode: metadata.permissions().mode(),
+            modified: maybe_time(metadata.modified()),
+            path: path.to_string()?,
+            size: metadata.len(),
+            gid: metadata.gid(),
+            uid: metadata.uid(),
+        })
+    }
+}
+
+impl TryFrom<&PathBuf> for PathInfo {
+    type Error = Error;
+
+    fn try_from(path_buf: &PathBuf) -> Result<Self, Self::Error> {
+        Self::try_from(path_buf.as_path())
+    }
+}
+
 impl TryFrom<&str> for PathInfo {
     type Error = Error;
 
@@ -243,37 +281,6 @@ impl TryFrom<String> for PathInfo {
     fn try_from(path: String) -> Result<Self, Self::Error> {
         let path_buf = PathBuf::from(path);
         Self::try_from(&path_buf)
-    }
-}
-
-impl TryFrom<&PathBuf> for PathInfo {
-    type Error = Error;
-
-    fn try_from(path_buf: &PathBuf) -> Result<Self, Self::Error> {
-        Self::try_from(path_buf.as_path())
-    }
-}
-
-impl TryFrom<&Path> for PathInfo {
-    type Error = Error;
-
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        // Only hold on to the data we care about, and drop DirEntry to avoid consuming File Handles on Unix.
-        // Ref: https://doc.rust-lang.org/std/fs/struct.DirEntry.html#platform-specific-behavior
-        //   On Unix, the DirEntry struct contains an internal reference to the open directory.
-        //   Holding DirEntry objects will consume a file handle even after the ReadDir iterator is dropped.
-        let metadata = path.symlink_metadata()?; // Will return an Error if the path doesn't exist
-        Ok(Self {
-            accessed: maybe_time(metadata.accessed()),
-            basename: path.to_basename(),
-            created: maybe_time(metadata.created()),
-            mode: metadata.permissions().mode(),
-            modified: maybe_time(metadata.modified()),
-            path: path.to_string()?,
-            size: metadata.len(),
-            gid: metadata.gid(),
-            uid: metadata.uid(),
-        })
     }
 }
 
