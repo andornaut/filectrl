@@ -221,6 +221,17 @@ impl TableView {
     }
 
     fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
+        // Reset filter if navigating to a different directory
+        // PromptView.set_directory() will take care of returning a Command::SetFilter("") command,
+        // which we can't do here, because we must return Command::SetSelected.
+        if self
+            .directory
+            .as_ref()
+            .map_or(false, |previous| !previous.is_same_inode(&directory))
+        {
+            self.filter.clear();
+        }
+
         self.directory = Some(directory);
         self.directory_items = children;
         self.sort()
@@ -263,12 +274,13 @@ impl TableView {
             if let Some(new_index) = self
                 .directory_items_sorted
                 .iter()
-                .position(|p| p == &selected_path)
+                .position(|p| p.is_same_inode(&selected_path))
             {
                 self.table_state.select(Some(new_index));
                 return Command::SetSelected(Some(selected_path)).into();
             }
         }
+        // We didn't find a matching selected_item, so reset
         self.select(0)
     }
 

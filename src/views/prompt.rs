@@ -52,20 +52,35 @@ impl PromptView {
         text_area_state.set_clipboard(Some(Clipboard::default().as_rat_clipboard()));
         text_area_state.set_text(&text);
 
-        // Move to 1 position after the last character
-        let text_width_plus_1 = text_area_state.line_width(0) + 1;
-        let position_after_last_char = TextPosition::new(text_width_plus_1 - 1, 0);
+        // Move the cursor to 1 position after the last character
+        let text_width = text_area_state.line_width(0);
+        let position_after_last_char = TextPosition::new(text_width, 0);
         text_area_state.set_cursor(position_after_last_char, false);
 
         // Workaround https://github.com/thscharler/rat-salsa/issues/5
         // `text_area_state.area` is not set yet, because `TextArea` hasn't been rendered yet, so
-        // we need to keep track of the `self.input_area` that would have applied, and then set the
-        // hscroll offset manually.
-        let hscroll_offset = text_width_plus_1.saturating_sub(self.input_area.width as u32);
+        // we need to keep track of the `self.input_area` from the previous render (when PromptView wasn't open),
+        // and then set the hscroll offset manually.
+        let hscroll_offset = (text_width as u16 + 1).saturating_sub(self.input_area.width);
         text_area_state.hscroll.set_offset(hscroll_offset as usize);
 
         self.input_state = text_area_state;
         CommandResult::Handled
+    }
+
+    fn set_directory(&mut self, directory: &PathInfo) -> CommandResult {
+        let should_reset_filter = self
+            .directory
+            .as_ref()
+            .map_or(false, |previous| !previous.is_same_inode(directory));
+
+        self.directory = Some(directory.clone());
+
+        if should_reset_filter {
+            Command::SetFilter("".into()).into()
+        } else {
+            CommandResult::Handled
+        }
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
