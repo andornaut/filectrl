@@ -9,6 +9,7 @@ mod style;
 mod widgets;
 
 use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
+use std::path::Path;
 
 use self::{
     columns::{Columns, SortColumn, SortDirection},
@@ -221,20 +222,44 @@ impl TableView {
     }
 
     fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
+        let previous_dir: Option<PathInfo> = self.directory.clone();
+
+        // Check if we are navigating back to the parent
+        let should_restore_selection: bool = previous_dir.as_ref().map_or(false, |prev_p_info| {
+            let prev_path = Path::new(&prev_p_info.path);
+            let new_path = Path::new(&directory.path);
+            prev_path.parent() == Some(new_path)
+        });
+
         // Reset filter if navigating to a different directory
-        // PromptView.set_directory() will take care of returning a Command::SetFilter("") command,
-        // which we can't do here, because we must return Command::SetSelected.
-        if self
-            .directory
+        let is_different_dir = previous_dir
             .as_ref()
-            .map_or(false, |previous| !previous.is_same_inode(&directory))
-        {
+            .map_or(true, |prev| prev != &directory);
+        if is_different_dir {
             self.filter.clear();
         }
 
         self.directory = Some(directory);
         self.directory_items = children;
-        self.sort()
+
+        let sort_result = self.sort();
+
+        // If we determined this was a 'back' navigation, try to select the item matching the previous directory
+        if should_restore_selection {
+            if let Some(previous_dir) = previous_dir {
+                if let Some(item) = self
+                    .directory_items_sorted
+                    .iter()
+                    .position(|directory| directory == &previous_dir)
+                {
+                    return self.select(item);
+                }
+            }
+        }
+
+        // Fallback: Return the original result from sort,
+        // which selects item 0 or the previously selected item if it was a refresh
+        sort_result
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
@@ -248,7 +273,9 @@ impl TableView {
     }
 
     fn sort(&mut self) -> CommandResult {
+        // Clone the self.directory_items, so we can sort without affecting the original items
         let mut items = self.directory_items.clone();
+
         match self.columns.sort_column() {
             SortColumn::Name => items.sort_by_cached_key(|path| path.name_comparator()),
             SortColumn::Modified => items.sort_by_cached_key(|path| path.modified_comparator()),
@@ -263,24 +290,30 @@ impl TableView {
             items.retain(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase));
         }
 
-        // set_directory(), which is called when navigating or refreshing, set_filter(), and sort_by() all
-        // call this method. Sometimes, we won't be able to retain the currently selected item, b/c it
-        // may no longer be present in the `items`, but other times it is present, though possibly at a
-        // different position. We handle these cases by storing the currently selected item before assigning
-        // the new items, and then attempting to restore the selection afterward.
-        let selected_path = self.selected_path().cloned();
+        // sort() is called when navigating or refreshing or sorting.
+        // Sometimes, we won't be able to retain the currently selected item, b/c it
+        // may no longer be present in the `items` (such as when navigating, or if it's been deleted),
+        // but other times it is present (such as when refreshing),
+        // though possibly at a different position (if another process has modified the directory).
+        // We handle these cases by storing the currently selected item before assigning the new items,
+        // and then attempting to restore the selection afterward by comparing inodes.
+        let selected = self.selected_path().cloned();
+        // Must assign self.directory_items_sorted only after retrieving the previously selected item
         self.directory_items_sorted = items;
-        if let Some(selected_path) = selected_path {
+
+        // Try to restore selection based on inode after sorting/filtering
+        // This will only work if this was a refresh, not a navigation
+        if let Some(selected_path) = selected {
             if let Some(new_index) = self
                 .directory_items_sorted
                 .iter()
                 .position(|p| p.is_same_inode(&selected_path))
             {
-                self.table_state.select(Some(new_index));
-                return Command::SetSelected(Some(selected_path)).into();
+                // Select the previously selected item if it still exists after sort/filter
+                return self.select(new_index);
             }
         }
-        // We didn't find a matching selected_item, so reset
+        // Fallback: Select the first item if previous selection not found or none existed
         self.select(0)
     }
 
