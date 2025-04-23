@@ -221,44 +221,47 @@ impl TableView {
             .map(|i| &self.directory_items_sorted[i])
     }
 
-    fn set_directory(&mut self, directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
-        let previous_dir: Option<PathInfo> = self.directory.clone();
+    fn set_directory(&mut self, new_directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
+        let prev_directory: Option<PathInfo> = self.directory.clone(); // Store previous directory
 
-        // Check if we are navigating back to the parent
-        let should_restore_selection: bool = previous_dir.as_ref().map_or(false, |prev_p_info| {
-            let prev_path = Path::new(&prev_p_info.path);
-            let new_path = Path::new(&directory.path);
-            prev_path.parent() == Some(new_path)
-        });
-
-        // Reset filter if navigating to a different directory
-        let is_different_dir = previous_dir
+        // Clear the filter if we're navigating to a different directory
+        let is_different_dir = prev_directory
             .as_ref()
-            .map_or(true, |prev| prev != &directory);
+            .map_or(true, |prev_directory| prev_directory != &new_directory);
         if is_different_dir {
             self.filter.clear();
         }
 
-        self.directory = Some(directory);
+        // We must set self.directory and self.directory_items before sorting, because sort() uses them
+        self.directory = Some(new_directory.clone());
         self.directory_items = children;
-
         let sort_result = self.sort();
 
-        // If we determined this was a 'back' navigation, try to select the item matching the previous directory
-        if should_restore_selection {
-            if let Some(previous_dir) = previous_dir {
-                if let Some(item) = self
-                    .directory_items_sorted
-                    .iter()
-                    .position(|directory| directory == &previous_dir)
+        // If we navigated to an ancestor directory, then select the item that was previously in the path
+        if let Some(prev_directory) = prev_directory {
+            let prev_path = Path::new(&prev_directory.path);
+            let new_path = Path::new(&new_directory.path);
+
+            if prev_path.starts_with(new_path) && prev_path != new_path {
+                let new_path_components_count = new_path.components().count();
+                if let Some(target_component) =
+                    prev_path.components().nth(new_path_components_count)
                 {
-                    return self.select(item);
+                    let target_ancestor_path = new_path.join(target_component.as_os_str());
+
+                    // Try to find this ancestor in the newly sorted list
+                    if let Some(item) = self
+                        .directory_items_sorted
+                        .iter()
+                        .position(|item| Path::new(&item.path) == target_ancestor_path.as_path())
+                    {
+                        return self.select(item);
+                    }
                 }
             }
         }
 
-        // Fallback: Return the original result from sort,
-        // which selects item 0 or the previously selected item if it was a refresh
+        // Fallback: Return the default selection result from sort()
         sort_result
     }
 
