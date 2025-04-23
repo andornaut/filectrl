@@ -28,6 +28,7 @@ serde = {version = "~1", features = ["derive"]}
 smart-default = "~0.7"
 textwrap = "~0.16"
 toml = "~0.8"
+unicode-segmentation = "~1"
 unicode-width = "~0.2"
 unix_mode = "~0.1"
 
