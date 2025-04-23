@@ -1,6 +1,7 @@
+use rat_text::HasScreenCursor;
 use rat_widget::textarea::TextArea;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     widgets::{Paragraph, StatefulWidget, Widget},
     Frame,
 };
@@ -21,7 +22,6 @@ impl View for PromptView {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .areas(area);
-        self.input_area = input_area;
 
         if !self.should_show(mode) {
             return;
@@ -30,17 +30,20 @@ impl View for PromptView {
         let label_widget = Paragraph::new(label).style(theme.prompt_label());
         label_widget.render(label_area, frame.buffer_mut());
 
+        // Workaround https://github.com/thscharler/rat-salsa/issues/5
+        // When we're at the right-edge, the cursor will be positioned _under_ the last char,
+        // so we have to adjust hscroll_offset to position the cursor _after_ the last char.
+        let hscroll_offset_plus_one =
+            (self.text_area_state.line_width(0) as u16 + 1).saturating_sub(input_area.width);
+        self.text_area_state
+            .hscroll
+            .set_offset(hscroll_offset_plus_one as usize);
+
         let textarea_widget = TextArea::new().style(theme.prompt_input());
-        textarea_widget.render(input_area, frame.buffer_mut(), &mut self.input_state);
-
-        // Panics if called before render_stateful_widget()
-        self.input_state.scroll_cursor_to_visible();
-
-        let cursor = self.input_state.cursor();
-        let cursor_position = Position::new(
-            input_area.x + cursor.x as u16 - self.input_state.hscroll.offset() as u16,
-            input_area.y + cursor.y as u16,
-        );
-        frame.set_cursor_position(cursor_position);
+        textarea_widget.render(input_area, frame.buffer_mut(), &mut self.text_area_state);
+        // .screen_cursor() returns None when there's an active selection.
+        if let Some((x, y)) = self.text_area_state.screen_cursor() {
+            frame.set_cursor_position((x, y));
+        }
     }
 }

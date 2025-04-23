@@ -378,6 +378,7 @@ dependencies = [
  "nix 0.29.0",
  "notify",
  "open",
+ "rat-text",
  "rat-widget",
  "ratatui",
  "serde",
@@ -980,14 +981,12 @@ checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 [[package]]
 name = "rat-cursor"
 version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37427a103efff37496fad20528e767ba658737e731dff1cf9231104859455dc0"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 
 [[package]]
 name = "rat-event"
 version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26e333b72bcd23f28ac85ba6441c5e75600ace55947e71930e7cb327e6716286"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "log",
@@ -997,8 +996,7 @@ dependencies = [
 [[package]]
 name = "rat-focus"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05ba7cfef5aa7bec283ad631c82eb41b9bc9dcce3384d10bf392542a573e40de"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "fxhash",
@@ -1011,8 +1009,7 @@ dependencies = [
 [[package]]
 name = "rat-ftable"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e27c12ab51fa591e7a08123f2a80cf097b3a23ee947868947bd8291477f2564d"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "log",
@@ -1027,8 +1024,7 @@ dependencies = [
 [[package]]
 name = "rat-menu"
 version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86dfbde4eedc30fbae55f0fad39c27b881250999519a86d4a8c3cbaf3c78d391"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "log",
@@ -1043,8 +1039,7 @@ dependencies = [
 [[package]]
 name = "rat-popup"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3485fc38234ff97a169f3a450efcf6d115f854e3bf6f43691f241716e4ecf676"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "log",
@@ -1059,8 +1054,7 @@ dependencies = [
 [[package]]
 name = "rat-reloc"
 version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbddcf2d92aae0efb227180c07d8fbbb4480cd30318e4e6f5825aae8f6dc5ba5"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "log",
  "ratatui",
@@ -1069,8 +1063,7 @@ dependencies = [
 [[package]]
 name = "rat-scrolled"
 version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7110d840d57dc76785c1fbb76814c162772d975414d37ce931bfa2296b1f8f45"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "crossterm",
  "log",
@@ -1082,8 +1075,7 @@ dependencies = [
 [[package]]
 name = "rat-text"
 version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c923ab42cee656bed589c2cbc2b454f4ead356fe91cc5d22bcbe497dfb36ba0"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "chrono",
  "crossterm",
@@ -1106,8 +1098,7 @@ dependencies = [
 [[package]]
 name = "rat-widget"
 version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d532b0b6cae7ce719ea62ac5239509414b918a00e723de321274b6c15ae0006c"
+source = "git+https://github.com/thscharler/rat-salsa?rev=677fe2c#677fe2cde8fb979dce81b91e7aca24f4b7924a11"
 dependencies = [
  "chrono",
  "crossterm",
@@ -1285,9 +1276,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook-registry"
-version = "1.4.2"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9e9e0b4211b72e7b8b6e85c807d36c212bdb33ea8587f7569562a84df5465b1"
+checksum = "9203b8055f63a2a00e2f593bb0510367fe707d7ff1e5c872de2f537b339e5410"
 dependencies = [
  "libc",
 ]
