@@ -24,12 +24,10 @@ impl CommandHandler for PromptView {
         let key_event = KeyEvent::new(*code, *modifiers);
         let event = Event::Key(key_event);
 
-        let is_ctrl = modifiers.contains(KeyModifiers::CONTROL);
-
-        match *code {
-            KeyCode::Esc => Command::ClosePrompt.into(),
-            KeyCode::Enter => self.submit(),
-            KeyCode::Left if is_ctrl => {
+        match (*code, *modifiers) {
+            (KeyCode::Esc, _) => Command::ClosePrompt.into(),
+            (KeyCode::Enter, _) => self.submit(),
+            (KeyCode::Left, KeyModifiers::CONTROL) => {
                 let text = self.text_area_state.text();
                 let current_pos = self.text_area_state.cursor();
                 let current_byte_offset = self
@@ -48,7 +46,7 @@ impl CommandHandler for PromptView {
                 self.text_area_state.set_cursor(new_pos, false);
                 CommandResult::Handled
             }
-            KeyCode::Right if is_ctrl => {
+            (KeyCode::Right, KeyModifiers::CONTROL) => {
                 let text = self.text_area_state.text();
                 let current_pos = self.text_area_state.cursor();
                 let current_byte_offset = self
@@ -67,24 +65,23 @@ impl CommandHandler for PromptView {
                 self.text_area_state.set_cursor(new_pos, false);
                 CommandResult::Handled
             }
-            _ => {
+            (KeyCode::Right, _) => {
                 let text_area_state = &mut self.text_area_state;
                 text_area::handle_events(text_area_state, true, &event);
 
                 // Workaround https://github.com/thscharler/rat-salsa/issues/6
-                // Only apply if not handled by our custom CTRL+Right
-                if *code == KeyCode::Right && !is_ctrl {
-                    let cursor_position_x = text_area_state.cursor().x;
-                    let hscroll_offset = text_area_state.hscroll.offset();
-                    // Check area width before using it
-                    if text_area_state.area.width > 0 {
-                        let is_position_after_right_edge = cursor_position_x
-                            == text_area_state.area.width as u32 + hscroll_offset as u32;
-                        if is_position_after_right_edge {
-                            text_area_state.hscroll.set_offset(hscroll_offset + 1);
-                        }
-                    }
+                let cursor_position_x = text_area_state.cursor().x;
+                let hscroll_offset = text_area_state.hscroll.offset();
+                let is_position_after_right_edge =
+                    cursor_position_x == text_area_state.area.width as u32 + hscroll_offset as u32;
+                if is_position_after_right_edge {
+                    text_area_state.hscroll.set_offset(hscroll_offset + 1);
                 }
+                CommandResult::Handled
+            }
+            (_, _) => {
+                let text_area_state = &mut self.text_area_state;
+                text_area::handle_events(text_area_state, true, &event);
                 CommandResult::Handled
             }
         }

@@ -33,14 +33,18 @@ impl View for PromptView {
         // Workaround https://github.com/thscharler/rat-salsa/issues/5
         // When we're at the right-edge, the cursor will be positioned _under_ the last char,
         // so we have to adjust hscroll_offset to position the cursor _after_ the last char.
-        let hscroll_offset_plus_one =
-            (self.text_area_state.line_width(0) as u16 + 1).saturating_sub(input_area.width);
-        self.text_area_state
-            .hscroll
-            .set_offset(hscroll_offset_plus_one as usize);
+        let cursor = self.text_area_state.cursor();
+        let line_width = self.text_area_state.line_width(cursor.y);
+        if cursor.x == line_width as u32 {
+            let hscroll_offset = (line_width as u16 + 1).saturating_sub(input_area.width);
+            self.text_area_state
+                .hscroll
+                .set_offset(hscroll_offset as usize);
+        }
 
         let textarea_widget = TextArea::new().style(theme.prompt_input());
         textarea_widget.render(input_area, frame.buffer_mut(), &mut self.text_area_state);
+
         // .screen_cursor() returns None when there's an active selection.
         if let Some((x, y)) = self.text_area_state.screen_cursor() {
             frame.set_cursor_position((x, y));
