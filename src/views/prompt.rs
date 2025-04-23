@@ -69,14 +69,14 @@ impl PromptView {
     }
 
     fn set_directory(&mut self, directory: &PathInfo) -> CommandResult {
-        let should_reset_filter = self
+        let is_different_dir = self
             .directory
             .as_ref()
-            .map_or(false, |previous| !previous.is_same_inode(directory));
+            .map_or(false, |previous_dir| !previous_dir.is_same_inode(directory));
 
         self.directory = Some(directory.clone());
 
-        if should_reset_filter {
+        if is_different_dir {
             Command::SetFilter("".into()).into()
         } else {
             CommandResult::Handled
