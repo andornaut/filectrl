@@ -1,5 +1,6 @@
 mod handler;
 mod view;
+mod word_navigation;
 
 use rat_widget::{text::TextPosition, textarea::TextAreaState};
 use ratatui::layout::Rect;
