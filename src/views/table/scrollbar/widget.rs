@@ -8,8 +8,6 @@ use crate::app::config::theme::Theme;
 pub fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
     let mut scrollbar = Scrollbar::default()
         .orientation(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
         .thumb_style(theme.table_scrollbar_thumb())
         .thumb_symbol(block::FULL)
         .track_style(theme.table_scrollbar_track())
@@ -21,6 +19,8 @@ pub fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
             .begin_style(theme.table_scrollbar_begin())
             .end_symbol(Some("▼"))
             .end_style(theme.table_scrollbar_end());
+    } else {
+        scrollbar = scrollbar.begin_symbol(None).end_symbol(None);
     }
 
     scrollbar

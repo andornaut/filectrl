@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     app::config::theme::Theme, clipboard::ClipboardCommand, file_system::path_info::PathInfo,
-    utf8::split_with_ellipsis,
+    unicode::split_with_ellipsis,
 };
 
 pub(super) fn table_widget<'a>(
@@ -49,28 +49,29 @@ fn header_cell_widget<'a>(
     column: SortColumn,
 ) -> Cell<'a> {
     let is_sorted = *sort_column == column;
-    let text = match (is_sorted, sort_direction) {
-        (true, SortDirection::Ascending) => match column {
-            SortColumn::Name => "[N]ame⌃",
-            SortColumn::Modified => "[M]odified⌃",
-            SortColumn::Size => "[S]ize⌃",
-        },
-        (true, SortDirection::Descending) => match column {
-            SortColumn::Name => "[N]ame⌄",
-            SortColumn::Modified => "[M]odified⌄",
-            SortColumn::Size => "[S]ize⌄",
-        },
-        (false, _) => match column {
-            SortColumn::Name => "[N]ame",
-            SortColumn::Modified => "[M]odified",
-            SortColumn::Size => "[S]ize",
-        },
+    let text = match column {
+        SortColumn::Name => "[N]ame",
+        SortColumn::Modified => "[M]odified",
+        SortColumn::Size => "[S]ize",
     };
+
+    // Add direction indicator if this column is sorted
+    let text = if is_sorted {
+        match sort_direction {
+            SortDirection::Ascending => format!("{}⌃", text),
+            SortDirection::Descending => format!("{}⌄", text),
+        }
+    } else {
+        text.into()
+    };
+
+    // Apply bold styling if this is the sorted column
     let label = if is_sorted {
         text.bold()
     } else {
         Span::raw(text)
     };
+
     Cell::from(label.style(header_style(theme, sort_column, &column)))
 }
 
@@ -98,15 +99,11 @@ pub(super) fn row_widget_and_height<'a>(
             )
         };
 
-    let name = split_name(name_column_width, item);
+    let name = split_name(item, name_column_width as usize);
     let height = name.len() as u16;
     let row = Row::new([
         Cell::from(name).style(name_style),
-        Cell::from(
-            item.modified_relative_to(relative_to_datetime)
-                .unwrap_or_default(),
-        )
-        .style(date_style),
+        Cell::from(item.modified(relative_to_datetime).unwrap_or_default()).style(date_style),
         Cell::from(item.size()).style(size_style),
         Cell::from(item.mode()),
     ])
@@ -115,7 +112,7 @@ pub(super) fn row_widget_and_height<'a>(
     (row, height)
 }
 
-fn split_name<'a>(width: u16, path: &'a PathInfo) -> Vec<Line<'a>> {
+fn split_name<'a>(path: &'a PathInfo, width: usize) -> Vec<Line<'a>> {
     split_with_ellipsis(&path.name(), width)
         .into_iter()
         .map(Line::from)

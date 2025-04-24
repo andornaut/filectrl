@@ -8,21 +8,21 @@ use std::time::{Duration, Instant};
 /// 2. Subsequent chunks that exceed the percentage-based threshold
 pub struct BytesDebouncer {
     current_bytes: u64,
-    threshold: u64,
     has_triggered: bool,
+    threshold: u64,
 }
 
 impl BytesDebouncer {
     pub fn new(debounce_threshold_percentage: u64, total_size: u64) -> Self {
         Self {
             current_bytes: 0,
-            threshold: (total_size * debounce_threshold_percentage) / 100,
             has_triggered: false,
+            threshold: (total_size * debounce_threshold_percentage) / 100,
         }
     }
 
-    pub fn should_trigger(&mut self, bytes: u64) -> bool {
-        self.current_bytes += bytes;
+    pub fn should_trigger(&mut self, additional_bytes: u64) -> bool {
+        self.current_bytes += additional_bytes;
         if !self.has_triggered || self.current_bytes >= self.threshold {
             self.current_bytes = 0; // Reset for next threshold
             self.has_triggered = true;
@@ -55,13 +55,14 @@ impl TimeDebouncer {
         }
     }
 
-    pub fn should_trigger(&mut self) -> bool {
-        let now = Instant::now();
-        let time_since_last_trigger = self.last_triggered.map(|last| now.duration_since(last));
+    pub fn should_trigger(&mut self, at: Instant) -> bool {
+        let time_since_last_trigger = self
+            .last_triggered
+            .map(|last_triggered| at.duration_since(last_triggered));
 
         // If we've never triggered or enough time has passed
         if time_since_last_trigger.is_none() || time_since_last_trigger.unwrap() >= self.threshold {
-            self.last_triggered = Some(now);
+            self.last_triggered = Some(at);
             self.has_delayed_event = false;
             true
         } else {

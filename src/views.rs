@@ -26,7 +26,7 @@ pub(super) trait View: CommandHandler {
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme);
 }
 
-pub(super) fn bordered(
+fn bordered(
     area: Rect,
     buf: &mut Buffer,
     style: Style,

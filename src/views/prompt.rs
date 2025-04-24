@@ -2,7 +2,9 @@ mod handler;
 mod view;
 mod word_navigation;
 
-use rat_widget::textarea::TextAreaState;
+use rat_text::TextRange;
+use rat_widget::textarea::{self, TextAreaState};
+use ratatui::crossterm::event::Event;
 
 use super::View;
 use crate::{
@@ -15,9 +17,9 @@ use crate::{
 pub(super) struct PromptView {
     directory: Option<PathInfo>,
     filter: String,
-    text_area_state: TextAreaState,
     kind: PromptKind,
     selected: Option<PathInfo>,
+    text_area_state: TextAreaState,
 }
 
 impl PromptView {
@@ -34,6 +36,28 @@ impl PromptView {
             PromptKind::Filter => " Filter ".into(),
             PromptKind::Rename => " Rename ".into(),
         }
+    }
+
+    fn navigate_by_word_boundary<F>(&mut self, find_boundary: F) -> CommandResult
+    where
+        F: Fn(&str, usize) -> usize,
+    {
+        let text = self.text_area_state.text();
+        let current_pos = self.text_area_state.cursor();
+        let current_byte_offset = self
+            .text_area_state
+            .try_bytes_at_range(TextRange::new((0, 0), current_pos))
+            .map(|r| r.end)
+            .unwrap_or(0); // Use unwrap_or for default
+
+        let new_byte_offset = find_boundary(&text, current_byte_offset);
+        let new_pos = self
+            .text_area_state
+            .try_byte_pos(new_byte_offset)
+            .unwrap_or(current_pos);
+
+        self.text_area_state.set_cursor(new_pos, false);
+        CommandResult::Handled
     }
 
     fn open(&mut self, kind: &PromptKind) -> CommandResult {
@@ -94,5 +118,20 @@ impl PromptView {
                 None => CommandResult::Handled,
             },
         }
+    }
+
+    fn workaround_navigate_right_when_at_edge(&mut self, event: &Event) -> CommandResult {
+        let text_area_state = &mut self.text_area_state;
+        textarea::handle_events(text_area_state, true, event);
+
+        // Workaround https://github.com/thscharler/rat-salsa/issues/6
+        let cursor_position_x = text_area_state.cursor().x;
+        let hscroll_offset = text_area_state.hscroll.offset();
+        let is_position_after_right_edge =
+            cursor_position_x == text_area_state.area.width as u32 + hscroll_offset as u32;
+        if is_position_after_right_edge {
+            text_area_state.hscroll.set_offset(hscroll_offset + 1);
+        }
+        CommandResult::Handled
     }
 }

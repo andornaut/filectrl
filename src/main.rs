@@ -29,11 +29,7 @@ fn main() -> Result<()> {
         return Config::write_default_config();
     }
 
-    let config = to_path_buf(args.config);
-    let directory = to_path_buf(args.directory);
+    let config = args.config.map(PathBuf::from);
+    let directory = args.directory.map(PathBuf::from);
     run(config, directory)
-}
-
-fn to_path_buf(option: Option<String>) -> Option<PathBuf> {
-    option.map(|directory| PathBuf::from(directory))
 }

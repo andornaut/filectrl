@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::{r#async::TaskCommand, FileSystem};
+use super::{task_command::TaskCommand, FileSystem};
 use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 impl CommandHandler for FileSystem {

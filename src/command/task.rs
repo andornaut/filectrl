@@ -8,12 +8,18 @@ use std::{
 pub struct Progress(pub u64, pub u64);
 
 impl Progress {
+    pub fn percentage(&self) -> u32 {
+        if self.is_done() {
+            return 100;
+        }
+        ((self.0 as f64 / self.1 as f64) * 100.0).round() as u32
+    }
+
     pub fn scaled(&self, factor: u16) -> u16 {
         if self.is_done() {
             return factor;
         }
-        let result = self.0 * factor as u64 / self.1;
-        result as u16
+        (self.0 * factor as u64 / self.1) as u16
     }
 
     fn combine(&self, progress: &Progress) -> Self {

@@ -31,15 +31,15 @@ impl CleanupOnDropTerminal {
     }
 
     fn cleanup(&mut self) {
-        self.show_cursor().unwrap();
-        execute!(
+        // Ignore errors during cleanup, because we're already in a failure state
+        let _ = self.show_cursor();
+        let _ = execute!(
             self.backend_mut(),
             PopKeyboardEnhancementFlags,
             DisableMouseCapture,
             LeaveAlternateScreen,
-        )
-        .unwrap();
-        disable_raw_mode().unwrap();
+        );
+        let _ = disable_raw_mode();
     }
 }
 

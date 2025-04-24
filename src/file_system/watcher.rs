@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -83,7 +83,7 @@ fn watch_for_notify_events(
                 notify::EventKind::Create(_)
                 | notify::EventKind::Modify(_)
                 | notify::EventKind::Remove(_) => {
-                    if debouncer.should_trigger() {
+                    if debouncer.should_trigger(Instant::now()) {
                         if let Err(e) = command_tx.send(Command::Refresh) {
                             error!("Failed to send refresh command: {}", e);
                         }

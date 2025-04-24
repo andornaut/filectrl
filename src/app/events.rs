@@ -11,12 +11,10 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     let mut commands = Vec::new();
     loop {
         // Non-blocking
-        let command = rx.try_recv();
-        if command.is_err() {
+        let Ok(command) = rx.try_recv() else {
             // Return when there are no more commands in the channel
             break;
-        }
-        let command = command.expect("Can receive a command from the rx channel");
+        };
         commands.push(command);
     }
     commands
