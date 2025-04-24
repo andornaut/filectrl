@@ -1,6 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    prelude::Rect,
+    prelude::Position,
 };
 
 use super::{NoticeKind, NoticesView};
@@ -56,6 +56,6 @@ impl CommandHandler for NoticesView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.area.intersects(Rect::new(x, y, 1, 1))
+        self.area.contains(Position { x, y })
     }
 }

@@ -83,7 +83,7 @@ impl CommandHandler for HeaderView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.area.intersects(Rect::new(x, y, 1, 1))
+        self.area.contains(ratatui::layout::Position { x, y })
     }
 }
 

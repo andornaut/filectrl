@@ -1,6 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::{Constraint, Rect},
+    layout::{Constraint, Position, Rect},
     style::Style,
     text::{Line, Text},
     widgets::{Paragraph, Widget},
@@ -115,7 +115,7 @@ impl CommandHandler for AlertsView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.area.intersects(Rect::new(x, y, 1, 1))
+        self.area.contains(Position { x, y })
     }
 }
 

@@ -1,6 +1,7 @@
 use rat_widget::text::TextRange;
 use rat_widget::textarea::{self as text_area};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use ratatui::layout::Position;
 
 use super::word_navigation;
 use super::PromptView;
@@ -97,7 +98,6 @@ impl CommandHandler for PromptView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        let area = self.text_area_state.area;
-        x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
+        self.text_area_state.area.contains(Position { x, y })
     }
 }

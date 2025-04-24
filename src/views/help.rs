@@ -1,6 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::{Constraint, Rect},
+    layout::{Constraint, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
@@ -67,7 +67,7 @@ impl CommandHandler for HelpView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.is_visible && self.area.intersects(Rect::new(x, y, 1, 1))
+        self.is_visible && self.area.contains(Position { x, y })
     }
 }
 

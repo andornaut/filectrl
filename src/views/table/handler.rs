@@ -1,6 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    prelude::Rect,
+    prelude::Position,
 };
 
 use super::{columns::SortColumn, TableView};
@@ -87,6 +87,6 @@ impl CommandHandler for TableView {
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.table_area.intersects(Rect::new(x, y, 1, 1)) || self.scrollbar_view.is_clicked(x, y)
+        self.table_area.contains(Position { x, y }) || self.scrollbar_view.is_clicked(x, y)
     }
 }
