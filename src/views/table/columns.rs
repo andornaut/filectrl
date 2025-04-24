@@ -15,10 +15,10 @@ pub(super) enum SortDirection {
 
 impl SortDirection {
     pub fn toggle(&mut self) {
-        match self {
-            Self::Ascending => *self = Self::Descending,
-            Self::Descending => *self = Self::Ascending,
-        }
+        *self = match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        };
     }
 }
 
@@ -79,23 +79,33 @@ impl Columns {
 }
 
 fn calculate_constraints(width: u16) -> (Vec<Constraint>, u16) {
-    let mut constraints = Vec::new();
+    let mut constraints = Vec::with_capacity(4); // Pre-allocate for potential max columns
     let mut name_column_width = width;
-    let mut len = NAME_MIN_LEN;
-    if width > len {
-        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
+
+    // Add columns in order of priority based on available width
+    let mut min_width = NAME_MIN_LEN;
+
+    // Add Modified column if there's enough space
+    if width > min_width {
         constraints.push(Constraint::Length(MODIFIED_LEN));
+        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
+        min_width += MODIFIED_LEN + 1;
+
+        // Add Size column if there's enough space
+        if width > min_width + SIZE_LEN + 1 {
+            constraints.push(Constraint::Length(SIZE_LEN));
+            name_column_width -= SIZE_LEN + 1;
+            min_width += SIZE_LEN + 1;
+
+            // Add Mode column if there's enough space
+            if width > min_width + MODE_LEN + 1 {
+                constraints.push(Constraint::Length(MODE_LEN));
+                name_column_width -= MODE_LEN + 1;
+            }
+        }
     }
-    len += MODIFIED_LEN + 1 + SIZE_LEN + 1;
-    if width > len {
-        name_column_width -= SIZE_LEN + 1;
-        constraints.push(Constraint::Length(SIZE_LEN));
-    }
-    len += MODE_LEN + 1;
-    if width > len {
-        name_column_width -= MODE_LEN + 1;
-        constraints.push(Constraint::Length(MODE_LEN));
-    }
+
+    // Name column is always first
     constraints.insert(0, Constraint::Length(name_column_width));
     (constraints, name_column_width)
 }

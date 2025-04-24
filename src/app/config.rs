@@ -25,6 +25,33 @@ pub struct Config {
     pub theme: Theme,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self::parse(DEFAULT_CONFIG_TOML).expect("Default configuration should be valid")
+    }
+}
+
+impl TryFrom<Option<PathBuf>> for Config {
+    type Error = Error;
+
+    fn try_from(value: Option<PathBuf>) -> Result<Self> {
+        // Try to use the user-provided path if available
+        let Some(path) = value else {
+            return Self::try_from_default_path();
+        };
+
+        info!("Loading config from user-provided path: {}", path.display());
+        match fs::read_to_string(&path) {
+            Ok(content) => Self::parse(&content),
+            Err(err) => Err(anyhow!(
+                "Could not read config from user-supplied path ({}): {}",
+                path.display(),
+                err
+            )),
+        }
+    }
+}
+
 impl Config {
     pub fn write_default_config() -> Result<()> {
         let config = Self::default();
@@ -56,51 +83,25 @@ impl Config {
 
         Ok(config)
     }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        Self::parse(DEFAULT_CONFIG_TOML).expect("Default configuration should be valid")
-    }
-}
-
-impl TryFrom<Option<PathBuf>> for Config {
-    type Error = Error;
-
-    fn try_from(value: Option<PathBuf>) -> Result<Self> {
-        // Try to use the user-provided path
-        if let Some(path) = value {
-            info!("Loading config from user-provided path: {}", path.display());
-            return match fs::read_to_string(&path) {
-                Ok(content) => Self::parse(&content),
-                Err(err) => Err(anyhow!(
-                    "Could not read config from user-supplied path ({}): {}",
-                    path.display(),
-                    err
-                )),
-            };
-        }
-
-        // No user-provided path provided, so try the default path
+    fn try_from_default_path() -> Result<Self> {
         let default_path = Self::default_path();
         info!(
             "Attempting to load the config from the default path: {}",
             default_path.display()
         );
+
         match fs::read_to_string(&default_path) {
             Ok(content) => Self::parse(&content),
-            Err(err) => {
-                if err.kind() == ErrorKind::NotFound {
-                    info!("No config file found, using the built-in config");
-                    // Fallback to the built-in config
-                    return Ok(Self::default());
-                }
-                Err(anyhow!(
-                    "could not read the config file from the default path ({}): {}",
-                    default_path.display(),
-                    err
-                ))
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                info!("No config file found, using the built-in config");
+                Ok(Self::default())
             }
+            Err(err) => Err(anyhow!(
+                "Could not read the config file from the default path ({}): {}",
+                default_path.display(),
+                err
+            )),
         }
     }
 }

@@ -13,7 +13,7 @@ use super::{bordered, View};
 use crate::{
     app::config::theme::Theme,
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-    utf8::split_with_ellipsis,
+    unicode::split_with_ellipsis,
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
@@ -72,7 +72,7 @@ impl AlertsView {
         self.alerts
             .iter()
             .flat_map(|(kind, message)| {
-                split_with_ellipsis(message, width_without_prefix)
+                split_with_ellipsis(message, width_without_prefix as usize)
                     .into_iter()
                     .enumerate()
                     .map(|(i, line)| {
@@ -105,13 +105,10 @@ impl CommandHandler for AlertsView {
         }
     }
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.clear_alerts();
-                CommandResult::Handled
-            }
-            _ => CommandResult::Handled,
+        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+            return self.clear_alerts();
         }
+        CommandResult::Handled
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
@@ -125,10 +122,10 @@ impl View for AlertsView {
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
+        self.area = area;
         if !self.should_show(&area) {
             return;
         }
-        self.area = area;
 
         let style = theme.alert();
         let title_left = "Alerts";

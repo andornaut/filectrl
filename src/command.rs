@@ -83,10 +83,10 @@ impl TryFrom<CommandResult> for Command {
         match value {
             CommandResult::HandledWith(command) => Ok(command.clone()),
             CommandResult::Handled => Err(anyhow!(
-                "Cannot convert to Command, because CommandResult is Handled without a command"
+                "Cannot convert CommandResult::Handled to Command, because it was not handled with a command"
             )),
             CommandResult::NotHandled => Err(anyhow!(
-                "Cannot convert to Command, because CommandResult is NotHandled"
+                "Cannot convert CommandResult::NotHandled to Command, because the CommandResult is not handled"
             )),
         }
     }

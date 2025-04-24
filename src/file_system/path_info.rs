@@ -46,22 +46,26 @@ fn osstr_to_string(os_str: &OsStr) -> Result<String> {
 #[derive(Clone, Eq, Hash)]
 pub struct PathInfo {
     pub basename: String,
-    pub inode: u64, // Unique identifier for the file on the system
     pub modified: Option<DateTime<Local>>,
     pub path: String,
     pub size: u64,
 
     gid: u32,
     uid: u32,
+    inode: u64, // Unique identifier for the file on the system
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
 }
 
 impl PathInfo {
+    pub fn as_path(&self) -> &Path {
+        Path::new(&self.path)
+    }
+
     pub fn breadcrumbs(&self) -> Vec<String> {
-        // Predicate: the path exists, otherwise this will panic
-        let mut breadcrumbs: Vec<_> = PathBuf::from(self.path.clone())
+        let mut breadcrumbs: Vec<_> = self
+            .as_path()
             .ancestors()
             .into_iter()
             .map(|path| path.to_basename())
@@ -70,21 +74,20 @@ impl PathInfo {
         breadcrumbs
     }
 
-    pub fn accessed(&self) -> Option<String> {
-        maybe_time_to_string(&self.accessed)
+    pub fn accessed(&self, relative_to: DateTime<Local>) -> Option<String> {
+        maybe_time_to_string(&self.accessed, relative_to)
     }
 
-    pub fn created(&self) -> Option<String> {
-        maybe_time_to_string(&self.created)
+    pub fn created(&self, relative_to: DateTime<Local>) -> Option<String> {
+        maybe_time_to_string(&self.created, relative_to)
     }
 
     pub fn mode(&self) -> String {
         unix_mode::to_string(self.mode)
     }
 
-    pub fn modified_relative_to(&self, relative_to: DateTime<Local>) -> Option<String> {
-        self.modified
-            .map(|datetime| humanize_datetime(datetime, relative_to))
+    pub fn modified(&self, relative_to: DateTime<Local>) -> Option<String> {
+        maybe_time_to_string(&self.modified, relative_to)
     }
 
     pub fn modified_comparator(&self) -> i64 {
@@ -92,11 +95,10 @@ impl PathInfo {
     }
 
     pub fn name(&self) -> String {
-        let name = &self.basename;
         if self.is_directory() {
-            format!("{name}{MAIN_SEPARATOR}")
+            format!("{}{MAIN_SEPARATOR}", self.basename)
         } else {
-            name.clone()
+            self.basename.to_string()
         }
     }
 
@@ -119,10 +121,9 @@ impl PathInfo {
     }
 
     pub fn parent(&self) -> Option<PathInfo> {
-        let path_buf = PathBuf::from(self.path.clone());
-        path_buf
+        self.as_path()
             .parent()
-            .map(|parent| Some(PathInfo::try_from(parent).unwrap()))?
+            .and_then(|parent| PathInfo::try_from(parent).ok())
     }
 
     pub fn size(&self) -> String {
@@ -145,14 +146,40 @@ impl PathInfo {
         unix_mode::is_dir(self.mode)
     }
 
-    pub fn is_pipe(&self) -> bool {
-        unix_mode::is_fifo(self.mode)
+    pub fn is_door(&self) -> bool {
+        // Check if the file is a door (Solaris IPC mechanism)
+        // On non-Solaris systems, this will always return false
+        #[cfg(target_os = "solaris")]
+        {
+            unix_mode::is_door(self.mode)
+        }
+
+        #[cfg(not(target_os = "solaris"))]
+        {
+            false
+        }
+    }
+    pub fn is_executable(&self) -> bool {
+        // Check if the file is executable by anyone (user, group, or other)
+        // The executable bits are 0o111 in octal (73 in decimal)
+        (self.mode & 0o111) != 0
     }
 
     pub fn is_file(&self) -> bool {
         unix_mode::is_file(self.mode)
     }
 
+    pub fn is_other_writable(&self) -> bool {
+        // Check if the directory is writable by others (o+w)
+        // The other-writable bit is 0o002 in octal (2 in decimal)
+        (self.mode & 0o002) != 0
+    }
+    pub fn is_pipe(&self) -> bool {
+        unix_mode::is_fifo(self.mode)
+    }
+    pub fn is_same_inode(&self, other: &Self) -> bool {
+        self.inode == other.inode
+    }
     pub fn is_setgid(&self) -> bool {
         unix_mode::is_setgid(self.mode)
     }
@@ -174,37 +201,7 @@ impl PathInfo {
     }
 
     pub fn is_symlink_broken(&self) -> bool {
-        self.is_symlink() && !Path::new(&self.path).exists()
-    }
-
-    pub fn is_other_writable(&self) -> bool {
-        // Check if the directory is writable by others (o+w)
-        // The other-writable bit is 0o002 in octal (2 in decimal)
-        (self.mode & 0o002) != 0
-    }
-
-    pub fn is_executable(&self) -> bool {
-        // Check if the file is executable by anyone (user, group, or other)
-        // The executable bits are 0o111 in octal (73 in decimal)
-        (self.mode & 0o111) != 0
-    }
-
-    pub fn is_door(&self) -> bool {
-        // Check if the file is a door (Solaris IPC mechanism)
-        // On non-Solaris systems, this will always return false
-        #[cfg(target_os = "solaris")]
-        {
-            unix_mode::is_door(self.mode)
-        }
-
-        #[cfg(not(target_os = "solaris"))]
-        {
-            false
-        }
-    }
-
-    pub fn is_same_inode(&self, other: &Self) -> bool {
-        self.inode == other.inode
+        self.is_symlink() && !self.as_path().exists()
     }
 }
 
@@ -216,8 +213,11 @@ impl fmt::Debug for PathInfo {
 
 impl Default for PathInfo {
     fn default() -> Self {
-        let directory = env::current_dir().expect("Can get the CWD");
-        PathInfo::try_from(&directory).expect("Can create a HumanPath from the CWD")
+        env::current_dir()
+            .expect("Can get the CWD")
+            .as_path()
+            .try_into()
+            .expect("Can create a PathInfo from the CWD")
     }
 }
 
@@ -291,27 +291,30 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
 
     let divisor = FACTOR.pow(unit_index as u32) as f64;
     let value = (bytes as f64) / divisor;
-    let value = if value >= 10.0 {
+
+    // Format based on value:
+    // - For values >= 10, show no decimal places
+    // - For values with fractional part, show one decimal place
+    // - For whole numbers < 10, show no decimal places
+    let formatted_value = if value >= 10.0 {
         format!("{:.0}", value)
+    } else if value.fract() != 0.0 {
+        format!("{:.1}", value)
     } else {
-        let has_fraction = value.fract() != 0.0;
-        if has_fraction {
-            format!("{:.1}", value)
-        } else {
-            format!("{:.0}", value)
-        }
+        format!("{:.0}", value)
     };
-    let unit = UNITS[unit_index];
-    format!("{}{}", value, unit)
+
+    format!("{}{}", formatted_value, UNITS[unit_index])
 }
 
 fn unit_index(bytes: u64) -> usize {
-    if bytes == 0 {
-        return 0;
+    match bytes {
+        0 => 0,
+        b => {
+            let index = b.ilog10() / FACTOR.ilog10();
+            cmp::min(index, (UNITS.len() - 1) as u32) as usize
+        }
     }
-    let mut unit_index = bytes.ilog10() / FACTOR.ilog10();
-    unit_index = cmp::min(unit_index, (UNITS.len() - 1) as u32);
-    unit_index as usize
 }
 
 #[derive(Debug, PartialEq)]
@@ -326,16 +329,12 @@ pub enum DateTimeAge {
 pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
     let duration = relative_to.signed_duration_since(datetime);
 
-    if duration.num_minutes() == 0 {
-        DateTimeAge::LessThanMinute
-    } else if duration.num_days() == 0 {
-        DateTimeAge::LessThanDay
-    } else if duration.num_days() < 30 {
-        DateTimeAge::LessThanMonth
-    } else if duration.num_days() < 365 {
-        DateTimeAge::LessThanYear
-    } else {
-        DateTimeAge::GreaterThanYear
+    match duration {
+        d if d.num_minutes() == 0 => DateTimeAge::LessThanMinute,
+        d if d.num_days() == 0 => DateTimeAge::LessThanDay,
+        d if d.num_days() < 30 => DateTimeAge::LessThanMonth,
+        d if d.num_days() < 365 => DateTimeAge::LessThanYear,
+        _ => DateTimeAge::GreaterThanYear,
     }
 }
 
@@ -363,11 +362,14 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
 }
 
 fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
-    result.ok().map(|time| time.into())
+    result.ok().map(Into::into)
 }
 
-fn maybe_time_to_string(time: &Option<DateTime<Local>>) -> Option<String> {
-    time.map(|time| humanize_datetime(time, Local::now()))
+fn maybe_time_to_string(
+    time: &Option<DateTime<Local>>,
+    relative_to: DateTime<Local>,
+) -> Option<String> {
+    time.map(|time| humanize_datetime(time, relative_to))
 }
 
 #[cfg(test)]

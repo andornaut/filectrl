@@ -13,41 +13,45 @@ use super::path_info::PathInfo;
 pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
     info!("Changing directory to {directory:?}");
     let entries = fs::read_dir(&directory.path)?;
-    let (children, errors): (Vec<_>, Vec<_>) = entries
-        .map(|entry| -> Result<PathInfo> { PathInfo::try_from(&entry?.path()) })
-        .partition(Result::is_ok);
+
+    // Use collect to gather results, then partition into successes and failures
+    let results: Vec<Result<PathInfo>> = entries
+        .map(|entry| {
+            entry
+                .map_err(Into::into)
+                .and_then(|e| PathInfo::try_from(&e.path()))
+        })
+        .collect();
+
+    let (children, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
     if !errors.is_empty() {
         warn!("Some paths could not be read: {:?}", errors);
     }
-    Ok(children.into_iter().map(Result::unwrap).collect())
+
+    Ok(children.into_iter().flatten().collect())
 }
 
-pub(super) fn open_in(template: Option<String>, path: &str) -> Result<()> {
-    match template {
-        Some(template) => {
-            info!("Opening the program defined in template:\"{template}\", %s:\"{path}\"");
-            let mut it: std::str::SplitWhitespace<'_> = template.split_whitespace();
+pub(super) fn open_in(path: &PathInfo, template: &Option<String>) -> Result<()> {
+    let Some(template) = template else {
+        warn!("Cannot open the program, because a template is not configured");
+        return Ok(());
+    };
 
-            it.next().map_or_else(
-                || Ok(()),
-                |program| {
-                    let args = it.map(|arg| arg.replace("%s", path));
-                    run_detached(program, args).map_or_else(
-                        |error| Err(anyhow!("Failed to open program \"{program}\": {error}")),
-                        |_| Ok(()),
-                    )
-                },
-            )
-        }
-        None => {
-            warn!("Cannot open the program, because a template is not configured");
-            Ok(())
-        }
-    }
+    info!("Opening the program defined in template:\"{template}\", %s:\"{path:?}\"");
+    let mut it = template.split_whitespace();
+
+    let Some(program) = it.next() else {
+        return Ok(());
+    };
+
+    let args = it.map(|arg| arg.replace("%s", &path.path));
+    run_detached(program, args)
+        .map_err(|error| anyhow!("Failed to open program \"{program}\": {error}"))
 }
 
-pub(super) fn rename(old_path: &PathInfo, new_basename: &str) -> Result<()> {
-    let old_path = Path::new(&old_path.path);
+pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
+    let old_path = path.as_path();
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");
     if old_path != new_path {
@@ -66,9 +70,9 @@ where
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.into())
+        .spawn()?;
+
+    Ok(())
 }
 
 fn join_parent(left: &Path, right: &str) -> PathBuf {

@@ -1,17 +1,19 @@
-pub mod r#async;
-pub mod debounce;
-pub mod handler;
+mod r#async;
+mod debounce;
+mod handler;
 pub mod path_info;
-pub mod sync;
-pub mod watcher;
+mod sync;
+mod task_command;
+mod watcher;
 
 use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
 use log::info;
-use r#async::TaskCommand;
 
-use self::{path_info::PathInfo, sync::open_in, watcher::DirectoryWatcher};
+use self::{
+    path_info::PathInfo, sync::open_in, task_command::TaskCommand, watcher::DirectoryWatcher,
+};
 use crate::{
     app::config::Config,
     command::{result::CommandResult, task::Task, Command},
@@ -56,6 +58,7 @@ impl FileSystem {
 
         self.cd(directory).try_into()
     }
+
     fn back(&mut self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
         match directory.parent() {
@@ -108,29 +111,24 @@ impl FileSystem {
 
     fn open_current_directory(&self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
-        open_in(
-            self.open_current_directory_template.clone(),
-            &directory.path,
-        )
-        .map_or_else(|error| error.into(), |_| CommandResult::Handled)
+        open_in(directory, &self.open_current_directory_template)
+            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
     fn open_custom(&self, path: &PathInfo) -> CommandResult {
-        open_in(self.open_selected_file_template.clone(), &path.path)
+        open_in(path, &self.open_selected_file_template)
             .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
     fn open_new_window(&self) -> CommandResult {
         let directory = self.directory.as_ref().unwrap();
-        open_in(self.open_new_window_template.clone(), &directory.path)
+        open_in(directory, &self.open_new_window_template)
             .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
 
-    fn rename(&mut self, old_path: &PathInfo, new_basename: &str) -> CommandResult {
-        match sync::rename(old_path, new_basename) {
-            Err(error) => {
-                anyhow!("Failed to rename {old_path:?} to {new_basename:?}: {error}").into()
-            }
+    fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
+        match sync::rename(path, new_basename) {
+            Err(error) => anyhow!("Failed to rename {path:?} to {new_basename:?}: {error}").into(),
             Ok(_) => self.refresh(),
         }
     }

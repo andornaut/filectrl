@@ -1,5 +1,5 @@
 use ratatui::style::{Color, Modifier};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::value::StringDeserializer, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Custom deserializer for Option<Color> that deserializes empty strings as None
 pub fn deserialize_optional_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
@@ -11,13 +11,8 @@ where
         return Ok(None);
     }
 
-    // For non-empty strings, use the built-in Color deserialization
-    match Color::deserialize(serde::de::value::StringDeserializer::<D::Error>::new(
-        color_str,
-    )) {
-        Ok(color) => Ok(Some(color)),
-        Err(e) => Err(e),
-    }
+    // For non-empty strings, use the built-in Color deserialization and map the result to Option<Color>
+    Color::deserialize(StringDeserializer::<D::Error>::new(color_str)).map(Some)
 }
 
 /// Custom serializer for Option<Color> that serializes None as empty string
@@ -80,21 +75,20 @@ impl<'de> Deserialize<'de> for ModifierWrapper {
     {
         let modifiers: Vec<String> = Deserialize::deserialize(deserializer)?;
 
-        let mut modifier = Modifier::empty();
-
-        for m in modifiers {
+        // Start with empty modifier and add each specified modifier
+        let modifier = modifiers.iter().fold(Modifier::empty(), |acc, m| {
             match m.to_lowercase().as_str() {
-                "bold" => modifier |= Modifier::BOLD,
-                "dim" => modifier |= Modifier::DIM,
-                "italic" => modifier |= Modifier::ITALIC,
-                "underlined" => modifier |= Modifier::UNDERLINED,
-                "blink" => modifier |= Modifier::SLOW_BLINK,
-                "rapid_blink" => modifier |= Modifier::RAPID_BLINK,
-                "reversed" => modifier |= Modifier::REVERSED,
-                "crossed_out" => modifier |= Modifier::CROSSED_OUT,
-                _ => {} // Ignore unknown and unsupported (e.g. "hidden") modifiers
+                "bold" => acc | Modifier::BOLD,
+                "dim" => acc | Modifier::DIM,
+                "italic" => acc | Modifier::ITALIC,
+                "underlined" => acc | Modifier::UNDERLINED,
+                "blink" => acc | Modifier::SLOW_BLINK,
+                "rapid_blink" => acc | Modifier::RAPID_BLINK,
+                "reversed" => acc | Modifier::REVERSED,
+                "crossed_out" => acc | Modifier::CROSSED_OUT,
+                _ => acc, // Ignore unknown and unsupported (e.g. "hidden") modifiers
             }
-        }
+        });
 
         Ok(ModifierWrapper(modifier))
     }

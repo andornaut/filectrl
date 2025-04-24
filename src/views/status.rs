@@ -15,7 +15,7 @@ pub(super) struct StatusView {
 }
 
 impl StatusView {
-    fn set_directory(&mut self, directory: PathInfo, children: &Vec<PathInfo>) -> CommandResult {
+    fn set_directory(&mut self, directory: PathInfo, children: &[PathInfo]) -> CommandResult {
         self.directory = Some(directory);
         self.directory_len = children.len();
         CommandResult::Handled

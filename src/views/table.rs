@@ -3,13 +3,12 @@ mod double_click;
 mod handler;
 mod line_item_map;
 mod pager;
-mod render;
 mod scrollbar;
 mod style;
+mod view;
 mod widgets;
 
 use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
-use std::path::Path;
 
 use self::{
     columns::{Columns, SortColumn, SortDirection},
@@ -221,8 +220,12 @@ impl TableView {
             .map(|i| &self.directory_items_sorted[i])
     }
 
-    fn set_directory(&mut self, new_directory: PathInfo, children: Vec<PathInfo>) -> CommandResult {
-        let prev_directory: Option<PathInfo> = self.directory.clone(); // Store previous directory
+    fn set_directory(
+        &mut self,
+        new_directory: PathInfo,
+        new_children: Vec<PathInfo>,
+    ) -> CommandResult {
+        let prev_directory = self.directory.clone();
 
         // Clear the filter if we're navigating to a different directory
         let is_different_dir = prev_directory
@@ -230,30 +233,32 @@ impl TableView {
             .map_or(true, |prev_directory| prev_directory != &new_directory);
         if is_different_dir {
             self.filter.clear();
+            self.table_state.select(None); // An optimization to avoid attemptying to re-select an item if we're in a different directory
         }
 
-        // We must set self.directory and self.directory_items before sorting, because sort() uses them
+        // We must update self.directory and self.directory_items before sorting, because sort() depends on them
         self.directory = Some(new_directory.clone());
-        self.directory_items = children;
+        self.directory_items = new_children;
         let sort_result = self.sort();
 
         // If we navigated to an ancestor directory, then select the item that was previously in the path
         if let Some(prev_directory) = prev_directory {
-            let prev_path = Path::new(&prev_directory.path);
-            let new_path = Path::new(&new_directory.path);
+            let prev_path = prev_directory.as_path();
+            let new_path = new_directory.as_path();
 
             if prev_path.starts_with(new_path) && prev_path != new_path {
-                let new_path_components_count = new_path.components().count();
-                if let Some(target_component) =
-                    prev_path.components().nth(new_path_components_count)
-                {
-                    let target_ancestor_path = new_path.join(target_component.as_os_str());
+                let new_components_count = new_path.components().count();
+
+                // .nth() is 0-indexed, so target_child is a child of new_path
+                if let Some(target_child) = prev_path.components().nth(new_components_count) {
+                    let target_ancestor_path = new_path.join(target_child);
+                    let target_ancestor_path = target_ancestor_path.as_path();
 
                     // Try to find this ancestor in the newly sorted list
                     if let Some(item) = self
                         .directory_items_sorted
                         .iter()
-                        .position(|item| Path::new(&item.path) == target_ancestor_path.as_path())
+                        .position(|item| item.as_path() == target_ancestor_path)
                     {
                         return self.select(item);
                     }

@@ -28,14 +28,10 @@ impl LineItemMap {
     }
 
     pub(super) fn item(&self, line: usize) -> usize {
-        if self.lines_to_items.len() <= line {
-            // We default to 0, even when there are no items
-            return 0;
-        }
-        self.lines_to_items[line]
+        self.lines_to_items.get(line).copied().unwrap_or(0)
     }
     pub(super) fn first_line(&self, item: usize) -> usize {
-        // TODO This should probably return Option<None> if the item is not found
+        // TODO This should probably return None if the item is not found
         self.lines_to_items
             .iter()
             .position(|&i| i == item)
@@ -43,7 +39,7 @@ impl LineItemMap {
     }
 
     pub(super) fn last_line(&self, item: usize) -> usize {
-        // TODO This should probably return Option<None> if the item is not found
+        // TODO This should probably return None if the item is not found
         self.lines_to_items
             .iter()
             .rposition(|&i| i == item)

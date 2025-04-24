@@ -12,10 +12,10 @@ impl CommandHandler for TableView {
             Command::ClearClipboard => self.clear_clipboard(),
             Command::Copy(_, _) | Command::Move(_, _) => Command::ClearClipboard.into(),
             Command::SetDirectory(directory, children) => {
-                self.set_directory(directory.clone(), children.clone())
+                self.set_directory(directory.clone(), children.to_vec())
             }
             // self.handle_key() and PromptView may emit SetFilter()
-            Command::SetFilter(filter) => self.set_filter(filter.clone()),
+            Command::SetFilter(filter) => self.set_filter(filter.to_string()),
 
             _ => CommandResult::NotHandled,
         }

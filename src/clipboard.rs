@@ -51,21 +51,21 @@ impl Clipboard {
         self.backend.clear()
     }
 
-    fn set_clipboard_command(&self, command: ClipboardCommand) -> Result<(), Error> {
-        let text = command.to_string();
-        self.backend.set_string(&text)
-    }
-
     pub fn get_clipboard_command(&self) -> Option<ClipboardCommand> {
         self.backend
             .get_string()
             .ok()
-            .and_then(|text| ClipboardCommand::try_from(text.as_str()).ok())
+            .and_then(|text| text.as_str().try_into().ok())
     }
 
     pub fn get_command(&self, destination: PathInfo) -> Option<Command> {
         self.get_clipboard_command()
             .map(|command| command.to_command(destination))
+    }
+
+    fn set_clipboard_command(&self, command: ClipboardCommand) -> Result<(), Error> {
+        let text = command.to_string();
+        self.backend.set_string(&text)
     }
 }
 
@@ -90,14 +90,21 @@ impl TryFrom<&str> for ClipboardCommand {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         let mut parts = value.splitn(2, ' ');
-        let command_str = parts.next().ok_or_else(|| anyhow!("Missing command"))?;
-        let path_str = parts.next().ok_or_else(|| anyhow!("Missing path"))?;
+
+        let Some(command_str) = parts.next() else {
+            return Err(anyhow!("Missing command"));
+        };
+
+        let Some(path_str) = parts.next() else {
+            return Err(anyhow!("Missing path"));
+        };
+
         let path = PathInfo::try_from(path_str)?;
 
         match command_str {
             "cp" => Ok(Self::Copy(path)),
             "mv" => Ok(Self::Move(path)),
-            _ => Err(anyhow!("Invalid ClipboardCommand")),
+            _ => Err(anyhow!("Invalid ClipboardCommand: {command_str}")),
         }
     }
 }

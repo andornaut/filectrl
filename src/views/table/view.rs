@@ -26,25 +26,23 @@ impl View for TableView {
         }
 
         let (block_area, scrollbar_area, table_area) = layout(area);
-        self.table_area = table_area;
-        self.scrollbar_view.set_area(scrollbar_area);
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
-        self.render_table_and_init_mapper(frame.buffer_mut(), theme);
+        self.render_table_and_init_mapper(table_area, frame.buffer_mut(), theme);
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
-        self.render_scrollbar(frame.buffer_mut(), theme);
-        self.render_1x1_block(frame.buffer_mut(), theme, block_area);
+        self.render_scrollbar(scrollbar_area, frame.buffer_mut(), theme);
+        self.render_1x1_block(block_area, frame.buffer_mut(), theme);
     }
 }
 
 impl TableView {
-    fn render_1x1_block(&self, buf: &mut Buffer, theme: &Theme, area: Rect) {
+    fn render_1x1_block(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         // Extend the table header above the scrollbar as a 1x1 block
         let block = Block::default().style(theme.table_header());
         block.render(Rect { height: 1, ..area }, buf);
     }
 
-    fn render_scrollbar(&mut self, buf: &mut Buffer, theme: &Theme) {
+    fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         let selected_line = self
             .table_state
             .selected()
@@ -52,10 +50,12 @@ impl TableView {
         let total_lines_count = self.mapper.total_lines_count();
 
         self.scrollbar_view
-            .render(buf, theme, selected_line, total_lines_count);
+            .render(area, buf, theme, selected_line, total_lines_count);
     }
 
-    fn render_table_and_init_mapper(&mut self, buf: &mut Buffer, theme: &Theme) {
+    fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        self.table_area = area;
+
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
         let clipboard_command = self.clipboard.get_clipboard_command();
@@ -82,7 +82,7 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
-        StatefulWidget::render(table, self.table_area, buf, &mut self.table_state);
+        StatefulWidget::render(table, area, buf, &mut self.table_state);
 
         // -1 for table header
         let visible_lines_count = self.table_area.height as usize - 1;

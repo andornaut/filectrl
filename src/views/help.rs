@@ -57,13 +57,10 @@ impl CommandHandler for HelpView {
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.is_visible = false;
-                CommandResult::Handled
-            }
-            _ => CommandResult::Handled,
+        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+            self.is_visible = false;
         }
+        CommandResult::Handled
     }
 
     fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
@@ -77,10 +74,10 @@ impl View for HelpView {
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
+        self.area = area;
         if !self.is_visible || area.height < MIN_HEIGHT {
             return;
         }
-        self.area = area;
 
         let style = theme.help();
         let title_left = "Help";

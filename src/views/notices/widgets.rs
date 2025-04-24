@@ -13,11 +13,11 @@ use crate::{
     app::config::theme::Theme,
     clipboard::ClipboardCommand,
     command::task::{Progress, Task},
-    utf8::truncate_left_utf8,
+    unicode::truncate_left,
 };
 
-const MOVE_PREFIX: &str = " Cut ";
 const COPY_PREFIX: &str = " Copied ";
+const MOVE_PREFIX: &str = " Cut ";
 const CLIPBOARD_SUFFIX: &str = "(Press c to cancel)";
 const FILTER_PREFIX: &str = " Filtered by ";
 const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
@@ -33,7 +33,7 @@ pub(super) fn clipboard_widget<'a>(
     };
 
     let available_width = width.saturating_sub(prefix.width() as u16);
-    let truncated_path = truncate_left_utf8(&path.path, available_width);
+    let truncated_path = truncate_left(&path.path, available_width as usize);
 
     let left = Line::from(vec![
         Span::raw(prefix),
@@ -72,32 +72,34 @@ pub(super) fn progress_widget<'a>(
     width: u16,
     tasks: &'a HashSet<Task>,
 ) -> Block<'a> {
+    // Combine the progress from all the tasks
     let progress = tasks
         .iter()
         .fold(Progress(0, 0), |acc, task| task.combine_progress(&acc));
-    let percent = (progress.0 as f64 / progress.1.max(1) as f64 * 100.0).round() as u32;
-    let percent_text = format!(" {}%", percent);
-    let bar_width = width.saturating_sub(percent_text.width() as u16);
+
+    let percentage = progress.percentage();
+    let percentage_text = format!(" {}%", percentage);
+    let bar_width = width.saturating_sub(percentage_text.width() as u16);
     let progress_width = progress.scaled(bar_width);
-    let progress_bar = format!(
-        "{}{}",
-        block::FULL.repeat(progress_width.into()),
-        " ".repeat((bar_width - progress_width).into())
-    );
+
+    let filled = block::FULL.repeat(progress_width.into());
+    let empty = " ".repeat((bar_width - progress_width).into());
+    let progress_bar = format!("{}{}", filled, empty);
 
     let left = Line::from(progress_bar);
-    let right = Some(Line::from(percent_text));
+    let right = Some(Line::from(percentage_text));
 
     create_notice_block(left, right, theme.notice_progress())
 }
+
 fn create_notice_block<'a>(left: Line<'a>, right: Option<Line<'a>>, style: Style) -> Block<'a> {
-    let mut block = Block::default()
+    let block = Block::default()
         .borders(Borders::NONE)
         .title(left)
         .style(style);
 
-    if let Some(right) = right {
-        block = block.title(right.alignment(Alignment::Right));
+    match right {
+        Some(right_text) => block.title(right_text.alignment(Alignment::Right)),
+        None => block,
     }
-    block
 }

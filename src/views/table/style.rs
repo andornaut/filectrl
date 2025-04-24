@@ -97,10 +97,10 @@ pub(super) fn name_style(theme: &FileTheme, path: &PathInfo) -> Style {
 pub(super) fn modified_date_style(
     theme: &Theme,
     item: &PathInfo,
-    relative_to_datetime: DateTime<Local>,
+    relative_to: DateTime<Local>,
 ) -> Style {
-    let modified = item.modified.unwrap_or(relative_to_datetime);
-    let age = datetime_age(modified, relative_to_datetime);
+    let modified = item.modified.unwrap_or(relative_to);
+    let age = datetime_age(modified, relative_to);
 
     match age {
         DateTimeAge::LessThanMinute => theme.modified_less_than_minute(),
