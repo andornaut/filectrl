@@ -16,13 +16,14 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 4;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 17] = [
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 18] = [
     ("Quit: ", "q"),
     ("Navigate: ", "↓/j, ↑/k, ←/h, →/l"),
     ("Parent dir: ", "←/b/Backspace"),
     ("Open: ", "→/f/l/Enter"),
-    ("First item: ", "Home/g/^"),
-    ("Last item: ", "End/G/$"),
+    ("Select first row: ", "Home/g/^"),
+    ("Select last row: ", "End/G/$"),
+    ("Select middle of visible rows: ", "z"),
     ("Page down: ", "CTRL+f/CTRL+d/PgDn"),
     ("Page up: ", "CTRL+b/CTRL+u/PgUp"),
     ("Delete: ", "Delete"),
@@ -41,13 +42,13 @@ const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
     ("Cancel: ", "Esc"),
     ("Move cursor: ", "←/→"),
     ("Move cursor by word: ", "CTRL+←/→"),
-    ("Move to beginning/end of line: ", "Home/End"),
-    ("Select: ", "SHIFT+←/→"),
+    ("Move cursor to beginning/end of line: ", "Home/End"),
+    ("Select text: ", "SHIFT+←/→"),
     ("Select to beginning/end of line: ", "SHIFT+Home/End"),
     ("Select by word: ", "CTRL+SHIFT+←/→"),
     ("Select all: ", "CTRL+a"),
-    ("Copy/Cut/Paste: ", "CTRL+c, CTRL+x, CTRL+v"),
-    ("Delete: ", "Backspace/Delete"),
+    ("Copy/Cut/Paste text: ", "CTRL+c, CTRL+x, CTRL+v"),
+    ("Delete before/after cursor: ", "Backspace/Delete"),
 ];
 
 #[derive(Default)]

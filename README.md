@@ -63,8 +63,9 @@ q | Quit
 ↓/j, ↑/k, ←/h, →/l | Navigate
 ←/b/Backspace | Go to parent directory
 →/f/l/Enter | Open the selected file or navigate to the selected directory
-Home/g/^ | Go to first row
-End/G/$ | Go to last row
+Home/g/^ | Select first row
+End/G/$ | Select last row
+z | Select middle of visible rows
 CTRL+f/CTRL+d/PgDn | Scroll down one page
 CTRL+b/CTRL+u/PgUp | Scroll up one page
 Delete | Delete the selected file or directory
@@ -86,15 +87,13 @@ Esc | Cancel and exit filtering/renaming mode
 Enter | Submit your input and exit filtering/renaming mode
 ←/→ | Move cursor
 CTRL+←/→ | Move cursor by word (delimited by whitespaces or punctuation)
-Home/End | Move to beginning/end of line
-Backspace/Delete | Delete character before/after cursor
+Home/End | Move cursor to beginning/end of line
 SHIFT+←/→ | Select text
 SHIFT+Home/End | Select to beginning/end of line
-CTRL+SHIFT+←/→ | Select words (delimited by whitespaces or punctuation)
-CTRL+a | Select all text
-CTRL+c | Copy selected text
-CTRL+x | Cut selected text
-CTRL+v | Paste from clipboard
+CTRL+SHIFT+←/→ | Select by word (delimited by whitespaces or punctuation)
+CTRL+a | Select all
+CTRL+c, CTRL+x, CTRL+v | Copy/Cut/Paste text
+Backspace/Delete | Delete character before/after cursor
 
 ## Configuration
 
