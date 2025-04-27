@@ -16,19 +16,24 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 2;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 12] = [
-    ("Navigate: ", "h/j/k/l/←↓↑→"),
-    ("Open: ", "f/l/Enter"),
-    ("Back: ", "h/b/Backspace"),
-    ("Refresh: ", "CTRL+r"),
-    ("Filter: ", "/"),
-    ("Rename: ", "r"),
-    ("Delete: ", "Delete"),
-    ("Copy/Cut: ", "y/x"),
-    ("Paste: ", "p"),
-    ("Sort: ", "n/m/s"),
-    ("New window: ", "w"),
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 17] = [
     ("Quit: ", "q"),
+    ("Navigate: ", "↓/j, ↑/k, ←/h, →/l"),
+    ("Parent dir: ", "←/b/Backspace"),
+    ("Open: ", "→/f/l/Enter"),
+    ("First item: ", "Home/g/^"),
+    ("Last item: ", "End/G/$"),
+    ("Page down: ", "CTRL+f/CTRL+d/PgDn"),
+    ("Page up: ", "CTRL+b/CTRL+u/PgUp"),
+    ("Delete: ", "Delete"),
+    ("Filter: ", "/"),
+    ("Refresh: ", "CTRL+r/F5"),
+    ("Rename: ", "r/F2"),
+    ("New window: ", "w"),
+    ("Open terminal: ", "t"),
+    ("Clear alerts, clipboard, progress: ", "a, c, p"),
+    ("Copy/Cut/Paste selected: ", "CTRL+c, CTRL+x, CTRL+v"),
+    ("Sort by name, modified, size: ", "n, m, s"),
 ];
 
 const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 4] = [

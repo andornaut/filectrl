@@ -60,26 +60,22 @@ _**Normal mode**_
 Keys | Description
 --- | ---
 q | Quit
-↓, j / ↑, k | Move selection down / up
-←, Backspace, h, b | Navigate to the parent directory
-→, Enter, l, f | Open the selected file or navigate to the selected directory
-CTRL+f, CTRL+d PgDn | Scroll down one page
-CTRL+b, CTRL+u, PgUp | Scroll up one page
-Home, g, ^ | Select the first item
-End, G, $ | Select the last item
+↓/j, ↑/k, ←/h, →/l | Navigate
+←/b/Backspace | Go to parent directory
+→/f/l/Enter | Open the selected file or navigate to the selected directory
+Home/g/^ | Go to first row
+End/G/$ | Go to last row
+CTRL+f/CTRL+d/PgDn | Scroll down one page
+CTRL+b/CTRL+u/PgUp | Scroll up one page
 Delete | Delete the selected file or directory
-r, F2 | Rename the selected file or directory
-CTRL+r, F5 | Refresh
-/ | Filter files by name
-n | Sort by name (toggle direction if already sorted)
-m | Sort by modified (toggle direction if already sorted)
-s | Sort by size (toggle direction if already sorted)
-a | Clear alert messages
-c | Clear clipboard (cancel copy/cut)
-p | Clear progress bars
+/ | Filter by name
+CTRL+r/F5 | Refresh the current directory
+r/F2 | Rename the selected file or directory
 w | Open a new `filectrl` window
 t | Open current directory in a terminal
-o | Open selected file
+a, c, p | Clear alerts, clipboard content, or progress bars
+CTRL+c, CTRL+x, CTRL+v | Copy/Cut/Paste selected file or directory
+n, m, s | Sort by name, modified date, or size
 ? | Toggle help
 
 _**Filtering / Renaming mode**_
@@ -89,7 +85,7 @@ Keys | Description
 Esc | Cancel and exit filtering/renaming mode
 Enter | Submit your input and exit filtering/renaming mode
 ←/→ | Move cursor
-CTRL+←/→ | Move cursor by words (delimited by whitespaces or punctuation)
+CTRL+←/→ | Navigate by word (delimited by whitespaces or punctuation)
 Home/End | Move to beginning/end of line
 Backspace/Delete | Delete character before/after cursor
 SHIFT+←/→ | Select text
