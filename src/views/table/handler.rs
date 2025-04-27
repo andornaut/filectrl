@@ -47,6 +47,7 @@ impl CommandHandler for TableView {
                 KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('c') => self.clear_clipboard(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                KeyCode::Char('z') => self.move_to_middle(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),

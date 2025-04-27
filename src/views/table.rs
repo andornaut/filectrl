@@ -154,6 +154,13 @@ impl TableView {
         self.select(self.directory_items_sorted.len().saturating_sub(1))
     }
 
+    fn move_to_middle(&mut self) -> CommandResult {
+        let first_line = self.mapper.first_visible_line();
+        let last_line = self.mapper.last_visible_line();
+        let middle_line = first_line + (last_line - first_line) / 2;
+        self.select(self.mapper.item(middle_line))
+    }
+
     fn next_page(&mut self) -> CommandResult {
         pager::next_page(
             &self.mapper,
