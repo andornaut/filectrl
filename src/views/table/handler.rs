@@ -29,7 +29,7 @@ impl CommandHandler for TableView {
             (KeyCode::Char('u'), KeyModifiers::CONTROL)
             | (KeyCode::Char('b'), KeyModifiers::CONTROL)
             | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
-            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.last(),
+            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.select_last(),
             (KeyCode::Char('d'), KeyModifiers::CONTROL)
             | (KeyCode::Char('f'), KeyModifiers::CONTROL)
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
@@ -40,14 +40,14 @@ impl CommandHandler for TableView {
                 }
                 KeyCode::Esc => Command::SetFilter("".into()).into(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
-                KeyCode::Down | KeyCode::Char('j') => self.next(),
-                KeyCode::Up | KeyCode::Char('k') => self.previous(),
-                KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.first(),
-                KeyCode::Char('$') | KeyCode::End => self.last(),
+                KeyCode::Down | KeyCode::Char('j') => self.select_next(),
+                KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
+                KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.select_first(),
+                KeyCode::Char('$') | KeyCode::End => self.select_last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('c') => self.clear_clipboard(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
-                KeyCode::Char('z') => self.move_to_middle(),
+                KeyCode::Char('z') => self.select_middle_visible_item(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
@@ -81,8 +81,8 @@ impl CommandHandler for TableView {
                 }
                 CommandResult::Handled
             }
-            MouseEventKind::ScrollUp => self.previous(),
-            MouseEventKind::ScrollDown => self.next(),
+            MouseEventKind::ScrollUp => self.select_previous(),
+            MouseEventKind::ScrollDown => self.select_next(),
             _ => CommandResult::Handled,
         }
     }
