@@ -1,5 +1,6 @@
 use ratatui::prelude::Constraint;
 
+const NAME_MIN_LEN: u16 = 39; // Below this width, we don't show any other columns
 const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
 const SIZE_LEN: u16 = 7;
@@ -80,7 +81,7 @@ fn calculate_constraints(width: u16) -> (Vec<Constraint>, u16) {
     let mut name_column_width = width;
 
     // Add columns in order of priority based on available width
-    let mut min_width = width;
+    let mut min_width = NAME_MIN_LEN;
 
     // Add Modified column if there's enough space
     if width > min_width {
