@@ -18,7 +18,7 @@ const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
 pub struct FileSystemConfig {
     pub buffer_max_bytes: u64,
     pub buffer_min_bytes: u64,
-    pub update_threshold_milliseconds: u64,
+    pub refresh_debounce_milliseconds: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -30,8 +30,8 @@ pub struct Templates {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UiConfig {
-    pub double_click_threshold_milliseconds: u16,
-    pub tick_rate_milliseconds: u64,
+    pub double_click_interval_milliseconds: u16,
+    pub frame_delay_milliseconds: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

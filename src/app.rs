@@ -62,7 +62,7 @@ impl App {
 
         spawn_command_sender(self.tx.clone());
 
-        let max_sleep = Duration::from_millis(self.config.ui.tick_rate_milliseconds);
+        let max_sleep = Duration::from_millis(self.config.ui.frame_delay_milliseconds);
 
         loop {
             let start = Instant::now();

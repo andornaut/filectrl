@@ -8,7 +8,7 @@ log_level = "off"
 buffer_max_bytes = 64000000 # 64 MB
 buffer_min_bytes = 64000    # 64 KB
 # Minimum time between filesystem updates to avoid excessive refreshes
-update_threshold_milliseconds = 100
+refresh_debounce_milliseconds = 100
 
 [templates]
 # Programs to use to open files or directories:
@@ -20,9 +20,9 @@ open_selected_file = "pcmanfm %s"
 
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
-double_click_threshold_milliseconds = 300
+double_click_interval_milliseconds = 300
 # Maximum time to sleep between UI refreshes
-tick_rate_milliseconds = 30
+frame_delay_milliseconds = 30
 
 [theme]
 alert_bg = "#373424"
