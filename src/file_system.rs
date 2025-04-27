@@ -40,7 +40,7 @@ impl FileSystem {
             open_current_directory_template: config.templates.open_current_directory.clone(),
             open_new_window_template: config.templates.open_new_window.clone(),
             open_selected_file_template: config.templates.open_selected_file.clone(),
-            watcher: DirectoryWatcher::try_new(config.file_system.update_threshold_milliseconds)
+            watcher: DirectoryWatcher::try_new(config.file_system.refresh_debounce_milliseconds)
                 .expect("Can initialize DirectoryWatcher"),
         }
     }

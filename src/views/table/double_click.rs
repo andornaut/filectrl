@@ -11,7 +11,7 @@ pub struct DoubleClick {
 
 impl DoubleClick {
     pub fn new(config: &Config) -> Self {
-        let threshold_milliseconds = config.ui.double_click_threshold_milliseconds;
+        let threshold_milliseconds = config.ui.double_click_interval_milliseconds;
         Self {
             threshold_milliseconds,
             ..Default::default()
