@@ -61,6 +61,7 @@ Keys | Description
 --- | ---
 q | Quit
 ↓/j, ↑/k, ←/h, →/l | Navigate
+~ | Go to home directory
 ←/b/Backspace | Go to parent directory
 →/f/l/Enter | Open the selected file or navigate to the selected directory
 Home/g/^ | Select first row
