@@ -19,22 +19,26 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        let key_event = KeyEvent::new(*code, *modifiers);
-        let event = Event::Key(key_event);
+        let event = Event::Key(KeyEvent::new(*code, *modifiers));
 
         match (*code, *modifiers) {
             (KeyCode::Esc, _) => Command::ClosePrompt.into(),
             (KeyCode::Enter, _) => self.submit(),
             (KeyCode::Left, KeyModifiers::CONTROL) => {
-                self.navigate_by_word_boundary(word_navigation::find_prev_word_boundary)
+                self.navigate_by_word(word_navigation::prev_word_boundary)
             }
             (KeyCode::Right, KeyModifiers::CONTROL) => {
-                self.navigate_by_word_boundary(word_navigation::find_next_word_boundary)
+                self.navigate_by_word(word_navigation::next_word_boundary)
+            }
+            (KeyCode::Left, m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
+                self.select_by_word(word_navigation::prev_word_boundary)
+            }
+            (KeyCode::Right, m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
+                self.select_by_word(word_navigation::next_word_boundary)
             }
             (KeyCode::Right, _) => self.workaround_navigate_right_when_at_edge(&event),
             (_, _) => {
-                let text_area_state = &mut self.text_area_state;
-                textarea::handle_events(text_area_state, true, &event);
+                textarea::handle_events(&mut self.text_area_state, true, &event);
                 CommandResult::Handled
             }
         }

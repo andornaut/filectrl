@@ -38,7 +38,7 @@ impl PromptView {
         }
     }
 
-    fn navigate_by_word_boundary<F>(&mut self, find_boundary: F) -> CommandResult
+    fn move_by_word<F>(&mut self, find_boundary: F, select: bool) -> CommandResult
     where
         F: Fn(&str, usize) -> usize,
     {
@@ -56,8 +56,22 @@ impl PromptView {
             .try_byte_pos(new_byte_offset)
             .unwrap_or(current_pos);
 
-        self.text_area_state.set_cursor(new_pos, false);
+        self.text_area_state.set_cursor(new_pos, select);
         CommandResult::Handled
+    }
+
+    fn navigate_by_word<F>(&mut self, find_boundary: F) -> CommandResult
+    where
+        F: Fn(&str, usize) -> usize,
+    {
+        self.move_by_word(find_boundary, false)
+    }
+
+    fn select_by_word<F>(&mut self, find_boundary: F) -> CommandResult
+    where
+        F: Fn(&str, usize) -> usize,
+    {
+        self.move_by_word(find_boundary, true)
     }
 
     fn open(&mut self, kind: &PromptKind) -> CommandResult {

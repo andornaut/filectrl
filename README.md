@@ -60,11 +60,11 @@ _**Normal mode**_
 Keys | Description
 --- | ---
 q | Quit
-j, Down / k, Up | Move selection down / Up
-Backspace, Left, b, h | Navigate to the parent directory
-Enter, Right, f, l | Open the selected file or navigate to the selected directory
-CTRL+f, CTRL+d PgDn | Move selection and scroll down one page
-CTRL+b, CTRL+u, PgUp | Move selection and scroll up one page
+Down, j / Up, k | Move selection down / Up
+Left, Backspace, h, b | Navigate to the parent directory
+Right, Enter, l, f | Open the selected file or navigate to the selected directory
+CTRL+f, CTRL+d PgDn | Scroll down one page
+CTRL+b, CTRL+u, PgUp | Scroll up one page
 Home, g, ^ | Select the first item
 End, G, $ | Select the last item
 Delete | Delete the selected file or directory
@@ -74,15 +74,12 @@ CTRL+r, F5 | Refresh
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
-y | Copy selected file or directory
-x | Cut selected file or directory
-p | Paste from clipboard / Clear progress indicator
-c | Clear clipboard (cancel copy/cut)
 a | Clear alert messages
+c | Clear clipboard (cancel copy/cut)
 p | Clear progress bars
 w | Open a new `filectrl` window
-t | Open current directory in terminal/file manager
-o | Open selected file with custom program
+t | Open current directory in a terminal
+o | Open selected file
 ? | Toggle help
 
 _**Filtering / Renaming mode**_
@@ -91,17 +88,17 @@ Keys | Description
 --- | ---
 Esc | Cancel and exit filtering/renaming mode
 Enter | Submit your input and exit filtering/renaming mode
-Left/Right | Navigate cursor
-CTRL+Left/Right | Navigate by word boundaries
+Left/Right | Move cursor
+CTRL+Left/Right | Move cursor by words (delimited by whitespaces or punctuation)
 Home/End | Move to beginning/end of line
 Backspace/Delete | Delete character before/after cursor
 SHIFT+Left/Right | Select text
 SHIFT+Home/End | Select to beginning/end of line
-CTRL+SHIFT+Left/Right | Select words
-CTRL+A | Select all text
-CTRL+C | Copy selected text
-CTRL+X | Cut selected text
-CTRL+V | Paste from clipboard
+CTRL+SHIFT+Left/Right | Select words (delimited by whitespaces or punctuation)
+CTRL+a | Select all text
+CTRL+c | Copy selected text
+CTRL+x | Cut selected text
+CTRL+v | Paste from clipboard
 
 ## Configuration
 
