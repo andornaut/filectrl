@@ -60,9 +60,9 @@ _**Normal mode**_
 Keys | Description
 --- | ---
 q | Quit
-Down, j / Up, k | Move selection down / Up
-Left, Backspace, h, b | Navigate to the parent directory
-Right, Enter, l, f | Open the selected file or navigate to the selected directory
+↓, j / ↑, k | Move selection down / up
+←, Backspace, h, b | Navigate to the parent directory
+→, Enter, l, f | Open the selected file or navigate to the selected directory
 CTRL+f, CTRL+d PgDn | Scroll down one page
 CTRL+b, CTRL+u, PgUp | Scroll up one page
 Home, g, ^ | Select the first item
@@ -88,13 +88,13 @@ Keys | Description
 --- | ---
 Esc | Cancel and exit filtering/renaming mode
 Enter | Submit your input and exit filtering/renaming mode
-Left/Right | Move cursor
-CTRL+Left/Right | Move cursor by words (delimited by whitespaces or punctuation)
+←/→ | Move cursor
+CTRL+←/→ | Move cursor by words (delimited by whitespaces or punctuation)
 Home/End | Move to beginning/end of line
 Backspace/Delete | Delete character before/after cursor
-SHIFT+Left/Right | Select text
+SHIFT+←/→ | Select text
 SHIFT+Home/End | Select to beginning/end of line
-CTRL+SHIFT+Left/Right | Select words (delimited by whitespaces or punctuation)
+CTRL+SHIFT+←/→ | Select words (delimited by whitespaces or punctuation)
 CTRL+a | Select all text
 CTRL+c | Copy selected text
 CTRL+x | Cut selected text
