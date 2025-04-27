@@ -18,10 +18,10 @@ const MIN_HEIGHT: u16 = 4;
 
 const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 19] = [
     ("Quit: ", "q"),
-    ("Navigate: ", "↓/j, ↑/k, ←/h, →/l"),
+    ("Navigate: ", "←/h, ↓/j, ↑/k, →/l"),
     ("Go to home dir: ", "~"),
     ("Go to parent dir: ", "←/b/Backspace"),
-    ("Open: ", "→/f/l/Enter"),
+    ("Open: ", "→/f/l/Enter/Space"),
     ("Select first row: ", "Home/g/^"),
     ("Select last row: ", "End/G/$"),
     ("Select middle of visible rows: ", "z"),

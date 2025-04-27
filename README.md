@@ -63,7 +63,7 @@ Keys | Description
 <kbd>←</kbd> / <kbd>h</kbd>, <kbd>↓</kbd> / <kbd>j</kbd>, <kbd>↑</kbd> / <kbd>k</kbd>,  <kbd>→</kbd> / <kbd>l</kbd> | Navigate left, down, up, right
 <kbd>~</kbd> | Go to home directory
 <kbd>←</kbd> / <kbd>b</kbd> / <kbd>Backspace</kbd> | Go to parent directory
-<kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
+<kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> / <kbd>Space</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
 <kbd>o</kbd> | Open the selected file using the program configured by: `templates.open_selected_file`
 <kbd>Home</kbd> / <kbd>g</kbd> / <kbd>^</kbd> | Select first row
 <kbd>End</kbd> / <kbd>G</kbd> / <kbd>$</kbd> | Select last row
