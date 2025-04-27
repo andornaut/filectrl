@@ -70,26 +70,38 @@ End, G, $ | Select the last item
 Delete | Delete the selected file or directory
 r, F2 | Rename the selected file or directory
 CTRL+r, F5 | Refresh
+/ | Filter files by name
 n | Sort by name (toggle direction if already sorted)
 m | Sort by modified (toggle direction if already sorted)
 s | Sort by size (toggle direction if already sorted)
-c | Cancel copy/cut
+y | Copy selected file or directory
+x | Cut selected file or directory
+p | Paste from clipboard / Clear progress indicator
+c | Clear clipboard (cancel copy/cut)
 a | Clear alert messages
-p | Clear progress bar
+p | Clear progress bars
+w | Open a new `filectrl` window
+t | Open current directory in terminal/file manager
+o | Open selected file with custom program
 ? | Toggle help
 
-_**Filtered mode**_
+_**Filtering / Renaming mode**_
 
 Keys | Description
 --- | ---
-Esc | Exit filtered mode
-
-_**Input mode**_
-
-Keys | Description
---- | ---
-Esc | Exit input mode
-Enter | Submit your input and exit input mode
+Esc | Cancel and exit filtering/renaming mode
+Enter | Submit your input and exit filtering/renaming mode
+Left/Right | Navigate cursor
+CTRL+Left/Right | Navigate by word boundaries
+Home/End | Move to beginning/end of line
+Backspace/Delete | Delete character before/after cursor
+SHIFT+Left/Right | Select text
+SHIFT+Home/End | Select to beginning/end of line
+CTRL+SHIFT+Left/Right | Select words
+CTRL+A | Select all text
+CTRL+C | Copy selected text
+CTRL+X | Cut selected text
+CTRL+V | Paste from clipboard
 
 ## Configuration
 
