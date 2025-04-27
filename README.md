@@ -85,7 +85,7 @@ Keys | Description
 Esc | Cancel and exit filtering/renaming mode
 Enter | Submit your input and exit filtering/renaming mode
 ←/→ | Move cursor
-CTRL+←/→ | Navigate by word (delimited by whitespaces or punctuation)
+CTRL+←/→ | Move cursor by word (delimited by whitespaces or punctuation)
 Home/End | Move to beginning/end of line
 Backspace/Delete | Delete character before/after cursor
 SHIFT+←/→ | Select text
