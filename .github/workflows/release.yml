@@ -49,17 +49,17 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
 
     steps:
+      # We need to checkout the code in order to delete the "main" tag
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           ref: ${{ github.ref }}
 
-      - name: Delete any existing "main" release and tag
+      - name: Delete the "main" tag if it exists
         if: github.ref == 'refs/heads/main'
         run: |
-          gh release delete main --yes || true
-          git push origin :refs/tags/main || true
+          git push --delete origin refs/tags/main || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,33 +68,23 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Prepare assets for release
+        run: |
+          mkdir release-assets
+          cp artifacts/filectrl-ubuntu-latest/filectrl release-assets/filectrl-linux
+          cp artifacts/filectrl-macos-latest/filectrl release-assets/filectrl-macos
+
+      # GitHub releases require a tag, so this step will auto-create a tag for the "main" release.
+      # We delete the 'main' tag in advance (above), so that step will create a new one that points
+      # to the latest revision on the main branch
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref == 'refs/heads/main' && 'main' || github.ref_name }}
-          release_name: ${{ github.ref == 'refs/heads/main' && 'main' || github.ref_name }}
-          draft: false
-          prerelease: false
-
-      - name: Upload Linux artifact
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts/filectrl-ubuntu-latest/filectrl
-          asset_name: filectrl-linux
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS artifact
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts/filectrl-macos-latest/filectrl
-          asset_name: filectrl-macos
-          asset_content_type: application/octet-stream
+          name: ${{ github.ref == 'refs/heads/main' && 'main' || github.ref_name }}
+          body: ${{ github.ref == 'refs/heads/main' && 'Latest build from main branch' || '' }}
+          files: |
+            release-assets/filectrl-linux
+            release-assets/filectrl-macos
