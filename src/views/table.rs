@@ -174,6 +174,16 @@ impl TableView {
         }
     }
 
+    fn navigate_to_home_directory(&mut self) -> CommandResult {
+        match etcetera::home_dir() {
+            Ok(path) => match PathInfo::try_from(&path) {
+                Ok(path) => Command::Open(path).into(),
+                Err(_) => Command::AlertError("Could not access home directory".into()).into(),
+            },
+            Err(_) => Command::AlertError("Could not determine home directory".into()).into(),
+        }
+    }
+
     fn open_filter_prompt(&self) -> CommandResult {
         Command::OpenPrompt(PromptKind::Filter).into()
     }

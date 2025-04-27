@@ -39,6 +39,7 @@ impl CommandHandler for TableView {
                     self.open_selected()
                 }
                 KeyCode::Esc => Command::SetFilter("".into()).into(),
+                KeyCode::Char('~') => self.navigate_to_home_directory(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
                 KeyCode::Up | KeyCode::Char('k') => self.select_previous(),

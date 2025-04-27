@@ -16,10 +16,11 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 4;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 18] = [
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 19] = [
     ("Quit: ", "q"),
     ("Navigate: ", "↓/j, ↑/k, ←/h, →/l"),
-    ("Parent dir: ", "←/b/Backspace"),
+    ("Go to home dir: ", "~"),
+    ("Go to parent dir: ", "←/b/Backspace"),
     ("Open: ", "→/f/l/Enter"),
     ("Select first row: ", "Home/g/^"),
     ("Select last row: ", "End/G/$"),
