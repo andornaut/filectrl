@@ -58,6 +58,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           gh release delete main --yes || true
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # Note: GitHub's release model requires a tag. We delete and recreate the 'main' release each time
       # for main branch releases, or create a new release for tag-based releases
