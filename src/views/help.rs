@@ -14,7 +14,7 @@ use crate::{
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
-const MIN_HEIGHT: u16 = 2;
+const MIN_HEIGHT: u16 = 4;
 
 const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 17] = [
     ("Quit: ", "q"),
@@ -36,11 +36,18 @@ const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 17] = [
     ("Sort by name, modified, size: ", "n, m, s"),
 ];
 
-const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 4] = [
+const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
     ("Submit: ", "Enter"),
     ("Cancel: ", "Esc"),
-    ("Navigate by word: ", "CTRL+←/→"),
+    ("Move cursor: ", "←/→"),
+    ("Move cursor by word: ", "CTRL+←/→"),
+    ("Move to beginning/end of line: ", "Home/End"),
+    ("Select: ", "SHIFT+←/→"),
+    ("Select to beginning/end of line: ", "SHIFT+Home/End"),
     ("Select by word: ", "CTRL+SHIFT+←/→"),
+    ("Select all: ", "CTRL+a"),
+    ("Copy/Cut/Paste: ", "CTRL+c, CTRL+x, CTRL+v"),
+    ("Delete: ", "Backspace/Delete"),
 ];
 
 #[derive(Default)]
@@ -52,7 +59,7 @@ pub(super) struct HelpView {
 impl HelpView {
     fn height(&self) -> u16 {
         if self.is_visible {
-            4 // 2 lines of text + 2 borders
+            MIN_HEIGHT + 2 // 2 lines of text + 2 borders
         } else {
             0
         }
@@ -119,7 +126,7 @@ impl View for HelpView {
             _ => &DEFAULT_KEYBOARD_SHORTCUTS[..],
         };
 
-        let key_style = Style::default().add_modifier(Modifier::BOLD);
+        let label_style = Style::default().add_modifier(Modifier::BOLD);
         let spans: Vec<Span> = keyboard_shortcuts
             .iter()
             .enumerate()
@@ -128,8 +135,8 @@ impl View for HelpView {
                 if index > 0 {
                     spans.push(" ".into());
                 }
-                spans.push(description.into());
-                spans.push(Span::styled(key, key_style));
+                spans.push(Span::styled(description, label_style));
+                spans.push(key.into());
                 spans
             })
             .collect();
