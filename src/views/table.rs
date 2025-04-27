@@ -49,44 +49,34 @@ impl TableView {
     }
 
     fn clear_clipboard(&mut self) -> CommandResult {
-        self.clipboard
-            .clear()
-            .map_err(|e| Command::AlertError(format!("Failed to clear clipboard: {}", e)))
-            .map(|_| Command::ClearedClipboard.into())
-            .unwrap_or_else(|error_command| error_command.into())
+        match self.clipboard.clear() {
+            Ok(_) => Command::ClearedClipboard.into(),
+            Err(e) => Command::AlertError(format!("Failed to clear clipboard: {}", e)).into(),
+        }
     }
 
     fn copy_to_clipboard(&mut self) -> CommandResult {
-        self.selected_path().map_or(
-            Command::AlertWarn("No file selected".into()).into(),
-            |path| {
-                self.clipboard
-                    .copy_file(path.path.as_str())
-                    .map_err(|e| Command::AlertError(format!("Failed to copy: {}", e)))
-                    .map(|_| Command::CopiedToClipboard(path.clone()).into())
-                    .unwrap_or_else(|error_command| error_command.into())
+        match self.selected_path() {
+            None => Command::AlertWarn("No file selected".into()).into(),
+            Some(path) => match self.clipboard.copy_file(path.path.as_str()) {
+                Ok(_) => Command::CopiedToClipboard(path.clone()).into(),
+                Err(e) => Command::AlertError(format!("Failed to copy: {}", e)).into(),
             },
-        )
+        }
     }
 
     fn cut_to_clipboard(&mut self) -> CommandResult {
-        self.selected_path().map_or(
-            Command::AlertWarn("No file selected".into()).into(),
-            |path| {
-                self.clipboard
-                    .cut_file(path.path.as_str())
-                    .map_err(|e| Command::AlertError(format!("Failed to cut: {}", e)))
-                    .map(|_| Command::CutToClipboard(path.clone()).into())
-                    .unwrap_or_else(|error_command| error_command.into())
+        match self.selected_path() {
+            None => Command::AlertWarn("No file selected".into()).into(),
+            Some(path) => match self.clipboard.cut_file(path.path.as_str()) {
+                Ok(_) => Command::CutToClipboard(path.clone()).into(),
+                Err(e) => Command::AlertError(format!("Failed to cut: {}", e)).into(),
             },
-        )
+        }
     }
 
     fn paste_from_clipboard(&mut self) -> CommandResult {
-        let destination = self
-            .directory
-            .as_ref()
-            .expect("Directory should always be set");
+        let destination = self.directory.as_ref().expect("Directory is always set");
         match self.clipboard.get_command(destination.clone()) {
             Some(command) => command.into(),
             None => CommandResult::Handled,
@@ -101,20 +91,19 @@ impl TableView {
 
     fn click_table(&mut self, y: u16) -> CommandResult {
         let y = y as usize - 1; // -1 for the header
-        let clicked_line = self.mapper.first_visible_line() + y;
-        if clicked_line >= self.mapper.total_lines_count() {
+        let line = self.mapper.first_visible_line() + y;
+        if line >= self.mapper.total_lines_count() {
             // Clicked past the table
             return CommandResult::Handled;
         }
 
-        let clicked_item = self.mapper.item(clicked_line);
-        let clicked_path = &self.directory_items_sorted[clicked_item];
-        if self.double_click.click_and_is_double_click(clicked_path) {
+        let item = self.mapper.item(line);
+        let path = &self.directory_items_sorted[item];
+        if self.double_click.click_and_is_double_click(path) {
             return self.open_selected();
         }
 
-        self.table_state.select(Some(clicked_item));
-        Command::SetSelected(Some(self.selected_path().unwrap().clone())).into()
+        self.select(item)
     }
 
     fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
@@ -124,13 +113,12 @@ impl TableView {
                 self.mapper.total_lines_count(),
                 self.mapper.visible_lines_count(),
             )
-            .map_or(CommandResult::Handled, |selected_item| {
-                self.select(self.mapper.item(selected_item))
+            .map_or(CommandResult::Handled, |line| {
+                self.select(self.mapper.item(line))
             })
     }
 
-    // Navigate
-    fn next(&mut self) -> CommandResult {
+    fn select_next(&mut self) -> CommandResult {
         self.table_state.scroll_down_by(1);
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
@@ -138,7 +126,7 @@ impl TableView {
         }
     }
 
-    fn previous(&mut self) -> CommandResult {
+    fn select_previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
@@ -146,15 +134,15 @@ impl TableView {
         }
     }
 
-    fn first(&mut self) -> CommandResult {
+    fn select_first(&mut self) -> CommandResult {
         self.select(0)
     }
 
-    fn last(&mut self) -> CommandResult {
+    fn select_last(&mut self) -> CommandResult {
         self.select(self.directory_items_sorted.len().saturating_sub(1))
     }
 
-    fn move_to_middle(&mut self) -> CommandResult {
+    fn select_middle_visible_item(&mut self) -> CommandResult {
         let first_line = self.mapper.first_visible_line();
         let last_line = self.mapper.last_visible_line();
         let middle_line = first_line + (last_line - first_line) / 2;
@@ -167,9 +155,7 @@ impl TableView {
             self.table_state.selected().unwrap_or_default(),
             self.directory_items_sorted.len(),
         )
-        .map_or(CommandResult::Handled, |selected_item| {
-            self.select(selected_item)
-        })
+        .map_or(CommandResult::Handled, |item| self.select(item))
     }
 
     fn previous_page(&mut self) -> CommandResult {
@@ -178,9 +164,7 @@ impl TableView {
             self.table_state.selected().unwrap_or_default(),
             self.table_state.offset(),
         )
-        .map_or(CommandResult::Handled, |selected_item| {
-            self.select(selected_item)
-        })
+        .map_or(CommandResult::Handled, |item| self.select(item))
     }
 
     fn delete(&self) -> CommandResult {
@@ -285,7 +269,7 @@ impl TableView {
             return CommandResult::Handled;
         }
         self.filter = filter;
-        self.sort(true)
+        self.sort(false)
     }
 
     fn sort(&mut self, is_refresh: bool) -> CommandResult {
