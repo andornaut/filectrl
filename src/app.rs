@@ -28,7 +28,6 @@ use crate::{
 };
 
 const BROADCASTS_COUNT: u8 = 5;
-const MAIN_LOOP_MAX_SLEEP: Duration = Duration::from_millis(30);
 
 pub struct App {
     config: Config,
@@ -63,12 +62,14 @@ impl App {
 
         spawn_command_sender(self.tx.clone());
 
+        let max_sleep = Duration::from_millis(self.config.ui.tick_rate_milliseconds);
+
         loop {
             let start = Instant::now();
             let commands = receive_commands(&self.rx);
 
             if commands.is_empty() {
-                thread::sleep(MAIN_LOOP_MAX_SLEEP);
+                thread::sleep(max_sleep);
                 continue;
             }
 
@@ -81,8 +82,7 @@ impl App {
             must_not_contain_unhandled(&remaining_commands)?;
             self.render()?;
 
-            let actual_sleep =
-                MAIN_LOOP_MAX_SLEEP.saturating_sub(Instant::now().duration_since(start));
+            let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
             thread::sleep(actual_sleep);
         }
     }

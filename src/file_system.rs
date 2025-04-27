@@ -20,23 +20,28 @@ use crate::{
 };
 
 pub struct FileSystem {
+    buffer_max_bytes: u64,
+    buffer_min_bytes: u64,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
-    open_current_directory_template: Option<String>,
-    open_new_window_template: Option<String>,
-    open_selected_file_template: Option<String>,
+    open_current_directory_template: String,
+    open_new_window_template: String,
+    open_selected_file_template: String,
     watcher: DirectoryWatcher,
 }
 
 impl FileSystem {
     pub fn new(config: &Config, command_tx: Sender<Command>) -> Self {
         Self {
+            buffer_max_bytes: config.file_system.buffer_max_bytes,
+            buffer_min_bytes: config.file_system.buffer_min_bytes,
             command_tx,
             directory: None,
-            open_current_directory_template: config.open_current_directory_template.clone(),
-            open_new_window_template: config.open_new_window_template.clone(),
-            open_selected_file_template: config.open_selected_file_template.clone(),
-            watcher: DirectoryWatcher::try_new().expect("Can initialize DirectoryWatcher"),
+            open_current_directory_template: config.templates.open_current_directory.clone(),
+            open_new_window_template: config.templates.open_new_window.clone(),
+            open_selected_file_template: config.templates.open_selected_file.clone(),
+            watcher: DirectoryWatcher::try_new(config.file_system.update_threshold_milliseconds)
+                .expect("Can initialize DirectoryWatcher"),
         }
     }
 
@@ -139,7 +144,11 @@ impl FileSystem {
     }
 
     fn run_task(&mut self, task: TaskCommand) -> CommandResult {
-        task.run(self.command_tx.clone())
+        task.run(
+            self.command_tx.clone(),
+            self.buffer_min_bytes,
+            self.buffer_max_bytes,
+        )
     }
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {

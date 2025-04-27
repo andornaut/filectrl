@@ -1,23 +1,17 @@
 use std::time::Instant;
 
 use crate::{app::config::Config, file_system::path_info::PathInfo};
-use smart_default::SmartDefault;
 
-const DEFAULT_THRESHOLD_MILLISECONDS: u16 = 300;
-
-#[derive(SmartDefault)]
+#[derive(Default)]
 pub struct DoubleClick {
     last_path: Option<PathInfo>,
     start: Option<Instant>,
-    #[default(DEFAULT_THRESHOLD_MILLISECONDS)]
     threshold_milliseconds: u16,
 }
 
 impl DoubleClick {
     pub fn new(config: &Config) -> Self {
-        let threshold_milliseconds = config
-            .double_click_threshold_milliseconds
-            .expect("double_click_threshold_milliseconds is a required configuration setting");
+        let threshold_milliseconds = config.ui.double_click_threshold_milliseconds;
         Self {
             threshold_milliseconds,
             ..Default::default()

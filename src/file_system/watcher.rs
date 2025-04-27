@@ -11,20 +11,21 @@ use notify::{recommended_watcher, Event, RecommendedWatcher, Watcher};
 
 use crate::{command::Command, file_system::debounce};
 
-const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(1000);
-const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(500);
+const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(500);
 
 pub struct DirectoryWatcher {
+    debounce_threshold: Duration,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched_directory: Option<PathBuf>,
     watcher: RecommendedWatcher,
 }
 
 impl DirectoryWatcher {
-    pub fn try_new() -> Result<Self> {
+    pub fn try_new(debounce_ms: u64) -> Result<Self> {
         let (notify_tx, notify_rx) = channel();
         let watcher = recommended_watcher(notify_tx)?;
         Ok(Self {
+            debounce_threshold: Duration::from_millis(debounce_ms),
             notify_rx: Some(notify_rx),
             watcher,
             watched_directory: None,
@@ -40,9 +41,15 @@ impl DirectoryWatcher {
         let (delayed_tx, delayed_rx) = channel();
         let command_tx_for_delayed = command_tx.clone();
         let command_tx_for_notify = command_tx.clone();
+        let debounce_threshold = self.debounce_threshold;
         thread::spawn(move || watch_for_delayed_commands(command_tx_for_delayed, delayed_rx));
         thread::spawn(move || {
-            watch_for_notify_events(command_tx_for_notify, delayed_tx, notify_rx)
+            watch_for_notify_events(
+                command_tx_for_notify,
+                delayed_tx,
+                notify_rx,
+                debounce_threshold,
+            )
         });
     }
 
@@ -75,8 +82,9 @@ fn watch_for_notify_events(
     command_tx: Sender<Command>,
     delayed_tx: Sender<Command>,
     notify_rx: Receiver<std::result::Result<Event, notify::Error>>,
+    debounce_threshold: Duration,
 ) {
-    let mut debouncer = debounce::TimeDebouncer::new(DEBOUNCE_THRESHOLD);
+    let mut debouncer = debounce::TimeDebouncer::new(debounce_threshold);
     for result in notify_rx {
         match result {
             Ok(event) => match event.kind {

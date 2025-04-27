@@ -1,20 +1,28 @@
 pub(super) const DEFAULT_CONFIG_TOML: &str = r##"
-# Whether to apply $LS_COLORS on top of any styles configured in [theme.file_types]
-apply_ls_colors = true
-
-# How long to wait to interpret multiple clicks to the same element as a double click
-double_click_threshold_milliseconds = 300
-
 # One of: off, error, warn, info, debug, or trace
 # Logs are written to stderr
 log_level = "off"
 
+[file_system]
+# Buffer sizes for file operations
+buffer_max_bytes = 64000000 # 64 MB
+buffer_min_bytes = 64000    # 64 KB
+# Minimum time between filesystem updates to avoid excessive refreshes
+update_threshold_milliseconds = 100
+
+[templates]
 # Programs to use to open files or directories:
 # %s will be replaced by the path to the current working directory:
-open_current_directory_template = "alacritty --working-directory %s"
-open_new_window_template = "alacritty --command filectrl %s"
+open_current_directory = "alacritty --working-directory %s"
+open_new_window = "alacritty --command filectrl %s"
 # %s will be replaced by the path to the selected file or directory:
-open_selected_file_template = "pcmanfm %s"
+open_selected_file = "pcmanfm %s"
+
+[ui]
+# How long to wait to interpret multiple clicks to the same element as a double click
+double_click_threshold_milliseconds = 300
+# Maximum time to sleep between UI refreshes
+tick_rate_milliseconds = 30
 
 [theme]
 alert_bg = "#373424"
@@ -123,9 +131,8 @@ pib_fg = "#FF0000"    # Red
 pib_modifiers = []
 
 [theme.file_types]
-# n.b. When the top-level option `apply_ls_colors` is set to true, these options
-# are superceded by the $LS_COLORS environment variable
-# Using Solarized 256-dark theme colors
+# Whether to apply colors defined in the $LS_COLORS environment variable on top of colors configured in this section
+ls_colors_take_precedence = true
 
 # Normal file default (rs=0)
 normal_file_bg = ""

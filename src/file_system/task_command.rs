@@ -17,11 +17,20 @@ pub enum TaskCommand {
 }
 
 impl TaskCommand {
-    pub fn run(self, tx: Sender<Command>) -> CommandResult {
+    pub fn run(
+        self,
+        tx: Sender<Command>,
+        buffer_min_bytes: u64,
+        buffer_max_bytes: u64,
+    ) -> CommandResult {
         match self {
-            TaskCommand::Copy(path, dir) => run_copy_task(tx, path, dir),
+            TaskCommand::Copy(path, dir) => {
+                run_copy_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            }
             TaskCommand::DeletePath(path) => run_delete_task(tx, path),
-            TaskCommand::Move(path, dir) => run_move_task(tx, path, dir),
+            TaskCommand::Move(path, dir) => {
+                run_move_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            }
         }
     }
 }

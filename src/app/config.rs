@@ -7,7 +7,7 @@ use std::{fs, io::ErrorKind, path::PathBuf};
 
 use anyhow::{anyhow, Error, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
-use log::{info, LevelFilter};
+use log::{debug, info, LevelFilter};
 use serde::{Deserialize, Serialize};
 
 use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, theme::Theme};
@@ -15,14 +15,32 @@ use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, them
 const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct FileSystemConfig {
+    pub buffer_max_bytes: u64,
+    pub buffer_min_bytes: u64,
+    pub update_threshold_milliseconds: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Templates {
+    pub open_current_directory: String,
+    pub open_new_window: String,
+    pub open_selected_file: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UiConfig {
+    pub double_click_threshold_milliseconds: u16,
+    pub tick_rate_milliseconds: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
-    pub apply_ls_colors: bool,
-    pub double_click_threshold_milliseconds: Option<u16>,
-    pub log_level: Option<LevelFilter>,
-    pub open_current_directory_template: Option<String>,
-    pub open_new_window_template: Option<String>,
-    pub open_selected_file_template: Option<String>,
+    pub file_system: FileSystemConfig,
+    pub log_level: LevelFilter,
+    pub templates: Templates,
     pub theme: Theme,
+    pub ui: UiConfig,
 }
 
 impl Default for Config {
@@ -40,7 +58,7 @@ impl TryFrom<Option<PathBuf>> for Config {
             return Self::try_from_default_path();
         };
 
-        info!("Loading config from user-provided path: {}", path.display());
+        debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
             Ok(content) => Self::parse(&content),
             Err(err) => Err(anyhow!(
@@ -77,7 +95,7 @@ impl Config {
         let mut config = toml::from_str::<Config>(content)
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
-        if config.apply_ls_colors {
+        if config.theme.file_types.ls_colors_take_precedence {
             apply_ls_colors(&mut config.theme.file_types);
         }
 
@@ -86,7 +104,7 @@ impl Config {
 
     fn try_from_default_path() -> Result<Self> {
         let default_path = Self::default_path();
-        info!(
+        debug!(
             "Attempting to load the config from the default path: {}",
             default_path.display()
         );
@@ -94,7 +112,7 @@ impl Config {
         match fs::read_to_string(&default_path) {
             Ok(content) => Self::parse(&content),
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                info!("No config file found, using the built-in config");
+                debug!("No config file found, using the built-in config");
                 Ok(Self::default())
             }
             Err(err) => Err(anyhow!(

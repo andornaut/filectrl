@@ -1,10 +1,8 @@
 use ratatui::prelude::Constraint;
-use smart_default::SmartDefault;
 
-pub const NAME_MIN_LEN: u16 = 39;
-pub const MODE_LEN: u16 = 10;
-pub const MODIFIED_LEN: u16 = 12;
-pub const SIZE_LEN: u16 = 7;
+const MODE_LEN: u16 = 10;
+const MODIFIED_LEN: u16 = 12;
+const SIZE_LEN: u16 = 7;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) enum SortDirection {
@@ -30,9 +28,8 @@ pub(super) enum SortColumn {
     Size,
 }
 
-#[derive(SmartDefault)]
+#[derive(Default)]
 pub(super) struct Columns {
-    #[default(NAME_MIN_LEN)]
     name_width: u16,
     sort_column: SortColumn,
     sort_direction: SortDirection,
@@ -83,7 +80,7 @@ fn calculate_constraints(width: u16) -> (Vec<Constraint>, u16) {
     let mut name_column_width = width;
 
     // Add columns in order of priority based on available width
-    let mut min_width = NAME_MIN_LEN;
+    let mut min_width = width;
 
     // Add Modified column if there's enough space
     if width > min_width {
