@@ -113,15 +113,18 @@ Run `filectrl --write-config` to write the [default configuration](./src/app/def
 Keyboard key | Description
 --- | ---
 f | Open the selected file using the default application configured in your environment
-o | Open the selected file using the program configured by: `open_selected_file_template`
-t | Open the current directory in the program configured by: `open_current_directory_template`
-w | Open a new `filectrl` window in the terminal configured by: `open_new_window_template`
+o | Open the selected file using the program configured by: `templates.open_selected_file`
+t | Open the current directory in the program configured by: `templates.open_current_directory`
+w | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
 
 ```toml
-# %s will be replaced by the current directory path:
-open_current_directory_template = "alacritty --working-directory %s"
-# %s will be replaced by the selected file or directory path:
-open_selected_file_template = "pcmanfm %s"
+[templates]
+# Programs to use to open files or directories:
+# %s will be replaced by the path to the current working directory:
+open_current_directory = "alacritty --working-directory %s"
+open_new_window = "alacritty --command filectrl %s"
+# %s will be replaced by the path to the selected file or directory:
+open_selected_file = "pcmanfm %s"
 ```
 
 ### Theming
@@ -151,6 +154,7 @@ update-desktop-database ~/.local/share/applications/
 
 - [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
 - See [Cargo.toml](./Cargo.toml) for dependencies.
+- [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
 
 ```bash
 cargo clippy
