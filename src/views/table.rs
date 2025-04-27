@@ -227,19 +227,20 @@ impl TableView {
     ) -> CommandResult {
         let prev_directory = self.directory.clone();
 
-        // Clear the filter if we're navigating to a different directory
-        let is_different_dir = prev_directory
+        // Check if we're refreshing the same directory or navigating to a different one
+        let is_refresh = prev_directory
             .as_ref()
-            .map_or(true, |prev_directory| prev_directory != &new_directory);
-        if is_different_dir {
+            .map_or(false, |prev_directory| prev_directory == &new_directory);
+
+        if !is_refresh {
             self.filter.clear();
-            self.table_state.select(None); // An optimization to avoid attemptying to re-select an item if we're in a different directory
+            self.table_state.select(None); // An optimization to avoid attempting to re-select an item if we're in a different directory
         }
 
         // We must update self.directory and self.directory_items before sorting, because sort() depends on them
         self.directory = Some(new_directory.clone());
         self.directory_items = new_children;
-        let sort_result = self.sort();
+        let sort_result = self.sort(is_refresh);
 
         // If we navigated to an ancestor directory, then select the item that was previously in the path
         if let Some(prev_directory) = prev_directory {
@@ -277,10 +278,10 @@ impl TableView {
             return CommandResult::Handled;
         }
         self.filter = filter;
-        self.sort()
+        self.sort(true)
     }
 
-    fn sort(&mut self) -> CommandResult {
+    fn sort(&mut self, is_refresh: bool) -> CommandResult {
         // Clone the self.directory_items, so we can sort without affecting the original items
         let mut items = self.directory_items.clone();
 
@@ -306,6 +307,8 @@ impl TableView {
         // We handle these cases by storing the currently selected item before assigning the new items,
         // and then attempting to restore the selection afterward by comparing inodes.
         let selected = self.selected_path().cloned();
+        let selected_index = self.table_state.selected();
+
         // Must assign self.directory_items_sorted only after retrieving the previously selected item
         self.directory_items_sorted = items;
 
@@ -320,13 +323,23 @@ impl TableView {
                 // Select the previously selected item if it still exists after sort/filter
                 return self.select(new_index);
             }
+
+            // If we're refreshing the directory and couldn't find the file - it was likely deleted
+            // Select next item (same index) or index 0
+            if is_refresh {
+                if let Some(idx) = selected_index {
+                    return self
+                        .select(idx.min(self.directory_items_sorted.len().saturating_sub(1)));
+                }
+            }
         }
+
         // Fallback: Select the first item if previous selection not found or none existed
         self.select(0)
     }
 
     fn sort_by(&mut self, column: SortColumn) -> CommandResult {
         self.columns.sort_by(column);
-        self.sort()
+        self.sort(false)
     }
 }
