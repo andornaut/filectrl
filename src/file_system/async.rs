@@ -16,11 +16,15 @@ use crate::{
 };
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
-const MAX_BUFFER_BYTES: u64 = 64_000_000;
-const MIN_BUFFER_BYTES: u64 = 64_000;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 
-pub(super) fn run_copy_task(tx: Sender<Command>, path: PathInfo, dir: PathInfo) -> CommandResult {
+pub(super) fn run_copy_task(
+    tx: Sender<Command>,
+    path: PathInfo,
+    dir: PathInfo,
+    buffer_min_bytes: u64,
+    buffer_max_bytes: u64,
+) -> CommandResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
         Ok(paths) => paths,
         Err(result) => return result,
@@ -28,14 +32,20 @@ pub(super) fn run_copy_task(tx: Sender<Command>, path: PathInfo, dir: PathInfo) 
 
     let mut task = Task::new(path.size);
     let task_clone = task.clone();
-    let buffer_size = buffer_bytes(path.size);
+    let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
 
     thread::spawn(move || copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size));
 
     Command::Progress(task_clone).into()
 }
 
-pub(super) fn run_move_task(tx: Sender<Command>, path: PathInfo, dir: PathInfo) -> CommandResult {
+pub(super) fn run_move_task(
+    tx: Sender<Command>,
+    path: PathInfo,
+    dir: PathInfo,
+    buffer_min_bytes: u64,
+    buffer_max_bytes: u64,
+) -> CommandResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
         Ok(paths) => paths,
         Err(result) => return result,
@@ -53,7 +63,7 @@ pub(super) fn run_move_task(tx: Sender<Command>, path: PathInfo, dir: PathInfo) 
         Err(error) => match error.kind() {
             // If the file is on a different device/mount-point, we must copy-then-delete it instead
             ErrorKind::CrossesDevices => {
-                let buffer_size = buffer_bytes(path.size);
+                let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
                 if copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size) {
                     if let Err(error) = fs::remove_file(&old_path) {
                         task.error(format!(
@@ -105,23 +115,20 @@ pub(super) fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandRes
     Command::Progress(task_clone).into()
 }
 
-fn buffer_bytes(len: u64) -> usize {
-    // 1) For files ≤ 64KB:
+fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
+    // 1) For files ≤ buffer_min_bytes:
     //    Use len of the file as the buffer size
-    // 2) For files ≥ 1.28GB:
-    //    Use 64MB buffer
-    // 3) For files > 64KB and < 1.28GB:
-    //    Use the maximum of 64KB or len / 20
-    //    This ensures we never go below 64KB
-    //    Example: 1MB file → 64KB buffer (since 1MB/20 = 50KB < 64KB)
-    //    Example: 100MB file → 5MB buffer (since 100MB/20 = 5MB > 64KB)
-    //    Example: 1.27GB file → 63.5MB buffer (since 1.27GB/20 = 63.5MB > 64KB)
-    if len <= MIN_BUFFER_BYTES {
+    // 2) For files ≥ (buffer_max_bytes * 20):
+    //    Use buffer_max_bytes buffer
+    // 3) For files > buffer_min_bytes and < (buffer_max_bytes * 20):
+    //    Use the maximum of buffer_min_bytes or len / 20
+    //    This ensures we never go below buffer_min_bytes
+    if len <= buffer_min_bytes {
         len as usize
-    } else if len >= (MAX_BUFFER_BYTES * 20) {
-        MAX_BUFFER_BYTES as usize
+    } else if len >= (buffer_max_bytes * BUFFER_SIZE_DIVISOR) {
+        buffer_max_bytes as usize
     } else {
-        std::cmp::max(MIN_BUFFER_BYTES, len / BUFFER_SIZE_DIVISOR) as usize
+        std::cmp::max(buffer_min_bytes, len / BUFFER_SIZE_DIVISOR) as usize
     }
 }
 

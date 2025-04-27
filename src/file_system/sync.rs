@@ -32,12 +32,7 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
     Ok(children.into_iter().flatten().collect())
 }
 
-pub(super) fn open_in(path: &PathInfo, template: &Option<String>) -> Result<()> {
-    let Some(template) = template else {
-        warn!("Cannot open the program, because a template is not configured");
-        return Ok(());
-    };
-
+pub(super) fn open_in(path: &PathInfo, template: &String) -> Result<()> {
     info!("Opening the program defined in template:\"{template}\", %s:\"{path:?}\"");
     let mut it = template.split_whitespace();
 

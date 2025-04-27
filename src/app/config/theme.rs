@@ -54,6 +54,9 @@ macro_rules! style_setter {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileTheme {
+    // Whether to apply $LS_COLORS on top of styles configured in this section
+    pub ls_colors_take_precedence: bool,
+
     // Block device (bd)
     #[serde(
         deserialize_with = "deserialize_optional_color",
