@@ -1,7 +1,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Finds the byte offset of the next word boundary
-pub(super) fn find_next_word_boundary(text: &str, current_byte_offset: usize) -> usize {
+pub(super) fn next_word_boundary(text: &str, current_byte_offset: usize) -> usize {
     let text_len = text.len();
     if current_byte_offset >= text_len {
         return text_len;
@@ -31,7 +31,7 @@ pub(super) fn find_next_word_boundary(text: &str, current_byte_offset: usize) ->
 }
 
 /// Finds the byte offset of the previous word boundary
-pub(super) fn find_prev_word_boundary(text: &str, current_byte_offset: usize) -> usize {
+pub(super) fn prev_word_boundary(text: &str, current_byte_offset: usize) -> usize {
     if current_byte_offset == 0 {
         return 0;
     }
@@ -77,7 +77,7 @@ mod tests {
         expected_offset: usize,
         description: &str,
     ) {
-        let result = find_next_word_boundary(text, start_offset);
+        let result = next_word_boundary(text, start_offset);
         assert_eq!(result, expected_offset, "next - {}", description);
     }
 
@@ -93,7 +93,7 @@ mod tests {
         expected_offset: usize,
         description: &str,
     ) {
-        let result = find_prev_word_boundary(text, start_offset);
+        let result = prev_word_boundary(text, start_offset);
         assert_eq!(result, expected_offset, "prev - {}", description);
     }
 }
