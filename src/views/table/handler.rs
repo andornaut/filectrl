@@ -35,9 +35,11 @@ impl CommandHandler for TableView {
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
             (_, KeyModifiers::NONE) => match code {
                 KeyCode::Delete => self.delete(),
-                KeyCode::Enter | KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('l') => {
-                    self.open_selected()
-                }
+                KeyCode::Enter
+                | KeyCode::Right
+                | KeyCode::Char('f')
+                | KeyCode::Char('l')
+                | KeyCode::Char(' ') => self.open_selected(),
                 KeyCode::Esc => Command::SetFilter("".into()).into(),
                 KeyCode::Char('~') => self.navigate_to_home_directory(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
