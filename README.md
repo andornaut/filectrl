@@ -1,6 +1,6 @@
-# FileCTRL
+# FileCtrl
 
-FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCtrl is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 ![image](./screenshot.png)
 
@@ -32,7 +32,7 @@ Run `filectrl --help` to view the available command line arguments and options:
 ```text
 Usage: filectrl [<directory>] [-c <config>] [--write-config]
 
-FileCTRL is a light, opinionated, responsive, theme-able, and simple
+FileCtrl is a light, opinionated, responsive, theme-able, and simple
 Text User Interface (TUI) file manager for Linux and macOS
 
 Positional Arguments:
@@ -47,11 +47,11 @@ Options:
 
 ### Copy / paste
 
-When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` into your clipboard buffer
+When you copy/cut a file or directory, FileCtrl puts `${operation} ${path}` into your clipboard buffer
 (where `operation` is "cp" or "mv").
-If you then paste into a second FileCTRL window, this second instance of FileCTRL will perform the equivalent of:
+If you then paste into a second FileCtrl window, this second instance of FileCtrl will perform the equivalent of:
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
-Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
+Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
 
 ### Keyboard controls
 
@@ -59,42 +59,43 @@ _**Normal mode**_
 
 Keys | Description
 --- | ---
-q | Quit
-↓/j, ↑/k, ←/h, →/l | Navigate
-~ | Go to home directory
-←/b/Backspace | Go to parent directory
-→/f/l/Enter | Open the selected file or navigate to the selected directory
-Home/g/^ | Select first row
-End/G/$ | Select last row
-z | Select middle of visible rows
-CTRL+f/CTRL+d/PgDn | Scroll down one page
-CTRL+b/CTRL+u/PgUp | Scroll up one page
-Delete | Delete the selected file or directory
-/ | Filter by name
-CTRL+r/F5 | Refresh the current directory
-r/F2 | Rename the selected file or directory
-w | Open a new `filectrl` window
-t | Open current directory in a terminal
-a, c, p | Clear alerts, clipboard content, or progress bars
-CTRL+c, CTRL+x, CTRL+v | Copy/Cut/Paste selected file or directory
-n, m, s | Sort by name, modified date, or size
-? | Toggle help
+<kbd>q</kbd> | Quit
+<kbd>←</kbd> / <kbd>h</kbd>, <kbd>↓</kbd> / <kbd>j</kbd>, <kbd>↑</kbd> / <kbd>k</kbd>,  <kbd>→</kbd> / <kbd>l</kbd> | Navigate left, down, up, right
+<kbd>~</kbd> | Go to home directory
+<kbd>←</kbd> / <kbd>b</kbd> / <kbd>Backspace</kbd> | Go to parent directory
+<kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
+<kbd>o</kbd> | Open the selected file using the program configured by: `templates.open_selected_file`
+<kbd>Home</kbd> / <kbd>g</kbd> / <kbd>^</kbd> | Select first row
+<kbd>End</kbd> / <kbd>G</kbd> / <kbd>$</kbd> | Select last row
+<kbd>z</kbd> | Select middle of visible rows
+<kbd>Ctrl</kbd>+<kbd>f</kbd> / <kbd>Ctrl</kbd>+<kbd>d</kbd> / <kbd>PgDn</kbd> | Scroll down one page
+<kbd>Ctrl</kbd>+<kbd>b</kbd> / <kbd>Ctrl</kbd>+<kbd>u</kbd> / <kbd>PgUp</kbd> | Scroll up one page
+<kbd>Delete</kbd> | Delete the selected file or directory
+<kbd> / </kbd> | Filter by name
+<kbd>Ctrl</kbd>+<kbd>r</kbd> / <kbd>F5</kbd> | Refresh the current directory
+<kbd>r</kbd> / <kbd>F2</kbd> | Rename the selected file or directory
+<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
+<kbd>t</kbd> | Open the current directory in the program configured by: `templates.open_current_directory`
+<kbd>a</kbd>, <kbd>c</kbd>, <kbd>p</kbd> | Clear alerts, clipboard content, or progress bars
+<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste selected file or directory
+<kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd> | Sort by name, modified date, or size
+<kbd>?</kbd> | Toggle help
 
 _**Filtering / Renaming mode**_
 
 Keys | Description
 --- | ---
-Esc | Cancel and exit filtering/renaming mode
-Enter | Submit your input and exit filtering/renaming mode
-←/→ | Move cursor
-CTRL+←/→ | Move cursor by word (delimited by whitespaces or punctuation)
-Home/End | Move cursor to beginning/end of line
-SHIFT+←/→ | Select text
-SHIFT+Home/End | Select to beginning/end of line
-CTRL+SHIFT+←/→ | Select by word (delimited by whitespaces or punctuation)
-CTRL+a | Select all
-CTRL+c, CTRL+x, CTRL+v | Copy/Cut/Paste text
-Backspace/Delete | Delete character before/after cursor
+<kbd>Esc</kbd> | Cancel and exit filtering/renaming mode
+<kbd>Enter</kbd> | Submit your input and exit filtering/renaming mode
+<kbd>←</kbd> / <kbd>→</kbd> | Move cursor
+<kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>→</kbd> | Move cursor by word (delimited by whitespaces or punctuation)
+<kbd>Home</kbd> / <kbd>End</kbd> | Move cursor to beginning/end of line
+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Shift</kbd>+<kbd>→</kbd> | Select text
+<kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | Select to beginning/end of line
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd> | Select by word (delimited by whitespaces or punctuation)
+<kbd>Ctrl</kbd>+<kbd>a</kbd> | Select all
+<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste text
+<kbd>Backspace</kbd> / <kbd>Delete</kbd> | Delete character before/after cursor
 
 ## Configuration
 
@@ -113,10 +114,10 @@ Run `filectrl --write-config` to write the [default configuration](./src/app/def
 
 Keyboard key | Description
 --- | ---
-f | Open the selected file using the default application configured in your environment
-o | Open the selected file using the program configured by: `templates.open_selected_file`
-t | Open the current directory in the program configured by: `templates.open_current_directory`
-w | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
+<kbd>f</kbd> | Open the selected file using the default application configured in your environment
+<kbd>o</kbd> | Open the selected file using the program configured by: `templates.open_selected_file`
+<kbd>t</kbd> | Open the current directory in the program configured by: `templates.open_current_directory`
+<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
 
 ```toml
 [templates]
