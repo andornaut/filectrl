@@ -59,13 +59,15 @@ jobs:
         run: |
           gh release delete main --yes || true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Note: GitHub's release model requires a tag. We delete and recreate the 'main' release each time
       # for main branch releases, or create a new release for tag-based releases
       - name: Create GitHub release
         id: create_release
         uses: actions/create-release@v1
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref == 'refs/heads/main' && 'main' || github.ref_name }}
           release_name: ${{ github.ref == 'refs/heads/main' && 'main' || github.ref_name }}
@@ -73,6 +75,8 @@ jobs:
 
       - name: Upload Linux artifact
         uses: actions/upload-release-asset@v1
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: artifacts/filectrl-ubuntu-latest/filectrl
@@ -81,6 +85,8 @@ jobs:
 
       - name: Upload macOS artifact
         uses: actions/upload-release-asset@v1
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: artifacts/filectrl-macos-latest/filectrl
