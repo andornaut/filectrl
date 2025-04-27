@@ -1,6 +1,5 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-/// Finds the byte offset of the next word boundary
 pub(super) fn next_word_boundary(text: &str, current_byte_offset: usize) -> usize {
     let text_len = text.len();
     if current_byte_offset >= text_len {
@@ -30,7 +29,6 @@ pub(super) fn next_word_boundary(text: &str, current_byte_offset: usize) -> usiz
     }
 }
 
-/// Finds the byte offset of the previous word boundary
 pub(super) fn prev_word_boundary(text: &str, current_byte_offset: usize) -> usize {
     if current_byte_offset == 0 {
         return 0;

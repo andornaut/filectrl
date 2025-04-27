@@ -16,16 +16,27 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 2;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 7] = [
-    ("Left/Down/Up/Right: ", "h/j/k/l"),
-    ("Open: ", "f"),
-    ("Navigate back: ", "b"),
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 12] = [
+    ("Navigate: ", "h/j/k/l/←↓↑→"),
+    ("Open: ", "f/l/Enter"),
+    ("Back: ", "h/b/Backspace"),
     ("Refresh: ", "CTRL+r"),
+    ("Filter: ", "/"),
     ("Rename: ", "r"),
     ("Delete: ", "Delete"),
+    ("Copy/Cut: ", "y/x"),
+    ("Paste: ", "p"),
+    ("Sort: ", "n/m/s"),
+    ("New window: ", "w"),
     ("Quit: ", "q"),
 ];
-const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 2] = [("Submit: ", "Enter"), ("Cancel: ", "Esc")];
+
+const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 4] = [
+    ("Submit: ", "Enter"),
+    ("Cancel: ", "Esc"),
+    ("Navigate by word: ", "CTRL+←/→"),
+    ("Select by word: ", "CTRL+SHIFT+←/→"),
+];
 
 #[derive(Default)]
 pub(super) struct HelpView {
