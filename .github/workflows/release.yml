@@ -56,9 +56,10 @@ jobs:
           fetch-depth: 1
           ref: ${{ github.ref }}
 
-      - name: Delete the "main" tag if it exists
+      - name: Delete the previous "main" tag and release if they exist
         if: github.ref == 'refs/heads/main'
         run: |
+          gh release delete main --yes || true
           git push --delete origin refs/tags/main || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
