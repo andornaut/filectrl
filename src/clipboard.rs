@@ -5,36 +5,36 @@ use std::{
 
 use anyhow::{anyhow, Error};
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
+use log::warn;
 use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
 
 use crate::{command::Command, file_system::path_info::PathInfo};
 
-impl RatClipboard for ClipboardBackend {
-    fn get_string(&self) -> Result<String, ClipboardError> {
-        self.get_string().map_err(|_| ClipboardError)
-    }
-
-    fn set_string(&self, s: &str) -> Result<(), ClipboardError> {
-        self.set_string(s).map_err(|_| ClipboardError)
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct Clipboard {
-    backend: ClipboardBackend,
+    backend: Option<ClipboardBackend>,
 }
 
 impl Default for Clipboard {
     fn default() -> Self {
-        Self {
-            backend: ClipboardBackend::try_new().expect("Can access the clipboard"),
-        }
+        let backend = match ClipboardBackend::try_new() {
+            Ok(backend) => Some(backend),
+            Err(err) => {
+                warn!("Failed to initialize clipboard: {}", err);
+                None
+            }
+        };
+
+        Self { backend }
     }
 }
 
 impl Clipboard {
     pub(super) fn as_rat_clipboard(self) -> Box<dyn RatClipboard> {
-        Box::new(self.backend) as Box<dyn RatClipboard>
+        match self.backend {
+            Some(backend) => Box::new(backend),
+            None => Box::new(NoopClipboardBackend),
+        }
     }
 
     pub(super) fn copy_file(&self, path: &str) -> Result<(), Error> {
@@ -48,14 +48,19 @@ impl Clipboard {
     }
 
     pub(super) fn clear(&self) -> Result<(), Error> {
-        self.backend.clear()
+        match &self.backend {
+            Some(backend) => backend.clear(),
+            None => Ok(()),
+        }
     }
 
     pub fn get_clipboard_command(&self) -> Option<ClipboardCommand> {
-        self.backend
-            .get_string()
-            .ok()
-            .and_then(|text| text.as_str().try_into().ok())
+        self.backend.as_ref().and_then(|backend| {
+            backend
+                .get_string()
+                .ok()
+                .and_then(|text| text.as_str().try_into().ok())
+        })
     }
 
     pub fn get_command(&self, destination: PathInfo) -> Option<Command> {
@@ -63,9 +68,18 @@ impl Clipboard {
             .map(|command| command.to_command(destination))
     }
 
+    pub fn is_enabled(&self) -> bool {
+        self.backend.is_some()
+    }
+
     fn set_clipboard_command(&self, command: ClipboardCommand) -> Result<(), Error> {
-        let text = command.to_string();
-        self.backend.set_string(&text)
+        match &self.backend {
+            Some(backend) => {
+                let text = command.to_string();
+                backend.set_string(&text)
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -160,5 +174,28 @@ impl ClipboardBackend {
 
     fn clear(&self) -> Result<(), Error> {
         self.set_string("")
+    }
+}
+
+impl RatClipboard for ClipboardBackend {
+    fn get_string(&self) -> Result<String, ClipboardError> {
+        self.get_string().map_err(|_| ClipboardError)
+    }
+
+    fn set_string(&self, s: &str) -> Result<(), ClipboardError> {
+        self.set_string(s).map_err(|_| ClipboardError)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NoopClipboardBackend;
+
+impl RatClipboard for NoopClipboardBackend {
+    fn get_string(&self) -> Result<String, ClipboardError> {
+        Ok(String::new())
+    }
+
+    fn set_string(&self, _s: &str) -> Result<(), ClipboardError> {
+        Ok(())
     }
 }

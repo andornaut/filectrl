@@ -49,6 +49,10 @@ impl TableView {
     }
 
     fn clear_clipboard(&mut self) -> CommandResult {
+        if !self.clipboard.is_enabled() {
+            return CommandResult::Handled;
+        }
+
         match self.clipboard.clear() {
             Ok(_) => Command::ClearedClipboard.into(),
             Err(e) => Command::AlertError(format!("Failed to clear clipboard: {}", e)).into(),
@@ -56,6 +60,10 @@ impl TableView {
     }
 
     fn copy_to_clipboard(&mut self) -> CommandResult {
+        if !self.clipboard.is_enabled() {
+            return CommandResult::Handled;
+        }
+
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => match self.clipboard.copy_file(path.path.as_str()) {
@@ -66,6 +74,10 @@ impl TableView {
     }
 
     fn cut_to_clipboard(&mut self) -> CommandResult {
+        if !self.clipboard.is_enabled() {
+            return CommandResult::Handled;
+        }
+
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => match self.clipboard.cut_file(path.path.as_str()) {
@@ -76,6 +88,10 @@ impl TableView {
     }
 
     fn paste_from_clipboard(&mut self) -> CommandResult {
+        if !self.clipboard.is_enabled() {
+            return CommandResult::Handled;
+        }
+
         let destination = self.directory.as_ref().expect("Directory is always set");
         match self.clipboard.get_command(destination.clone()) {
             Some(command) => command.into(),
