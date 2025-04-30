@@ -9,7 +9,7 @@ FileCtrl is a light, opinionated, responsive, theme-able, and simple Text User I
 You can [download and install a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux or macOS:
 
 ```bash
-curl -L https://github.com/andornaut/filectrl/releases/download/latest/filectrl-linux -o filectrl
+curl -sL https://github.com/andornaut/filectrl/releases/download/main/filectrl-linux -o filectrl
 chmod +x filectrl
 sudo mv filectrl /usr/local/bin/
 ```

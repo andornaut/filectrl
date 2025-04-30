@@ -82,6 +82,7 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
+        let table = table.style(theme.table_body());
         StatefulWidget::render(table, area, buf, &mut self.table_state);
 
         // -1 for table header
