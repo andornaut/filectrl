@@ -168,76 +168,76 @@ fg = "#1D1F21"
 modifiers = []
 
 [theme.file_modified_date.less_than_minute]
-bg = ""
+bg = "#373424"
 fg = "#00FFFF"  # Sky Blue
 modifiers = []
 
 [theme.file_modified_date.less_than_day]
-bg = ""
-fg = "#00FF00"    # Bright Green
+bg = "#373424"
+fg = "#00FF00"  # Bright Green
 modifiers = []
 
 [theme.file_modified_date.less_than_month]
-bg = ""
+bg = "#373424"
 fg = "#FFFF00"  # Yellow
 modifiers = []
 
 [theme.file_modified_date.less_than_year]
-bg = ""
-fg = "#FF00FF"   # Magenta
+bg = "#373424"
+fg = "#FF00FF"  # Magenta
 modifiers = []
 
 [theme.file_modified_date.greater_than_year]
-bg = ""
+bg = "#373424"
 fg = "#FF0000" # Red
 modifiers = []
 
 [theme.file_size.bytes]
-bg = ""
+bg = "#373424"
 fg = "#87CEEB"  # Sky Blue
 modifiers = []
 
 [theme.file_size.kib]
-bg = ""
-fg = "#00FFFF"    # Cyan
+bg = "#373424"
+fg = "#00FFFF"  # Cyan
 modifiers = []
 
 [theme.file_size.mib]
-bg = ""
-fg = "#00FF00"    # Bright Green
+bg = "#373424"
+fg = "#00FF00"  # Bright Green
 modifiers = []
 
 [theme.file_size.gib]
-bg = ""
-fg = "#FFFF00"    # Yellow
+bg = "#373424"
+fg = "#FFFF00"  # Yellow
 modifiers = []
 
 [theme.file_size.tib]
-bg = ""
-fg = "#FF00FF"    # Magenta
+bg = "#373424"
+fg = "#FF00FF"  # Magenta
 modifiers = []
 
 [theme.file_size.pib]
-bg = ""
-fg = "#FF0000"    # Red
+bg = "#373424"
+fg = "#FF0000"  # Red
 modifiers = []
 
 [theme.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
-ls_colors_take_precedence = true
+ls_colors_take_precedence = false
 
 [theme.file_type.normal_file]
-bg = ""
+bg = "#373424"
 fg = "#E4E4E4"  # 254
 modifiers = []
 
 [theme.file_type.regular_file]
-bg = ""
+bg = "#373424"
 fg = "#E4E4E4"  # 254
 modifiers = []
 
 [theme.file_type.directory]
-bg = ""
+bg = "#373424"
 fg = "#0087FF"  # 33
 modifiers = []
 
@@ -247,7 +247,7 @@ fg = "#0087FF"  # 33
 modifiers = []
 
 [theme.file_type.symlink]
-bg = ""
+bg = "#373424"
 fg = "#00AFAF"  # 37
 modifiers = ["bold"]
 
@@ -282,12 +282,12 @@ fg = "#D70000"  # 160
 modifiers = []
 
 [theme.file_type.missing]
-bg = ""
+bg = "#373424"
 fg = ""
 modifiers = []
 
 [theme.file_type.executable]
-bg = ""
+bg = "#373424"
 fg = "#5F8700"  # 64
 modifiers = ["bold"]
 
