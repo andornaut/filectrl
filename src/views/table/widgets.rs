@@ -92,7 +92,7 @@ pub(super) fn row_widget_and_height<'a>(
             )
         } else {
             (
-                name_style(&theme.file_types, item),
+                name_style(theme.file_type(), item),
                 modified_date_style(theme, item, relative_to_datetime),
                 size_style(theme, item),
                 theme.table_body(),

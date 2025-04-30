@@ -1,4 +1,5 @@
 use std::{
+    env,
     io::{stdout, Result, Stdout},
     ops::{Deref, DerefMut},
 };
@@ -14,6 +15,14 @@ use ratatui::{
 };
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
+
+/// Check if the terminal supports truecolor (24-bit color)
+pub fn supports_truecolor() -> bool {
+    match env::var("COLORTERM") {
+        Ok(val) => val.to_lowercase().contains("truecolor") || val.to_lowercase().contains("24bit"),
+        Err(_) => false,
+    }
+}
 
 pub struct CleanupOnDropTerminal(CrosstermTerminal);
 

@@ -372,6 +372,7 @@ dependencies = [
  "nix",
  "notify",
  "open",
+ "paste",
  "rat-text",
  "rat-widget",
  "ratatui",

@@ -10,7 +10,7 @@ use etcetera::{choose_base_strategy, BaseStrategy};
 use log::{debug, info, LevelFilter};
 use serde::{Deserialize, Serialize};
 
-use self::{default_config::DEFAULT_CONFIG_TOML, ls_colors::apply_ls_colors, theme::Theme};
+use self::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
 
 const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
 
@@ -34,12 +34,13 @@ pub struct UiConfig {
     pub frame_delay_milliseconds: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Config {
     pub file_system: FileSystemConfig,
     pub log_level: LevelFilter,
     pub templates: Templates,
     pub theme: Theme,
+    pub theme256: Theme,
     pub ui: UiConfig,
 }
 
@@ -95,10 +96,7 @@ impl Config {
         let mut config = toml::from_str::<Config>(content)
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
-        if config.theme.file_types.ls_colors_take_precedence {
-            apply_ls_colors(&mut config.theme.file_types);
-        }
-
+        config.theme.maybe_apply_ls_colors();
         Ok(config)
     }
 

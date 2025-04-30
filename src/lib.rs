@@ -11,7 +11,11 @@ use anyhow::Result;
 use env_logger::{Builder, Env, DEFAULT_FILTER_ENV};
 use log::{info, LevelFilter};
 
-use self::app::{config::Config, terminal::CleanupOnDropTerminal, App};
+use self::app::{
+    config::Config,
+    terminal::{supports_truecolor, CleanupOnDropTerminal},
+    App,
+};
 
 const PKG_NAME: Option<&str> = option_env!("CARGO_PKG_NAME");
 
@@ -28,6 +32,13 @@ pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> 
         let level = config.log_level;
         log::set_max_level(level);
         info!("Setting the log level from the config: {level:?}");
+    }
+
+    // Log truecolor support information
+    let has_truecolor = supports_truecolor();
+    info!("Terminal truecolor support: {}", has_truecolor);
+    if !has_truecolor {
+        info!("Using 256-color theme fallback");
     }
 
     let terminal = CleanupOnDropTerminal::try_new()?;
