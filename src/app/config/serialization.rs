@@ -1,28 +1,28 @@
 use ratatui::style::{Color, Modifier};
 use serde::{de::value::StringDeserializer, Deserialize, Deserializer, Serialize, Serializer};
 
-/// Custom deserializer for Option<Color> that deserializes empty strings as None
-pub fn deserialize_optional_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
+/// Custom deserializer for Color that deserializes empty strings as the default color (reset)
+pub fn deserialize_color<'de, D>(deserializer: D) -> Result<Color, D::Error>
 where
     D: Deserializer<'de>,
 {
     let color_str: String = Deserialize::deserialize(deserializer)?;
     if color_str.is_empty() {
-        return Ok(None);
+        return Ok(Color::Reset);
     }
 
-    // For non-empty strings, use the built-in Color deserialization and map the result to Option<Color>
-    Color::deserialize(StringDeserializer::<D::Error>::new(color_str)).map(Some)
+    // For non-empty strings, use the built-in Color deserialization
+    Color::deserialize(StringDeserializer::<D::Error>::new(color_str))
 }
 
-/// Custom serializer for Option<Color> that serializes None as empty string
-pub fn serialize_optional_color<S>(color: &Option<Color>, serializer: S) -> Result<S::Ok, S::Error>
+/// Custom serializer for Color that serializes Reset as empty string
+pub fn serialize_color<S>(color: &Color, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     match color {
-        Some(color) => color.serialize(serializer),
-        None => "".serialize(serializer),
+        Color::Reset => "".serialize(serializer),
+        _ => color.serialize(serializer),
     }
 }
 

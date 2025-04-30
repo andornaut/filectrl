@@ -124,8 +124,12 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            self.root
-                .render(area, frame, &self.mode, &self.config.theme);
+            let theme = if terminal::supports_truecolor() {
+                &self.config.theme
+            } else {
+                &self.config.theme256
+            };
+            self.root.render(area, frame, &self.mode, theme);
         })?;
         Ok(())
     }

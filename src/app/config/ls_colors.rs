@@ -1,8 +1,8 @@
 use ratatui::style::{Color, Modifier};
 
-use super::theme::FileTheme;
+use super::theme::FileType;
 
-pub(super) fn apply_ls_colors(theme: &mut FileTheme) {
+pub(super) fn apply_ls_colors(theme: &mut FileType) {
     let ls_colors = match std::env::var("LS_COLORS") {
         Ok(value) => value,
         Err(_) => return,
@@ -16,7 +16,7 @@ pub(super) fn apply_ls_colors(theme: &mut FileTheme) {
 
         let (key, value) = (parts[0], parts[1]);
         let (fg, bg, attrs) = parse(value);
-        if fg.is_none() && bg.is_none() && attrs == Modifier::empty() {
+        if fg == Color::Reset && bg == Color::Reset && attrs == Modifier::empty() {
             continue;
         }
 
@@ -49,9 +49,9 @@ pub(super) fn apply_ls_colors(theme: &mut FileTheme) {
     }
 }
 
-fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
-    let mut fg = None;
-    let mut bg = None;
+fn parse(line: &str) -> (Color, Color, Modifier) {
+    let mut fg = Color::Reset;
+    let mut bg = Color::Reset;
     let mut attrs = Modifier::empty();
 
     let codes: Vec<&str> = line.split(';').collect();
@@ -70,51 +70,51 @@ fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "08" | "8" => {}                         // Hidden - not supported
 
             // Foreground colors (30-37, 90-97)
-            "30" => fg = Some(Color::Black),
-            "31" => fg = Some(Color::Red),
-            "32" => fg = Some(Color::Green),
-            "33" => fg = Some(Color::Yellow),
-            "34" => fg = Some(Color::Blue),
-            "35" => fg = Some(Color::Magenta),
-            "36" => fg = Some(Color::Cyan),
-            "37" => fg = Some(Color::White),
-            "90" => fg = Some(Color::DarkGray),
-            "91" => fg = Some(Color::LightRed),
-            "92" => fg = Some(Color::LightGreen),
-            "93" => fg = Some(Color::LightYellow),
-            "94" => fg = Some(Color::LightBlue),
-            "95" => fg = Some(Color::LightMagenta),
-            "96" => fg = Some(Color::LightCyan),
-            "97" => fg = Some(Color::Gray),
+            "30" => fg = Color::Black,
+            "31" => fg = Color::Red,
+            "32" => fg = Color::Green,
+            "33" => fg = Color::Yellow,
+            "34" => fg = Color::Blue,
+            "35" => fg = Color::Magenta,
+            "36" => fg = Color::Cyan,
+            "37" => fg = Color::White,
+            "90" => fg = Color::DarkGray,
+            "91" => fg = Color::LightRed,
+            "92" => fg = Color::LightGreen,
+            "93" => fg = Color::LightYellow,
+            "94" => fg = Color::LightBlue,
+            "95" => fg = Color::LightMagenta,
+            "96" => fg = Color::LightCyan,
+            "97" => fg = Color::Gray,
 
             // Background colors (40-47, 100-107)
-            "40" => bg = Some(Color::Black),
-            "41" => bg = Some(Color::Red),
-            "42" => bg = Some(Color::Green),
-            "43" => bg = Some(Color::Yellow),
-            "44" => bg = Some(Color::Blue),
-            "45" => bg = Some(Color::Magenta),
-            "46" => bg = Some(Color::Cyan),
-            "47" => bg = Some(Color::White),
-            "100" => bg = Some(Color::DarkGray),
-            "101" => bg = Some(Color::LightRed),
-            "102" => bg = Some(Color::LightGreen),
-            "103" => bg = Some(Color::LightYellow),
-            "104" => bg = Some(Color::LightBlue),
-            "105" => bg = Some(Color::LightMagenta),
-            "106" => bg = Some(Color::LightCyan),
-            "107" => bg = Some(Color::Gray),
+            "40" => bg = Color::Black,
+            "41" => bg = Color::Red,
+            "42" => bg = Color::Green,
+            "43" => bg = Color::Yellow,
+            "44" => bg = Color::Blue,
+            "45" => bg = Color::Magenta,
+            "46" => bg = Color::Cyan,
+            "47" => bg = Color::White,
+            "100" => bg = Color::DarkGray,
+            "101" => bg = Color::LightRed,
+            "102" => bg = Color::LightGreen,
+            "103" => bg = Color::LightYellow,
+            "104" => bg = Color::LightBlue,
+            "105" => bg = Color::LightMagenta,
+            "106" => bg = Color::LightCyan,
+            "107" => bg = Color::Gray,
 
             // Extended color codes
             "38" => {
                 if let Some((color, skip)) = parse_extended_color(&codes, i) {
-                    fg = Some(color);
+                    fg = color;
                     i += skip;
                 }
             }
             "48" => {
                 if let Some((color, skip)) = parse_extended_color(&codes, i) {
-                    bg = Some(color);
+                    bg = color;
                     i += skip;
                 }
             }

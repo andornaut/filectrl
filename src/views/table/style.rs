@@ -3,7 +3,7 @@ use ratatui::style::Style;
 
 use super::SortColumn;
 use crate::{
-    app::config::theme::{FileTheme, Theme},
+    app::config::theme::{FileType, Theme},
     clipboard::ClipboardCommand,
     file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
@@ -28,7 +28,7 @@ pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &Sor
     }
 }
 
-pub(super) fn name_style(theme: &FileTheme, path: &PathInfo) -> Style {
+pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
     // Symlinks should be checked first (highest precedence in ls)
     if path.is_symlink_broken() {
         return theme.symlink_broken();
@@ -102,23 +102,31 @@ pub(super) fn modified_date_style(
     let modified = item.modified.unwrap_or(relative_to);
     let age = datetime_age(modified, relative_to);
 
-    match age {
-        DateTimeAge::LessThanMinute => theme.modified_less_than_minute(),
-        DateTimeAge::LessThanDay => theme.modified_less_than_day(),
-        DateTimeAge::LessThanMonth => theme.modified_less_than_month(),
-        DateTimeAge::LessThanYear => theme.modified_less_than_year(),
-        DateTimeAge::GreaterThanYear => theme.modified_greater_than_year(),
-    }
+    get_date_style(theme, age)
 }
 
 pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
-    match item.size_unit_index() {
-        0 => theme.size_bytes(),
-        1 => theme.size_kib(),
-        2 => theme.size_mib(),
-        3 => theme.size_gib(),
-        4 => theme.size_tib(),
-        5 => theme.size_pib(),
-        _ => theme.size_pib(),
+    get_size_style(theme, item.size_unit_index())
+}
+
+fn get_date_style(theme: &Theme, age: DateTimeAge) -> Style {
+    match age {
+        DateTimeAge::LessThanMinute => theme.file_modified_date().less_than_minute(),
+        DateTimeAge::LessThanDay => theme.file_modified_date().less_than_day(),
+        DateTimeAge::LessThanMonth => theme.file_modified_date().less_than_month(),
+        DateTimeAge::LessThanYear => theme.file_modified_date().less_than_year(),
+        DateTimeAge::GreaterThanYear => theme.file_modified_date().greater_than_year(),
+    }
+}
+
+fn get_size_style(theme: &Theme, unit_index: usize) -> Style {
+    match unit_index {
+        0 => theme.file_size().bytes(),
+        1 => theme.file_size().kib(),
+        2 => theme.file_size().mib(),
+        3 => theme.file_size().gib(),
+        4 => theme.file_size().tib(),
+        5 => theme.file_size().pib(),
+        _ => theme.file_size().pib(),
     }
 }
