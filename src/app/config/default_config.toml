@@ -1,4 +1,3 @@
-pub(super) const DEFAULT_CONFIG_TOML: &str = r##"
 # One of: off, error, warn, info, debug, or trace
 # Logs are written to stderr
 log_level = "off"
@@ -6,7 +5,7 @@ log_level = "off"
 [file_system]
 # Buffer sizes for file operations
 buffer_max_bytes = 64000000 # 64 MB
-buffer_min_bytes = 64000    # 64 KB
+buffer_min_bytes = 64000 # 64 KB
 # Minimum time between filesystem updates to avoid excessive refreshes
 refresh_debounce_milliseconds = 100
 
@@ -123,14 +122,14 @@ fg = "#FFFFFF"
 modifiers = []
 
 [theme.table_copied]
-bg = "#33A999"
-fg = "#006400"  # Dark Green
-modifiers = []
+bg = "#33A999" 
+fg = "#006400" # Dark Green
+modifiers = [] 
 
 [theme.table_cut]
-bg = "#33A999"
-fg = "#800080"  # Purple
-modifiers = []
+bg = "#33A999" 
+fg = "#800080" # Purple
+modifiers = [] 
 
 [theme.table_header_active]
 bg = "#9C9977"
@@ -168,118 +167,118 @@ fg = "#1D1F21"
 modifiers = []
 
 [theme.file_modified_date.less_than_minute]
-bg = "#373424"
-fg = "#00FFFF"  # Sky Blue
-modifiers = []
+bg = "#373424" 
+fg = "#00FFFF" # Sky Blue
+modifiers = [] 
 
 [theme.file_modified_date.less_than_day]
-bg = "#373424"
-fg = "#00FF00"  # Bright Green
-modifiers = []
+bg = "#373424" 
+fg = "#00FF00" # Bright Green
+modifiers = [] 
 
 [theme.file_modified_date.less_than_month]
-bg = "#373424"
-fg = "#FFFF00"  # Yellow
-modifiers = []
+bg = "#373424" 
+fg = "#FFFF00" # Yellow
+modifiers = [] 
 
 [theme.file_modified_date.less_than_year]
-bg = "#373424"
-fg = "#FF00FF"  # Magenta
-modifiers = []
+bg = "#373424" 
+fg = "#FF00FF" # Magenta
+modifiers = [] 
 
 [theme.file_modified_date.greater_than_year]
-bg = "#373424"
+bg = "#373424" 
 fg = "#FF0000" # Red
-modifiers = []
+modifiers = [] 
 
 [theme.file_size.bytes]
-bg = "#373424"
-fg = "#87CEEB"  # Sky Blue
-modifiers = []
+bg = "#373424" 
+fg = "#87CEEB" # Sky Blue
+modifiers = [] 
 
 [theme.file_size.kib]
-bg = "#373424"
-fg = "#00FFFF"  # Cyan
-modifiers = []
+bg = "#373424" 
+fg = "#00FFFF" # Cyan
+modifiers = [] 
 
 [theme.file_size.mib]
-bg = "#373424"
-fg = "#00FF00"  # Bright Green
-modifiers = []
+bg = "#373424" 
+fg = "#00FF00" # Bright Green
+modifiers = [] 
 
 [theme.file_size.gib]
-bg = "#373424"
-fg = "#FFFF00"  # Yellow
-modifiers = []
+bg = "#373424" 
+fg = "#FFFF00" # Yellow
+modifiers = [] 
 
 [theme.file_size.tib]
-bg = "#373424"
-fg = "#FF00FF"  # Magenta
-modifiers = []
+bg = "#373424" 
+fg = "#FF00FF" # Magenta
+modifiers = [] 
 
 [theme.file_size.pib]
-bg = "#373424"
-fg = "#FF0000"  # Red
-modifiers = []
+bg = "#373424" 
+fg = "#FF0000" # Red
+modifiers = [] 
 
 [theme.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
 ls_colors_take_precedence = false
 
 [theme.file_type.normal_file]
-bg = "#373424"
-fg = "#E4E4E4"  # 254
-modifiers = []
+bg = "#373424" 
+fg = "#E4E4E4" # 254
+modifiers = [] 
 
 [theme.file_type.regular_file]
-bg = "#373424"
-fg = "#E4E4E4"  # 254
-modifiers = []
+bg = "#373424" 
+fg = "#E4E4E4" # 254
+modifiers = [] 
 
 [theme.file_type.directory]
-bg = "#373424"
-fg = "#0087FF"  # 33
-modifiers = []
+bg = "#373424" 
+fg = "#0087FF" # 33
+modifiers = [] 
 
 [theme.file_type.directory_other_writable]
-bg = "#262626"  # 235
-fg = "#0087FF"  # 33
-modifiers = []
+bg = "#262626" # 235
+fg = "#0087FF" # 33
+modifiers = [] 
 
 [theme.file_type.symlink]
-bg = "#373424"
-fg = "#00AFAF"  # 37
-modifiers = ["bold"]
+bg = "#373424" 
+fg = "#00AFAF" # 37
+modifiers = ["bold"] 
 
 [theme.file_type.pipe]
-bg = "#FFFFD7"  # 230
-fg = "#AF8700"  # 136
-modifiers = ["bold"]
+bg = "#FFFFD7" # 230
+fg = "#AF8700" # 136
+modifiers = ["bold"] 
 
 [theme.file_type.socket]
-bg = "#FFFFD7"  # 230
-fg = "#AF8700"  # 136
-modifiers = ["bold"]
+bg = "#FFFFD7" # 230
+fg = "#AF8700" # 136
+modifiers = ["bold"] 
 
 [theme.file_type.door]
-bg = "#FFFFD7"  # 230
-fg = "#AF8700"  # 136
-modifiers = ["bold"]
+bg = "#FFFFD7" # 230
+fg = "#AF8700" # 136
+modifiers = ["bold"] 
 
 [theme.file_type.block_device]
-bg = "#FFFFD7"  # 230
-fg = "#808080"  # 244
-modifiers = ["bold"]
+bg = "#FFFFD7" # 230
+fg = "#808080" # 244
+modifiers = ["bold"] 
 
 [theme.file_type.character_device]
-bg = "#FFFFD7"  # 230
-fg = "#808080"  # 244
-modifiers = ["bold"]
+bg = "#FFFFD7" # 230
+fg = "#808080" # 244
+modifiers = ["bold"] 
 
 [theme.file_type.symlink_broken]
-bg = "#262626"  # 235
-fg = "#D70000"  # 160
-modifiers = []
+bg = "#262626" # 235
+fg = "#D70000" # 160
+modifiers = [] 
 
 [theme.file_type.missing]
 bg = "#373424"
@@ -287,287 +286,287 @@ fg = ""
 modifiers = []
 
 [theme.file_type.executable]
-bg = "#373424"
-fg = "#5F8700"  # 64
-modifiers = ["bold"]
+bg = "#373424" 
+fg = "#5F8700" # 64
+modifiers = ["bold"] 
 
 [theme.file_type.directory_sticky]
-bg = "#0087FF"  # 33
-fg = "#FFFFD7"  # 230
-modifiers = []
+bg = "#0087FF" # 33
+fg = "#FFFFD7" # 230
+modifiers = [] 
 
 [theme.file_type.directory_sticky_other_writable]
-bg = "#5F8700"  # 64
-fg = "#FFFFD7"  # 230
-modifiers = []
+bg = "#5F8700" # 64
+fg = "#FFFFD7" # 230
+modifiers = [] 
 
 [theme.file_type.setgid]
-bg = "#AF8700"  # 136
-fg = "#FFFFD7"  # 230
-modifiers = []
+bg = "#AF8700" # 136
+fg = "#FFFFD7" # 230
+modifiers = [] 
 
 [theme.file_type.setuid]
-bg = "#D70000"  # 160
-fg = "#FFFFD7"  # 230
-modifiers = []
+bg = "#D70000" # 160
+fg = "#FFFFD7" # 230
+modifiers = [] 
 
 # 256 color theme for terminals that don't support true color
 [theme256]
 table_scrollbar_begin_end_enabled = true
 
 [theme256.alert]
-bg = "#3a3a3a"  # 237
-fg = "#d7af00"  # 178
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d7af00" # 178
+modifiers = [] 
 
 [theme256.alert_error]
-bg = "#3a3a3a"  # 237
-fg = "#d70000"  # 160
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d70000" # 160
+modifiers = [] 
 
 [theme256.alert_info]
-bg = "#3a3a3a"  # 237
-fg = "#87d787"  # 114
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#87d787" # 114
+modifiers = [] 
 
 [theme256.alert_warning]
-bg = "#3a3a3a"  # 237
-fg = "#d7d75f"  # 185
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d7d75f" # 185
+modifiers = [] 
 
 [theme256.header_active]
-bg = "#d7d7af"  # 187
-fg = "#262626"  # 235
-modifiers = []
+bg = "#d7d7af" # 187
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.header]
-bg = "#3a3a3a"  # 237
-fg = "#d7d7af"  # 187
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d7d7af" # 187
+modifiers = [] 
 
 [theme256.help]
-bg = "#3a3a3a"  # 237
-fg = "#afaf87"  # 144
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#afaf87" # 144
+modifiers = [] 
 
 [theme256.notice_clipboard]
-bg = "#5fd7af"  # 79
-fg = "#262626"  # 235
-modifiers = []
+bg = "#5fd7af" # 79
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.notice_filter]
-bg = "#87875f"  # 101
-fg = "#262626"  # 235
-modifiers = []
+bg = "#87875f" # 101
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.notice_progress]
-bg = "#008787"  # 30
-fg = "#5fd7af"  # 79
-modifiers = []
+bg = "#008787" # 30
+fg = "#5fd7af" # 79
+modifiers = [] 
 
 [theme256.prompt_input]
-bg = "#3a3a3a"  # 237
-fg = "#d7d7af"  # 187
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d7d7af" # 187
+modifiers = [] 
 
 [theme256.prompt_label]
-bg = "#afaf87"  # 144
-fg = "#262626"  # 235
-modifiers = []
+bg = "#afaf87" # 144
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.prompt_cursor]
-bg = "#d7d7af"  # 187
-fg = "#262626"  # 235
-modifiers = []
+bg = "#d7d7af" # 187
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.prompt_selection]
-bg = "#afaf87"  # 144
-fg = "#262626"  # 235
-modifiers = []
+bg = "#afaf87" # 144
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.status_directory]
-bg = "#5fd7af"  # 79
-fg = "#262626"  # 235
-modifiers = []
+bg = "#5fd7af" # 79
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.status_directory_label]
-bg = "#008787"  # 30
-fg = "#d7d7d7"  # 188
-modifiers = []
+bg = "#008787" # 30
+fg = "#d7d7d7" # 188
+modifiers = [] 
 
 [theme256.status_selected]
-bg = "#5fd7af"  # 79
-fg = "#262626"  # 235
-modifiers = []
+bg = "#5fd7af" # 79
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.status_selected_label]
-bg = "#008787"  # 30
-fg = "#d7d7d7"  # 188
-modifiers = []
+bg = "#008787" # 30
+fg = "#d7d7d7" # 188
+modifiers = [] 
 
 [theme256.table_body]
-bg = "#3a3a3a"  # 237
-fg = "#ffffff"  # 231
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#ffffff" # 231
+modifiers = [] 
 
 [theme256.table_copied]
-bg = "#5fd7af"  # 79
-fg = "#005f00"  # 22
-modifiers = []
+bg = "#5fd7af" # 79
+fg = "#005f00" # 22
+modifiers = [] 
 
 [theme256.table_cut]
-bg = "#5fd7af"  # 79
-fg = "#5f005f"  # 53
-modifiers = []
+bg = "#5fd7af" # 79
+fg = "#5f005f" # 53
+modifiers = [] 
 
 [theme256.table_header_active]
-bg = "#afaf87"  # 144
-fg = "#262626"  # 235
-modifiers = []
+bg = "#afaf87" # 144
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.table_header]
-bg = "#87875f"  # 101
-fg = "#262626"  # 235
-modifiers = []
+bg = "#87875f" # 101
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.table_scrollbar_begin]
-bg = "#87875f"  # 101
-fg = "#3a3a3a"  # 237
-modifiers = []
+bg = "#87875f" # 101
+fg = "#3a3a3a" # 237
+modifiers = [] 
 
 [theme256.table_scrollbar_end]
-bg = "#87875f"  # 101
-fg = "#3a3a3a"  # 237
-modifiers = []
+bg = "#87875f" # 101
+fg = "#3a3a3a" # 237
+modifiers = [] 
 
 [theme256.table_scrollbar_thumb]
-bg = "#3a3a3a"  # 237
-fg = "#d7d7af"  # 187
-modifiers = []
+bg = "#3a3a3a" # 237
+fg = "#d7d7af" # 187
+modifiers = [] 
 
 [theme256.table_scrollbar_track]
-bg = "#4e4e4e"  # 239
-fg = "#87875f"  # 101
-modifiers = []
+bg = "#4e4e4e" # 239
+fg = "#87875f" # 101
+modifiers = [] 
 
 [theme256.table_selected]
-bg = "#d7d7af"  # 187
-fg = "#262626"  # 235
-modifiers = []
+bg = "#d7d7af" # 187
+fg = "#262626" # 235
+modifiers = [] 
 
 [theme256.file_modified_date.less_than_minute]
-bg = ""
-fg = "#87ffff"  # 123
-modifiers = []
+bg = "" 
+fg = "#87ffff" # 123
+modifiers = [] 
 
 [theme256.file_modified_date.less_than_day]
-bg = ""
-fg = "#87ff87"  # 120
-modifiers = []
+bg = "" 
+fg = "#87ff87" # 120
+modifiers = [] 
 
 [theme256.file_modified_date.less_than_month]
-bg = ""
-fg = "#ffff87"  # 228
-modifiers = []
+bg = "" 
+fg = "#ffff87" # 228
+modifiers = [] 
 
 [theme256.file_modified_date.less_than_year]
-bg = ""
-fg = "#ff87ff"  # 213
-modifiers = []
+bg = "" 
+fg = "#ff87ff" # 213
+modifiers = [] 
 
 [theme256.file_modified_date.greater_than_year]
-bg = ""
-fg = "#ff8787"  # 210
-modifiers = []
+bg = "" 
+fg = "#ff8787" # 210
+modifiers = [] 
 
 [theme256.file_size.bytes]
-bg = ""
-fg = "#87d7ff"  # 117
-modifiers = []
+bg = "" 
+fg = "#87d7ff" # 117
+modifiers = [] 
 
 [theme256.file_size.kib]
-bg = ""
-fg = "#87ffff"  # 123
-modifiers = []
+bg = "" 
+fg = "#87ffff" # 123
+modifiers = [] 
 
 [theme256.file_size.mib]
-bg = ""
-fg = "#87ff87"  # 120
-modifiers = []
+bg = "" 
+fg = "#87ff87" # 120
+modifiers = [] 
 
 [theme256.file_size.gib]
-bg = ""
-fg = "#ffff87"  # 228
-modifiers = []
+bg = "" 
+fg = "#ffff87" # 228
+modifiers = [] 
 
 [theme256.file_size.tib]
-bg = ""
-fg = "#ff87ff"  # 213
-modifiers = []
+bg = "" 
+fg = "#ff87ff" # 213
+modifiers = [] 
 
 [theme256.file_size.pib]
-bg = ""
-fg = "#ff8787"  # 210
-modifiers = []
+bg = "" 
+fg = "#ff8787" # 210
+modifiers = [] 
 
 [theme256.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
 ls_colors_take_precedence = true
 
 [theme256.file_type.normal_file]
-bg = ""
-fg = "#e4e4e4"  # 254
-modifiers = []
+bg = "" 
+fg = "#e4e4e4" # 254
+modifiers = [] 
 
 [theme256.file_type.regular_file]
-bg = ""
-fg = "#e4e4e4"  # 254
-modifiers = []
+bg = "" 
+fg = "#e4e4e4" # 254
+modifiers = [] 
 
 [theme256.file_type.directory]
-bg = ""
-fg = "#0087ff"  # 33
-modifiers = []
+bg = "" 
+fg = "#0087ff" # 33
+modifiers = [] 
 
 [theme256.file_type.directory_other_writable]
-bg = "#262626"  # 235
-fg = "#0087ff"  # 33
-modifiers = []
+bg = "#262626" # 235
+fg = "#0087ff" # 33
+modifiers = [] 
 
 [theme256.file_type.symlink]
-bg = ""
-fg = "#00afaf"  # 37
-modifiers = ["bold"]
+bg = "" 
+fg = "#00afaf" # 37
+modifiers = ["bold"] 
 
 [theme256.file_type.pipe]
-bg = "#ffffd7"  # 230
-fg = "#af8700"  # 136
-modifiers = ["bold"]
+bg = "#ffffd7" # 230
+fg = "#af8700" # 136
+modifiers = ["bold"] 
 
 [theme256.file_type.socket]
-bg = "#ffffd7"  # 230
-fg = "#af8700"  # 136
-modifiers = ["bold"]
+bg = "#ffffd7" # 230
+fg = "#af8700" # 136
+modifiers = ["bold"] 
 
 [theme256.file_type.door]
-bg = "#ffffd7"  # 230
-fg = "#af8700"  # 136
-modifiers = ["bold"]
+bg = "#ffffd7" # 230
+fg = "#af8700" # 136
+modifiers = ["bold"] 
 
 [theme256.file_type.block_device]
-bg = "#ffffd7"  # 230
-fg = "#808080"  # 244
-modifiers = ["bold"]
+bg = "#ffffd7" # 230
+fg = "#808080" # 244
+modifiers = ["bold"] 
 
 [theme256.file_type.character_device]
-bg = "#ffffd7"  # 230
-fg = "#808080"  # 244
-modifiers = ["bold"]
+bg = "#ffffd7" # 230
+fg = "#808080" # 244
+modifiers = ["bold"] 
 
 [theme256.file_type.symlink_broken]
-bg = "#262626"  # 235
-fg = "#d70000"  # 160
-modifiers = []
+bg = "#262626" # 235
+fg = "#d70000" # 160
+modifiers = [] 
 
 [theme256.file_type.missing]
 bg = ""
@@ -575,27 +574,26 @@ fg = ""
 modifiers = []
 
 [theme256.file_type.executable]
-bg = ""
-fg = "#5f8700"  # 64
-modifiers = ["bold"]
+bg = "" 
+fg = "#5f8700" # 64
+modifiers = ["bold"] 
 
 [theme256.file_type.directory_sticky]
-bg = "#0087ff"  # 33
-fg = "#ffffd7"  # 230
-modifiers = []
+bg = "#0087ff" # 33
+fg = "#ffffd7" # 230
+modifiers = [] 
 
 [theme256.file_type.directory_sticky_other_writable]
-bg = "#5f8700"  # 64
-fg = "#ffffd7"  # 230
-modifiers = []
+bg = "#5f8700" # 64
+fg = "#ffffd7" # 230
+modifiers = [] 
 
 [theme256.file_type.setgid]
-bg = "#af8700"  # 136
-fg = "#ffffd7"  # 230
-modifiers = []
+bg = "#af8700" # 136
+fg = "#ffffd7" # 230
+modifiers = [] 
 
 [theme256.file_type.setuid]
-bg = "#d70000"  # 160
-fg = "#ffffd7"  # 230
+bg = "#d70000" # 160
+fg = "#ffffd7" # 230
 modifiers = []
-"##;

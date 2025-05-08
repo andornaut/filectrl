@@ -1,18 +1,18 @@
-mod default_config;
 mod ls_colors;
 mod serialization;
 pub mod theme;
 
 use std::{fs, io::ErrorKind, path::PathBuf};
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
 use log::{debug, info, LevelFilter};
 use serde::{Deserialize, Serialize};
 
-use self::{default_config::DEFAULT_CONFIG_TOML, theme::Theme};
+use self::theme::Theme;
 
 const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
+const DEFAULT_CONFIG_PATH: &str = "src/app/config/default_config.toml";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FileSystemConfig {
@@ -46,14 +46,12 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self::parse(DEFAULT_CONFIG_TOML).expect("Default configuration should be valid")
+        Self::from_default_file().expect("Default configuration file should be valid")
     }
 }
 
-impl TryFrom<Option<PathBuf>> for Config {
-    type Error = Error;
-
-    fn try_from(value: Option<PathBuf>) -> Result<Self> {
+impl Config {
+    pub fn try_from(value: Option<PathBuf>) -> Result<Self> {
         // Try to use the user-provided path if available
         let Some(path) = value else {
             return Self::try_from_default_path();
@@ -69,16 +67,17 @@ impl TryFrom<Option<PathBuf>> for Config {
             )),
         }
     }
-}
 
-impl Config {
+    fn from_default_file() -> Result<Self> {
+        let content = fs::read_to_string(DEFAULT_CONFIG_PATH)
+            .map_err(|e| anyhow!("Could not read default config file: {e}"))?;
+        Self::parse(&content)
+    }
+
     pub fn write_default_config() -> Result<()> {
-        let config = Self::default();
-        let content = toml::to_string_pretty(&config)?;
         let path = Self::default_path();
-
         fs::create_dir_all(path.parent().unwrap())?;
-        fs::write(&path, &content)
+        fs::copy(DEFAULT_CONFIG_PATH, &path)
             .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
         info!("Wrote the default config to {path:?}");
         Ok(())
