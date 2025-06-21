@@ -137,15 +137,6 @@ impl PromptView {
     fn workaround_navigate_right_when_at_edge(&mut self, event: &Event) -> CommandResult {
         let text_area_state = &mut self.text_area_state;
         textarea::handle_events(text_area_state, true, event);
-
-        // Workaround https://github.com/thscharler/rat-salsa/issues/6
-        let cursor_position_x = text_area_state.cursor().x;
-        let hscroll_offset = text_area_state.hscroll.offset();
-        let is_position_after_right_edge =
-            cursor_position_x == text_area_state.area.width as u32 + hscroll_offset as u32;
-        if is_position_after_right_edge {
-            text_area_state.hscroll.set_offset(hscroll_offset + 1);
-        }
         CommandResult::Handled
     }
 }
