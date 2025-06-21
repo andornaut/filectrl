@@ -23,15 +23,15 @@ nix = {version = "~0", default-features = false, features = ["user"]}
 notify = "~8"
 open = "~5"
 paste = "1.0.15"
-rat-text = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-text"}
-rat-widget = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-widget"}
+rat-text = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-text"}
+rat-widget = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-widget"}
 ratatui = {version = "~0.29", features = ["all-widgets", "serde"]}
 serde = {version = "~1", features = ["derive"]}
 smart-default = "~0.7"
 textwrap = "~0.16"
 toml = "~0.8"
 unicode-segmentation = "~1"
-unicode-width = "~0.2"
+unicode-width = "0.2.0"
 unix_mode = "~0.1"
 
 [dev-dependencies]
@@ -46,11 +46,11 @@ panic = 'abort' # Abort on panic
 strip = true # Symbols from Binary
 
 [patch.crates-io]
-rat-cursor = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-cursor"}
-rat-event = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-event"}
-rat-focus = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-focus"}
-rat-ftable = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-ftable"}
-rat-menu = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-menu"}
-rat-popup = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-popup"}
-rat-reloc = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-reloc"}
-rat-scrolled = {git = "https://github.com/thscharler/rat-salsa", rev = "677fe2c", package = "rat-scrolled"}
+rat-cursor = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-cursor"}
+rat-event = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-event"}
+rat-focus = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-focus"}
+rat-ftable = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-ftable"}
+rat-menu = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-menu"}
+rat-popup = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-popup"}
+rat-reloc = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-reloc"}
+rat-scrolled = {git = "https://github.com/thscharler/rat-salsa", rev = "59cdf46", package = "rat-scrolled"}
