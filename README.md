@@ -170,6 +170,18 @@ cargo build --release
 RUST_LOG=debug cargo run 2>err
 ```
 
+### Git hooks
+
+- [cargo-husky](https://github.com/rhysd/cargo-husky)
+
+[Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
+
+1. Edit the `[dev-dependencies.cargo-husky]` section of [Cargo.toml](./Cargo.toml)
+1. `rm .git/hooks/pre-commit` (or other hook file)
+1. `cargo clean`
+1. `cargo test`
+1. Verify that the changes have been applied to `.git/hooks/pre-commit`
+
 ### Releasing
 
 The project uses GitHub Actions to automate the release process. To release a new version:
@@ -183,15 +195,3 @@ The project uses GitHub Actions to automate the release process. To release a ne
    ```
 
 3. The GitHub Actions [release workflow](.github/workflows/release.yml) will automatically trigger, build the binaries for Linux and macOS, and create a new GitHub Release with the artifacts.
-
-### Git hooks
-
-- [cargo-husky](https://github.com/rhysd/cargo-husky)
-
-[Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
-
-1. Edit the `[dev-dependencies.cargo-husky]` section of [Cargo.toml](./Cargo.toml)
-1. `rm .git/hooks/pre-commit` (or other hook file)
-1. `cargo clean`
-1. `cargo test`
-1. Verify that the changes have been applied to `.git/hooks/pre-commit`
