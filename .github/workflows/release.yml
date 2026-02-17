@@ -2,10 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -18,27 +16,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          ref: ${{ github.ref }}
+      - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install XCB dependencies
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
-      - name: Build
-        run: cargo build --release
+      - run: cargo build --release
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: filectrl-${{ matrix.os }}
           path: target/release/filectrl
@@ -49,14 +37,9 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
 
     steps:
-      # We need to checkout the code in order to delete the "main" tag
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          ref: ${{ github.ref }}
+      - uses: actions/checkout@v4
 
-      - name: Delete the previous "main" tag and release if they exist
+      - name: Delete previous main release
         if: github.ref == 'refs/heads/main'
         run: |
           gh release delete main --yes || true
@@ -64,22 +47,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Prepare assets for release
+      - name: Prepare release assets
         run: |
           mkdir release-assets
           cp artifacts/filectrl-ubuntu-latest/filectrl release-assets/filectrl-linux
           cp artifacts/filectrl-macos-latest/filectrl release-assets/filectrl-macos
 
-      # GitHub releases require a tag, so this step will auto-create a tag for the "main" release.
-      # We delete the 'main' tag in advance (above), so that step will create a new one that points
-      # to the latest revision on the main branch
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
