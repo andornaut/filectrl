@@ -165,6 +165,7 @@ cargo test
 cargo run
 cargo build --release
 ./target/debug/filectrl
+sudo cp ./target/debug/filectrl /usr/local/bin/
 
 # Log to ./err
 RUST_LOG=debug cargo run 2>err
