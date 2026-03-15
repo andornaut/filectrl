@@ -14,8 +14,8 @@ pub(super) fn clipboard_style(
     item: &PathInfo,
 ) -> Option<Style> {
     match clipboard_command {
-        Some(ClipboardCommand::Copy(ref path)) if path == item => Some(theme.table_copied()),
-        Some(ClipboardCommand::Move(ref path)) if path == item => Some(theme.table_cut()),
+        Some(ClipboardCommand::Copy(path)) if path == item => Some(theme.table_copied()),
+        Some(ClipboardCommand::Move(path)) if path == item => Some(theme.table_cut()),
         _ => None,
     }
 }
