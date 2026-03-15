@@ -5,13 +5,13 @@ use super::Command;
 #[derive(Clone, Debug)]
 pub enum CommandResult {
     Handled,
-    HandledWith(Command),
+    HandledWith(Box<Command>),
     NotHandled,
 }
 
 impl From<Command> for CommandResult {
     fn from(value: Command) -> Self {
-        Self::HandledWith(value)
+        Self::HandledWith(Box::new(value))
     }
 }
 

@@ -30,7 +30,7 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    pub(super) fn as_rat_clipboard(self) -> Box<dyn RatClipboard> {
+    pub(super) fn into_rat_clipboard(self) -> Box<dyn RatClipboard> {
         match self.backend {
             Some(backend) => Box::new(backend),
             None => Box::new(NoopClipboardBackend),

@@ -75,7 +75,7 @@ impl CommandHandler for TableView {
                 if y == 0 {
                     return self.click_header(x);
                 }
-                return self.click_table(y);
+                self.click_table(y)
             }
             MouseEventKind::Up(MouseButton::Left) => self.handle_scroll(event),
             MouseEventKind::Drag(MouseButton::Left) => {

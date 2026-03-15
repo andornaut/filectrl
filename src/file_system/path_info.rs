@@ -43,7 +43,7 @@ fn osstr_to_string(os_str: &OsStr) -> Result<String> {
         .map_err(|orig| anyhow!("Path cannot be converted to a string: {:?}", orig))
 }
 
-#[derive(Clone, Eq, Hash)]
+#[derive(Clone, Eq)]
 pub struct PathInfo {
     pub basename: String,
     pub modified: Option<DateTime<Local>>,
@@ -230,6 +230,12 @@ impl Display for PathInfo {
 impl PartialEq for PathInfo {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
+    }
+}
+
+impl std::hash::Hash for PathInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.path.hash(state);
     }
 }
 

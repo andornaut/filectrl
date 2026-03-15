@@ -13,13 +13,12 @@ pub(super) fn next_word_boundary(text: &str, current_byte_offset: usize) -> usiz
         .peekable();
 
     // Determine if starting grapheme is a separator by peeking at the first element
-    let initial_is_sep = grapheme_iter.peek().map_or(true, |&(_, g)| is_separator(g));
+    let initial_is_sep = grapheme_iter.peek().is_none_or(|&(_, g)| is_separator(g));
     if initial_is_sep {
         // Started ON separator:
         grapheme_iter
             .skip_while(|&(_, g)| is_separator(g)) // Skip separators
-            .skip_while(|&(_, g)| !is_separator(g)) // Skip word
-            .next() // Get next separator
+            .find(|&(_, g)| is_separator(g)) // Skip word, get next separator
             .map_or(text_len, |(idx, _)| idx) // Get index or text_len if none
     } else {
         // Started IN word:
@@ -40,10 +39,8 @@ pub(super) fn prev_word_boundary(text: &str, current_byte_offset: usize) -> usiz
         .filter(|(idx, _)| *idx < current_byte_offset)
         // Skip initial separators
         .skip_while(|&(_, g)| is_separator(g))
-        // Skip word characters
-        .skip_while(|&(_, g)| !is_separator(g))
-        // The next item is the separator before the word (or None if we hit the start)
-        .next()
+        // Skip word characters, find the separator before the word
+        .find(|&(_, g)| is_separator(g))
         .map(|(idx, grapheme)| idx + grapheme.len())
         // If no separator found before the word, we reached the beginning
         .unwrap_or(0)
@@ -53,7 +50,7 @@ fn is_separator(grapheme: &str) -> bool {
     grapheme
         .chars()
         .next()
-        .map_or(true, |c| c.is_whitespace() || c.is_ascii_punctuation())
+        .is_none_or(|c| c.is_whitespace() || c.is_ascii_punctuation())
 }
 
 #[cfg(test)]
