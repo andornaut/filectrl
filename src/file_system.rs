@@ -65,7 +65,7 @@ impl FileSystem {
     }
 
     fn back(&mut self) -> CommandResult {
-        let directory = self.directory.as_ref().unwrap();
+        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
         match directory.parent() {
             Some(parent) => self.cd(parent),
             None => CommandResult::Handled,
@@ -115,7 +115,7 @@ impl FileSystem {
     }
 
     fn open_current_directory(&self) -> CommandResult {
-        let directory = self.directory.as_ref().unwrap();
+        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
         open_in(directory, &self.open_current_directory_template)
             .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
@@ -126,7 +126,7 @@ impl FileSystem {
     }
 
     fn open_new_window(&self) -> CommandResult {
-        let directory = self.directory.as_ref().unwrap();
+        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
         open_in(directory, &self.open_new_window_template)
             .map_or_else(|error| error.into(), |_| CommandResult::Handled)
     }
@@ -139,7 +139,7 @@ impl FileSystem {
     }
 
     fn refresh(&mut self) -> CommandResult {
-        let directory = self.directory.as_ref().unwrap();
+        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
         self.cd(directory.clone())
     }
 
