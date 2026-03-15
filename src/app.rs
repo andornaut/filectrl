@@ -206,7 +206,7 @@ fn recursively_handle_command(
     let mut handled = !matches!(result, CommandResult::NotHandled);
 
     if let CommandResult::HandledWith(derived_command) = result {
-        derived_commands.push(derived_command);
+        derived_commands.push(*derived_command);
     }
 
     let child_derived_commands = handler.children().into_iter().flat_map(|child| {

@@ -81,7 +81,7 @@ impl TryFrom<CommandResult> for Command {
 
     fn try_from(value: CommandResult) -> Result<Self, Self::Error> {
         match value {
-            CommandResult::HandledWith(command) => Ok(command.clone()),
+            CommandResult::HandledWith(command) => Ok(*command),
             CommandResult::Handled => Err(anyhow!(
                 "Cannot convert CommandResult::Handled to Command, because it was not handled with a command"
             )),

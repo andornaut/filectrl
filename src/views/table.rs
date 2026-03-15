@@ -247,7 +247,7 @@ impl TableView {
         // Check if we're refreshing the same directory or navigating to a different one
         let is_refresh = prev_directory
             .as_ref()
-            .map_or(false, |prev_directory| prev_directory == &new_directory);
+            == Some(&new_directory);
 
         if !is_refresh {
             self.filter.clear();
@@ -343,11 +343,11 @@ impl TableView {
 
             // If we're refreshing the directory and couldn't find the file - it was likely deleted
             // Select next item (same index) or index 0
-            if is_refresh {
-                if let Some(idx) = selected_index {
-                    return self
-                        .select(idx.min(self.directory_items_sorted.len().saturating_sub(1)));
-                }
+            if is_refresh
+                && let Some(idx) = selected_index
+            {
+                return self
+                    .select(idx.min(self.directory_items_sorted.len().saturating_sub(1)));
             }
         }
 
