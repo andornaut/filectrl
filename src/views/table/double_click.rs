@@ -20,14 +20,13 @@ impl DoubleClick {
 
     pub fn click_and_is_double_click(&mut self, path: &PathInfo) -> bool {
         let item = Some(path.clone());
-        if let Some(start) = self.start {
-            if start.elapsed().as_millis() <= self.threshold_milliseconds as u128
-                && self.last_path == item
-            {
-                self.start = None;
-                self.last_path = None;
-                return true;
-            }
+        if let Some(start) = self.start
+            && start.elapsed().as_millis() <= self.threshold_milliseconds as u128
+            && self.last_path == item
+        {
+            self.start = None;
+            self.last_path = None;
+            return true;
         }
         self.start = Some(Instant::now());
         self.last_path = item;

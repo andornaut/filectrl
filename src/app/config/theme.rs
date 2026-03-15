@@ -135,10 +135,8 @@ impl FileType {
 
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
         // Extension pattern
-        if let Some(ext) = name.rsplit('.').next() {
-            if let Some(triplet) = self.extension_styles.get(ext) {
-                return Some(triplet.into());
-            }
+        if let Some(triplet) = name.rsplit('.').next().and_then(|ext| self.extension_styles.get(ext)) {
+            return Some(triplet.into());
         }
 
         // Name pattern

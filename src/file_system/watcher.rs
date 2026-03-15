@@ -54,10 +54,10 @@ impl DirectoryWatcher {
     }
 
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
-        if let Some(old_path) = &self.watched_directory {
-            if let Err(e) = self.watcher.unwatch(old_path.as_path()) {
-                error!("Failed to unwatch directory: {}", e);
-            }
+        if let Some(old_path) = &self.watched_directory
+            && let Err(e) = self.watcher.unwatch(old_path.as_path())
+        {
+            error!("Failed to unwatch directory: {}", e);
         }
 
         self.watcher

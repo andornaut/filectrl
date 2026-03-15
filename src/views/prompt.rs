@@ -86,7 +86,7 @@ impl PromptView {
         };
 
         let mut text_area_state = TextAreaState::new();
-        text_area_state.set_clipboard(Some(Clipboard::default().as_rat_clipboard()));
+        text_area_state.set_clipboard(Some(Clipboard::default().into_rat_clipboard()));
         text_area_state.focus.set(true);
         text_area_state.set_text(&text);
         text_area_state.move_to_line_end(false);
@@ -98,7 +98,7 @@ impl PromptView {
         let is_different_dir = self
             .directory
             .as_ref()
-            .map_or(false, |previous_dir| !previous_dir.is_same_inode(directory));
+            .is_some_and(|previous_dir| !previous_dir.is_same_inode(directory));
 
         self.directory = Some(directory.clone());
 
