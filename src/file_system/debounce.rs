@@ -61,7 +61,7 @@ impl TimeDebouncer {
             .map(|last_triggered| at.duration_since(last_triggered));
 
         // If we've never triggered or enough time has passed
-        if time_since_last_trigger.is_none() || time_since_last_trigger.unwrap() >= self.threshold {
+        if time_since_last_trigger.is_none_or(|d| d >= self.threshold) {
             self.last_triggered = Some(at);
             self.has_delayed_event = false;
             true

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use self::theme::Theme;
 
 const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
-const DEFAULT_CONFIG_PATH: &str = "src/app/config/default_config.toml";
+const DEFAULT_CONFIG: &str = include_str!("config/default_config.toml");
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FileSystemConfig {
@@ -69,25 +69,26 @@ impl Config {
     }
 
     fn from_default_file() -> Result<Self> {
-        let content = fs::read_to_string(DEFAULT_CONFIG_PATH)
-            .map_err(|e| anyhow!("Could not read default config file: {e}"))?;
-        Self::parse(&content)
+        Self::parse(DEFAULT_CONFIG)
     }
 
     pub fn write_default_config() -> Result<()> {
-        let path = Self::default_path();
-        fs::create_dir_all(path.parent().unwrap())?;
-        fs::copy(DEFAULT_CONFIG_PATH, &path)
+        let path = Self::default_path()?;
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
+        )?;
+        fs::write(&path, DEFAULT_CONFIG)
             .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
         info!("Wrote the default config to {path:?}");
         Ok(())
     }
 
-    fn default_path() -> PathBuf {
-        choose_base_strategy()
-            .unwrap()
+    fn default_path() -> Result<PathBuf> {
+        Ok(choose_base_strategy()
+            .map_err(|e| anyhow!("Cannot determine config directory: {e}"))?
             .config_dir()
-            .join(CONFIG_RELATIVE_PATH)
+            .join(CONFIG_RELATIVE_PATH))
     }
 
     fn parse(content: &str) -> Result<Self> {
@@ -100,7 +101,7 @@ impl Config {
     }
 
     fn try_from_default_path() -> Result<Self> {
-        let default_path = Self::default_path();
+        let default_path = Self::default_path()?;
         debug!(
             "Attempting to load the config from the default path: {}",
             default_path.display()
