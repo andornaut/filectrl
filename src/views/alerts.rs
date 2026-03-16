@@ -111,8 +111,8 @@ impl CommandHandler for AlertsView {
         CommandResult::Handled
     }
 
-    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.area.contains(Position { x, y })
+    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+        self.area.contains(Position { x: event.column, y: event.row })
     }
 }
 

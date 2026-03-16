@@ -49,11 +49,11 @@ impl CommandHandler for PromptView {
         CommandResult::Handled
     }
 
-    fn should_receive_key(&self, mode: &InputMode) -> bool {
+    fn should_handle_key(&self, mode: &InputMode) -> bool {
         matches!(mode, InputMode::Prompt)
     }
 
-    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.text_area_state.area.contains(Position { x, y })
+    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+        self.text_area_state.area.contains(Position { x: event.column, y: event.row })
     }
 }
