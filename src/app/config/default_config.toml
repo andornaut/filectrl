@@ -9,13 +9,19 @@ buffer_min_bytes = 64000 # 64 KB
 # Minimum time between filesystem updates to avoid excessive refreshes
 refresh_debounce_milliseconds = 100
 
-[templates]
 # Programs to use to open files or directories:
-# %s will be replaced by the path to the current working directory:
-open_current_directory = "alacritty --working-directory %s"
-open_new_window = "alacritty --command filectrl %s"
-# %s will be replaced by the path to the selected file or directory:
-open_selected_file = "pcmanfm %s"
+# %s will be replaced by the relevant path
+[templates.linux]
+open_current_directory = "xdg-open %s"
+open_new_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
+open_selected_file = "xdg-open %s"
+
+# Note: "open" delegates to macOS default app associations.
+# open_new_window launches Terminal.app in the given directory but does not automatically start filectrl.
+[templates.macos]
+open_current_directory = "open %s"
+open_new_window = "open -a Terminal %s"
+open_selected_file = "open %s"
 
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
