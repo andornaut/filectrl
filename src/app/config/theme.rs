@@ -2,31 +2,20 @@ use std::collections::HashMap;
 
 use paste::paste;
 use ratatui::style::{Color, Modifier, Style};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use super::serialization::{
-    deserialize_color, deserialize_modifier, serialize_color, serialize_modifier,
-};
+use super::serialization::{deserialize_color, deserialize_modifier};
 
 /// A triplet of style properties: foreground color, background color, and modifiers
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct ThemeStyle {
-    #[serde(
-        deserialize_with = "deserialize_color",
-        serialize_with = "serialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     fg: Color,
 
-    #[serde(
-        deserialize_with = "deserialize_color",
-        serialize_with = "serialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     bg: Color,
 
-    #[serde(
-        deserialize_with = "deserialize_modifier",
-        serialize_with = "serialize_modifier"
-    )]
+    #[serde(deserialize_with = "deserialize_modifier")]
     modifiers: Modifier,
 }
 
@@ -63,7 +52,7 @@ macro_rules! style_getter_and_setter {
     };
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct FileType {
     // Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured below
     ls_colors_take_precedence: bool,
@@ -154,7 +143,7 @@ impl FileType {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct FileSize {
     bytes: ThemeStyle,
     kib: ThemeStyle,
@@ -173,7 +162,7 @@ impl FileSize {
     style_getter!(pib);
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct FileModifiedDate {
     less_than_minute: ThemeStyle,
     less_than_day: ThemeStyle,
@@ -190,7 +179,7 @@ impl FileModifiedDate {
     style_getter!(less_than_year);
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct Theme {
     alert: ThemeStyle,
     alert_error: ThemeStyle,

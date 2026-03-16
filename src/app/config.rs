@@ -7,34 +7,49 @@ use std::{fs, io::ErrorKind, path::PathBuf};
 use anyhow::{anyhow, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
 use log::{debug, info, LevelFilter};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use self::theme::Theme;
 
 const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
 const DEFAULT_CONFIG: &str = include_str!("config/default_config.toml");
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
     pub buffer_max_bytes: u64,
     pub buffer_min_bytes: u64,
     pub refresh_debounce_milliseconds: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct Templates {
     pub open_current_directory: String,
     pub open_new_window: String,
     pub open_selected_file: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
+struct OsTemplates {
+    linux: Templates,
+    macos: Templates,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
     pub frame_delay_milliseconds: u64,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
+struct RawConfig {
+    file_system: FileSystemConfig,
+    log_level: LevelFilter,
+    templates: OsTemplates,
+    theme: Theme,
+    theme256: Theme,
+    ui: UiConfig,
+}
+
 pub struct Config {
     pub file_system: FileSystemConfig,
     pub log_level: LevelFilter,
@@ -92,10 +107,23 @@ impl Config {
     }
 
     fn parse(content: &str) -> Result<Self> {
-        // Parse the TOML directly
-        let mut config = toml::from_str::<Config>(content)
+        let raw = toml::from_str::<RawConfig>(content)
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
+        let templates = if cfg!(target_os = "macos") {
+            raw.templates.macos
+        } else {
+            raw.templates.linux
+        };
+
+        let mut config = Config {
+            file_system: raw.file_system,
+            log_level: raw.log_level,
+            templates,
+            theme: raw.theme,
+            theme256: raw.theme256,
+            ui: raw.ui,
+        };
         config.theme.maybe_apply_ls_colors();
         Ok(config)
     }
