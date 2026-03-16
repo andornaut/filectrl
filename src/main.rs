@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use argh::FromArgs;
 
-use filectrl::{app::config::Config, run};
+use filectrl::{app::config::write_default_config, run};
 
 #[derive(FromArgs)]
 
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
     let args: Args = argh::from_env();
 
     if args.write_default_config.unwrap_or_default() {
-        return Config::write_default_config();
+        return write_default_config();
     }
 
     let config = args.config.map(PathBuf::from);

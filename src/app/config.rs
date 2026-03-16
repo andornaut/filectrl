@@ -2,7 +2,7 @@ mod ls_colors;
 mod serialization;
 pub mod theme;
 
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
 
 use anyhow::{anyhow, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
@@ -59,14 +59,22 @@ pub struct Config {
     pub ui: UiConfig,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self::from_default_file().expect("Default configuration file should be valid")
-    }
+pub fn write_default_config() -> Result<()> {
+    let path = Config::default_path()?;
+    fs::create_dir_all(
+        path.parent()
+            .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
+    )?;
+    fs::write(&path, DEFAULT_CONFIG)
+        .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
+    info!("Wrote the default config to {path:?}");
+    Ok(())
 }
 
-impl Config {
-    pub fn try_from(value: Option<PathBuf>) -> Result<Self> {
+impl TryFrom<Option<PathBuf>> for Config {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Option<PathBuf>) -> Result<Self> {
         // Try to use the user-provided path if available
         let Some(path) = value else {
             return Self::try_from_default_path();
@@ -83,20 +91,11 @@ impl Config {
         }
     }
 
+}
+
+impl Config {
     fn from_default_file() -> Result<Self> {
         Self::parse(DEFAULT_CONFIG)
-    }
-
-    pub fn write_default_config() -> Result<()> {
-        let path = Self::default_path()?;
-        fs::create_dir_all(
-            path.parent()
-                .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
-        )?;
-        fs::write(&path, DEFAULT_CONFIG)
-            .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
-        info!("Wrote the default config to {path:?}");
-        Ok(())
     }
 
     fn default_path() -> Result<PathBuf> {
@@ -139,7 +138,7 @@ impl Config {
             Ok(content) => Self::parse(&content),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Ok(Self::default())
+                Self::from_default_file()
             }
             Err(err) => Err(anyhow!(
                 "Could not read the config file from the default path ({}): {}",

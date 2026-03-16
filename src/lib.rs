@@ -8,31 +8,24 @@ mod views;
 use std::{env, io::Write, path::PathBuf};
 
 use anyhow::Result;
-use env_logger::{Builder, Env, DEFAULT_FILTER_ENV};
-use log::{info, LevelFilter};
+use env_logger::{Builder, DEFAULT_FILTER_ENV, Env};
+use log::{LevelFilter, info};
 
 use self::app::{
-    config::Config,
-    terminal::{supports_truecolor, CleanupOnDropTerminal},
     App,
+    config::Config,
+    terminal::{CleanupOnDropTerminal, supports_truecolor},
 };
 
-const PKG_NAME: Option<&str> = option_env!("CARGO_PKG_NAME");
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
 pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> Result<()> {
     // Configure logging with a default level before loading config, so that Info+ messages from the
     // config initialization are logged
     configure_logging();
 
-    let config = Config::try_from(config_path)?;
-
-    if let Ok(level) = env::var(DEFAULT_FILTER_ENV) {
-        info!("Setting the log level from environment variable: {DEFAULT_FILTER_ENV}={level}");
-    } else {
-        let level = config.log_level;
-        log::set_max_level(level);
-        info!("Setting the log level from the config: {level:?}");
-    }
+    let config = config_path.try_into()?;
+    apply_log_level(&config);
 
     // Log truecolor support information
     let has_truecolor = supports_truecolor();
@@ -45,9 +38,20 @@ pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> 
     App::new(config, terminal).run_once(initial_directory)
 }
 
+fn apply_log_level(config: &Config) {
+    if let Ok(level) = env::var(DEFAULT_FILTER_ENV) {
+        // RUST_LOG is set; env_logger already applied it in configure_logging()
+        info!("Log level set from environment variable: {DEFAULT_FILTER_ENV}={level}");
+    } else {
+        // No env override; apply the level from the config file
+        let level = config.log_level;
+        log::set_max_level(level);
+        info!("Log level set from config: {level:?}");
+    }
+}
+
 fn configure_logging() {
-    let pkg_name = PKG_NAME.unwrap_or("filectrl");
-    let prefix = format!("{pkg_name}::");
+    let prefix = format!("{PKG_NAME}::");
 
     // Set the log level to the value of $RUST_LOG or default to Info
     Builder::from_env(Env::default().default_filter_or(LevelFilter::Info.as_str()))
