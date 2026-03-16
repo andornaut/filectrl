@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::mpsc::Sender,
     thread,
@@ -138,18 +138,15 @@ fn copy_file(
             None
         }
 
-        Ok((old_file, new_file)) => {
+        Ok((mut old_file, mut new_file)) => {
             let mut buffer = vec![0; buffer_size];
-            // Use with_capacity to specify optimal buffer sizes for reader and writer
-            let mut reader = BufReader::with_capacity(buffer_size, old_file);
-            let mut writer = BufWriter::with_capacity(buffer_size, new_file);
             let mut debouncer =
                 debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
 
             loop {
-                match reader.read(&mut buffer) {
+                match old_file.read(&mut buffer) {
                     Ok(0) => break Some(active),
-                    Ok(bytes) => match writer.write_all(&buffer[..bytes]) {
+                    Ok(bytes) => match new_file.write_all(&buffer[..bytes]) {
                         Ok(()) => {
                             active.increment(bytes as u64);
                             if debouncer.should_trigger(bytes as u64) {
