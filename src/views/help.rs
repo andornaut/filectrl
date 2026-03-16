@@ -88,8 +88,8 @@ impl CommandHandler for HelpView {
         CommandResult::Handled
     }
 
-    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.is_visible && self.area.contains(Position { x, y })
+    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+        self.is_visible && self.area.contains(Position { x: event.column, y: event.row })
     }
 }
 

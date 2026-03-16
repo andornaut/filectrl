@@ -90,7 +90,8 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.table_area.contains(Position { x, y }) || self.scrollbar_view.is_clicked(x, y)
+    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+        self.table_area.contains(Position { x: event.column, y: event.row })
+            || self.scrollbar_view.is_clicked(event.column, event.row)
     }
 }

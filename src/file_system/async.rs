@@ -7,11 +7,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use log::info;
 
 use super::path_info::PathInfo;
 use crate::{
-    command::{result::CommandResult, task::Task, Command},
+    command::{result::CommandResult, task::ActiveTask, Command},
     file_system::debounce,
 };
 
@@ -30,13 +29,16 @@ pub(super) fn run_copy_task(
         Err(result) => return result,
     };
 
-    let mut task = Task::new(path.size);
-    let task_clone = task.clone();
+    let (active, initial) = ActiveTask::new(path.size, tx);
     let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
 
-    thread::spawn(move || copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size));
+    thread::spawn(move || {
+        if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
+            active.done();
+        }
+    });
 
-    Command::Progress(task_clone).into()
+    Command::Progress(initial).into()
 }
 
 pub(super) fn run_move_task(
@@ -51,46 +53,37 @@ pub(super) fn run_move_task(
         Err(result) => return result,
     };
 
-    let mut task = Task::new(path.size);
-    let task_clone = task.clone();
+    let (mut active, initial) = ActiveTask::new(path.size, tx);
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
         Ok(_) => {
-            task.increment(path.size);
-            task.done();
-            tx.send(Command::Progress(task)).expect("Can send command");
+            active.increment(path.size);
+            active.done();
         }
         Err(error) => match error.kind() {
             // If the file is on a different device/mount-point, we must copy-then-delete it instead
             ErrorKind::CrossesDevices => {
                 let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
-                if copy_file(&old_path, &new_path, &mut task, &tx, buffer_size, path.size) {
-                    if let Err(error) = fs::remove_file(&old_path) {
-                        task.error(format!(
+                if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
+                    match fs::remove_file(&old_path) {
+                        Ok(_) => active.done(),
+                        Err(error) => active.error(format!(
                             "Copy succeeded, but failed to delete original file {old_path:?}: {error}"
-                        ));
-                        tx.send(Command::Progress(task)).expect("Can send command");
-                    } else {
-                        task.done();
-                        tx.send(Command::Progress(task)).expect("Can send command");
+                        )),
                     }
                 }
             }
-            _ => {
-                task.error(format!(
-                    "Failed to move {old_path:?} to {new_path:?}: {error}"
-                ));
-                tx.send(Command::Progress(task)).expect("Can send command");
-            }
+            _ => active.error(format!(
+                "Failed to move {old_path:?} to {new_path:?}: {error}"
+            )),
         },
     });
 
-    Command::Progress(task_clone).into()
+    Command::Progress(initial).into()
 }
 
 pub(super) fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
-    let mut task = Task::new(path.size);
-    let task_clone = task.clone();
+    let (active, initial) = ActiveTask::new(path.size, tx);
     let path = PathBuf::from(&path.path);
 
     thread::spawn(move || {
@@ -101,18 +94,12 @@ pub(super) fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandRes
         };
 
         match result {
-            Ok(_) => {
-                task.done();
-                tx.send(Command::Progress(task)).expect("Can send command");
-            }
-            Err(error) => {
-                task.error(format!("Failed to delete {path:?}: {error}"));
-                tx.send(Command::Progress(task)).expect("Can send command");
-            }
+            Ok(_) => active.done(),
+            Err(error) => active.error(format!("Failed to delete {path:?}: {error}")),
         }
     });
 
-    Command::Progress(task_clone).into()
+    Command::Progress(initial).into()
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
@@ -132,20 +119,23 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
     }
 }
 
+/// Copies a file chunk-by-chunk, sending debounced progress updates via `active`.
+///
+/// Returns `Some(active)` on success, leaving finalization to the caller.
+/// Returns `None` if an error occurred — the task has already been finalized via `active.error()`.
 fn copy_file(
     old_path: &Path,
     new_path: &Path,
-    task: &mut Task,
-    tx: &Sender<Command>,
+    mut active: ActiveTask,
     buffer_size: usize,
-    total_size: u64,
-) -> bool {
+) -> Option<ActiveTask> {
+    let total_size = active.total_size();
     match open_files(old_path, new_path) {
         Err(error) => {
-            task.error(format!(
+            active.error(format!(
                 "Failed to copy {old_path:?} to {new_path:?}: {error}"
             ));
-            false
+            None
         }
 
         Ok((old_file, new_file)) => {
@@ -158,30 +148,22 @@ fn copy_file(
 
             loop {
                 match reader.read(&mut buffer) {
-                    Ok(0) => {
-                        task.done();
-                        tx.send(Command::Progress(task.clone()))
-                            .expect("Can send command");
-                        break true;
-                    }
+                    Ok(0) => break Some(active),
                     Ok(bytes) => match writer.write_all(&buffer[..bytes]) {
                         Ok(()) => {
-                            task.increment(bytes as u64);
-
+                            active.increment(bytes as u64);
                             if debouncer.should_trigger(bytes as u64) {
-                                info!("Sending progress command: {:?}", task);
-                                tx.send(Command::Progress(task.clone()))
-                                    .expect("Can send command");
+                                active.send_progress();
                             }
                         }
                         Err(error) => {
-                            task.error(format!("Failed to write {new_path:?}: {error}"));
-                            break false;
+                            active.error(format!("Failed to write {new_path:?}: {error}"));
+                            break None;
                         }
                     },
                     Err(error) => {
-                        task.error(format!("Failed to read {old_path:?}: {error}"));
-                        break false;
+                        active.error(format!("Failed to read {old_path:?}: {error}"));
+                        break None;
                     }
                 }
             }

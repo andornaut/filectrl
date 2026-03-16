@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 
-use super::{mode::InputMode, result::CommandResult, Command};
+use super::{Command, mode::InputMode, result::CommandResult};
 
 pub trait CommandHandler {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
@@ -21,11 +21,11 @@ pub trait CommandHandler {
         CommandResult::NotHandled
     }
 
-    fn should_receive_key(&self, mode: &InputMode) -> bool {
+    fn should_handle_key(&self, mode: &InputMode) -> bool {
         matches!(mode, InputMode::Normal)
     }
 
-    fn should_receive_mouse(&self, _x: u16, _y: u16) -> bool {
+    fn should_handle_mouse(&self, _event: &MouseEvent) -> bool {
         false
     }
 }

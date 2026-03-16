@@ -1,7 +1,12 @@
 use std::{
     hash::{Hash, Hasher},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc::Sender,
+    },
 };
+
+use super::Command;
 
 // Progress (x,y) means "x progress" of "y total"
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -40,6 +45,53 @@ impl Progress {
     }
 }
 
+/// A handle to an in-progress task.
+///
+/// Finalization methods (`done`, `error`) consume `self`, making it a compile-time
+/// error to finalize a task more than once or to report an error after it has already
+/// been marked done. This prevents the class of bugs where an async operation attempts
+/// to update a task that has already been removed from the UI.
+pub struct ActiveTask {
+    task: Task,
+    tx: Sender<Command>,
+}
+
+impl ActiveTask {
+    /// Creates a new active task and an initial snapshot suitable for `Command::Progress`.
+    pub fn new(total: u64, tx: Sender<Command>) -> (Self, Task) {
+        let task = Task::new(total);
+        let initial = task.clone();
+        (Self { task, tx }, initial)
+    }
+
+    pub fn total_size(&self) -> u64 {
+        self.task.progress.1
+    }
+
+    pub fn increment(&mut self, additional: u64) {
+        self.task.increment(additional);
+    }
+
+    pub fn send_progress(&self) {
+        // Err means the receiver was dropped (app is shutting down); silently ignore.
+        let _ = self.tx.send(Command::Progress(self.task.clone()));
+    }
+
+    /// Marks the task as successfully completed. Consumes `self`.
+    pub fn done(mut self) {
+        self.task.done();
+        // Err means the receiver was dropped (app is shutting down); silently ignore.
+        let _ = self.tx.send(Command::Progress(self.task));
+    }
+
+    /// Marks the task as failed with an error message. Consumes `self`.
+    pub fn error(mut self, message: String) {
+        self.task.error(message);
+        // Err means the receiver was dropped (app is shutting down); silently ignore.
+        let _ = self.tx.send(Command::Progress(self.task));
+    }
+}
+
 #[derive(Clone, Debug, Eq)]
 pub struct Task {
     id: Id,
@@ -60,7 +112,7 @@ impl Hash for Task {
 }
 
 impl Task {
-    pub fn new(total: u64) -> Self {
+    fn new(total: u64) -> Self {
         Self {
             id: next_id(),
             progress: Progress(0, total),
@@ -72,15 +124,13 @@ impl Task {
         self.progress.combine(progress)
     }
 
-    pub fn done(&mut self) {
+    fn done(&mut self) {
         // Calling .increment() may also set the status to done.
         self.progress.done();
         self.status = TaskStatus::Done;
     }
 
-    pub fn error(&mut self, message: String) {
-        assert!(!self.is_done_or_error());
-
+    fn error(&mut self, message: String) {
         self.status = TaskStatus::Error(message)
     }
 
@@ -91,9 +141,7 @@ impl Task {
         }
     }
 
-    pub fn increment(&mut self, additional: u64) {
-        assert!(!self.is_done_or_error());
-
+    fn increment(&mut self, additional: u64) {
         self.progress.increment(additional);
         self.status = if self.progress.is_done() {
             TaskStatus::Done
