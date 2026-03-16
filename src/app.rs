@@ -9,11 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::debug;
 use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
     Frame,
+    crossterm::event::{KeyCode, KeyModifiers},
 };
 
 use self::{
@@ -22,9 +22,9 @@ use self::{
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::FileSystem,
-    views::{root::RootView, View},
+    views::{View, root::RootView},
 };
 
 const BROADCASTS_COUNT: u8 = 5;
@@ -175,15 +175,14 @@ fn recursively_handle_command(
 
     let result = match command {
         Command::Key(code, modifiers) => {
-            if handler.should_receive_key(mode) {
+            if handler.should_handle_key(mode) {
                 handler.handle_key(code, modifiers)
             } else {
                 CommandResult::NotHandled
             }
         }
         Command::Mouse(mouse_event) => {
-            let MouseEvent { column, row, .. } = mouse_event;
-            if handler.should_receive_mouse(*column, *row) {
+            if handler.should_handle_mouse(mouse_event) {
                 handler.handle_mouse(mouse_event)
             } else {
                 CommandResult::NotHandled

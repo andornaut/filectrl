@@ -1,19 +1,19 @@
 use std::path::MAIN_SEPARATOR;
 
 use ratatui::{
+    Frame,
     crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
 use super::View;
 use crate::{
     app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::path_info::PathInfo,
 };
 
@@ -82,8 +82,11 @@ impl CommandHandler for HeaderView {
         }
     }
 
-    fn should_receive_mouse(&self, x: u16, y: u16) -> bool {
-        self.area.contains(ratatui::layout::Position { x, y })
+    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+        self.area.contains(ratatui::layout::Position {
+            x: event.column,
+            y: event.row,
+        })
     }
 }
 
@@ -104,7 +107,15 @@ impl View for HeaderView {
             inactive_style,
         );
 
-        // Prioritize displaying the deepest directories
+        // Prioritize displaying the deepest directories.
+        // positions.len() >= area.height always holds: constraint() requests exactly
+        // self.height() rows, and the layout engine never allocates more than requested.
+        // This invariant is relied upon by handle_mouse, which indexes into self.positions
+        // using a y offset guaranteed to be < self.area.height by should_handle_mouse.
+        debug_assert!(
+            positions.len() >= self.area.height as usize,
+            "layout allocated more height than the header requested"
+        );
         let at = positions.len() - self.area.height as usize;
         let container = container.split_off(at);
         self.positions = positions.split_off(at);

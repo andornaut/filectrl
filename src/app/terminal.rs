@@ -2,6 +2,7 @@ use std::{
     env,
     io::{stdout, Result, Stdout},
     ops::{Deref, DerefMut},
+    panic,
 };
 
 use ratatui::{
@@ -28,6 +29,14 @@ pub struct CleanupOnDropTerminal(CrosstermTerminal);
 
 impl CleanupOnDropTerminal {
     pub fn try_new() -> Result<Self> {
+        // Install a panic hook so the terminal is restored even if the app panics,
+        // leaving the shell in a usable state.
+        let original_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            ratatui::restore();
+            original_hook(info);
+        }));
+
         enable_raw_mode()?;
 
         let mut stdout = stdout();

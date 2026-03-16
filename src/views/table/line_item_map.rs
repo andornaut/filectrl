@@ -7,6 +7,8 @@ pub(super) struct LineItemMap {
 
     /// Maps each line index (y offset) to its corresponding item index
     lines_to_items: Vec<usize>,
+    /// Maps each item index to the index of its first line — O(1) alternative to scanning lines_to_items
+    item_first_lines: Vec<usize>,
 }
 
 impl LineItemMap {
@@ -15,35 +17,33 @@ impl LineItemMap {
         visible_lines_count: usize,
         first_visible_item: usize,
     ) -> Self {
-        let lines_to_items = item_heights
-            .iter()
-            .enumerate()
-            .flat_map(|(i, &height)| std::iter::repeat_n(i, height as usize))
-            .collect();
+        let mut lines_to_items = Vec::new();
+        let mut item_first_lines = Vec::with_capacity(item_heights.len());
+        for (i, &height) in item_heights.iter().enumerate() {
+            item_first_lines.push(lines_to_items.len());
+            lines_to_items.extend(std::iter::repeat_n(i, height as usize));
+        }
         Self {
             first_visible_item,
             lines_to_items,
             visible_lines_count,
+            item_first_lines,
         }
     }
 
     pub(super) fn item(&self, line: usize) -> usize {
         self.lines_to_items.get(line).copied().unwrap_or(0)
     }
+
     pub(super) fn first_line(&self, item: usize) -> usize {
-        // TODO This should probably return None if the item is not found
-        self.lines_to_items
-            .iter()
-            .position(|&i| i == item)
-            .unwrap_or_default()
+        self.item_first_lines.get(item).copied().unwrap_or(0)
     }
 
     pub(super) fn last_line(&self, item: usize) -> usize {
-        // TODO This should probably return None if the item is not found
-        self.lines_to_items
-            .iter()
-            .rposition(|&i| i == item)
-            .unwrap_or_default()
+        self.item_first_lines
+            .get(item + 1)
+            .map(|&next_first| next_first - 1)
+            .unwrap_or_else(|| self.total_lines_count().saturating_sub(1))
     }
 
     pub(super) fn first_visible_line(&self) -> usize {
