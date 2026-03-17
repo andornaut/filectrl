@@ -30,19 +30,20 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [<directory>] [-c <config>] [--write-config]
+Usage: filectrl [-c <config>] [--write-default-config] [--colors-256] [--] [<directory>]
 
-FileCtrl is a light, opinionated, responsive, theme-able, and simple
-Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 Positional Arguments:
   directory         path to a directory to navigate to
 
 Options:
   -c, --config      path to a configuration file
-  --write-config    write the default config to ~/.config/filectrl/config.toml,
+  --write-default-config
+                    write the default config to ~/.config/filectrl/config.toml,
                     then exit
-  --help            display usage information
+  --colors-256      force 256-color theme (disables truecolor detection)
+  --help, help      display usage information
 ```
 
 ### Copy / paste
@@ -105,7 +106,7 @@ The configuration is drawn from the first of the following:
 1. The default path, if it exists: `~/.config/filectrl/config.toml`
 1. The built-in [default configuration](./src/app/config/default_config.toml)
 
-Run `filectrl --write-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`.
+Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`.
 
 ### Opening in other applications
 
@@ -134,7 +135,7 @@ open_selected_file = "pcmanfm %s"
 All colors can be changed by editing the configuration file:
 
 ```bash
-filectrl --write-config
+filectrl --write-default-config
 vim ~/.config/filectrl/config.toml
 ```
 
@@ -157,6 +158,13 @@ update-desktop-database ~/.local/share/applications/
 - [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
 - See [Cargo.toml](./Cargo.toml) for dependencies.
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
+- The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
+  - **`file_dates/`** — files with mtimes in each date-colour bucket (< 1 min, < 1 day, < 1 month, < 1 year, > 1 year)
+  - **`file_sizes/`** — sparse files covering every size-colour bucket (bytes → GiB)
+  - **`file_types/`** — named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
+  - **`no_delete/`** — read-only parent directory (`chmod 555`); navigate here to trigger delete/rename permission errors
+  - **`scrolling/`** — 53 entries with long filenames interspersed to exercise scrolling and multi-row truncation
+  - Plus: executables, symlinks, hidden files, Unicode names, special characters, and long filenames
 
 ```bash
 cargo clippy

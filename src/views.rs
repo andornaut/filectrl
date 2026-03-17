@@ -17,13 +17,13 @@ use ratatui::{
 };
 
 use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode},
+    app::{config::theme::Theme, state::AppState},
+    command::handler::CommandHandler,
 };
 
 pub(super) trait View: CommandHandler {
-    fn constraint(&self, area: Rect, mode: &InputMode) -> Constraint;
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme);
+    fn constraint(&self, area: Rect, state: &AppState) -> Constraint;
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme);
 }
 
 fn bordered(

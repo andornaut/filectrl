@@ -381,7 +381,7 @@ fn maybe_time_to_string(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveDateTime, TimeZone};
+    use chrono::{Duration, NaiveDateTime, TimeZone};
     use test_case::test_case;
 
     const DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -420,5 +420,44 @@ mod tests {
     fn to_local_datetime(datetime: &str) -> DateTime<Local> {
         let datetime = NaiveDateTime::parse_from_str(datetime, DATETIME_FORMAT).unwrap();
         Local.from_local_datetime(&datetime).unwrap()
+    }
+
+    // datetime_age boundary tests
+    //
+    // The match arms are:
+    //   num_minutes() == 0  → LessThanMinute
+    //   num_days()    == 0  → LessThanDay
+    //   num_days()    < 30  → LessThanMonth
+    //   num_days()    < 365 → LessThanYear
+    //   _                   → GreaterThanYear
+
+    fn age(seconds_ago: i64) -> DateTimeAge {
+        let now = to_local_datetime("2024-06-15 12:00:00");
+        datetime_age(now - Duration::seconds(seconds_ago), now)
+    }
+
+    #[test_case(0,                        DateTimeAge::LessThanMinute  ; "0 seconds")]
+    #[test_case(59,                       DateTimeAge::LessThanMinute  ; "59 seconds, still < 1 minute")]
+    #[test_case(60,                       DateTimeAge::LessThanDay     ; "60 seconds crosses into less than day")]
+    #[test_case(23 * 3600 + 59 * 60 + 59, DateTimeAge::LessThanDay    ; "just under one day")]
+    #[test_case(24 * 3600,                DateTimeAge::LessThanMonth   ; "exactly one day crosses into less than month")]
+    #[test_case(29 * 24 * 3600,           DateTimeAge::LessThanMonth   ; "29 days")]
+    #[test_case(30 * 24 * 3600,           DateTimeAge::LessThanYear    ; "30 days crosses into less than year")]
+    #[test_case(364 * 24 * 3600,          DateTimeAge::LessThanYear    ; "364 days")]
+    #[test_case(365 * 24 * 3600,          DateTimeAge::GreaterThanYear ; "365 days crosses into greater than year")]
+    fn datetime_age_boundary(seconds_ago: i64, expected: DateTimeAge) {
+        assert_eq!(expected, age(seconds_ago));
+    }
+
+    // name_comparator: strips all leading dots, then lowercases
+
+    #[test_case(".bashrc",  "bashrc"  ; "strips single leading dot")]
+    #[test_case("..hidden", "hidden"  ; "strips all leading dots")]
+    #[test_case("Makefile", "makefile"; "lowercases")]
+    #[test_case(".README",  "readme"  ; "strips dot and lowercases")]
+    fn name_comparator_is_correct(basename: &str, expected: &str) {
+        let mut info = PathInfo::try_from(Path::new(".")).unwrap();
+        info.basename = basename.to_string();
+        assert_eq!(expected, info.name_comparator());
     }
 }

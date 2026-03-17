@@ -1,0 +1,1 @@
+cannot be deleted (parent dir is read-only)

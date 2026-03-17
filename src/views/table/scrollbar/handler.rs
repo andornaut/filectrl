@@ -67,3 +67,59 @@ impl ScrollbarView {
         Some(selected_line)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::ScrollbarView;
+
+    fn scrollbar_at(y: u16, height: u16) -> ScrollbarView {
+        ScrollbarView {
+            area: Rect { x: 0, y, width: 1, height },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn content_fits_in_viewport_returns_none() {
+        let s = scrollbar_at(0, 5);
+        assert_eq!(None, s.handle_drag(0, 5, 5));
+        assert_eq!(None, s.handle_drag(0, 3, 5));
+    }
+
+    #[test]
+    fn drag_at_top_selects_first_line() {
+        let s = scrollbar_at(0, 10);
+        assert_eq!(Some(0), s.handle_drag(0, 100, 10));
+    }
+
+    #[test]
+    fn drag_at_bottom_selects_last_line() {
+        let s = scrollbar_at(0, 10);
+        assert_eq!(Some(99), s.handle_drag(9, 100, 10));
+    }
+
+    #[test]
+    fn drag_at_middle_selects_proportional_line() {
+        // height=10, y=5 → relative=5, percentage=5/9 ≈ 0.556, line = round(0.556 * 99) = 55
+        let s = scrollbar_at(0, 10);
+        assert_eq!(Some(55), s.handle_drag(5, 100, 10));
+    }
+
+    #[test]
+    fn drag_with_scrollbar_y_offset_adjusts_relative_position() {
+        // scrollbar starts at y=5; drag at y=5 → relative=0 → first line
+        let s = scrollbar_at(5, 10);
+        assert_eq!(Some(0), s.handle_drag(5, 100, 10));
+        // drag at y=14 → relative=9 → last line
+        assert_eq!(Some(99), s.handle_drag(14, 100, 10));
+    }
+
+    #[test]
+    fn drag_beyond_scrollbar_bottom_clamps_to_last_line() {
+        // scrollbar height=10, starts at y=0; drag at y=100 → relative clamped to 1.0 → last line
+        let s = scrollbar_at(0, 10);
+        assert_eq!(Some(99), s.handle_drag(100, 100, 10));
+    }
+}

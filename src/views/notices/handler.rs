@@ -3,26 +3,13 @@ use ratatui::{
     prelude::Position,
 };
 
-use super::{NoticeKind, NoticesView};
-use crate::{
-    clipboard::ClipboardCommand,
-    command::{handler::CommandHandler, result::CommandResult, Command},
-};
+use super::{NoticesView, notice::Notice};
+use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearedClipboard => self.clear_clipboard(),
-            Command::CopiedToClipboard(path) => {
-                self.clipboard_command = Some(ClipboardCommand::Copy(path.clone()));
-                CommandResult::Handled
-            }
-            Command::CutToClipboard(path) => {
-                self.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
-                CommandResult::Handled
-            }
             Command::Progress(task) => self.update_tasks(task.clone()),
-            Command::SetFilter(filter) => self.set_filter(filter.clone()),
             _ => CommandResult::NotHandled,
         }
     }
@@ -38,16 +25,11 @@ impl CommandHandler for NoticesView {
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Clear the notice that was clicked based on its position
-                let y = event.row.saturating_sub(self.area.y);
-
-                let notices: Vec<_> = self.active_notices().collect();
-
-                // Find which notice was clicked based on y position
-                match notices.get(y as usize) {
-                    Some(NoticeKind::Clipboard(_)) => Command::ClearClipboard.into(),
-                    Some(NoticeKind::Filter(_)) => Command::SetFilter("".into()).into(),
-                    Some(NoticeKind::Progress) => self.clear_progress(),
+                let y = event.row.saturating_sub(self.area.y) as usize;
+                match self.notices.get(y) {
+                    Some(Notice::Clipboard(_)) => Command::ClearClipboard.into(),
+                    Some(Notice::Filter(_)) => Command::SetFilter("".into()).into(),
+                    Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }
             }
@@ -56,6 +38,9 @@ impl CommandHandler for NoticesView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.area.contains(Position { x: event.column, y: event.row })
+        self.area.contains(Position {
+            x: event.column,
+            y: event.row,
+        })
     }
 }

@@ -1,61 +1,43 @@
 mod handler;
-mod notice_kind;
+mod notice;
 mod view;
 mod widgets;
 
 use std::collections::HashSet;
 
-use notice_kind::NoticeKind;
+use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    clipboard::ClipboardCommand,
+    app::state::AppState,
     command::{result::CommandResult, task::Task},
 };
 
 #[derive(Default)]
 pub(super) struct NoticesView {
     area: Rect,
-    clipboard_command: Option<ClipboardCommand>,
-    filter: String,
     tasks: HashSet<Task>,
+    /// Cached at render time so the mouse handler can map y-position → action
+    notices: Vec<Notice>,
 }
 
 impl NoticesView {
-    fn active_notices(&self) -> impl Iterator<Item = NoticeKind<'_>> {
+    fn build_notices(&self, state: &AppState) -> Vec<Notice> {
         let mut notices = Vec::new();
-
         if !self.tasks.is_empty() {
-            notices.push(NoticeKind::Progress);
+            notices.push(Notice::Progress);
         }
-
-        if let Some(command) = &self.clipboard_command {
-            notices.push(NoticeKind::Clipboard(command));
+        if let Some(cmd) = &state.clipboard_command {
+            notices.push(Notice::Clipboard(cmd.clone()));
         }
-
-        if !self.filter.is_empty() {
-            notices.push(NoticeKind::Filter(&self.filter));
+        if !state.filter.is_empty() {
+            notices.push(Notice::Filter(state.filter.clone()));
         }
-
-        notices.into_iter()
-    }
-
-    fn clear_clipboard(&mut self) -> CommandResult {
-        self.clipboard_command = None;
-        CommandResult::Handled
+        notices
     }
 
     fn clear_progress(&mut self) -> CommandResult {
         self.tasks.clear();
-        CommandResult::Handled
-    }
-
-    fn height(&self) -> u16 {
-        self.active_notices().count() as u16
-    }
-
-    fn set_filter(&mut self, filter: String) -> CommandResult {
-        self.filter = filter;
         CommandResult::Handled
     }
 
