@@ -83,7 +83,7 @@ impl Clipboard {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ClipboardCommand {
     Copy(PathInfo),
     Move(PathInfo),

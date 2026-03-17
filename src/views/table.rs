@@ -18,7 +18,7 @@ use self::{
 };
 use crate::{
     app::config::Config,
-    clipboard::Clipboard,
+    clipboard::{Clipboard, ClipboardCommand},
     command::{Command, PromptKind, result::CommandResult},
     file_system::path_info::PathInfo,
 };
@@ -67,7 +67,7 @@ impl TableView {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => match self.clipboard.copy_file(path.path.as_str()) {
-                Ok(_) => Command::CopiedToClipboard(path.clone()).into(),
+                Ok(_) => Command::ClipboardChanged(ClipboardCommand::Copy(path.clone())).into(),
                 Err(e) => Command::AlertError(format!("Failed to copy: {}", e)).into(),
             },
         }
@@ -81,7 +81,7 @@ impl TableView {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => match self.clipboard.cut_file(path.path.as_str()) {
-                Ok(_) => Command::CutToClipboard(path.clone()).into(),
+                Ok(_) => Command::ClipboardChanged(ClipboardCommand::Move(path.clone())).into(),
                 Err(e) => Command::AlertError(format!("Failed to cut: {}", e)).into(),
             },
         }
