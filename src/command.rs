@@ -9,6 +9,7 @@ use ratatui::crossterm::event::{
 };
 
 use self::{result::CommandResult, task::Task};
+use crate::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
@@ -24,7 +25,7 @@ pub enum Command {
     AlertInfo(String),
     AlertWarn(String),
     ClearClipboard,
-    ClipboardChanged(crate::clipboard::ClipboardCommand),
+    SetClipboard(ClipboardEntry),
     ClosePrompt,
     Copy(PathInfo, PathInfo),
     DeletePath(PathInfo),

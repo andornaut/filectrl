@@ -27,7 +27,7 @@ impl NoticesView {
         if !self.tasks.is_empty() {
             notices.push(Notice::Progress);
         }
-        if let Some(cmd) = &state.clipboard_command {
+        if let Some(cmd) = &state.clipboard_entry {
             notices.push(Notice::Clipboard(cmd.clone()));
         }
         if !state.filter.is_empty() {

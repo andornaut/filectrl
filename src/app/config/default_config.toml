@@ -325,214 +325,216 @@ fg = "#FFFFD7" # 230
 modifiers = []
 
 # 256 color theme for terminals that don't support true color
+# All colors use decimal 256-color indexes (emitted as 38;5;n / 48;5;n)
+# to ensure compatibility with terminals like Terminal.app that don't support truecolor.
 [theme256]
 table_scrollbar_begin_end_enabled = true
 
 [theme256.background]
-bg = "#1c1c1c" # 234 - near black
-fg = "#d0d0d0" # 252 - light gray
+bg = "234" # #1c1c1c - near black
+fg = "252" # #d0d0d0 - light gray
 modifiers = []
 
 [theme256.alert]
 bg = ""
-fg = "#808080" # 244 - gray
+fg = "244" # #808080 - gray
 modifiers = []
 
 [theme256.alert_error]
 bg = ""
-fg = "Red"
+fg = "160" # #d70000 - red
 modifiers = ["bold"]
 
 [theme256.alert_info]
 bg = ""
-fg = "Green"
+fg = "114" # #87d787 - green
 modifiers = ["bold"]
 
 [theme256.alert_warning]
 bg = ""
-fg = "Yellow"
+fg = "173" # #d7875f - orange
 modifiers = ["bold"]
 
 [theme256.header_active]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = ["bold"]
 
 [theme256.header]
-bg = "#1c1c1c" # 234
-fg = "Cyan"
+bg = "234" # #1c1c1c
+fg = "44"  # #00d7d7 - cyan
 modifiers = []
 
 [theme256.help]
-bg = "#1c1c1c" # 234
-fg = "#585858" # 240 - dim gray
+bg = "234" # #1c1c1c
+fg = "240" # #585858 - dim gray
 modifiers = []
 
 [theme256.notice_clipboard]
-bg = "#008700" # 28
-fg = "#1c1c1c" # 234
+bg = "28"  # #008700 - green
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.notice_filter]
-bg = "#afaf00" # 142
-fg = "#1c1c1c" # 234
+bg = "142" # #afaf00 - yellow
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.notice_progress]
-bg = "#005fd7" # 26
-fg = "Cyan"
+bg = "26"  # #005fd7 - blue
+fg = "44"  # #00d7d7 - cyan
 modifiers = []
 
 [theme256.prompt_input]
-bg = "#1c1c1c" # 234
-fg = "#d0d0d0" # 252
+bg = "234" # #1c1c1c
+fg = "252" # #d0d0d0
 modifiers = []
 
 [theme256.prompt_label]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.prompt_cursor]
-bg = "#008787" # 30
-fg = "#1c1c1c" # 234
+bg = "30"  # #008787 - teal
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.prompt_selection]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.status_directory]
-bg = "#008787" # 30
-fg = "#1c1c1c" # 234
+bg = "30"  # #008787 - teal
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.status_directory_label]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.status_selected]
-bg = "#008787" # 30
-fg = "#1c1c1c" # 234
+bg = "30"  # #008787 - teal
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.status_selected_label]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.table_body]
-bg = "#1c1c1c" # 234
-fg = "#d0d0d0" # 252
+bg = "234" # #1c1c1c
+fg = "252" # #d0d0d0
 modifiers = []
 
 [theme256.table_copied]
-bg = "#008700" # 28
-fg = "#1c1c1c" # 234
+bg = "28"  # #008700 - green
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.table_cut]
-bg = "#870087" # 90
-fg = "White"
+bg = "90"  # #870087 - magenta
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.table_header_active]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = ["bold"]
 
 [theme256.table_header]
-bg = "#000087" # 18 - dark blue
-fg = "#d0d0d0" # 252
+bg = "18"  # #000087 - dark blue
+fg = "252" # #d0d0d0
 modifiers = []
 
 [theme256.table_scrollbar_begin]
-bg = "#000087" # 18
-fg = "#1c1c1c" # 234
+bg = "18"  # #000087
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.table_scrollbar_end]
-bg = "#000087" # 18
-fg = "#1c1c1c" # 234
+bg = "18"  # #000087
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.table_scrollbar_thumb]
-bg = "#1c1c1c" # 234
-fg = "#d0d0d0" # 252
+bg = "234" # #1c1c1c
+fg = "252" # #d0d0d0
 modifiers = []
 
 [theme256.table_scrollbar_track]
-bg = "#262626" # 235
-fg = "#000087" # 18
+bg = "235" # #262626
+fg = "18"  # #000087
 modifiers = []
 
 [theme256.table_selected]
-bg = "#005fd7" # 26
-fg = "White"
+bg = "26"  # #005fd7 - blue
+fg = "231" # #ffffff - white
 modifiers = []
 
 # Recency heat-map: cold (just modified) → hot (old) — mirrors [theme] progression
 [theme256.file_modified_date.less_than_minute]
 bg = ""
-fg = "#87d7ff" # 117 - sky blue
+fg = "117" # #87d7ff - sky blue
 modifiers = []
 
 [theme256.file_modified_date.less_than_hour]
 bg = ""
-fg = "#00d7d7" # 44 - cyan
+fg = "44"  # #00d7d7 - cyan
 modifiers = []
 
 [theme256.file_modified_date.less_than_day]
 bg = ""
-fg = "#87ff87" # 120 - green
+fg = "120" # #87ff87 - green
 modifiers = []
 
 [theme256.file_modified_date.less_than_month]
 bg = ""
-fg = "#d7d700" # 184 - yellow
+fg = "184" # #d7d700 - yellow
 modifiers = []
 
 [theme256.file_modified_date.less_than_year]
 bg = ""
-fg = "#d700d7" # 164 - magenta
+fg = "164" # #d700d7 - magenta
 modifiers = []
 
 [theme256.file_modified_date.greater_than_year]
 bg = ""
-fg = "#d70000" # 160 - red
+fg = "160" # #d70000 - red
 modifiers = []
 
 # Size heat-map: gray (tiny) → teal → cyan → amber → orange → red (huge)
 [theme256.file_size.bytes]
 bg = ""
-fg = "#808080" # 244 - gray
+fg = "244" # #808080 - gray
 modifiers = []
 
 [theme256.file_size.kib]
 bg = ""
-fg = "#00af87" # 36 - teal
+fg = "36"  # #00af87 - teal
 modifiers = []
 
 [theme256.file_size.mib]
 bg = ""
-fg = "#00d7d7" # 44 - cyan
+fg = "44"  # #00d7d7 - cyan
 modifiers = []
 
 [theme256.file_size.gib]
 bg = ""
-fg = "#d7af00" # 178 - amber
+fg = "178" # #d7af00 - amber
 modifiers = []
 
 [theme256.file_size.tib]
 bg = ""
-fg = "#d75f00" # 166 - orange
+fg = "166" # #d75f00 - orange
 modifiers = []
 
 [theme256.file_size.pib]
 bg = ""
-fg = "#d70000" # 160 - red
+fg = "160" # #d70000 - red
 modifiers = []
 
 [theme256.file_type]
@@ -552,47 +554,47 @@ modifiers = []
 
 [theme256.file_type.directory]
 bg = ""
-fg = "Blue"
+fg = "33"  # #0087ff - blue (di=01;34)
 modifiers = ["bold"]
 
 [theme256.file_type.directory_other_writable]
-bg = "#008700" # 28 # ow=34;42
-fg = "Blue"
+bg = "28"  # #008700 - green (ow=34;42)
+fg = "33"  # #0087ff - blue
 modifiers = []
 
 [theme256.file_type.symlink]
 bg = ""
-fg = "Cyan" # ln=01;36
+fg = "37"  # #00afaf - cyan (ln=01;36)
 modifiers = ["bold"]
 
 [theme256.file_type.pipe]
-bg = "#000000" # 16 # pi=40;33
-fg = "Yellow"
+bg = "16"  # #000000 - black (pi=40;33)
+fg = "136" # #af8700 - yellow
 modifiers = []
 
 [theme256.file_type.socket]
 bg = ""
-fg = "Magenta" # so=01;35
+fg = "127" # #af00af - magenta (so=01;35)
 modifiers = ["bold"]
 
 [theme256.file_type.door]
 bg = ""
-fg = "Magenta" # do=01;35
+fg = "127" # #af00af - magenta (do=01;35)
 modifiers = ["bold"]
 
 [theme256.file_type.block_device]
-bg = "#000000" # 16 # bd=40;33;01
-fg = "Yellow"
+bg = "16"  # #000000 - black (bd=40;33;01)
+fg = "136" # #af8700 - yellow
 modifiers = ["bold"]
 
 [theme256.file_type.character_device]
-bg = "#000000" # 16 # cd=40;33;01
-fg = "Yellow"
+bg = "16"  # #000000 - black (cd=40;33;01)
+fg = "136" # #af8700 - yellow
 modifiers = ["bold"]
 
 [theme256.file_type.symlink_broken]
-bg = "#000000" # 16 # or=40;31;01
-fg = "Red"
+bg = "16"  # #000000 - black (or=40;31;01)
+fg = "160" # #d70000 - red
 modifiers = ["bold"]
 
 [theme256.file_type.missing]
@@ -602,25 +604,25 @@ modifiers = []
 
 [theme256.file_type.executable]
 bg = ""
-fg = "Green" # ex=01;32
+fg = "64"  # #5f8700 - green (ex=01;32)
 modifiers = ["bold"]
 
 [theme256.file_type.directory_sticky]
-bg = "#005fd7" # 26 # st=37;44
-fg = "White"
+bg = "26"  # #005fd7 - blue (st=37;44)
+fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.file_type.directory_sticky_other_writable]
-bg = "#008700" # 28 # tw=30;42
-fg = "#1c1c1c" # 234
+bg = "28"  # #008700 - green (tw=30;42)
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.file_type.setgid]
-bg = "#afaf00" # 142 # sg=30;43
-fg = "#1c1c1c" # 234
+bg = "142" # #afaf00 - yellow (sg=30;43)
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.file_type.setuid]
-bg = "#870000" # 88 # su=37;41
-fg = "White"
+bg = "88"  # #870000 - red (su=37;41)
+fg = "231" # #ffffff - white
 modifiers = []
