@@ -208,7 +208,7 @@ pub struct Theme {
     status_selected: ThemeStyle,
     status_selected_label: ThemeStyle,
     table_body: ThemeStyle,
-    table_copied: ThemeStyle,
+    table_copy: ThemeStyle,
     table_cut: ThemeStyle,
     table_header: ThemeStyle,
     table_header_active: ThemeStyle,
@@ -218,7 +218,7 @@ pub struct Theme {
     table_scrollbar_track: ThemeStyle,
     table_selected: ThemeStyle,
 
-    table_scrollbar_begin_end_enabled: bool,
+    table_scrollbar_show_begin_end_symbols: bool,
 
     file_type: FileType,
     file_size: FileSize,
@@ -246,7 +246,7 @@ impl Theme {
     style_getter!(status_selected);
     style_getter!(status_selected_label);
     style_getter!(table_body);
-    style_getter!(table_copied);
+    style_getter!(table_copy);
     style_getter!(table_cut);
     style_getter!(table_header);
     style_getter!(table_header_active);
@@ -274,7 +274,7 @@ impl Theme {
         &self.file_type
     }
 
-    pub fn table_scrollbar_begin_end_enabled(&self) -> bool {
-        self.table_scrollbar_begin_end_enabled
+    pub fn table_scrollbar_show_begin_end_symbols(&self) -> bool {
+        self.table_scrollbar_show_begin_end_symbols
     }
 }
