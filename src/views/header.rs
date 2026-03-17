@@ -93,8 +93,12 @@ impl CommandHandler for HeaderView {
 }
 
 impl View for HeaderView {
-    fn constraint(&self, area: Rect, _: &AppState) -> Constraint {
-        Constraint::Length(self.height(area.width))
+    fn constraint(&self, area: Rect, state: &AppState) -> Constraint {
+        if state.is_help_visible {
+            Constraint::Length(0)
+        } else {
+            Constraint::Length(self.height(area.width))
+        }
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {

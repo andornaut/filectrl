@@ -26,7 +26,7 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 3; // Max chain depth: Key → Open/Rename → NavigateDirectory
+const BROADCASTS_COUNT: u8 = 3; // Max chain depth: Key → Back/Refresh → NavigateDirectory/RefreshDirectory → SetSelected
 
 pub struct App {
     config: Config,
