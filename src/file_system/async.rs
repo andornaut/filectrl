@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use log::info;
 
 use super::path_info::PathInfo;
 use crate::{
@@ -29,6 +30,7 @@ pub(super) fn run_copy_task(
         Err(result) => return result,
     };
 
+    info!("Copying {old_path:?} to {new_path:?}");
     let (active, initial) = ActiveTask::new(path.size, tx);
     let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
 
@@ -53,6 +55,7 @@ pub(super) fn run_move_task(
         Err(result) => return result,
     };
 
+    info!("Moving {old_path:?} to {new_path:?}");
     let (mut active, initial) = ActiveTask::new(path.size, tx);
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
@@ -85,6 +88,7 @@ pub(super) fn run_move_task(
 pub(super) fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
     let (active, initial) = ActiveTask::new(path.size, tx);
     let path = PathBuf::from(&path.path);
+    info!("Deleting {path:?}");
 
     thread::spawn(move || {
         let result = if path.is_dir() {
