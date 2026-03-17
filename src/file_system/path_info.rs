@@ -326,6 +326,7 @@ fn unit_index(bytes: u64) -> usize {
 #[derive(Debug, PartialEq)]
 pub enum DateTimeAge {
     LessThanMinute,
+    LessThanHour,
     LessThanDay,
     LessThanMonth,
     LessThanYear,
@@ -337,6 +338,7 @@ pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> 
 
     match duration {
         d if d.num_minutes() == 0 => DateTimeAge::LessThanMinute,
+        d if d.num_hours() == 0 => DateTimeAge::LessThanHour,
         d if d.num_days() == 0 => DateTimeAge::LessThanDay,
         d if d.num_days() < 30 => DateTimeAge::LessThanMonth,
         d if d.num_days() < 365 => DateTimeAge::LessThanYear,
@@ -348,6 +350,7 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
     let age = datetime_age(datetime, relative_to);
     let format = match age {
         DateTimeAge::LessThanMinute => "%I:%M:%S%P",
+        DateTimeAge::LessThanHour => "%I:%M%P",
         DateTimeAge::LessThanDay => "%I:%M%P",
         DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
             // Show year if dates are from different calendar years
@@ -426,6 +429,7 @@ mod tests {
     //
     // The match arms are:
     //   num_minutes() == 0  → LessThanMinute
+    //   num_hours()   == 0  → LessThanHour
     //   num_days()    == 0  → LessThanDay
     //   num_days()    < 30  → LessThanMonth
     //   num_days()    < 365 → LessThanYear
@@ -438,7 +442,9 @@ mod tests {
 
     #[test_case(0,                        DateTimeAge::LessThanMinute  ; "0 seconds")]
     #[test_case(59,                       DateTimeAge::LessThanMinute  ; "59 seconds, still < 1 minute")]
-    #[test_case(60,                       DateTimeAge::LessThanDay     ; "60 seconds crosses into less than day")]
+    #[test_case(60,                       DateTimeAge::LessThanHour    ; "60 seconds crosses into less than hour")]
+    #[test_case(3599,                     DateTimeAge::LessThanHour    ; "3599 seconds, still < 1 hour")]
+    #[test_case(3600,                     DateTimeAge::LessThanDay     ; "3600 seconds crosses into less than day")]
     #[test_case(23 * 3600 + 59 * 60 + 59, DateTimeAge::LessThanDay    ; "just under one day")]
     #[test_case(24 * 3600,                DateTimeAge::LessThanMonth   ; "exactly one day crosses into less than month")]
     #[test_case(29 * 24 * 3600,           DateTimeAge::LessThanMonth   ; "29 days")]
