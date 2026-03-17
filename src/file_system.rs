@@ -73,12 +73,16 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
-        (match sync::cd(&directory) {
+        self.cd_command(directory, navigate).into()
+    }
+
+    fn cd_command(&mut self, directory: PathInfo, navigate: bool) -> Command {
+        match sync::cd(&directory) {
             Ok(children) => {
                 self.directory = Some(directory.clone());
-
-                if let Err(e) = self.watcher.watch_directory(directory.path.clone().into()) {
-                    self.send_directory_error(&directory.path.clone().into(), e);
+                let path_buf = PathBuf::from(&directory.path);
+                if let Err(e) = self.watcher.watch_directory(path_buf.clone()) {
+                    self.send_directory_error(&path_buf, e);
                 }
                 if navigate {
                     Command::NavigateDirectory(directory, children)
@@ -87,8 +91,7 @@ impl FileSystem {
                 }
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
-        })
-        .into()
+        }
     }
 
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
@@ -105,7 +108,11 @@ impl FileSystem {
         {
             Ok(path) => {
                 if path.is_directory() {
-                    self.cd(path, true)
+                    // Send via channel to avoid Key/Mouse → Open → NavigateDirectory → SetSelected
+                    // exceeding BROADCASTS_COUNT.
+                    let command = self.cd_command(path, true);
+                    self.command_tx.send(command).expect("Can send command messages");
+                    CommandResult::Handled
                 } else {
                     info!("Opening path: {path:?}");
                     match open::that_detached(&path.path) {
