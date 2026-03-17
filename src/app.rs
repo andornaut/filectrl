@@ -27,7 +27,7 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 2;
+const BROADCASTS_COUNT: u8 = 3; // Max chain depth: Key → Open/Rename → SetDirectory
 
 pub struct App {
     config: Config,
@@ -39,7 +39,7 @@ pub struct App {
     state: AppState,
     terminal: CleanupOnDropTerminal,
     rx: Receiver<Command>,
-    tx: Sender<Command>,
+    tx: Sender<Command>, // Held to keep the channel open for the lifetime of App
 }
 
 impl App {
@@ -61,7 +61,7 @@ impl App {
         }
     }
 
-    pub fn run_once(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
+    pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
         // An initial command is required to start the main loop
         self.tx
             .send(self.file_system.run_once(initial_directory)?)?;
@@ -141,12 +141,11 @@ impl App {
 
 impl CommandHandler for App {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
-        let file_system: &mut dyn CommandHandler = &mut self.file_system;
-        let root: &mut dyn CommandHandler = &mut self.root;
-        #[cfg(not(debug_assertions))]
-        return vec![file_system, root];
+        let mut children: Vec<&mut dyn CommandHandler> =
+            vec![&mut self.file_system, &mut self.root];
         #[cfg(debug_assertions)]
-        return vec![file_system, root, &mut self.debug];
+        children.push(&mut self.debug);
+        children
     }
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -174,6 +173,10 @@ impl CommandHandler for App {
             }
             Command::ClearClipboard => {
                 self.state.clipboard_command = None;
+                CommandResult::Handled
+            }
+            Command::SetDirectory(_, _) => {
+                self.state.filter.clear();
                 CommandResult::Handled
             }
             Command::Resize(_, _) => CommandResult::Handled,

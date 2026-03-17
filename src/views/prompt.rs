@@ -103,10 +103,10 @@ impl PromptView {
         self.directory = Some(directory.clone());
 
         if is_different_dir {
-            Command::SetFilter("".into()).into()
-        } else {
-            CommandResult::Handled
+            self.filter.clear();
         }
+
+        CommandResult::Handled
     }
 
     fn set_filter(&mut self, filter: String) -> CommandResult {
