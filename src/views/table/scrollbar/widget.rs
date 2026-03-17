@@ -13,7 +13,7 @@ pub fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
         .track_style(theme.table_scrollbar_track())
         .track_symbol(Some(line::VERTICAL));
 
-    if theme.table_scrollbar_begin_end_enabled() {
+    if theme.table_scrollbar_show_begin_end_symbols() {
         scrollbar = scrollbar
             .begin_symbol(Some("▲"))
             .begin_style(theme.table_scrollbar_begin())
