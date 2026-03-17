@@ -37,7 +37,6 @@ struct OsTemplates {
 #[derive(Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
-    pub frame_delay_milliseconds: u64,
 }
 
 #[derive(Deserialize)]
