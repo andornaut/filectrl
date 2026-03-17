@@ -1,18 +1,18 @@
 use std::{
     env,
-    io::{stdout, Result, Stdout},
+    io::{Result, Stdout, stdout},
     ops::{Deref, DerefMut},
     panic,
 };
 
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture, PopKeyboardEnhancementFlags},
         execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     },
-    Terminal,
 };
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
@@ -40,7 +40,7 @@ impl CleanupOnDropTerminal {
         enable_raw_mode()?;
 
         let mut stdout = stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture,)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
         let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
         terminal.hide_cursor()?;
