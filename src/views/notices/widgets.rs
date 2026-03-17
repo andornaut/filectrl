@@ -10,10 +10,9 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::config::theme::Theme,
-    clipboard::ClipboardEntry,
-    command::task::{Progress, Task},
-    unicode::truncate_left,
+    app::{clipboard::ClipboardEntry, config::theme::Theme},
+    command::progress::{Progress, Task},
+    views::unicode::truncate_left,
 };
 
 const COPY_PREFIX: &str = " Copied ";
@@ -39,7 +38,7 @@ pub(super) fn clipboard_widget<'a>(
         Span::raw(prefix),
         Span::styled(
             truncated_path,
-            theme.notice_clipboard().add_modifier(Modifier::BOLD),
+            theme.notice.clipboard().add_modifier(Modifier::BOLD),
         ),
     ]);
 
@@ -49,13 +48,13 @@ pub(super) fn clipboard_widget<'a>(
         None
     };
 
-    create_notice_block(left, right, theme.notice_clipboard())
+    create_notice_block(left, right, theme.notice.clipboard())
 }
 
 pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Block<'a> {
     let left = Line::from(vec![
         FILTER_PREFIX.into(),
-        Span::styled(filter, theme.notice_filter().add_modifier(Modifier::BOLD)),
+        Span::styled(filter, theme.notice.filter().add_modifier(Modifier::BOLD)),
     ]);
 
     let right = if width > (FILTER_PREFIX.width() + filter.width() + FILTER_SUFFIX.width()) as u16 {
@@ -64,7 +63,7 @@ pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> B
         None
     };
 
-    create_notice_block(left, right, theme.notice_filter())
+    create_notice_block(left, right, theme.notice.filter())
 }
 
 pub(super) fn progress_widget<'a>(
@@ -89,7 +88,7 @@ pub(super) fn progress_widget<'a>(
     let left = Line::from(progress_bar);
     let right = Some(Line::from(percentage_text));
 
-    create_notice_block(left, right, theme.notice_progress())
+    create_notice_block(left, right, theme.notice.progress())
 }
 
 fn create_notice_block<'a>(left: Line<'a>, right: Option<Line<'a>>, style: Style) -> Block<'a> {

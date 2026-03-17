@@ -27,12 +27,12 @@ impl View for PromptView {
             .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
             .areas(area);
 
-        let label_widget = Paragraph::new(label).style(theme.prompt_label());
+        let label_widget = Paragraph::new(label).style(theme.prompt.label());
         label_widget.render(label_area, frame.buffer_mut());
         let textarea_widget = TextArea::new()
-            .style(theme.prompt_input())
-            .select_style(theme.prompt_selection())
-            .cursor_style(theme.prompt_cursor());
+            .style(theme.prompt.input())
+            .select_style(theme.prompt.selection())
+            .cursor_style(theme.prompt.cursor());
         textarea_widget.render(input_area, frame.buffer_mut(), &mut self.text_area_state);
 
         // .screen_cursor() returns None when there's an active selection.

@@ -8,7 +8,7 @@ use ratatui::crossterm::event::Event;
 
 use super::View;
 use crate::{
-    clipboard::Clipboard,
+    app::clipboard::Clipboard,
     command::{mode::InputMode, result::CommandResult, Command, PromptKind},
     file_system::path_info::PathInfo,
 };

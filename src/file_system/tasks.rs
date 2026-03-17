@@ -6,19 +6,58 @@ use std::{
     thread,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use log::info;
 
 use super::path_info::PathInfo;
 use crate::{
-    command::{result::CommandResult, task::ActiveTask, Command},
+    command::{result::CommandResult, progress::ActiveTask, Command},
     file_system::debounce,
 };
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 
-pub(super) fn run_copy_task(
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TaskCommand {
+    Copy(PathInfo, PathInfo),
+    DeletePath(PathInfo),
+    Move(PathInfo, PathInfo),
+}
+
+impl TaskCommand {
+    pub fn run(
+        self,
+        tx: Sender<Command>,
+        buffer_min_bytes: u64,
+        buffer_max_bytes: u64,
+    ) -> CommandResult {
+        match self {
+            TaskCommand::Copy(path, dir) => {
+                run_copy_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            }
+            TaskCommand::DeletePath(path) => run_delete_task(tx, path),
+            TaskCommand::Move(path, dir) => {
+                run_move_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            }
+        }
+    }
+}
+
+impl TryFrom<&Command> for TaskCommand {
+    type Error = Error;
+
+    fn try_from(value: &Command) -> Result<Self, Self::Error> {
+        match value {
+            Command::Copy(path, dir) => Ok(Self::Copy(path.clone(), dir.clone())),
+            Command::Move(path, dir) => Ok(Self::Move(path.clone(), dir.clone())),
+            Command::DeletePath(path) => Ok(Self::DeletePath(path.clone())),
+            _ => Err(anyhow!("Cannot convert Command:{value:?} to TaskCommand")),
+        }
+    }
+}
+
+fn run_copy_task(
     tx: Sender<Command>,
     path: PathInfo,
     dir: PathInfo,
@@ -43,7 +82,7 @@ pub(super) fn run_copy_task(
     Command::Progress(initial).into()
 }
 
-pub(super) fn run_move_task(
+fn run_move_task(
     tx: Sender<Command>,
     path: PathInfo,
     dir: PathInfo,
@@ -85,7 +124,7 @@ pub(super) fn run_move_task(
     Command::Progress(initial).into()
 }
 
-pub(super) fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
+fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
     let (active, initial) = ActiveTask::new(path.size, tx);
     let path = PathBuf::from(&path.path);
     info!("Deleting {path:?}");

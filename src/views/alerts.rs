@@ -13,7 +13,7 @@ use super::{bordered, View};
 use crate::{
     app::{config::theme::Theme, state::AppState},
     command::{handler::CommandHandler, result::CommandResult, Command},
-    unicode::split_with_ellipsis,
+    views::unicode::split_with_ellipsis,
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
@@ -29,9 +29,9 @@ enum AlertKind {
 impl AlertKind {
     fn to_style(&self, theme: &Theme) -> Style {
         match self {
-            AlertKind::Info => theme.alert_info(),
-            AlertKind::Warn => theme.alert_warning(),
-            AlertKind::Error => theme.alert_error(),
+            AlertKind::Info => theme.alert.info(),
+            AlertKind::Warn => theme.alert.warning(),
+            AlertKind::Error => theme.alert.error(),
         }
     }
 }
@@ -127,7 +127,7 @@ impl View for AlertsView {
             return;
         }
 
-        let style = theme.alert();
+        let style = theme.alert.style();
         let title_left = "Alerts";
         let title_right = "(Press \"a\" to clear)";
         let title_left_width = title_left.width() as u16;

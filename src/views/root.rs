@@ -103,7 +103,7 @@ impl View for RootView {
 
 fn render_resize_message(buf: &mut Buffer, area: Rect, theme: &Theme) {
     let widget = Paragraph::new(RESIZE_WINDOW)
-        .style(theme.alert_error())
+        .style(theme.alert.error())
         .wrap(Wrap { trim: true });
     widget.render(area, buf);
 }

@@ -1,5 +1,5 @@
 mod ls_colors;
-mod serialization;
+mod serde;
 pub mod theme;
 
 use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
@@ -7,7 +7,7 @@ use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
 use anyhow::{anyhow, Result};
 use etcetera::{choose_base_strategy, BaseStrategy};
 use log::{debug, info, LevelFilter};
-use serde::Deserialize;
+use ::serde::Deserialize;
 
 use self::theme::Theme;
 

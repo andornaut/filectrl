@@ -1,8 +1,6 @@
 pub mod app;
-mod clipboard;
 mod command;
 mod file_system;
-mod unicode;
 mod views;
 
 use std::{env, io::Write, path::PathBuf};
