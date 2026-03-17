@@ -1,4 +1,7 @@
-use crate::{clipboard::ClipboardCommand, command::mode::InputMode};
+use crate::{
+    clipboard::{Clipboard, ClipboardCommand},
+    command::mode::InputMode,
+};
 
 pub struct AppState {
     pub clipboard_command: Option<ClipboardCommand>,
@@ -19,8 +22,10 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         // Read any pre-existing clipboard entry so the notice shows on startup
-        use crate::clipboard::Clipboard;
         let clipboard_command = Clipboard::default().get_clipboard_command();
-        Self { clipboard_command, ..Self::default() }
+        Self {
+            clipboard_command,
+            ..Self::default()
+        }
     }
 }

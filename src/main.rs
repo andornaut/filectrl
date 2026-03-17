@@ -15,7 +15,7 @@ struct Args {
 
     /// write the default config to ~/.config/filectrl/config.toml, then exit
     #[argh(switch)]
-    write_default_config: Option<bool>,
+    write_default_config: bool,
 
     /// force 256-color theme (disables truecolor detection)
     #[argh(switch)]
@@ -29,7 +29,7 @@ struct Args {
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
 
-    if args.write_default_config.unwrap_or_default() {
+    if args.write_default_config {
         return write_default_config();
     }
 
