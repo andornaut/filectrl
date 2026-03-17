@@ -37,10 +37,11 @@ pub enum Command {
     OpenPrompt(PromptKind),
     Progress(Task),
     Quit,
+    NavigateDirectory(PathInfo, Vec<PathInfo>),
     Refresh,
     RenamePath(PathInfo, String),
     Resize(u16, u16), // w,h
-    SetDirectory(PathInfo, Vec<PathInfo>),
+    RefreshDirectory(PathInfo, Vec<PathInfo>),
     SetFilter(String),
     SetSelected(Option<PathInfo>),
 }

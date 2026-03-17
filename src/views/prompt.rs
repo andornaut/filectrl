@@ -94,21 +94,6 @@ impl PromptView {
         CommandResult::Handled
     }
 
-    fn set_directory(&mut self, directory: &PathInfo) -> CommandResult {
-        let is_different_dir = self
-            .directory
-            .as_ref()
-            .is_some_and(|previous_dir| !previous_dir.is_same_inode(directory));
-
-        self.directory = Some(directory.clone());
-
-        if is_different_dir {
-            self.filter.clear();
-        }
-
-        CommandResult::Handled
-    }
-
     fn set_filter(&mut self, filter: String) -> CommandResult {
         self.filter = filter;
         CommandResult::Handled

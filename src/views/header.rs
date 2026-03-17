@@ -54,7 +54,9 @@ impl HeaderView {
 impl CommandHandler for HeaderView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::SetDirectory(directory, _) => self.set_directory(directory.clone()),
+            Command::NavigateDirectory(directory, _) | Command::RefreshDirectory(directory, _) => {
+                self.set_directory(directory.clone())
+            }
             _ => CommandResult::NotHandled,
         }
     }

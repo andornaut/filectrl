@@ -61,18 +61,18 @@ impl FileSystem {
             })
             .unwrap_or_default();
 
-        self.cd(directory).try_into()
+        self.cd(directory, true).try_into()
     }
 
     fn back(&mut self) -> CommandResult {
         let directory = self.directory.as_ref().expect("directory is set before any navigation command");
         match directory.parent() {
-            Some(parent) => self.cd(parent),
+            Some(parent) => self.cd(parent, true),
             None => CommandResult::Handled,
         }
     }
 
-    fn cd(&mut self, directory: PathInfo) -> CommandResult {
+    fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
         (match sync::cd(&directory) {
             Ok(children) => {
                 self.directory = Some(directory.clone());
@@ -80,7 +80,11 @@ impl FileSystem {
                 if let Err(e) = self.watcher.watch_directory(directory.path.clone().into()) {
                     self.send_directory_error(&directory.path.clone().into(), e);
                 }
-                Command::SetDirectory(directory, children)
+                if navigate {
+                    Command::NavigateDirectory(directory, children)
+                } else {
+                    Command::RefreshDirectory(directory, children)
+                }
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
         })
@@ -101,7 +105,7 @@ impl FileSystem {
         {
             Ok(path) => {
                 if path.is_directory() {
-                    self.cd(path)
+                    self.cd(path, true)
                 } else {
                     info!("Opening path: {path:?}");
                     match open::that_detached(&path.path) {
@@ -140,7 +144,7 @@ impl FileSystem {
 
     fn refresh(&mut self) -> CommandResult {
         let directory = self.directory.as_ref().expect("directory is set before any navigation command");
-        self.cd(directory.clone())
+        self.cd(directory.clone(), false)
     }
 
     fn run_task(&mut self, task: TaskCommand) -> CommandResult {
