@@ -8,13 +8,13 @@ use ratatui::crossterm::event::read;
 use crate::command::Command;
 
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
-    let mut commands = Vec::new();
-    loop {
-        // Non-blocking
-        let Ok(command) = rx.try_recv() else {
-            // Return when there are no more commands in the channel
-            break;
-        };
+    // Block (zero CPU) until the first command arrives
+    let Ok(first) = rx.recv() else {
+        return Vec::new();
+    };
+    let mut commands = vec![first];
+    // Drain any additional commands already queued
+    while let Ok(command) = rx.try_recv() {
         commands.push(command);
     }
     commands

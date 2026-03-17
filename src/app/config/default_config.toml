@@ -26,8 +26,6 @@ open_selected_file = "open %s"
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
 double_click_interval_milliseconds = 300
-# Maximum time to sleep between UI refreshes
-frame_delay_milliseconds = 30
 
 [theme]
 table_scrollbar_begin_end_enabled = false

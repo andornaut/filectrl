@@ -8,8 +8,6 @@ pub mod terminal;
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
-    thread,
-    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -36,10 +34,10 @@ pub struct App {
     #[cfg(debug_assertions)]
     debug: debug::DebugHandler,
     file_system: FileSystem,
-    state: AppState,
-    root: RootView,
-    terminal: CleanupOnDropTerminal,
     is_truecolor: bool,
+    root: RootView,
+    state: AppState,
+    terminal: CleanupOnDropTerminal,
     rx: Receiver<Command>,
     tx: Sender<Command>,
 }
@@ -70,16 +68,8 @@ impl App {
 
         spawn_command_sender(self.tx.clone());
 
-        let max_sleep = Duration::from_millis(self.config.ui.frame_delay_milliseconds);
-
         loop {
-            let start = Instant::now();
             let commands = receive_commands(&self.rx);
-
-            if commands.is_empty() {
-                thread::sleep(max_sleep);
-                continue;
-            }
 
             let remaining_commands = self.broadcast_commands(commands);
 
@@ -89,9 +79,6 @@ impl App {
 
             must_not_contain_unhandled(&remaining_commands)?;
             self.render()?;
-
-            let actual_sleep = max_sleep.saturating_sub(Instant::now().duration_since(start));
-            thread::sleep(actual_sleep);
         }
     }
 
