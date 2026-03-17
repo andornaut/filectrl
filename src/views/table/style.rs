@@ -112,6 +112,7 @@ pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
 fn get_date_style(theme: &Theme, age: DateTimeAge) -> Style {
     match age {
         DateTimeAge::LessThanMinute => theme.file_modified_date().less_than_minute(),
+        DateTimeAge::LessThanHour => theme.file_modified_date().less_than_hour(),
         DateTimeAge::LessThanDay => theme.file_modified_date().less_than_day(),
         DateTimeAge::LessThanMonth => theme.file_modified_date().less_than_month(),
         DateTimeAge::LessThanYear => theme.file_modified_date().less_than_year(),
