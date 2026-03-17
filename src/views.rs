@@ -6,6 +6,7 @@ mod prompt;
 pub mod root;
 mod status;
 mod table;
+mod unicode;
 
 use ratatui::{
     buffer::Buffer,

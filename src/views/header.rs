@@ -104,8 +104,8 @@ impl View for HeaderView {
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {
         self.area = area;
 
-        let active_style = theme.header_active();
-        let inactive_style = theme.header();
+        let active_style = theme.header.active();
+        let inactive_style = theme.header.style();
         let (mut container, mut positions) = spans(
             &self.breadcrumbs,
             self.area.width,
@@ -128,7 +128,7 @@ impl View for HeaderView {
 
         let text: Vec<_> = container.into_iter().map(Line::from).collect();
 
-        let widget = Paragraph::new(text).style(theme.header());
+        let widget = Paragraph::new(text).style(theme.header.style());
         widget.render(self.area, frame.buffer_mut());
     }
 }

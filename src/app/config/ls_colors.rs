@@ -1,6 +1,6 @@
 use ratatui::style::{Color, Modifier};
 
-use super::theme::FileType;
+use super::theme::{FileType, ThemeStyle};
 
 pub(super) fn apply_ls_colors(theme: &mut FileType) {
     let ls_colors = match std::env::var("LS_COLORS") {
@@ -42,7 +42,7 @@ pub(super) fn apply_ls_colors(theme: &mut FileType) {
 
             // File patterns (both extensions and names)
             key if key.starts_with('*') => {
-                theme.add_pattern_style(key, fg, bg, attrs);
+                theme.add_pattern_style(key, ThemeStyle::new(fg, bg, attrs));
             }
             _ => continue,
         }

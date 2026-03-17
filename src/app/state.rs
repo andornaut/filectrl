@@ -1,7 +1,5 @@
-use crate::{
-    clipboard::{Clipboard, ClipboardEntry},
-    command::mode::InputMode,
-};
+use crate::command::mode::InputMode;
+use super::clipboard::{Clipboard, ClipboardEntry};
 
 pub struct AppState {
     pub clipboard_entry: Option<ClipboardEntry>,

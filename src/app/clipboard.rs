@@ -11,7 +11,7 @@ use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
 use crate::{command::Command, file_system::path_info::PathInfo};
 
 #[derive(Clone, Debug)]
-pub(super) struct Clipboard {
+pub(crate) struct Clipboard {
     backend: Option<ClipboardBackend>,
 }
 
@@ -30,24 +30,24 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    pub(super) fn into_rat_clipboard(self) -> Box<dyn RatClipboard> {
+    pub(crate) fn into_rat_clipboard(self) -> Box<dyn RatClipboard> {
         match self.backend {
             Some(backend) => Box::new(backend),
             None => Box::new(NoopClipboardBackend),
         }
     }
 
-    pub(super) fn copy_file(&self, path: &str) -> Result<(), Error> {
+    pub(crate) fn copy_file(&self, path: &str) -> Result<(), Error> {
         let path = PathInfo::try_from(path)?;
         self.set_clipboard_entry(ClipboardEntry::Copy(path))
     }
 
-    pub(super) fn cut_file(&self, path: &str) -> Result<(), Error> {
+    pub(crate) fn cut_file(&self, path: &str) -> Result<(), Error> {
         let path = PathInfo::try_from(path)?;
         self.set_clipboard_entry(ClipboardEntry::Move(path))
     }
 
-    pub(super) fn clear(&self) -> Result<(), Error> {
+    pub(crate) fn clear(&self) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => backend.clear(),
             None => Ok(()),

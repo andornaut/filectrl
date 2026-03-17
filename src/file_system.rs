@@ -1,10 +1,9 @@
-mod r#async;
 mod debounce;
 mod handler;
 pub mod path_info;
-mod sync;
-mod task_command;
-mod watcher;
+mod operations;
+mod tasks;
+mod watch;
 
 use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
@@ -12,11 +11,11 @@ use anyhow::{anyhow, Result};
 use log::info;
 
 use self::{
-    path_info::PathInfo, sync::open_in, task_command::TaskCommand, watcher::DirectoryWatcher,
+    path_info::PathInfo, operations::open_in, tasks::TaskCommand, watch::DirectoryWatcher,
 };
 use crate::{
     app::config::Config,
-    command::{result::CommandResult, task::Task, Command},
+    command::{result::CommandResult, progress::Task, Command},
 };
 
 pub struct FileSystem {
@@ -73,11 +72,7 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
-        self.cd_command(directory, navigate).into()
-    }
-
-    fn cd_command(&mut self, directory: PathInfo, navigate: bool) -> Command {
-        match sync::cd(&directory) {
+        match operations::cd(&directory) {
             Ok(children) => {
                 self.directory = Some(directory.clone());
                 let path_buf = PathBuf::from(&directory.path);
@@ -92,6 +87,7 @@ impl FileSystem {
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
         }
+        .into()
     }
 
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
@@ -108,11 +104,7 @@ impl FileSystem {
         {
             Ok(path) => {
                 if path.is_directory() {
-                    // Send via channel to avoid Key/Mouse → Open → NavigateDirectory → SetSelected
-                    // exceeding BROADCASTS_COUNT.
-                    let command = self.cd_command(path, true);
-                    self.command_tx.send(command).expect("Can send command messages");
-                    CommandResult::Handled
+                    self.cd(path, true)
                 } else {
                     info!("Opening path: {path:?}");
                     match open::that_detached(&path.path) {
@@ -143,7 +135,7 @@ impl FileSystem {
     }
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
-        match sync::rename(path, new_basename) {
+        match operations::rename(path, new_basename) {
             Err(error) => anyhow!("Failed to rename {path:?} to {new_basename:?}: {error}").into(),
             Ok(_) => self.refresh(),
         }
@@ -164,7 +156,7 @@ impl FileSystem {
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {
         self.command_tx
-            .send(Command::AlertError(format!(
+            .send(Command::AlertWarn(format!(
                 "Failed to read directory {dir:?}: {error}"
             )))
             .expect("Can send command messages");

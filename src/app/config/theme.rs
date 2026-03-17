@@ -4,11 +4,11 @@ use paste::paste;
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 
-use super::serialization::{deserialize_color, deserialize_modifier};
+use super::serde::{deserialize_color, deserialize_modifier};
 
 /// A triplet of style properties: foreground color, background color, and modifiers.
 /// `fg` and `bg` are optional — `None` (from `""` in config) means inherit from the parent widget.
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 pub struct ThemeStyle {
     #[serde(deserialize_with = "deserialize_color")]
     fg: Option<Color>,
@@ -20,8 +20,14 @@ pub struct ThemeStyle {
     modifiers: Modifier,
 }
 
-impl From<&ThemeStyle> for Style {
-    fn from(style: &ThemeStyle) -> Self {
+impl ThemeStyle {
+    pub(super) fn new(fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) -> Self {
+        Self { fg, bg, modifiers }
+    }
+}
+
+impl From<ThemeStyle> for Style {
+    fn from(style: ThemeStyle) -> Self {
         let mut s = Style::default().add_modifier(style.modifiers);
         if let Some(fg) = style.fg {
             s = s.fg(fg);
@@ -35,23 +41,19 @@ impl From<&ThemeStyle> for Style {
 
 macro_rules! style_getter {
     ($name:ident) => {
-        paste! {
-            pub fn $name(&self) -> Style {
-                (&self.$name).into()
-            }
+        pub fn $name(&self) -> Style {
+            self.$name.into()
         }
     };
 }
 
 macro_rules! style_getter_and_setter {
     ($name:ident) => {
-        // Create the getter
         style_getter!($name);
 
-        // Create the setter
         paste! {
             pub(super) fn [<set_ $name>](&mut self, fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) {
-                self.$name = ThemeStyle { fg, bg, modifiers};
+                self.$name = ThemeStyle { fg, bg, modifiers };
             }
         }
     };
@@ -60,7 +62,7 @@ macro_rules! style_getter_and_setter {
 #[derive(Deserialize)]
 pub struct FileType {
     // Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured below
-    ls_colors_take_precedence: bool,
+    pub ls_colors_take_precedence: bool,
 
     block_device: ThemeStyle,
     character_device: ThemeStyle,
@@ -106,45 +108,32 @@ impl FileType {
     style_getter_and_setter!(symlink);
     style_getter_and_setter!(symlink_broken);
 
-    pub(super) fn add_pattern_style(
-        &mut self,
-        key: &str,
-        fg: Option<Color>,
-        bg: Option<Color>,
-        modifiers: Modifier,
-    ) {
-        let theme_style = ThemeStyle { fg, bg, modifiers };
-
+    pub(super) fn add_pattern_style(&mut self, key: &str, style: ThemeStyle) {
         if key.starts_with("*.") {
             // File extension patterns (*.ext=color)
             let extension = key.trim_start_matches("*.");
-            self.extension_styles
-                .insert(extension.to_string(), theme_style);
+            self.extension_styles.insert(extension.to_string(), style);
         } else if key.starts_with('*') {
             // File name patterns (*name=color)
             let name = key.trim_start_matches('*');
-            self.name_styles.insert(name.to_string(), theme_style);
+            self.name_styles.insert(name.to_string(), style);
         }
     }
 
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
         // Extension pattern
-        if let Some(triplet) = name.rsplit('.').next().and_then(|ext| self.extension_styles.get(ext)) {
-            return Some(triplet.into());
+        if let Some(&style) = name.rsplit('.').next().and_then(|ext| self.extension_styles.get(ext)) {
+            return Some(style.into());
         }
 
         // Name pattern
-        for (pattern, triplet) in &self.name_styles {
+        for (pattern, &style) in &self.name_styles {
             if name.contains(pattern) {
-                return Some(triplet.into());
+                return Some(style.into());
             }
         }
 
         None
-    }
-
-    fn ls_colors_take_precedence(&self) -> bool {
-        self.ls_colors_take_precedence
     }
 }
 
@@ -187,94 +176,176 @@ impl FileModifiedDate {
 }
 
 #[derive(Deserialize)]
-pub struct Theme {
-    background: ThemeStyle,
-    alert: ThemeStyle,
-    alert_error: ThemeStyle,
-    alert_info: ThemeStyle,
-    alert_warning: ThemeStyle,
+pub struct Alert {
+    #[serde(deserialize_with = "deserialize_color")]
+    fg: Option<Color>,
+
+    #[serde(deserialize_with = "deserialize_color")]
+    bg: Option<Color>,
+
+    #[serde(deserialize_with = "deserialize_modifier")]
+    modifiers: Modifier,
+
+    error: ThemeStyle,
+    info: ThemeStyle,
+    warning: ThemeStyle,
+}
+
+impl Alert {
+    pub fn style(&self) -> Style {
+        let mut s = Style::default().add_modifier(self.modifiers);
+        if let Some(fg) = self.fg {
+            s = s.fg(fg);
+        }
+        if let Some(bg) = self.bg {
+            s = s.bg(bg);
+        }
+        s
+    }
+
+    style_getter!(error);
+    style_getter!(info);
+    style_getter!(warning);
+}
+
+#[derive(Deserialize)]
+pub struct Header {
+    #[serde(deserialize_with = "deserialize_color")]
+    fg: Option<Color>,
+
+    #[serde(deserialize_with = "deserialize_color")]
+    bg: Option<Color>,
+
+    #[serde(deserialize_with = "deserialize_modifier")]
+    modifiers: Modifier,
+
+    active: ThemeStyle,
+}
+
+impl Header {
+    pub fn style(&self) -> Style {
+        let mut s = Style::default().add_modifier(self.modifiers);
+        if let Some(fg) = self.fg {
+            s = s.fg(fg);
+        }
+        if let Some(bg) = self.bg {
+            s = s.bg(bg);
+        }
+        s
+    }
+
+    style_getter!(active);
+}
+
+#[derive(Deserialize)]
+pub struct Notice {
+    clipboard: ThemeStyle,
+    filter: ThemeStyle,
+    progress: ThemeStyle,
+}
+
+impl Notice {
+    style_getter!(clipboard);
+    style_getter!(filter);
+    style_getter!(progress);
+}
+
+#[derive(Deserialize)]
+pub struct Prompt {
+    cursor: ThemeStyle,
+    input: ThemeStyle,
+    label: ThemeStyle,
+    selection: ThemeStyle,
+}
+
+impl Prompt {
+    style_getter!(cursor);
+    style_getter!(input);
+    style_getter!(label);
+    style_getter!(selection);
+}
+
+#[derive(Deserialize)]
+pub struct Status {
+    directory: ThemeStyle,
+    directory_label: ThemeStyle,
+    selected: ThemeStyle,
+    selected_label: ThemeStyle,
+}
+
+impl Status {
+    style_getter!(directory);
+    style_getter!(directory_label);
+    style_getter!(selected);
+    style_getter!(selected_label);
+}
+
+#[derive(Deserialize)]
+pub struct Table {
+    body: ThemeStyle,
+    copy: ThemeStyle,
+    cut: ThemeStyle,
     header: ThemeStyle,
     header_active: ThemeStyle,
+    scrollbar_begin: ThemeStyle,
+    scrollbar_end: ThemeStyle,
+    scrollbar_thumb: ThemeStyle,
+    scrollbar_track: ThemeStyle,
+    selected: ThemeStyle,
+    pub scrollbar_show_begin_end_symbols: bool,
+}
+
+impl Table {
+    style_getter!(body);
+    style_getter!(copy);
+    style_getter!(cut);
+    style_getter!(header);
+    style_getter!(header_active);
+    style_getter!(scrollbar_begin);
+    style_getter!(scrollbar_end);
+    style_getter!(scrollbar_thumb);
+    style_getter!(scrollbar_track);
+    style_getter!(selected);
+}
+
+#[derive(Deserialize)]
+pub struct Theme {
+    #[serde(deserialize_with = "deserialize_color")]
+    bg: Option<Color>,
+
+    #[serde(deserialize_with = "deserialize_color")]
+    fg: Option<Color>,
+
+    pub alert: Alert,
+    pub header: Header,
     help: ThemeStyle,
-    notice_clipboard: ThemeStyle,
-    notice_filter: ThemeStyle,
-    notice_progress: ThemeStyle,
-    prompt_cursor: ThemeStyle,
-    prompt_input: ThemeStyle,
-    prompt_label: ThemeStyle,
-    prompt_selection: ThemeStyle,
-    status_directory: ThemeStyle,
-    status_directory_label: ThemeStyle,
-    status_selected: ThemeStyle,
-    status_selected_label: ThemeStyle,
-    table_body: ThemeStyle,
-    table_copy: ThemeStyle,
-    table_cut: ThemeStyle,
-    table_header: ThemeStyle,
-    table_header_active: ThemeStyle,
-    table_scrollbar_begin: ThemeStyle,
-    table_scrollbar_end: ThemeStyle,
-    table_scrollbar_thumb: ThemeStyle,
-    table_scrollbar_track: ThemeStyle,
-    table_selected: ThemeStyle,
+    pub notice: Notice,
+    pub prompt: Prompt,
+    pub status: Status,
+    pub table: Table,
 
-    table_scrollbar_show_begin_end_symbols: bool,
-
-    file_type: FileType,
-    file_size: FileSize,
-    file_modified_date: FileModifiedDate,
+    pub file_type: FileType,
+    pub file_size: FileSize,
+    pub file_modified_date: FileModifiedDate,
 }
 
 impl Theme {
-    style_getter!(background);
-    style_getter!(alert);
-    style_getter!(alert_error);
-    style_getter!(alert_info);
-    style_getter!(alert_warning);
-    style_getter!(header);
-    style_getter!(header_active);
+    pub fn background(&self) -> Style {
+        let mut s = Style::default();
+        if let Some(fg) = self.fg {
+            s = s.fg(fg);
+        }
+        if let Some(bg) = self.bg {
+            s = s.bg(bg);
+        }
+        s
+    }
+
     style_getter!(help);
-    style_getter!(notice_clipboard);
-    style_getter!(notice_filter);
-    style_getter!(notice_progress);
-    style_getter!(prompt_cursor);
-    style_getter!(prompt_input);
-    style_getter!(prompt_label);
-    style_getter!(prompt_selection);
-    style_getter!(status_directory);
-    style_getter!(status_directory_label);
-    style_getter!(status_selected);
-    style_getter!(status_selected_label);
-    style_getter!(table_body);
-    style_getter!(table_copy);
-    style_getter!(table_cut);
-    style_getter!(table_header);
-    style_getter!(table_header_active);
-    style_getter!(table_scrollbar_begin);
-    style_getter!(table_scrollbar_end);
-    style_getter!(table_scrollbar_thumb);
-    style_getter!(table_scrollbar_track);
-    style_getter!(table_selected);
 
     pub fn maybe_apply_ls_colors(&mut self) {
-        if self.file_type.ls_colors_take_precedence() {
+        if self.file_type.ls_colors_take_precedence {
             super::ls_colors::apply_ls_colors(&mut self.file_type);
         }
-    }
-
-    pub fn file_modified_date(&self) -> &FileModifiedDate {
-        &self.file_modified_date
-    }
-
-    pub fn file_size(&self) -> &FileSize {
-        &self.file_size
-    }
-
-    pub fn file_type(&self) -> &FileType {
-        &self.file_type
-    }
-
-    pub fn table_scrollbar_show_begin_end_symbols(&self) -> bool {
-        self.table_scrollbar_show_begin_end_symbols
     }
 }

@@ -1,8 +1,8 @@
 mod columns;
 mod double_click;
 mod handler;
-mod line_item_map;
-mod pager;
+mod row_map;
+mod scroll;
 mod scrollbar;
 mod style;
 mod view;
@@ -13,12 +13,11 @@ use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
 use self::{
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
-    line_item_map::LineItemMap,
+    row_map::LineItemMap,
     scrollbar::ScrollbarView,
 };
 use crate::{
-    app::config::Config,
-    clipboard::{Clipboard, ClipboardEntry},
+    app::{clipboard::{Clipboard, ClipboardEntry}, config::Config},
     command::{Command, PromptKind, result::CommandResult},
     file_system::path_info::PathInfo,
 };
@@ -166,7 +165,7 @@ impl TableView {
     }
 
     fn next_page(&mut self) -> CommandResult {
-        pager::next_page(
+        scroll::next_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),
             self.directory_items_sorted.len(),
@@ -175,7 +174,7 @@ impl TableView {
     }
 
     fn previous_page(&mut self) -> CommandResult {
-        pager::previous_page(
+        scroll::previous_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),
             self.table_state.offset(),
