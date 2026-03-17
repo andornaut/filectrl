@@ -27,7 +27,7 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 5;
+const BROADCASTS_COUNT: u8 = 2;
 
 pub struct App {
     config: Config,
@@ -90,29 +90,39 @@ impl App {
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
-        let mode = self.state.mode.clone();
-        let mut commands: Vec<Command> = vec![command];
+        let mut pending = vec![command];
+        let mut unhandled = Vec::new();
+
         for _ in 0..BROADCASTS_COUNT {
-            commands = commands
-                .into_iter()
-                .flat_map(|command| {
-                    // The same command may be broadcast up to BROADCAST_CYCLES times
-                    // if it doesn't produce a derived command. This seems wasteful,
-                    // but it only occurs for Command::Quit or if the command is
-                    // ultimately unhandled, which results in an error anyway.
-                    let (mut derived_commands, handled) =
-                        recursively_handle_command(self, &command, &mode);
-                    if !handled {
-                        derived_commands.push(command);
-                    }
-                    derived_commands
-                })
-                .collect();
-            if commands.is_empty() {
+            if pending.is_empty() {
                 break;
             }
+            // Re-read mode each iteration so a derived command that changes mode
+            // (e.g. OpenPrompt) is reflected in subsequent cycles.
+            let mode = self.state.mode.clone();
+            let mut next_pending = Vec::new();
+            for cmd in pending {
+                let (derived, handled) = recursively_handle_command(self, &cmd, &mode);
+                if handled {
+                    // Only derived commands (HandledWith) continue to the next cycle.
+                    next_pending.extend(derived);
+                } else {
+                    // Unhandled commands are returned as-is; never re-queued.
+                    unhandled.push(cmd);
+                }
+            }
+            pending = next_pending;
         }
-        commands
+
+        if !pending.is_empty() {
+            log::error!(
+                "Broadcast cycle limit ({BROADCASTS_COUNT}) exceeded; dropping {} derived command(s): {:?}",
+                pending.len(),
+                pending
+            );
+        }
+
+        unhandled
     }
 
     fn render(&mut self) -> Result<()> {
@@ -162,7 +172,7 @@ impl CommandHandler for App {
                 self.state.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
                 CommandResult::Handled
             }
-            Command::ClearedClipboard => {
+            Command::ClearClipboard => {
                 self.state.clipboard_command = None;
                 CommandResult::Handled
             }

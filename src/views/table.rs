@@ -54,7 +54,7 @@ impl TableView {
         }
 
         match self.clipboard.clear() {
-            Ok(_) => Command::ClearedClipboard.into(),
+            Ok(_) => CommandResult::Handled,
             Err(e) => Command::AlertError(format!("Failed to clear clipboard: {}", e)).into(),
         }
     }
