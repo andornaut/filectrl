@@ -34,15 +34,12 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
 
 pub(super) fn open_in(path: &PathInfo, template: &String) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
-    let mut it = template.split_whitespace();
-
-    let Some(program) = it.next() else {
+    if template.is_empty() {
         return Ok(());
-    };
-
-    let args = it.map(|arg| arg.replace("%s", &path.path));
-    run_detached(program, args)
-        .map_err(|error| anyhow!("Failed to open program \"{program}\": {error}"))
+    }
+    let command = template.replace("%s", &path.path);
+    run_detached("sh", ["-c", &command])
+        .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))
 }
 
 pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {

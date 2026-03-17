@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -92,7 +92,10 @@ impl View for HelpView {
         }
 
         let style = theme.help();
-        let title_left = "Help";
+        let title_left = match state.mode {
+            InputMode::Prompt => "Help (Prompt)",
+            _ => "Help",
+        };
         let title_right = "(Press \"?\" to close)";
         let title_left_width = title_left.width() as u16;
         let title_right_width = title_right.width() as u16;
@@ -116,23 +119,25 @@ impl View for HelpView {
         };
 
         let label_style = Style::default().add_modifier(Modifier::BOLD);
-        let spans: Vec<Span> = keyboard_shortcuts
+        let max_label_width = keyboard_shortcuts
             .iter()
-            .enumerate()
-            .flat_map(|(index, &(description, key))| {
-                let mut spans = Vec::with_capacity(3);
-                if index > 0 {
-                    spans.push(" ".into());
-                }
-                spans.push(Span::styled(description, label_style));
-                spans.push(key.into());
-                spans
+            .map(|(label, _)| label.width())
+            .max()
+            .unwrap_or(0);
+        let lines: Vec<Line> = keyboard_shortcuts
+            .iter()
+            .map(|&(label, key)| {
+                let padding = " ".repeat(max_label_width - label.width());
+                Line::from(vec![
+                    Span::styled(label, label_style),
+                    Span::raw(padding),
+                    Span::raw(key),
+                ])
             })
             .collect();
 
-        let widget = Paragraph::new(Line::from(spans))
+        Paragraph::new(lines)
             .style(style)
-            .wrap(Wrap { trim: true });
-        widget.render(bordered_area, frame.buffer_mut());
+            .render(bordered_area, frame.buffer_mut());
     }
 }
