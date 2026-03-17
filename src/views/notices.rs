@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::{
     app::state::AppState,
-    command::{result::CommandResult, task::Task},
+    command::{result::CommandResult, progress::Task},
 };
 
 #[derive(Default)]

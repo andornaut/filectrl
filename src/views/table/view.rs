@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use super::{
-    line_item_map::LineItemMap,
+    row_map::LineItemMap,
     widgets::{row_widget_and_height, table_widget},
     TableView,
 };
@@ -42,7 +42,7 @@ impl View for TableView {
 impl TableView {
     fn render_1x1_block(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         // Extend the table header above the scrollbar as a 1x1 block
-        let block = Block::default().style(theme.table_header());
+        let block = Block::default().style(theme.table.header());
         block.render(Rect { height: 1, ..area }, buf);
     }
 
@@ -85,7 +85,7 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
-        let table = table.style(theme.table_body());
+        let table = table.style(theme.table.body());
         StatefulWidget::render(table, area, buf, &mut self.table_state);
 
         // -1 for table header

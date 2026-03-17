@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod config;
 #[cfg(debug_assertions)]
 mod debug;

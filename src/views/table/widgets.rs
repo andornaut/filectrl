@@ -10,8 +10,9 @@ use super::{
     style::{clipboard_style, header_style, modified_date_style, name_style, size_style},
 };
 use crate::{
-    app::config::theme::Theme, clipboard::ClipboardEntry, file_system::path_info::PathInfo,
-    unicode::split_with_ellipsis,
+    app::{clipboard::ClipboardEntry, config::theme::Theme},
+    file_system::path_info::PathInfo,
+    views::unicode::split_with_ellipsis,
 };
 
 pub(super) fn table_widget<'a>(
@@ -24,8 +25,8 @@ pub(super) fn table_widget<'a>(
     let header = header_row_widget(theme, sort_column, sort_direction);
     Table::new(rows, vec![Constraint::Percentage(100)])
         .header(header)
-        .row_highlight_style(theme.table_selected())
-        .style(theme.table_body())
+        .row_highlight_style(theme.table.selected())
+        .style(theme.table.body())
         .widths(&column_constraints)
 }
 
@@ -38,8 +39,8 @@ fn header_row_widget<'a>(
         .into_iter()
         .map(|column| header_cell_widget(theme, sort_column, sort_direction, column))
         .collect();
-    cells.push(Cell::from("Mode").style(theme.table_header())); // Mode cannot be sorted
-    Row::new(cells).style(theme.table_header())
+    cells.push(Cell::from("Mode").style(theme.table.header())); // Mode cannot be sorted
+    Row::new(cells).style(theme.table.header())
 }
 
 fn header_cell_widget<'a>(
@@ -92,10 +93,10 @@ pub(super) fn row_widget_and_height<'a>(
             )
         } else {
             (
-                name_style(theme.file_type(), item),
+                name_style(&theme.file_type, item),
                 modified_date_style(theme, item, relative_to_datetime),
                 size_style(theme, item),
-                theme.table_body(),
+                theme.table.body(),
             )
         };
 
