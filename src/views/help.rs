@@ -1,5 +1,5 @@
 use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
     layout::{Constraint, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{bordered, View};
 use crate::{
     app::{config::theme::Theme, state::AppState},
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
+    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
 const MIN_HEIGHT: u16 = 4;
@@ -55,52 +55,39 @@ const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
 #[derive(Default)]
 pub(super) struct HelpView {
     area: Rect,
-    is_visible: bool,
-}
-
-impl HelpView {
-    fn height(&self) -> u16 {
-        if self.is_visible {
-            MIN_HEIGHT + 2 // 2 lines of text + 2 borders
-        } else {
-            0
-        }
-    }
-
-    fn toggle_visibility(&mut self) -> CommandResult {
-        self.is_visible = !self.is_visible;
-        CommandResult::Handled
-    }
 }
 
 impl CommandHandler for HelpView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => self.toggle_visibility(),
+            (KeyCode::Char('?'), KeyModifiers::NONE) => {
+                CommandResult::HandledWith(Box::new(Command::ToggleHelp))
+            }
             (_, _) => CommandResult::NotHandled,
         }
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
-            self.is_visible = false;
-        }
-        CommandResult::Handled
+    fn handle_mouse(&mut self, _event: &MouseEvent) -> CommandResult {
+        CommandResult::HandledWith(Box::new(Command::ToggleHelp))
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.is_visible && self.area.contains(Position { x: event.column, y: event.row })
+        self.area.contains(Position { x: event.column, y: event.row })
     }
 }
 
 impl View for HelpView {
-    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
-        Constraint::Length(self.height())
+    fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
+        if state.is_help_visible {
+            Constraint::Min(MIN_HEIGHT)
+        } else {
+            Constraint::Length(0)
+        }
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
         self.area = area;
-        if !self.is_visible || area.height < MIN_HEIGHT {
+        if !state.is_help_visible || area.height < MIN_HEIGHT {
             return;
         }
 
