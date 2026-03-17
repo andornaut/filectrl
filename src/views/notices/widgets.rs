@@ -18,7 +18,7 @@ use crate::{
 
 const COPY_PREFIX: &str = " Copied ";
 const MOVE_PREFIX: &str = " Cut ";
-const CLIPBOARD_SUFFIX: &str = "(Press c to cancel)";
+const CLIPBOARD_SUFFIX: &str = "(Press \"c\" to cancel)";
 const FILTER_PREFIX: &str = " Filtered by ";
 const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
 

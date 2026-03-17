@@ -76,7 +76,7 @@ impl AlertsView {
                     .into_iter()
                     .enumerate()
                     .map(|(i, line)| {
-                        let prefix = if i == 0 { "•" } else { " " };
+                        let prefix = if i == 0 { " •" } else { "  " };
                         (kind.clone(), Line::from(format!("{prefix} {line}")))
                     })
             })
