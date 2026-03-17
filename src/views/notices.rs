@@ -23,17 +23,14 @@ pub(super) struct NoticesView {
 
 impl NoticesView {
     fn build_notices(&self, state: &AppState) -> Vec<Notice> {
-        let mut notices = Vec::new();
-        if !self.tasks.is_empty() {
-            notices.push(Notice::Progress);
-        }
-        if let Some(cmd) = &state.clipboard_entry {
-            notices.push(Notice::Clipboard(cmd.clone()));
-        }
-        if !state.filter.is_empty() {
-            notices.push(Notice::Filter(state.filter.clone()));
-        }
-        notices
+        [
+            (!self.tasks.is_empty()).then_some(Notice::Progress),
+            state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone())),
+            (!state.filter.is_empty()).then_some(Notice::Filter(state.filter.clone())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn clear_progress(&mut self) -> CommandResult {

@@ -16,8 +16,12 @@ use crate::{app::{config::theme::Theme, state::AppState}, views::View};
 const MIN_HEIGHT: u16 = 3;
 
 impl View for TableView {
-    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
-        Constraint::Min(MIN_HEIGHT)
+    fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
+        if state.is_help_visible {
+            Constraint::Length(0)
+        } else {
+            Constraint::Min(MIN_HEIGHT)
+        }
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {

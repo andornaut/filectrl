@@ -12,24 +12,16 @@ use crate::{
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
-        let count = [
-            !self.tasks.is_empty(),
-            state.clipboard_entry.is_some(),
-            !state.filter.is_empty(),
-        ]
-        .iter()
-        .filter(|&&b| b)
-        .count();
-        Constraint::Length(count as u16)
+        Constraint::Length(self.build_notices(state).len() as u16)
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
-        self.area = area;
         self.notices = self.build_notices(state);
-
         if self.notices.is_empty() {
             return;
         }
+
+        self.area = area;
 
         let constraints = vec![Constraint::Length(1); self.notices.len()];
         let layout = Layout::default()

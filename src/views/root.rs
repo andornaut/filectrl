@@ -1,16 +1,16 @@
 use ratatui::{
+    Frame,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, Paragraph, Widget, Wrap},
-    Frame,
 };
 
 use super::{
-    alerts::AlertsView, header::HeaderView, help::HelpView, notices::NoticesView,
-    prompt::PromptView, status::StatusView, table::TableView, View,
+    View, alerts::AlertsView, header::HeaderView, help::HelpView, notices::NoticesView,
+    prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
-    app::{config::theme::Theme, config::Config, state::AppState},
+    app::{config::Config, config::theme::Theme, state::AppState},
     command::handler::CommandHandler,
 };
 
@@ -41,8 +41,8 @@ impl RootView {
         vec![
             // The order is significant
             &mut self.alerts,
-            &mut self.help,
             &mut self.header,
+            &mut self.help,
             &mut self.table,
             &mut self.notices,
             &mut self.status,
@@ -52,7 +52,7 @@ impl RootView {
 }
 
 impl CommandHandler for RootView {
-    fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
+    fn command_handlers(&mut self) -> Vec<&mut dyn CommandHandler> {
         vec![
             // The order is NOT significant
             &mut self.alerts,
@@ -68,7 +68,9 @@ impl CommandHandler for RootView {
 
 impl View for RootView {
     fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
-        unreachable!("RootView is the top-level view that always receives the full terminal area directly from App, so its constraint should never be called")
+        unreachable!(
+            "RootView is the top-level view, which always receives the full terminal area directly from App, so constraint() should never be called"
+        )
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
@@ -80,7 +82,9 @@ impl View for RootView {
         // Fill the entire frame with the base background color so that uncovered areas
         // (e.g. continuation lines of wrapped filenames, empty space below the last row)
         // show the correct color rather than the terminal default.
-        Block::default().style(theme.background()).render(area, frame.buffer_mut());
+        Block::default()
+            .style(theme.background())
+            .render(area, frame.buffer_mut());
 
         let views = self.views();
         let constraints: Vec<Constraint> = views

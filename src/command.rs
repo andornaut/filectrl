@@ -44,6 +44,7 @@ pub enum Command {
     RefreshDirectory(PathInfo, Vec<PathInfo>),
     SetFilter(String),
     SetSelected(Option<PathInfo>),
+    ToggleHelp,
 }
 
 impl Command {

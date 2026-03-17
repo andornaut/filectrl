@@ -6,6 +6,7 @@ use crate::{
 pub struct AppState {
     pub clipboard_entry: Option<ClipboardEntry>,
     pub filter: String,
+    pub is_help_visible: bool,
     pub mode: InputMode,
 }
 
@@ -14,6 +15,7 @@ impl Default for AppState {
         Self {
             clipboard_entry: None,
             filter: String::new(),
+            is_help_visible: false,
             mode: InputMode::default(),
         }
     }
