@@ -3,7 +3,7 @@ pub mod mode;
 pub mod result;
 pub mod task;
 
-use anyhow::{anyhow, Error};
+use anyhow::{Error, anyhow};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
