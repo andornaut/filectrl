@@ -14,7 +14,7 @@ impl View for NoticesView {
     fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
         let count = [
             !self.tasks.is_empty(),
-            state.clipboard_command.is_some(),
+            state.clipboard_entry.is_some(),
             !state.filter.is_empty(),
         ]
         .iter()

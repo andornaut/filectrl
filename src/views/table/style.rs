@@ -4,18 +4,18 @@ use ratatui::style::Style;
 use super::SortColumn;
 use crate::{
     app::config::theme::{FileType, Theme},
-    clipboard::ClipboardCommand,
+    clipboard::ClipboardEntry,
     file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
 
 pub(super) fn clipboard_style(
     theme: &Theme,
-    clipboard_command: &Option<ClipboardCommand>,
+    clipboard_entry: &Option<ClipboardEntry>,
     item: &PathInfo,
 ) -> Option<Style> {
-    match clipboard_command {
-        Some(ClipboardCommand::Copy(path)) if path == item => Some(theme.table_copied()),
-        Some(ClipboardCommand::Move(path)) if path == item => Some(theme.table_cut()),
+    match clipboard_entry {
+        Some(ClipboardEntry::Copy(path)) if path == item => Some(theme.table_copied()),
+        Some(ClipboardEntry::Move(path)) if path == item => Some(theme.table_cut()),
         _ => None,
     }
 }

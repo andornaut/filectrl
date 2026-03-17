@@ -39,12 +39,12 @@ impl Clipboard {
 
     pub(super) fn copy_file(&self, path: &str) -> Result<(), Error> {
         let path = PathInfo::try_from(path)?;
-        self.set_clipboard_command(ClipboardCommand::Copy(path))
+        self.set_clipboard_entry(ClipboardEntry::Copy(path))
     }
 
     pub(super) fn cut_file(&self, path: &str) -> Result<(), Error> {
         let path = PathInfo::try_from(path)?;
-        self.set_clipboard_command(ClipboardCommand::Move(path))
+        self.set_clipboard_entry(ClipboardEntry::Move(path))
     }
 
     pub(super) fn clear(&self) -> Result<(), Error> {
@@ -54,7 +54,7 @@ impl Clipboard {
         }
     }
 
-    pub fn get_clipboard_command(&self) -> Option<ClipboardCommand> {
+    pub fn get_clipboard_entry(&self) -> Option<ClipboardEntry> {
         self.backend.as_ref().and_then(|backend| {
             backend
                 .get_string()
@@ -64,18 +64,18 @@ impl Clipboard {
     }
 
     pub fn get_command(&self, destination: PathInfo) -> Option<Command> {
-        self.get_clipboard_command()
-            .map(|command| command.to_command(destination))
+        self.get_clipboard_entry()
+            .map(|entry| entry.to_command(destination))
     }
 
     pub fn is_enabled(&self) -> bool {
         self.backend.is_some()
     }
 
-    fn set_clipboard_command(&self, command: ClipboardCommand) -> Result<(), Error> {
+    fn set_clipboard_entry(&self, entry: ClipboardEntry) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => {
-                let text = command.to_string();
+                let text = entry.to_string();
                 backend.set_string(&text)
             }
             None => Ok(()),
@@ -84,12 +84,12 @@ impl Clipboard {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum ClipboardCommand {
+pub enum ClipboardEntry {
     Copy(PathInfo),
     Move(PathInfo),
 }
 
-impl Display for ClipboardCommand {
+impl Display for ClipboardEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let (name, path) = match self {
             Self::Copy(path) => ("cp", path),
@@ -99,7 +99,7 @@ impl Display for ClipboardCommand {
     }
 }
 
-impl TryFrom<&str> for ClipboardCommand {
+impl TryFrom<&str> for ClipboardEntry {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -118,12 +118,12 @@ impl TryFrom<&str> for ClipboardCommand {
         match command_str {
             "cp" => Ok(Self::Copy(path)),
             "mv" => Ok(Self::Move(path)),
-            _ => Err(anyhow!("Invalid ClipboardCommand: {command_str}")),
+            _ => Err(anyhow!("Invalid ClipboardEntry: {command_str}")),
         }
     }
 }
 
-impl ClipboardCommand {
+impl ClipboardEntry {
     fn to_command(&self, to: PathInfo) -> Command {
         match self {
             Self::Copy(path) => Command::Copy(path.clone(), to),

@@ -10,7 +10,7 @@ use super::{
     style::{clipboard_style, header_style, modified_date_style, name_style, size_style},
 };
 use crate::{
-    app::config::theme::Theme, clipboard::ClipboardCommand, file_system::path_info::PathInfo,
+    app::config::theme::Theme, clipboard::ClipboardEntry, file_system::path_info::PathInfo,
     unicode::split_with_ellipsis,
 };
 
@@ -77,13 +77,13 @@ fn header_cell_widget<'a>(
 
 pub(super) fn row_widget_and_height<'a>(
     theme: &'a Theme,
-    clipboard_command: &'a Option<ClipboardCommand>,
+    clipboard_entry: &'a Option<ClipboardEntry>,
     name_column_width: u16,
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
 ) -> (Row<'a>, u16) {
     let (name_style, date_style, size_style, row_style) =
-        if let Some(clipboard_style) = clipboard_style(theme, clipboard_command, item) {
+        if let Some(clipboard_style) = clipboard_style(theme, clipboard_entry, item) {
             (
                 clipboard_style,
                 clipboard_style,

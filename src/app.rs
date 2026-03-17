@@ -162,12 +162,12 @@ impl CommandHandler for App {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
-            Command::ClipboardChanged(clipboard_command) => {
-                self.state.clipboard_command = Some(clipboard_command.clone());
+            Command::SetClipboard(clipboard_entry) => {
+                self.state.clipboard_entry = Some(clipboard_entry.clone());
                 CommandResult::Handled
             }
             Command::ClearClipboard => {
-                self.state.clipboard_command = None;
+                self.state.clipboard_entry = None;
                 CommandResult::Handled
             }
             Command::NavigateDirectory(_, _) => {

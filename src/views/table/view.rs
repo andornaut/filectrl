@@ -65,7 +65,7 @@ impl TableView {
             .map(|item| {
                 let (row, height) = row_widget_and_height(
                     theme,
-                    &state.clipboard_command,
+                    &state.clipboard_entry,
                     self.columns.name_width(),
                     relative_to_datetime,
                     item,
