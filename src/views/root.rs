@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Block, Paragraph, Widget, Wrap},
     Frame,
 };
 
@@ -10,8 +10,8 @@ use super::{
     prompt::PromptView, status::StatusView, table::TableView, View,
 };
 use crate::{
-    app::{config::theme::Theme, config::Config},
-    command::{handler::CommandHandler, mode::InputMode},
+    app::{config::theme::Theme, config::Config, state::AppState},
+    command::handler::CommandHandler,
 };
 
 const MIN_WIDTH: u16 = 14; // Must be 11 or larger to prevent clipboard notices from causing a panic
@@ -67,20 +67,25 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
-    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
         unreachable!("RootView is the top-level view that always receives the full terminal area directly from App, so its constraint should never be called")
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             render_resize_message(frame.buffer_mut(), area, theme);
             return;
         }
 
+        // Fill the entire frame with the base background color so that uncovered areas
+        // (e.g. continuation lines of wrapped filenames, empty space below the last row)
+        // show the correct color rather than the terminal default.
+        Block::default().style(theme.background()).render(area, frame.buffer_mut());
+
         let views = self.views();
         let constraints: Vec<Constraint> = views
             .iter()
-            .map(|view| view.constraint(area, mode))
+            .map(|view| view.constraint(area, state))
             .collect();
         Layout::default()
             .direction(Direction::Vertical)
@@ -88,7 +93,7 @@ impl View for RootView {
             .split(area)
             .iter()
             .zip(views)
-            .for_each(|(area, handler)| handler.render(*area, frame, mode, theme));
+            .for_each(|(area, handler)| handler.render(*area, frame, state, theme));
     }
 }
 

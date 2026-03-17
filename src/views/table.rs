@@ -19,7 +19,7 @@ use self::{
 use crate::{
     app::config::Config,
     clipboard::Clipboard,
-    command::{result::CommandResult, Command, PromptKind},
+    command::{Command, PromptKind, result::CommandResult},
     file_system::path_info::PathInfo,
 };
 
@@ -245,9 +245,7 @@ impl TableView {
         let prev_directory = self.directory.clone();
 
         // Check if we're refreshing the same directory or navigating to a different one
-        let is_refresh = prev_directory
-            .as_ref()
-            == Some(&new_directory);
+        let is_refresh = prev_directory.as_ref() == Some(&new_directory);
 
         if !is_refresh {
             self.filter.clear();
@@ -343,11 +341,8 @@ impl TableView {
 
             // If we're refreshing the directory and couldn't find the file - it was likely deleted
             // Select next item (same index) or index 0
-            if is_refresh
-                && let Some(idx) = selected_index
-            {
-                return self
-                    .select(idx.min(self.directory_items_sorted.len().saturating_sub(1)));
+            if is_refresh && let Some(idx) = selected_index {
+                return self.select(idx.min(self.directory_items_sorted.len().saturating_sub(1)));
             }
         }
 

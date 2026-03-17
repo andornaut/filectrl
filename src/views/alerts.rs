@@ -11,8 +11,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{bordered, View};
 use crate::{
-    app::config::theme::Theme,
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    app::{config::theme::Theme, state::AppState},
+    command::{handler::CommandHandler, result::CommandResult, Command},
     unicode::split_with_ellipsis,
 };
 
@@ -117,11 +117,11 @@ impl CommandHandler for AlertsView {
 }
 
 impl View for AlertsView {
-    fn constraint(&self, area: Rect, _: &InputMode) -> Constraint {
+    fn constraint(&self, area: Rect, _: &AppState) -> Constraint {
         Constraint::Length(self.height(&area))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {
         self.area = area;
         if !self.should_show(&area) {
             return;

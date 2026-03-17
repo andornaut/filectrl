@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{bordered, View};
 use crate::{
-    app::config::theme::Theme,
+    app::{config::theme::Theme, state::AppState},
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
@@ -94,11 +94,11 @@ impl CommandHandler for HelpView {
 }
 
 impl View for HelpView {
-    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
         Constraint::Length(self.height())
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, mode: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
         self.area = area;
         if !self.is_visible || area.height < MIN_HEIGHT {
             return;
@@ -123,7 +123,7 @@ impl View for HelpView {
             Some(title_left),
             title_right,
         );
-        let keyboard_shortcuts = match *mode {
+        let keyboard_shortcuts = match state.mode {
             InputMode::Prompt => &PROMPT_KEYBOARD_SHORTCUTS[..],
             _ => &DEFAULT_KEYBOARD_SHORTCUTS[..],
         };

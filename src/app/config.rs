@@ -148,3 +148,13 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_parses_successfully() {
+        Config::from_default_file().unwrap();
+    }
+}
