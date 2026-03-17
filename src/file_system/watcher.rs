@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::error;
+use log::{error, warn};
 use notify::{recommended_watcher, Event, RecommendedWatcher, Watcher};
 
 use crate::{command::Command, file_system::debounce};
@@ -57,7 +57,7 @@ impl DirectoryWatcher {
         if let Some(old_path) = &self.watched_directory
             && let Err(e) = self.watcher.unwatch(old_path.as_path())
         {
-            error!("Failed to unwatch directory: {}", e);
+            warn!("Failed to unwatch directory: {}", e);
         }
 
         self.watcher
