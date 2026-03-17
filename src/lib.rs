@@ -35,7 +35,7 @@ pub fn run(
     info!("Terminal truecolor support: {is_truecolor}");
 
     let terminal = CleanupOnDropTerminal::try_new()?;
-    App::new(config, terminal, is_truecolor).run_once(initial_directory)
+    App::new(config, terminal, is_truecolor).run(initial_directory)
 }
 
 fn apply_log_level(config: &Config) {
