@@ -159,7 +159,7 @@ update-desktop-database ~/.local/share/applications/
 - See [Cargo.toml](./Cargo.toml) for dependencies.
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
 - The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
-  - **`file_dates/`** — files with mtimes in each date-colour bucket (< 1 min, < 1 day, < 1 month, < 1 year, > 1 year)
+  - **`file_dates/`** — files with mtimes in each date-colour bucket (< 1 min, < 1 hour, < 1 day, < 1 month, < 1 year, > 1 year)
   - **`file_sizes/`** — sparse files covering every size-colour bucket (bytes → GiB)
   - **`file_types/`** — named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
   - **`no_delete/`** — read-only parent directory (`chmod 555`); navigate here to trigger delete/rename permission errors

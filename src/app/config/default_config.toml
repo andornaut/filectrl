@@ -76,7 +76,7 @@ fg = "#1D1F21"
 modifiers = []
 
 [theme.notice_filter]
-bg = "#777755"
+bg = "#70C0B1"
 fg = "#1D1F21"
 modifiers = []
 
@@ -376,7 +376,7 @@ fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.notice_filter]
-bg = "142" # #afaf00 - yellow
+bg = "28"  # #008700 - green
 fg = "234" # #1c1c1c
 modifiers = []
 
