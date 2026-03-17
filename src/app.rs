@@ -27,7 +27,7 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 3; // Max chain depth: Key → Open/Rename → SetDirectory
+const BROADCASTS_COUNT: u8 = 3; // Max chain depth: Key → Open/Rename → NavigateDirectory
 
 pub struct App {
     config: Config,
@@ -175,10 +175,11 @@ impl CommandHandler for App {
                 self.state.clipboard_command = None;
                 CommandResult::Handled
             }
-            Command::SetDirectory(_, _) => {
+            Command::NavigateDirectory(_, _) => {
                 self.state.filter.clear();
                 CommandResult::Handled
             }
+            Command::RefreshDirectory(_, _) => CommandResult::Handled,
             Command::Resize(_, _) => CommandResult::Handled,
             _ => CommandResult::NotHandled,
         }

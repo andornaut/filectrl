@@ -11,7 +11,15 @@ impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::OpenPrompt(kind) => self.open(kind),
-            Command::SetDirectory(directory, _) => self.set_directory(directory),
+            Command::NavigateDirectory(directory, _) => {
+                self.directory = Some(directory.clone());
+                self.filter.clear();
+                CommandResult::Handled
+            }
+            Command::RefreshDirectory(directory, _) => {
+                self.directory = Some(directory.clone());
+                CommandResult::Handled
+            }
             Command::SetFilter(filter) => self.set_filter(filter.clone()),
             Command::SetSelected(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,

@@ -329,268 +329,271 @@ modifiers = []
 table_scrollbar_begin_end_enabled = true
 
 [theme256.background]
-bg = "#3a3a3a" # 237
-fg = "#ffffff" # 231
+bg = "#1c1c1c" # 234 - near black
+fg = "#d0d0d0" # 252 - light gray
 modifiers = []
 
 [theme256.alert]
 bg = ""
-fg = "#afaf87" # 144
+fg = "#808080" # 244 - gray
 modifiers = []
 
 [theme256.alert_error]
 bg = ""
-fg = "#d70000" # 160
-modifiers = []
+fg = "Red"
+modifiers = ["bold"]
 
 [theme256.alert_info]
 bg = ""
-fg = "#87d787" # 114
-modifiers = []
+fg = "Green"
+modifiers = ["bold"]
 
 [theme256.alert_warning]
 bg = ""
-fg = "#d7875f" # 173
-modifiers = []
+fg = "Yellow"
+modifiers = ["bold"]
 
 [theme256.header_active]
-bg = "#d7d7af" # 187
-fg = "#262626" # 235
-modifiers = []
+bg = "#005fd7" # 26
+fg = "White"
+modifiers = ["bold"]
 
 [theme256.header]
-bg = "#3a3a3a" # 237
-fg = "#d7d7af" # 187
+bg = "#1c1c1c" # 234
+fg = "Cyan"
 modifiers = []
 
 [theme256.help]
-bg = "#3a3a3a" # 237
-fg = "#afaf87" # 144
+bg = "#1c1c1c" # 234
+fg = "#585858" # 240 - dim gray
 modifiers = []
 
 [theme256.notice_clipboard]
-bg = "#5fd7af" # 79
-fg = "#262626" # 235
+bg = "#008700" # 28
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.notice_filter]
-bg = "#87875f" # 101
-fg = "#262626" # 235
+bg = "#afaf00" # 142
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.notice_progress]
-bg = "#008787" # 30
-fg = "#5fd7af" # 79
+bg = "#005fd7" # 26
+fg = "Cyan"
 modifiers = []
 
 [theme256.prompt_input]
-bg = "#3a3a3a" # 237
-fg = "#d7d7af" # 187
+bg = "#1c1c1c" # 234
+fg = "#d0d0d0" # 252
 modifiers = []
 
 [theme256.prompt_label]
-bg = "#afaf87" # 144
-fg = "#262626" # 235
+bg = "#005fd7" # 26
+fg = "White"
 modifiers = []
 
 [theme256.prompt_cursor]
-bg = "#d7d7af" # 187
-fg = "#262626" # 235
+bg = "#008787" # 30
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.prompt_selection]
-bg = "#afaf87" # 144
-fg = "#262626" # 235
+bg = "#005fd7" # 26
+fg = "White"
 modifiers = []
 
 [theme256.status_directory]
-bg = "#5fd7af" # 79
-fg = "#262626" # 235
+bg = "#008787" # 30
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.status_directory_label]
-bg = "#008787" # 30
-fg = "#d7d7d7" # 188
+bg = "#005fd7" # 26
+fg = "White"
 modifiers = []
 
 [theme256.status_selected]
-bg = "#5fd7af" # 79
-fg = "#262626" # 235
+bg = "#008787" # 30
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.status_selected_label]
-bg = "#008787" # 30
-fg = "#d7d7d7" # 188
+bg = "#005fd7" # 26
+fg = "White"
 modifiers = []
 
 [theme256.table_body]
-bg = "#3a3a3a" # 237
-fg = "#ffffff" # 231
+bg = "#1c1c1c" # 234
+fg = "#d0d0d0" # 252
 modifiers = []
 
 [theme256.table_copied]
-bg = "#5fd7af" # 79
-fg = "#005f00" # 22
+bg = "#008700" # 28
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.table_cut]
-bg = "#5fd7af" # 79
-fg = "#5f005f" # 53
+bg = "#870087" # 90
+fg = "White"
 modifiers = []
 
 [theme256.table_header_active]
-bg = "#afaf87" # 144
-fg = "#262626" # 235
-modifiers = []
+bg = "#005fd7" # 26
+fg = "White"
+modifiers = ["bold"]
 
 [theme256.table_header]
-bg = "#87875f" # 101
-fg = "#262626" # 235
+bg = "#000087" # 18 - dark blue
+fg = "#d0d0d0" # 252
 modifiers = []
 
 [theme256.table_scrollbar_begin]
-bg = "#87875f" # 101
-fg = "#3a3a3a" # 237
+bg = "#000087" # 18
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.table_scrollbar_end]
-bg = "#87875f" # 101
-fg = "#3a3a3a" # 237
+bg = "#000087" # 18
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.table_scrollbar_thumb]
-bg = "#3a3a3a" # 237
-fg = "#d7d7af" # 187
+bg = "#1c1c1c" # 234
+fg = "#d0d0d0" # 252
 modifiers = []
 
 [theme256.table_scrollbar_track]
-bg = "#4e4e4e" # 239
-fg = "#87875f" # 101
+bg = "#262626" # 235
+fg = "#000087" # 18
 modifiers = []
 
 [theme256.table_selected]
-bg = "#d7d7af" # 187
-fg = "#262626" # 235
+bg = "#005fd7" # 26
+fg = "White"
 modifiers = []
 
+# Recency heat-map: cold (just modified) → hot (old) — mirrors [theme] progression
 [theme256.file_modified_date.less_than_minute]
 bg = ""
-fg = "#87d7ff" # 117
+fg = "#87d7ff" # 117 - sky blue
 modifiers = []
 
 [theme256.file_modified_date.less_than_hour]
 bg = ""
-fg = "#87ffff" # 123
+fg = "#00d7d7" # 44 - cyan
 modifiers = []
 
 [theme256.file_modified_date.less_than_day]
 bg = ""
-fg = "#87ff87" # 120
+fg = "#87ff87" # 120 - green
 modifiers = []
 
 [theme256.file_modified_date.less_than_month]
 bg = ""
-fg = "#ffff87" # 228
+fg = "#d7d700" # 184 - yellow
 modifiers = []
 
 [theme256.file_modified_date.less_than_year]
 bg = ""
-fg = "#ff87ff" # 213
+fg = "#d700d7" # 164 - magenta
 modifiers = []
 
 [theme256.file_modified_date.greater_than_year]
 bg = ""
-fg = "#ff8787" # 210
+fg = "#d70000" # 160 - red
 modifiers = []
 
+# Size heat-map: gray (tiny) → teal → cyan → amber → orange → red (huge)
 [theme256.file_size.bytes]
 bg = ""
-fg = "#87d7ff" # 117
+fg = "#808080" # 244 - gray
 modifiers = []
 
 [theme256.file_size.kib]
 bg = ""
-fg = "#87ffff" # 123
+fg = "#00af87" # 36 - teal
 modifiers = []
 
 [theme256.file_size.mib]
 bg = ""
-fg = "#87ff87" # 120
+fg = "#00d7d7" # 44 - cyan
 modifiers = []
 
 [theme256.file_size.gib]
 bg = ""
-fg = "#ffff87" # 228
+fg = "#d7af00" # 178 - amber
 modifiers = []
 
 [theme256.file_size.tib]
 bg = ""
-fg = "#ff87ff" # 213
+fg = "#d75f00" # 166 - orange
 modifiers = []
 
 [theme256.file_size.pib]
 bg = ""
-fg = "#ff8787" # 210
+fg = "#d70000" # 160 - red
 modifiers = []
 
 [theme256.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
 ls_colors_take_precedence = true
 
+# Classic dircolors defaults: fi=00, di=01;34, ln=01;36, ex=01;32, etc.
 [theme256.file_type.normal_file]
 bg = ""
-fg = "#e4e4e4" # 254
+fg = ""
 modifiers = []
 
 [theme256.file_type.regular_file]
 bg = ""
-fg = "#e4e4e4" # 254
+fg = ""
 modifiers = []
 
 [theme256.file_type.directory]
 bg = ""
-fg = "#0087ff" # 33
-modifiers = []
+fg = "Blue"
+modifiers = ["bold"]
 
 [theme256.file_type.directory_other_writable]
-bg = "#262626" # 235
-fg = "#0087ff" # 33
+bg = "#008700" # 28 # ow=34;42
+fg = "Blue"
 modifiers = []
 
 [theme256.file_type.symlink]
 bg = ""
-fg = "#00afaf" # 37
+fg = "Cyan" # ln=01;36
 modifiers = ["bold"]
 
 [theme256.file_type.pipe]
-bg = "#ffffd7" # 230
-fg = "#af8700" # 136
-modifiers = ["bold"]
+bg = "#000000" # 16 # pi=40;33
+fg = "Yellow"
+modifiers = []
 
 [theme256.file_type.socket]
-bg = "#ffffd7" # 230
-fg = "#af8700" # 136
+bg = ""
+fg = "Magenta" # so=01;35
 modifiers = ["bold"]
 
 [theme256.file_type.door]
-bg = "#ffffd7" # 230
-fg = "#af8700" # 136
+bg = ""
+fg = "Magenta" # do=01;35
 modifiers = ["bold"]
 
 [theme256.file_type.block_device]
-bg = "#ffffd7" # 230
-fg = "#808080" # 244
+bg = "#000000" # 16 # bd=40;33;01
+fg = "Yellow"
 modifiers = ["bold"]
 
 [theme256.file_type.character_device]
-bg = "#ffffd7" # 230
-fg = "#808080" # 244
+bg = "#000000" # 16 # cd=40;33;01
+fg = "Yellow"
 modifiers = ["bold"]
 
 [theme256.file_type.symlink_broken]
-bg = "#262626" # 235
-fg = "#d70000" # 160
-modifiers = []
+bg = "#000000" # 16 # or=40;31;01
+fg = "Red"
+modifiers = ["bold"]
 
 [theme256.file_type.missing]
 bg = ""
@@ -599,25 +602,25 @@ modifiers = []
 
 [theme256.file_type.executable]
 bg = ""
-fg = "#5f8700" # 64
+fg = "Green" # ex=01;32
 modifiers = ["bold"]
 
 [theme256.file_type.directory_sticky]
-bg = "#0087ff" # 33
-fg = "#ffffd7" # 230
+bg = "#005fd7" # 26 # st=37;44
+fg = "White"
 modifiers = []
 
 [theme256.file_type.directory_sticky_other_writable]
-bg = "#5f8700" # 64
-fg = "#ffffd7" # 230
+bg = "#008700" # 28 # tw=30;42
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.file_type.setgid]
-bg = "#af8700" # 136
-fg = "#ffffd7" # 230
+bg = "#afaf00" # 142 # sg=30;43
+fg = "#1c1c1c" # 234
 modifiers = []
 
 [theme256.file_type.setuid]
-bg = "#d70000" # 160
-fg = "#ffffd7" # 230
+bg = "#870000" # 88 # su=37;41
+fg = "White"
 modifiers = []

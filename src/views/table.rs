@@ -241,11 +241,9 @@ impl TableView {
         &mut self,
         new_directory: PathInfo,
         new_children: Vec<PathInfo>,
+        is_refresh: bool,
     ) -> CommandResult {
         let prev_directory = self.directory.clone();
-
-        // Check if we're refreshing the same directory or navigating to a different one
-        let is_refresh = prev_directory.as_ref() == Some(&new_directory);
 
         if !is_refresh {
             self.filter.clear();
