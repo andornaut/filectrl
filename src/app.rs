@@ -39,13 +39,13 @@ pub struct App {
     state: AppState,
     root: RootView,
     terminal: CleanupOnDropTerminal,
-    truecolor: bool,
+    is_truecolor: bool,
     rx: Receiver<Command>,
     tx: Sender<Command>,
 }
 
 impl App {
-    pub fn new(config: Config, terminal: CleanupOnDropTerminal, truecolor: bool) -> Self {
+    pub fn new(config: Config, terminal: CleanupOnDropTerminal, is_truecolor: bool) -> Self {
         let (tx, rx) = mpsc::channel();
         let file_system = FileSystem::new(&config, tx.clone());
         let root = RootView::new(&config);
@@ -57,7 +57,7 @@ impl App {
             state: AppState::new(),
             root,
             terminal,
-            truecolor,
+            is_truecolor,
             rx,
             tx,
         }
@@ -131,7 +131,7 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            let theme = if self.truecolor {
+            let theme = if self.is_truecolor {
                 &self.config.theme
             } else {
                 &self.config.theme256
