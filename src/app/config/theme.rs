@@ -170,6 +170,7 @@ impl FileSize {
 #[derive(Deserialize)]
 pub struct FileModifiedDate {
     less_than_minute: ThemeStyle,
+    less_than_hour: ThemeStyle,
     less_than_day: ThemeStyle,
     less_than_month: ThemeStyle,
     less_than_year: ThemeStyle,
@@ -179,6 +180,7 @@ pub struct FileModifiedDate {
 impl FileModifiedDate {
     style_getter!(greater_than_year);
     style_getter!(less_than_day);
+    style_getter!(less_than_hour);
     style_getter!(less_than_minute);
     style_getter!(less_than_month);
     style_getter!(less_than_year);
