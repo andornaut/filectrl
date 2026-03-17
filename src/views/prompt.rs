@@ -23,14 +23,6 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    fn height(&self, mode: &InputMode) -> u16 {
-        if self.should_show(mode) {
-            1
-        } else {
-            0
-        }
-    }
-
     fn label(&self) -> String {
         match self.kind {
             PromptKind::Filter => " Filter ".into(),

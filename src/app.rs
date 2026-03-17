@@ -139,7 +139,7 @@ impl App {
 }
 
 impl CommandHandler for App {
-    fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
+    fn command_handlers(&mut self) -> Vec<&mut dyn CommandHandler> {
         let mut children: Vec<&mut dyn CommandHandler> =
             vec![&mut self.file_system, &mut self.root];
         #[cfg(debug_assertions)]
@@ -174,8 +174,10 @@ impl CommandHandler for App {
                 self.state.filter.clear();
                 CommandResult::Handled
             }
-            Command::RefreshDirectory(_, _) => CommandResult::Handled,
-            Command::Resize(_, _) => CommandResult::Handled,
+            Command::ToggleHelp => {
+                self.state.is_help_visible = !self.state.is_help_visible;
+                CommandResult::Handled
+            }
             _ => CommandResult::NotHandled,
         }
     }
@@ -219,7 +221,7 @@ fn recursively_handle_command(
         derived_commands.push(*derived_command);
     }
 
-    let child_derived_commands = handler.children().into_iter().flat_map(|child| {
+    let child_derived_commands = handler.command_handlers().into_iter().flat_map(|child| {
         let (child_derived_commands, child_handled) =
             recursively_handle_command(child, command, mode);
         handled |= child_handled;
@@ -230,13 +232,20 @@ fn recursively_handle_command(
     (derived_commands, handled)
 }
 
+// Terminal events that may go unhandled without error:
+// - Key/Mouse: not all inputs are bound to actions
+// - Resize: wakes the render loop; ratatui redraws automatically
+fn is_ignorable_unhandled(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Key(_, _) | Command::Mouse(_) | Command::Resize(_, _)
+    )
+}
+
 fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
-    // Ignore unhandled Key or Mouse commands
     let unhandled_count = commands
         .iter()
-        .filter(|command| {
-            !matches!(command, Command::Key(_, _)) && !matches!(command, Command::Mouse(_))
-        })
+        .filter(|command| !is_ignorable_unhandled(command))
         .count();
     if unhandled_count > 0 {
         return Err(anyhow!(

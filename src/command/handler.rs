@@ -3,7 +3,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use super::{Command, mode::InputMode, result::CommandResult};
 
 pub trait CommandHandler {
-    fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
+    fn command_handlers(&mut self) -> Vec<&mut dyn CommandHandler> {
         vec![]
     }
 
