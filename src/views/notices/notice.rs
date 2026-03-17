@@ -3,14 +3,14 @@ use std::collections::HashSet;
 use ratatui::widgets::Block;
 
 use super::widgets::{clipboard_widget, filter_widget, progress_widget};
-use crate::{app::config::theme::Theme, clipboard::ClipboardCommand, command::task::Task};
+use crate::{app::config::theme::Theme, clipboard::ClipboardEntry, command::task::Task};
 
 /// Represents the different types of notices that can be displayed.
 /// The order of the enum variants defines the order in which notices are displayed.
 #[derive(Debug)]
 pub(super) enum Notice {
     Progress,
-    Clipboard(ClipboardCommand),
+    Clipboard(ClipboardEntry),
     Filter(String),
 }
 
@@ -22,8 +22,8 @@ impl Notice {
         tasks: &'a HashSet<Task>,
     ) -> Block<'a> {
         match self {
-            Notice::Clipboard(clipboard_command) => {
-                clipboard_widget(theme, width, clipboard_command)
+            Notice::Clipboard(clipboard_entry) => {
+                clipboard_widget(theme, width, clipboard_entry)
             }
             Notice::Filter(filter) => filter_widget(theme, width, filter),
             Notice::Progress => progress_widget(theme, width, tasks),

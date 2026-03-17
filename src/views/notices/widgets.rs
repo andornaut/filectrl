@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::config::theme::Theme,
-    clipboard::ClipboardCommand,
+    clipboard::ClipboardEntry,
     command::task::{Progress, Task},
     unicode::truncate_left,
 };
@@ -25,11 +25,11 @@ const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
 pub(super) fn clipboard_widget<'a>(
     theme: &Theme,
     width: u16,
-    clipboard_command: &'a ClipboardCommand,
+    clipboard_entry: &'a ClipboardEntry,
 ) -> Block<'a> {
-    let (prefix, path) = match clipboard_command {
-        ClipboardCommand::Move(path) => (MOVE_PREFIX, path),
-        ClipboardCommand::Copy(path) => (COPY_PREFIX, path),
+    let (prefix, path) = match clipboard_entry {
+        ClipboardEntry::Move(path) => (MOVE_PREFIX, path),
+        ClipboardEntry::Copy(path) => (COPY_PREFIX, path),
     };
 
     let available_width = width.saturating_sub(prefix.width() as u16);
