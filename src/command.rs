@@ -24,7 +24,6 @@ pub enum Command {
     AlertInfo(String),
     AlertWarn(String),
     ClearClipboard,
-    ClearedClipboard,
     CopiedToClipboard(PathInfo),
     CutToClipboard(PathInfo),
     ClosePrompt,
