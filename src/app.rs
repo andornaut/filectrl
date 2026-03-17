@@ -21,7 +21,6 @@ use self::{
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    clipboard::ClipboardCommand,
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::FileSystem,
     views::{View, root::RootView},
@@ -163,12 +162,8 @@ impl CommandHandler for App {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
-            Command::CopiedToClipboard(path) => {
-                self.state.clipboard_command = Some(ClipboardCommand::Copy(path.clone()));
-                CommandResult::Handled
-            }
-            Command::CutToClipboard(path) => {
-                self.state.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
+            Command::ClipboardChanged(clipboard_command) => {
+                self.state.clipboard_command = Some(clipboard_command.clone());
                 CommandResult::Handled
             }
             Command::ClearClipboard => {
