@@ -31,14 +31,11 @@ pub fn run(
     let config = config_path.try_into()?;
     apply_log_level(&config);
 
-    let has_truecolor = supports_truecolor() && !colors_256;
-    info!("Terminal truecolor support: {}", has_truecolor);
-    if !has_truecolor {
-        info!("Using 256-color theme fallback");
-    }
+    let is_truecolor = supports_truecolor() && !colors_256;
+    info!("Terminal truecolor support: {is_truecolor}");
 
     let terminal = CleanupOnDropTerminal::try_new()?;
-    App::new(config, terminal, has_truecolor).run_once(initial_directory)
+    App::new(config, terminal, is_truecolor).run_once(initial_directory)
 }
 
 fn apply_log_level(config: &Config) {
