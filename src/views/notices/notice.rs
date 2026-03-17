@@ -8,25 +8,25 @@ use crate::{app::config::theme::Theme, clipboard::ClipboardCommand, command::tas
 /// Represents the different types of notices that can be displayed.
 /// The order of the enum variants defines the order in which notices are displayed.
 #[derive(Debug)]
-pub(super) enum NoticeKind<'a> {
+pub(super) enum Notice {
     Progress,
-    Clipboard(&'a ClipboardCommand),
-    Filter(&'a str),
+    Clipboard(ClipboardCommand),
+    Filter(String),
 }
 
-impl<'a> NoticeKind<'a> {
-    pub(super) fn create_widget<'b>(
-        &'b self,
-        theme: &'b Theme,
+impl Notice {
+    pub(super) fn create_widget<'a>(
+        &'a self,
+        theme: &'a Theme,
         width: u16,
-        tasks: &'b HashSet<Task>,
-    ) -> Block<'b> {
+        tasks: &'a HashSet<Task>,
+    ) -> Block<'a> {
         match self {
-            NoticeKind::Clipboard(clipboard_command) => {
+            Notice::Clipboard(clipboard_command) => {
                 clipboard_widget(theme, width, clipboard_command)
             }
-            NoticeKind::Filter(filter) => filter_widget(theme, width, filter),
-            NoticeKind::Progress => progress_widget(theme, width, tasks),
+            Notice::Filter(filter) => filter_widget(theme, width, filter),
+            Notice::Progress => progress_widget(theme, width, tasks),
         }
     }
 }

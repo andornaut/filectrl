@@ -11,16 +11,16 @@ use super::{
     widgets::{row_widget_and_height, table_widget},
     TableView,
 };
-use crate::{app::config::theme::Theme, command::mode::InputMode, views::View};
+use crate::{app::{config::theme::Theme, state::AppState}, views::View};
 
 const MIN_HEIGHT: u16 = 3;
 
 impl View for TableView {
-    fn constraint(&self, _: Rect, _: &InputMode) -> Constraint {
+    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &InputMode, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
         if area.height < MIN_HEIGHT || area.width < 8 {
             return;
         }
@@ -28,7 +28,7 @@ impl View for TableView {
         let (block_area, scrollbar_area, table_area) = layout(area);
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
-        self.render_table_and_init_mapper(table_area, frame.buffer_mut(), theme);
+        self.render_table_and_init_mapper(table_area, frame.buffer_mut(), theme, state);
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
         self.render_scrollbar(scrollbar_area, frame.buffer_mut(), theme);
         self.render_1x1_block(block_area, frame.buffer_mut(), theme);
@@ -53,12 +53,11 @@ impl TableView {
             .render(area, buf, theme, selected_line, total_lines_count);
     }
 
-    fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, state: &AppState) {
         self.table_area = area;
 
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
-        let clipboard_command = self.clipboard.get_clipboard_command();
 
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
@@ -66,7 +65,7 @@ impl TableView {
             .map(|item| {
                 let (row, height) = row_widget_and_height(
                     theme,
-                    &clipboard_command,
+                    &state.clipboard_command,
                     self.columns.name_width(),
                     relative_to_datetime,
                     item,

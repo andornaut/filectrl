@@ -78,3 +78,85 @@ impl TimeDebouncer {
         self.has_delayed_event = true;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod bytes_debouncer {
+        use super::*;
+
+        #[test]
+        fn first_call_always_triggers() {
+            let mut d = BytesDebouncer::new(5, 1_000_000);
+            assert!(d.should_trigger(1));
+        }
+
+        #[test]
+        fn second_call_below_threshold_does_not_trigger() {
+            let mut d = BytesDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
+            d.should_trigger(1); // first call always triggers
+            assert!(!d.should_trigger(1_000)); // well below threshold
+        }
+
+        #[test]
+        fn call_at_threshold_triggers() {
+            let mut d = BytesDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
+            d.should_trigger(1); // first call
+            assert!(d.should_trigger(50_000));
+        }
+
+        #[test]
+        fn zero_byte_file_always_triggers() {
+            // threshold = 0, so every call should trigger
+            let mut d = BytesDebouncer::new(5, 0);
+            assert!(d.should_trigger(0));
+            assert!(d.should_trigger(0));
+        }
+    }
+
+    mod time_debouncer {
+        use super::*;
+
+        #[test]
+        fn first_call_always_triggers() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            assert!(d.should_trigger(Instant::now()));
+        }
+
+        #[test]
+        fn call_within_threshold_does_not_trigger() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            let now = Instant::now();
+            d.should_trigger(now);
+            assert!(!d.should_trigger(now + Duration::from_millis(50)));
+        }
+
+        #[test]
+        fn call_at_threshold_triggers() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            let now = Instant::now();
+            d.should_trigger(now);
+            assert!(d.should_trigger(now + Duration::from_millis(100)));
+        }
+
+        #[test]
+        fn delayed_event_roundtrip() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            assert!(!d.has_delayed_event());
+            d.set_delayed_event();
+            assert!(d.has_delayed_event());
+        }
+
+        #[test]
+        fn triggering_clears_delayed_event() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            let now = Instant::now();
+            d.should_trigger(now);
+            d.set_delayed_event();
+            assert!(d.has_delayed_event());
+            d.should_trigger(now + Duration::from_millis(100));
+            assert!(!d.has_delayed_event());
+        }
+    }
+}

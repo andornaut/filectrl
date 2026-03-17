@@ -6,14 +6,15 @@ use serde::Deserialize;
 
 use super::serialization::{deserialize_color, deserialize_modifier};
 
-/// A triplet of style properties: foreground color, background color, and modifiers
+/// A triplet of style properties: foreground color, background color, and modifiers.
+/// `fg` and `bg` are optional — `None` (from `""` in config) means inherit from the parent widget.
 #[derive(Deserialize)]
 pub struct ThemeStyle {
     #[serde(deserialize_with = "deserialize_color")]
-    fg: Color,
+    fg: Option<Color>,
 
     #[serde(deserialize_with = "deserialize_color")]
-    bg: Color,
+    bg: Option<Color>,
 
     #[serde(deserialize_with = "deserialize_modifier")]
     modifiers: Modifier,
@@ -21,10 +22,14 @@ pub struct ThemeStyle {
 
 impl From<&ThemeStyle> for Style {
     fn from(style: &ThemeStyle) -> Self {
-        Style::default()
-            .fg(style.fg)
-            .bg(style.bg)
-            .add_modifier(style.modifiers)
+        let mut s = Style::default().add_modifier(style.modifiers);
+        if let Some(fg) = style.fg {
+            s = s.fg(fg);
+        }
+        if let Some(bg) = style.bg {
+            s = s.bg(bg);
+        }
+        s
     }
 }
 
@@ -45,7 +50,7 @@ macro_rules! style_getter_and_setter {
 
         // Create the setter
         paste! {
-            pub(super) fn [<set_ $name>](&mut self, fg: Color, bg: Color, modifiers: Modifier) {
+            pub(super) fn [<set_ $name>](&mut self, fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) {
                 self.$name = ThemeStyle { fg, bg, modifiers};
             }
         }
@@ -104,8 +109,8 @@ impl FileType {
     pub(super) fn add_pattern_style(
         &mut self,
         key: &str,
-        fg: Color,
-        bg: Color,
+        fg: Option<Color>,
+        bg: Option<Color>,
         modifiers: Modifier,
     ) {
         let theme_style = ThemeStyle { fg, bg, modifiers };
@@ -181,6 +186,7 @@ impl FileModifiedDate {
 
 #[derive(Deserialize)]
 pub struct Theme {
+    background: ThemeStyle,
     alert: ThemeStyle,
     alert_error: ThemeStyle,
     alert_info: ThemeStyle,
@@ -218,6 +224,7 @@ pub struct Theme {
 }
 
 impl Theme {
+    style_getter!(background);
     style_getter!(alert);
     style_getter!(alert_error);
     style_getter!(alert_info);

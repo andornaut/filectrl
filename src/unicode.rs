@@ -70,6 +70,7 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
+
     #[test_case(vec!["example"], "example", 7; "same width")]
     #[test_case(vec!["examp…", "le"], "example", 6; "width minus 1")]
     #[test_case(vec!["exa…", "mpl…", "e"], "example", 4; "three lines")]
@@ -95,5 +96,21 @@ mod tests {
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn truncate_left_panics_on_width_equal_to_ellipsis() {
         truncate_left("example", 1);
+    }
+
+    // Wide character tests — CJK chars have display width 2 each
+
+    // truncate_left must measure display width, not byte length
+    #[test_case("中文",  "中文",  4; "fits unchanged when display width equals target")]
+    #[test_case("…文字", "中文字", 5; "two wide chars fit in remaining width")]
+    #[test_case("…字",   "中文字", 3; "wide char that would overflow is excluded")]
+    fn truncate_left_with_wide_chars(expected: &str, text: &str, width: usize) {
+        assert_eq!(expected, truncate_left(text, width));
+    }
+
+    #[test]
+    fn split_with_ellipsis_counts_cjk_display_width_not_byte_length() {
+        // "中文" has byte length 6 but display width 4; width 4 → fits in one part
+        assert_eq!(vec!["中文"], split_with_ellipsis("中文", 4));
     }
 }

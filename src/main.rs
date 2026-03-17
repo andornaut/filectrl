@@ -17,6 +17,10 @@ struct Args {
     #[argh(switch)]
     write_default_config: Option<bool>,
 
+    /// force 256-color theme (disables truecolor detection)
+    #[argh(switch)]
+    colors_256: bool,
+
     /// path to a directory to navigate to
     #[argh(positional)]
     directory: Option<String>,
@@ -31,5 +35,5 @@ fn main() -> Result<()> {
 
     let config = args.config.map(PathBuf::from);
     let directory = args.directory.map(PathBuf::from);
-    run(config, directory)
+    run(config, directory, args.colors_256)
 }
