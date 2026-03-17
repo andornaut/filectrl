@@ -19,7 +19,11 @@ use self::app::{
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
-pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> Result<()> {
+pub fn run(
+    config_path: Option<PathBuf>,
+    initial_directory: Option<PathBuf>,
+    colors_256: bool,
+) -> Result<()> {
     // Configure logging with a default level before loading config, so that Info+ messages from the
     // config initialization are logged
     configure_logging();
@@ -27,15 +31,14 @@ pub fn run(config_path: Option<PathBuf>, initial_directory: Option<PathBuf>) -> 
     let config = config_path.try_into()?;
     apply_log_level(&config);
 
-    // Log truecolor support information
-    let has_truecolor = supports_truecolor();
+    let has_truecolor = supports_truecolor() && !colors_256;
     info!("Terminal truecolor support: {}", has_truecolor);
     if !has_truecolor {
         info!("Using 256-color theme fallback");
     }
 
     let terminal = CleanupOnDropTerminal::try_new()?;
-    App::new(config, terminal).run_once(initial_directory)
+    App::new(config, terminal, has_truecolor).run_once(initial_directory)
 }
 
 fn apply_log_level(config: &Config) {
@@ -45,8 +48,8 @@ fn apply_log_level(config: &Config) {
     } else {
         // No env override; apply the level from the config file
         let level = config.log_level;
-        log::set_max_level(level);
         info!("Log level set from config: {level:?}");
+        log::set_max_level(level);
     }
 }
 

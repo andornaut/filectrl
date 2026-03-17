@@ -1,5 +1,8 @@
 pub mod config;
+#[cfg(debug_assertions)]
+mod debug;
 mod events;
+pub mod state;
 pub mod terminal;
 
 use std::{
@@ -10,18 +13,17 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use log::debug;
-use ratatui::{
-    Frame,
-    crossterm::event::{KeyCode, KeyModifiers},
-};
+use ratatui::Frame;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use self::{
     config::Config,
     events::{receive_commands, spawn_command_sender},
+    state::AppState,
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
+    clipboard::ClipboardCommand,
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::FileSystem,
     views::{View, root::RootView},
@@ -31,25 +33,31 @@ const BROADCASTS_COUNT: u8 = 5;
 
 pub struct App {
     config: Config,
+    #[cfg(debug_assertions)]
+    debug: debug::DebugHandler,
     file_system: FileSystem,
-    mode: InputMode,
+    state: AppState,
     root: RootView,
     terminal: CleanupOnDropTerminal,
+    truecolor: bool,
     rx: Receiver<Command>,
     tx: Sender<Command>,
 }
 
 impl App {
-    pub fn new(config: Config, terminal: CleanupOnDropTerminal) -> Self {
+    pub fn new(config: Config, terminal: CleanupOnDropTerminal, truecolor: bool) -> Self {
         let (tx, rx) = mpsc::channel();
         let file_system = FileSystem::new(&config, tx.clone());
         let root = RootView::new(&config);
         Self {
             config,
+            #[cfg(debug_assertions)]
+            debug: debug::DebugHandler::default(),
             file_system,
-            mode: InputMode::default(),
+            state: AppState::new(),
             root,
             terminal,
+            truecolor,
             rx,
             tx,
         }
@@ -95,7 +103,7 @@ impl App {
     }
 
     fn broadcast_command(&mut self, command: Command) -> Vec<Command> {
-        let mode = self.mode.clone();
+        let mode = self.state.mode.clone();
         let mut commands: Vec<Command> = vec![command];
         for _ in 0..BROADCASTS_COUNT {
             commands = commands
@@ -123,20 +131,14 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            let theme = if terminal::supports_truecolor() {
+            let theme = if self.truecolor {
                 &self.config.theme
             } else {
                 &self.config.theme256
             };
-            self.root.render(area, frame, &self.mode, theme);
+            self.root.render(area, frame, &self.state, theme);
         })?;
         Ok(())
-    }
-
-    fn set_mode(&mut self, mode: InputMode) -> CommandResult {
-        debug!("Setting mode to: {:?}", mode);
-        self.mode = mode;
-        CommandResult::Handled
     }
 }
 
@@ -144,16 +146,40 @@ impl CommandHandler for App {
     fn children(&mut self) -> Vec<&mut dyn CommandHandler> {
         let file_system: &mut dyn CommandHandler = &mut self.file_system;
         let root: &mut dyn CommandHandler = &mut self.root;
-        vec![file_system, root]
+        #[cfg(not(debug_assertions))]
+        return vec![file_system, root];
+        #[cfg(debug_assertions)]
+        return vec![file_system, root, &mut self.debug];
     }
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClosePrompt => self.set_mode(InputMode::Normal),
-            Command::OpenPrompt(_) => self.set_mode(InputMode::Prompt),
-            Command::RenamePath(_, _) => self.set_mode(InputMode::Normal),
-            Command::Resize(_, _) => CommandResult::Handled, // TODO can probably remove Command::Resize
-            Command::SetFilter(_) => self.set_mode(InputMode::Normal),
+            Command::ClosePrompt | Command::RenamePath(_, _) => {
+                self.state.mode = InputMode::Normal;
+                CommandResult::Handled
+            }
+            Command::OpenPrompt(_) => {
+                self.state.mode = InputMode::Prompt;
+                CommandResult::Handled
+            }
+            Command::SetFilter(filter) => {
+                self.state.filter = filter.clone();
+                self.state.mode = InputMode::Normal;
+                CommandResult::Handled
+            }
+            Command::CopiedToClipboard(path) => {
+                self.state.clipboard_command = Some(ClipboardCommand::Copy(path.clone()));
+                CommandResult::Handled
+            }
+            Command::CutToClipboard(path) => {
+                self.state.clipboard_command = Some(ClipboardCommand::Move(path.clone()));
+                CommandResult::Handled
+            }
+            Command::ClearedClipboard => {
+                self.state.clipboard_command = None;
+                CommandResult::Handled
+            }
+            Command::Resize(_, _) => CommandResult::Handled,
             _ => CommandResult::NotHandled,
         }
     }

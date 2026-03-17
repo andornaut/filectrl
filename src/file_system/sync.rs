@@ -33,7 +33,7 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
 }
 
 pub(super) fn open_in(path: &PathInfo, template: &String) -> Result<()> {
-    info!("Opening the program defined in template:\"{template}\", %s:\"{path:?}\"");
+    info!("Opening \"{path:?}\" using template: \"{template}\"");
     let mut it = template.split_whitespace();
 
     let Some(program) = it.next() else {
