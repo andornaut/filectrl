@@ -1,0 +1,314 @@
+# 256 color theme for terminals that don't support true color
+# All colors use decimal 256-color indexes (emitted as 38;5;n / 48;5;n)
+# to ensure compatibility with terminals like Terminal.app that don't support truecolor.
+bg = "234" # #1c1c1c - near black
+fg = "252" # #d0d0d0 - light gray
+modifiers = []
+
+[alert]
+bg = ""
+fg = "244" # #808080 - gray
+modifiers = []
+
+[alert.error]
+bg = ""
+fg = "160" # #d70000 - red
+modifiers = ["bold"]
+
+[alert.info]
+bg = ""
+fg = "114" # #87d787 - green
+modifiers = ["bold"]
+
+[alert.warn]
+bg = ""
+fg = "173" # #d7875f - orange
+modifiers = ["bold"]
+
+[breadcrumbs]
+bg = "234" # #1c1c1c
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[breadcrumbs.ancestor]
+bg = "234" # #1c1c1c
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[breadcrumbs.basename]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = ["bold"]
+
+[breadcrumbs.separator]
+bg = "234" # #1c1c1c
+fg = "240" # #585858 - dim gray
+modifiers = []
+
+[file_modified_date.greater_than_year]
+bg = ""
+fg = "160" # #d70000 - red
+modifiers = []
+
+[file_modified_date.less_than_day]
+bg = ""
+fg = "120" # #87ff87 - green
+modifiers = []
+
+[file_modified_date.less_than_hour]
+bg = ""
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[file_modified_date.less_than_minute]
+bg = ""
+fg = "117" # #87d7ff - sky blue
+modifiers = []
+
+[file_modified_date.less_than_month]
+bg = ""
+fg = "184" # #d7d700 - yellow
+modifiers = []
+
+[file_modified_date.less_than_year]
+bg = ""
+fg = "164" # #d700d7 - magenta
+modifiers = []
+
+[file_size.bytes]
+bg = ""
+fg = "244" # #808080 - gray
+modifiers = []
+
+[file_size.gib]
+bg = ""
+fg = "178" # #d7af00 - amber
+modifiers = []
+
+[file_size.kib]
+bg = ""
+fg = "36" # #00af87 - teal
+modifiers = []
+
+[file_size.mib]
+bg = ""
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[file_size.pib]
+bg = ""
+fg = "160" # #d70000 - red
+modifiers = []
+
+[file_size.tib]
+bg = ""
+fg = "166" # #d75f00 - orange
+modifiers = []
+
+[file_type]
+# Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
+ls_colors_take_precedence = true
+
+# Classic dircolors defaults: fi=00, di=01;34, ln=01;36, ex=01;32, etc.
+[file_type.block_device]
+bg = "16" # #000000 - black (bd=40;33;01)
+fg = "136" # #af8700 - yellow
+modifiers = ["bold"]
+
+[file_type.character_device]
+bg = "16" # #000000 - black (cd=40;33;01)
+fg = "136" # #af8700 - yellow
+modifiers = ["bold"]
+
+[file_type.directory]
+bg = ""
+fg = "33" # #0087ff - blue (di=01;34)
+modifiers = ["bold"]
+
+[file_type.directory_other_writable]
+bg = "28" # #008700 - green (ow=34;42)
+fg = "33" # #0087ff - blue
+modifiers = []
+
+[file_type.directory_sticky]
+bg = "26" # #005fd7 - blue (st=37;44)
+fg = "231" # #ffffff - white
+modifiers = []
+
+[file_type.directory_sticky_other_writable]
+bg = "28" # #008700 - green (tw=30;42)
+fg = "234" # #1c1c1c
+modifiers = []
+
+[file_type.door]
+bg = ""
+fg = "127" # #af00af - magenta (do=01;35)
+modifiers = ["bold"]
+
+[file_type.executable]
+bg = ""
+fg = "64" # #5f8700 - green (ex=01;32)
+modifiers = ["bold"]
+
+[file_type.missing]
+bg = ""
+fg = ""
+modifiers = []
+
+[file_type.normal_file]
+bg = ""
+fg = ""
+modifiers = []
+
+[file_type.pipe]
+bg = "16" # #000000 - black (pi=40;33)
+fg = "136" # #af8700 - yellow
+modifiers = []
+
+[file_type.regular_file]
+bg = ""
+fg = ""
+modifiers = []
+
+[file_type.setgid]
+bg = "142" # #afaf00 - yellow (sg=30;43)
+fg = "234" # #1c1c1c
+modifiers = []
+
+[file_type.setuid]
+bg = "88" # #870000 - red (su=37;41)
+fg = "231" # #ffffff - white
+modifiers = []
+
+[file_type.socket]
+bg = ""
+fg = "127" # #af00af - magenta (so=01;35)
+modifiers = ["bold"]
+
+[file_type.symlink]
+bg = ""
+fg = "37" # #00afaf - cyan (ln=01;36)
+modifiers = ["bold"]
+
+[file_type.symlink_broken]
+bg = "16" # #000000 - black (or=40;31;01)
+fg = "160" # #d70000 - red
+modifiers = ["bold"]
+
+[help]
+bg = "234" # #1c1c1c
+fg = "240" # #585858 - dim gray
+modifiers = []
+
+[help.header]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = ["bold"]
+
+[help.actions]
+bg = ""
+fg = "252" # #d0d0d0 - light gray
+modifiers = ["bold"]
+
+[help.shortcuts]
+bg = ""
+fg = "252" # #d0d0d0 - light gray
+modifiers = []
+
+[clipboard.copy]
+bg = "100" # #878700 - olive green
+fg = "234" # #1c1c1c
+modifiers = []
+
+[clipboard.cut]
+bg = "166" # #d75f00 - orange red
+fg = "234" # #1c1c1c
+modifiers = []
+
+[notice.filter]
+bg = "28" # #008700 - green
+fg = "234" # #1c1c1c
+modifiers = []
+
+[notice.progress]
+bg = "26" # #005fd7 - blue
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[prompt.cursor]
+bg = "30" # #008787 - teal
+fg = "234" # #1c1c1c
+modifiers = []
+
+[prompt.input]
+bg = "234" # #1c1c1c
+fg = "252" # #d0d0d0
+modifiers = []
+
+[prompt.label]
+bg = "30" # #008787 - teal
+fg = "234" # #1c1c1c
+modifiers = []
+
+[prompt.selected]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = []
+
+[scrollbar]
+show_ends = true
+
+[scrollbar.ends]
+bg = "18" # #000087
+fg = "234" # #1c1c1c
+modifiers = []
+
+[scrollbar.thumb]
+bg = "234" # #1c1c1c
+fg = "26" # #005fd7 - blue
+modifiers = []
+
+[scrollbar.track]
+bg = "235" # #262626
+fg = "18" # #000087
+modifiers = []
+
+[status.directory]
+bg = "30" # #008787 - teal
+fg = "234" # #1c1c1c
+modifiers = []
+
+[status.directory_label]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = []
+
+[status.selected]
+bg = "30" # #008787 - teal
+fg = "234" # #1c1c1c
+modifiers = []
+
+[status.selected_label]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = []
+
+[table.body]
+bg = "234" # #1c1c1c
+fg = "252" # #d0d0d0
+modifiers = []
+
+[table.header]
+bg = "18" # #000087 - dark blue
+fg = "252" # #d0d0d0
+modifiers = []
+
+[table.header_sorted]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = ["bold"]
+
+[table.selected]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = []

@@ -22,6 +22,11 @@ open_current_directory = "open %s"
 open_new_window = "osascript -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl %s\"'"
 open_selected_file = "open %s"
 
+# Load theme from an external file (replaces inline [theme] below)
+# Relative paths are resolved from the directory containing this config file
+# theme_file = "my-theme.toml"
+# theme256_file = "my-theme-256.toml"
+
 [theme]
 bg = "#423F2E"
 fg = "#DDDCCC"
@@ -226,7 +231,7 @@ bg = "#9C9977"
 fg = "#1D1F21"
 modifiers = []
 
-[theme.help.label]
+[theme.help.actions]
 bg = ""
 fg = "#DDDCCC"
 modifiers = ["bold"]
@@ -277,7 +282,7 @@ fg = "#DDDCCC"
 modifiers = []
 
 [theme.scrollbar]
-show_begin_end_symbols = false
+show_ends = false
 
 [theme.scrollbar.ends]
 bg = "#777755"
@@ -542,7 +547,7 @@ bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = ["bold"]
 
-[theme256.help.label]
+[theme256.help.actions]
 bg = ""
 fg = "252" # #d0d0d0 - light gray
 modifiers = ["bold"]
@@ -593,7 +598,7 @@ fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.scrollbar]
-show_begin_end_symbols = true
+show_ends = true
 
 [theme256.scrollbar.ends]
 bg = "18" # #000087
