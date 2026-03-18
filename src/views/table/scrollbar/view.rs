@@ -1,6 +1,6 @@
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 
-use super::{widget::scrollbar, ScrollbarView};
+use super::ScrollbarView;
 use crate::app::config::theme::Theme;
 
 impl ScrollbarView {
@@ -27,7 +27,7 @@ impl ScrollbarView {
             .viewport_content_length(visible_lines_count)
             .position(first_visible_line);
 
-        let scrollbar_widget = scrollbar(&theme.scrollbar);
+        let scrollbar_widget = crate::views::scrollbar_widget(&theme.scrollbar);
         StatefulWidget::render(scrollbar_widget, self.area, buf, &mut self.state);
     }
 }

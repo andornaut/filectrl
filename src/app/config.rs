@@ -4,10 +4,10 @@ pub mod theme;
 
 use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
 
-use anyhow::{anyhow, Result};
-use directories::ProjectDirs;
-use log::{debug, info, LevelFilter};
 use ::serde::Deserialize;
+use anyhow::{Result, anyhow};
+use directories::ProjectDirs;
+use log::{LevelFilter, debug, info};
 
 use self::theme::Theme;
 
@@ -58,7 +58,6 @@ pub struct Config {
     pub ui: UiConfig,
 }
 
-
 impl TryFrom<Option<PathBuf>> for Config {
     type Error = anyhow::Error;
 
@@ -78,7 +77,6 @@ impl TryFrom<Option<PathBuf>> for Config {
             )),
         }
     }
-
 }
 
 impl Config {
