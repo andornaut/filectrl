@@ -18,7 +18,7 @@ argh = "0.1.17"
 chrono = {version = "0.4.44", default-features = false, features = ["clock"]}
 cli-clipboard = "0.4.0"
 env_logger = {version = "0.11.9", default-features = false}
-etcetera = "0.11.0"
+directories = "6.0.0"
 log = {version = "0.4.29", default-features = false, features = ["serde"]}
 nix = {version = "0.31.2", default-features = false, features = ["user"]}
 notify = "8.2.0"
