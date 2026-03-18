@@ -232,7 +232,7 @@ impl View for HelpView {
                 DEFAULT_MAX_LABEL_WIDTH,
             ),
             InputMode::Prompt => (
-                "Help (Prompt)",
+                "Help: Prompt",
                 &PROMPT_KEYBOARD_SHORTCUTS[..],
                 PROMPT_MAX_LABEL_WIDTH,
             ),
