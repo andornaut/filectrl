@@ -1,6 +1,5 @@
 mod handler;
 mod view;
-mod widget;
 
 use ratatui::{layout::Rect, widgets::ScrollbarState};
 

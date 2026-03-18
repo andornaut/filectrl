@@ -11,18 +11,12 @@ impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::OpenPrompt(kind, initial_text) => self.open(kind, initial_text),
-            Command::RefreshDirectory(directory, _) => {
-                self.directory = Some(directory.clone());
-                CommandResult::Handled
-            }
-            Command::SetSelected(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         let event = Event::Key(KeyEvent::new(*code, *modifiers));
-
         match (*code, *modifiers) {
             (KeyCode::Esc, _) => Command::ClosePrompt.into(),
             (KeyCode::Enter, _) => self.submit(),
@@ -37,6 +31,18 @@ impl CommandHandler for PromptView {
             }
             (KeyCode::Right, m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
                 self.select_by_word(word_navigation::next_word_boundary)
+            }
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                self.text_area_state.move_to_line_start(false);
+                CommandResult::Handled
+            }
+            (KeyCode::Char('a'), m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
+                self.text_area_state.select_all();
+                CommandResult::Handled
+            }
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
+                self.text_area_state.move_to_line_end(false);
+                CommandResult::Handled
             }
             (KeyCode::Right, _) => self.workaround_navigate_right_when_at_edge(&event),
             (_, _) => {

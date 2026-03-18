@@ -5,6 +5,12 @@ const MODE_LEN: u16 = 10;
 const MODIFIED_LEN: u16 = 12;
 const SIZE_LEN: u16 = 7;
 
+// Width thresholds (strict greater-than) at which each extra column becomes visible.
+// Each threshold accounts for the name column min, preceding columns, and their separators.
+const MODIFIED_THRESHOLD: u16 = NAME_MIN_LEN; // 39
+const SIZE_THRESHOLD: u16 = MODIFIED_THRESHOLD + MODIFIED_LEN + 1 + SIZE_LEN + 1; // 60
+const MODE_THRESHOLD: u16 = SIZE_THRESHOLD + MODE_LEN + 1; // 71
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) enum SortDirection {
     #[default]
@@ -56,7 +62,7 @@ impl Columns {
             Some(SortColumn::Name)
         } else if x <= self.name_width + MODIFIED_LEN {
             Some(SortColumn::Modified)
-        } else if x <= self.name_width + MODIFIED_LEN + SIZE_LEN {
+        } else if x <= self.name_width + MODIFIED_LEN + 1 + SIZE_LEN {
             Some(SortColumn::Size)
         } else {
             None
@@ -77,35 +83,26 @@ impl Columns {
 }
 
 fn calculate_constraints(width: u16) -> (Vec<Constraint>, u16) {
-    let mut constraints = Vec::with_capacity(4); // Pre-allocate for potential max columns
-    let mut name_column_width = width;
-
-    // Add columns in order of priority based on available width
-    let mut min_width = NAME_MIN_LEN;
-
-    // Add Modified column if there's enough space
-    if width > min_width {
+    let name_width = calculate_name_width(width);
+    let mut constraints = vec![Constraint::Length(name_width)];
+    if width > MODIFIED_THRESHOLD {
         constraints.push(Constraint::Length(MODIFIED_LEN));
-        name_column_width = width - MODIFIED_LEN - 1; // 1 for the cell padding
-        min_width += MODIFIED_LEN + 1;
-
-        // Add Size column if there's enough space
-        if width > min_width + SIZE_LEN + 1 {
-            constraints.push(Constraint::Length(SIZE_LEN));
-            name_column_width -= SIZE_LEN + 1;
-            min_width += SIZE_LEN + 1;
-
-            // Add Mode column if there's enough space
-            if width > min_width + MODE_LEN + 1 {
-                constraints.push(Constraint::Length(MODE_LEN));
-                name_column_width -= MODE_LEN + 1;
-            }
-        }
     }
+    if width > SIZE_THRESHOLD {
+        constraints.push(Constraint::Length(SIZE_LEN));
+    }
+    if width > MODE_THRESHOLD {
+        constraints.push(Constraint::Length(MODE_LEN));
+    }
+    (constraints, name_width)
+}
 
-    // Name column is always first
-    constraints.insert(0, Constraint::Length(name_column_width));
-    (constraints, name_column_width)
+fn calculate_name_width(width: u16) -> u16 {
+    let mut reserved = 0;
+    if width > MODIFIED_THRESHOLD { reserved += MODIFIED_LEN + 1; }
+    if width > SIZE_THRESHOLD     { reserved += SIZE_LEN + 1; }
+    if width > MODE_THRESHOLD     { reserved += MODE_LEN + 1; }
+    width.saturating_sub(reserved)
 }
 
 #[cfg(test)]
@@ -198,15 +195,15 @@ mod tests {
     #[test]
     fn click_past_modified_into_size_column() {
         let mut cols = Columns::default();
-        cols.constraints(72); // size ends at 40 + 12 + 7 = 59
+        cols.constraints(72); // size ends at 40 + 12 + 1 + 7 = 60
         assert_eq!(Some(SortColumn::Size), cols.sort_column_for_click(53));
-        assert_eq!(Some(SortColumn::Size), cols.sort_column_for_click(59));
+        assert_eq!(Some(SortColumn::Size), cols.sort_column_for_click(60));
     }
 
     #[test]
     fn click_on_mode_column_returns_none_because_it_is_not_sortable() {
         let mut cols = Columns::default();
-        cols.constraints(72); // mode starts at x = 60
-        assert_eq!(None, cols.sort_column_for_click(60));
+        cols.constraints(72); // mode starts at x = 62
+        assert_eq!(None, cols.sort_column_for_click(62));
     }
 }

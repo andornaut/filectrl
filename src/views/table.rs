@@ -32,7 +32,6 @@ pub(super) struct TableView {
     table_area: Rect,
     table_state: TableState,
 
-    clipboard_entry: Option<ClipboardEntry>,
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
@@ -63,11 +62,7 @@ impl TableView {
 
     fn paste_from_clipboard(&self) -> CommandResult {
         let destination = self.directory.as_ref().expect("Directory is always set");
-        match &self.clipboard_entry {
-            Some(ClipboardEntry::Copy(path)) => Command::Copy { src: path.clone(), dest: destination.clone() }.into(),
-            Some(ClipboardEntry::Move(path)) => Command::Move { src: path.clone(), dest: destination.clone() }.into(),
-            None => CommandResult::Handled,
-        }
+        Command::Paste(destination.clone()).into()
     }
 
     fn click_header(&mut self, x: u16) -> CommandResult {
@@ -200,7 +195,7 @@ impl TableView {
         self.table_state.select(Some(item));
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
-            None => CommandResult::Handled,
+            None => Command::SetSelected(None).into(),
         }
     }
 

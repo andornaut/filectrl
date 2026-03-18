@@ -1,4 +1,4 @@
-use crate::command::mode::InputMode;
+use crate::{command::mode::InputMode, file_system::path_info::PathInfo};
 use super::clipboard::{Clipboard, ClipboardEntry};
 
 #[derive(Default)]
@@ -7,6 +7,7 @@ pub struct AppState {
     pub filter: String,
     pub is_help_visible: bool,
     pub mode: InputMode,
+    pub selected: Option<PathInfo>,
 }
 
 
