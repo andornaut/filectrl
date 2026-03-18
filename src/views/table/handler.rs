@@ -10,6 +10,10 @@ impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Copy { .. } | Command::Move { .. } => Command::ClearClipboard.into(),
+            Command::ToggleHelp => {
+                self.is_visible = !self.is_visible;
+                CommandResult::NotHandled
+            }
             Command::NavigateDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.to_vec(), false)
             }
@@ -93,7 +97,8 @@ impl CommandHandler for TableView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+        let is_scroll = matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+        (is_scroll && self.is_visible)
             || self.table_area.contains(Position { x: event.column, y: event.row })
             || self.scrollbar_view.is_clicked(event.column, event.row)
     }
