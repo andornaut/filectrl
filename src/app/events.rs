@@ -10,7 +10,14 @@ use crate::command::Command;
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives
     let Ok(first) = rx.recv() else {
-        return Vec::new();
+        // The channel is disconnected — all senders have been dropped. This should
+        // not happen in normal operation because App holds tx for its entire lifetime.
+        // Returning an empty Vec here would cause App::run to loop forever: it would
+        // call receive_commands again immediately (since recv() returns Err instantly
+        // on a disconnected channel), burning 100% CPU re-rendering with no commands.
+        // Returning Quit exits the loop cleanly instead.
+        log::error!("Command channel disconnected unexpectedly");
+        return vec![Command::Quit];
     };
     let mut commands = vec![first];
     // Drain any additional commands already queued
