@@ -16,7 +16,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use self::{
-    clipboard::Clipboard,
+    clipboard::{Clipboard, ClipboardEntry},
     config::Config,
     events::{receive_commands, spawn_command_sender},
     state::AppState,
@@ -160,6 +160,16 @@ impl CommandHandler for App {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
+            // Intent resolution: PromptView emits RenameSelected; App enriches it with the
+            // selected path from AppState, so PromptView doesn't need to cache that state.
+            Command::RenameSelected(value) => match &self.state.selected {
+                Some(path) => Command::RenamePath(path.clone(), value.clone()).into(),
+                None => CommandResult::Handled,
+            },
+            Command::SetSelected(selected) => {
+                self.state.selected = selected.clone();
+                CommandResult::Handled
+            }
             Command::OpenPrompt(_, _) => {
                 self.state.mode = InputMode::Prompt;
                 CommandResult::Handled
@@ -169,6 +179,13 @@ impl CommandHandler for App {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
+            // Intent resolution: TableView emits Paste(dest); App enriches it with the
+            // clipboard entry from AppState, so TableView doesn't need to cache that state.
+            Command::Paste(dest) => match &self.state.clipboard_entry {
+                Some(ClipboardEntry::Copy(src)) => Command::Copy { src: src.clone(), dest: dest.clone() }.into(),
+                Some(ClipboardEntry::Move(src)) => Command::Move { src: src.clone(), dest: dest.clone() }.into(),
+                None => CommandResult::Handled,
+            },
             Command::SetClipboard(entry) => {
                 // set_clipboard_entry is a silent no-op when the system clipboard is unavailable,
                 // so in-session copy/cut/paste still works even without a system clipboard.
@@ -237,8 +254,20 @@ fn recursively_handle_command(
         derived.push(*derived_command);
     }
 
+    // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
+    // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
+    // Non-key commands (NavigateDirectory, ToggleHelp, …) are always broadcast to all handlers.
+    let is_key = matches!(command, Command::Key(_, _));
+    let mut key_consumed = is_key && handled;
     handler.visit_command_handlers(&mut |child| {
-        handled |= recursively_handle_command(derived, command, mode, child);
+        if key_consumed {
+            return;
+        }
+        let child_handled = recursively_handle_command(derived, command, mode, child);
+        handled |= child_handled;
+        if is_key && child_handled {
+            key_consumed = true;
+        }
     });
 
     handled

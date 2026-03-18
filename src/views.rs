@@ -9,17 +9,18 @@ mod table;
 mod unicode;
 
 use ratatui::{
+    Frame,
     buffer::Buffer,
     layout::{Alignment, Constraint, Margin, Rect},
     style::Style,
+    symbols::{block, line},
     text::Line,
-    widgets::{Block, Borders, Widget},
-    Frame,
+    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{config::theme::Theme, state::AppState},
+    app::{config::theme::{ScrollbarConfig, Theme}, state::AppState},
     command::handler::CommandHandler,
 };
 
@@ -48,4 +49,23 @@ fn bordered(
         horizontal: 1,
         vertical: 1,
     })
+}
+
+fn scrollbar_widget(theme: &ScrollbarConfig) -> Scrollbar<'_> {
+    let mut scrollbar = Scrollbar::default()
+        .orientation(ScrollbarOrientation::VerticalRight)
+        .thumb_style(theme.thumb())
+        .thumb_symbol(block::FULL)
+        .track_style(theme.track())
+        .track_symbol(Some(line::VERTICAL));
+    if theme.show_begin_end_symbols() {
+        scrollbar = scrollbar
+            .begin_symbol(Some("▲"))
+            .begin_style(theme.ends())
+            .end_symbol(Some("▼"))
+            .end_style(theme.ends());
+    } else {
+        scrollbar = scrollbar.begin_symbol(None).end_symbol(None);
+    }
+    scrollbar
 }

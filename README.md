@@ -73,6 +73,7 @@ Keys | Description
 <kbd>Ctrl</kbd>+<kbd>b</kbd> / <kbd>Ctrl</kbd>+<kbd>u</kbd> / <kbd>PgUp</kbd> | Scroll up one page
 <kbd>Delete</kbd> | Delete the selected file or directory
 <kbd> / </kbd> | Filter by name
+<kbd>Esc</kbd> | Clear active filter
 <kbd>Ctrl</kbd>+<kbd>r</kbd> / <kbd>F5</kbd> | Refresh the current directory
 <kbd>r</kbd> / <kbd>F2</kbd> | Rename the selected file or directory
 <kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
@@ -90,13 +91,21 @@ Keys | Description
 <kbd>Enter</kbd> | Submit your input and exit filtering/renaming mode
 <kbd>←</kbd> / <kbd>→</kbd> | Move cursor
 <kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>→</kbd> | Move cursor by word (delimited by whitespaces or punctuation)
-<kbd>Home</kbd> / <kbd>End</kbd> | Move cursor to beginning/end of line
+<kbd>Ctrl</kbd>+<kbd>a</kbd> / <kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move cursor to beginning/end of line
 <kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Shift</kbd>+<kbd>→</kbd> | Select text
 <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | Select to beginning/end of line
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd> | Select by word (delimited by whitespaces or punctuation)
-<kbd>Ctrl</kbd>+<kbd>a</kbd> | Select all
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>a</kbd> | Select all
 <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste text
 <kbd>Backspace</kbd> / <kbd>Delete</kbd> | Delete character before/after cursor
+
+> [!NOTE]
+> <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
+>
+> ```conf
+> set -g extended-keys on
+> set -ga terminal-features ",*:extkeys"
+> ```
 
 ## Configuration
 

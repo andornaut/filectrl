@@ -295,18 +295,31 @@ impl Status {
 }
 
 #[derive(Deserialize)]
+pub struct ScrollbarConfig {
+    ends: StyleConfig,
+    thumb: StyleConfig,
+    track: StyleConfig,
+    show_begin_end_symbols: bool,
+}
+
+impl ScrollbarConfig {
+    style_getter!(ends);
+    style_getter!(thumb);
+    style_getter!(track);
+
+    pub fn show_begin_end_symbols(&self) -> bool {
+        self.show_begin_end_symbols
+    }
+}
+
+#[derive(Deserialize)]
 pub struct Table {
     body: StyleConfig,
     copy: StyleConfig,
     cut: StyleConfig,
     header: StyleConfig,
     header_sorted: StyleConfig,
-    scrollbar_begin: StyleConfig,
-    scrollbar_end: StyleConfig,
-    scrollbar_thumb: StyleConfig,
-    scrollbar_track: StyleConfig,
     selected: StyleConfig,
-    scrollbar_show_begin_end_symbols: bool,
 }
 
 impl Table {
@@ -315,15 +328,7 @@ impl Table {
     style_getter!(cut);
     style_getter!(header);
     style_getter!(header_sorted);
-    style_getter!(scrollbar_begin);
-    style_getter!(scrollbar_end);
-    style_getter!(scrollbar_thumb);
-    style_getter!(scrollbar_track);
     style_getter!(selected);
-
-    pub fn scrollbar_show_begin_end_symbols(&self) -> bool {
-        self.scrollbar_show_begin_end_symbols
-    }
 }
 
 #[derive(Deserialize)]
@@ -356,6 +361,7 @@ pub struct Theme {
     pub help: Help,
     pub notice: Notice,
     pub prompt: Prompt,
+    pub scrollbar: ScrollbarConfig,
     pub status: Status,
     pub table: Table,
 }

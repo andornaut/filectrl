@@ -1,8 +1,8 @@
 use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
-    layout::{Constraint, Position, Rect},
+    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, ScrollbarState, StatefulWidget, Widget},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -15,12 +15,13 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 4;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 19] = [
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 22] = [
     ("Quit: ", "q"),
     ("Navigate: ", "←/h, ↓/j, ↑/k, →/l"),
     ("Go to home dir: ", "~"),
     ("Go to parent dir: ", "←/b/Backspace"),
     ("Open: ", "→/f/l/Enter/Space"),
+    ("Open with custom app: ", "o"),
     ("Select first row: ", "Home/g/^"),
     ("Select last row: ", "End/G/$"),
     ("Select middle of visible rows: ", "z"),
@@ -28,6 +29,7 @@ const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 19] = [
     ("Page up: ", "Ctrl+b/Ctrl+u/PgUp"),
     ("Delete: ", "Delete"),
     ("Filter: ", "/"),
+    ("Clear filter: ", "Esc"),
     ("Refresh: ", "Ctrl+r/F5"),
     ("Rename: ", "r/F2"),
     ("New window: ", "w"),
@@ -35,6 +37,7 @@ const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 19] = [
     ("Clear alerts, clipboard, progress: ", "a, c, p"),
     ("Copy/Cut/Paste selected: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
     ("Sort by name, modified, size: ", "n, m, s"),
+    ("Toggle help: ", "?"),
 ];
 
 const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
@@ -42,11 +45,11 @@ const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
     ("Cancel: ", "Esc"),
     ("Move cursor: ", "←/→"),
     ("Move cursor by word: ", "Ctrl+←/→"),
-    ("Move cursor to beginning/end of line: ", "Home/End"),
+    ("Move cursor to beginning/end of line: ", "Ctrl+a/Ctrl+e, Home/End"),
     ("Select text: ", "Shift+←/→"),
     ("Select to beginning/end of line: ", "Shift+Home/End"),
     ("Select by word: ", "Ctrl+Shift+←/→"),
-    ("Select all: ", "Ctrl+a"),
+    ("Select all: ", "Ctrl+Shift+a"),
     ("Copy/Cut/Paste text: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
     ("Delete before/after cursor: ", "Backspace/Delete"),
 ];
@@ -72,22 +75,123 @@ const PROMPT_MAX_LABEL_WIDTH: usize = max_label_width(&PROMPT_KEYBOARD_SHORTCUTS
 #[derive(Default)]
 pub(super) struct HelpView {
     area: Rect,
+    inner_height: u16, // height of the bordered inner area; used to clamp page-scroll
+    is_dragging: bool,
+    max_scroll: u16,   // cached in render; used by apply_drag
+    scroll_offset: u16,
+    scrollbar_area: Rect,
+    scrollbar_state: ScrollbarState,
+    visible: bool,
+}
+
+impl HelpView {
+    // Maps a drag y-position to a scroll offset proportional to the scrollbar area.
+    fn apply_drag(&mut self, y: u16) {
+        let last_relative = self.scrollbar_area.height.saturating_sub(1) as f32;
+        if last_relative == 0.0 || self.max_scroll == 0 {
+            return;
+        }
+        let relative_y = y.saturating_sub(self.scrollbar_area.y);
+        let percentage = (relative_y as f32 / last_relative).min(1.0);
+        self.scroll_offset = (percentage * self.max_scroll as f32).round() as u16;
+    }
 }
 
 impl CommandHandler for HelpView {
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => Command::ToggleHelp.into(),
-            (_, _) => CommandResult::NotHandled,
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        match command {
+            Command::ToggleHelp => {
+                self.visible = !self.visible;
+                self.scroll_offset = 0;
+                CommandResult::Handled
+            }
+            _ => CommandResult::NotHandled,
         }
     }
 
-    fn handle_mouse(&mut self, _event: &MouseEvent) -> CommandResult {
-        Command::ToggleHelp.into()
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Char('?'), KeyModifiers::NONE) => Command::ToggleHelp.into(),
+            _ if self.visible => match (*code, *modifiers) {
+                (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(1).min(self.max_scroll);
+                    CommandResult::Handled
+                }
+                (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    CommandResult::Handled
+                }
+                (KeyCode::PageDown, KeyModifiers::NONE)
+                | (KeyCode::Char('f'), KeyModifiers::CONTROL)
+                | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(self.inner_height).min(self.max_scroll);
+                    CommandResult::Handled
+                }
+                (KeyCode::PageUp, KeyModifiers::NONE)
+                | (KeyCode::Char('b'), KeyModifiers::CONTROL)
+                | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(self.inner_height);
+                    CommandResult::Handled
+                }
+                (KeyCode::Home, KeyModifiers::NONE)
+                | (KeyCode::Char('g'), KeyModifiers::NONE)
+                | (KeyCode::Char('^'), KeyModifiers::NONE) => {
+                    self.scroll_offset = 0;
+                    CommandResult::Handled
+                }
+                (KeyCode::End, KeyModifiers::NONE)
+                | (KeyCode::Char('G'), KeyModifiers::SHIFT)
+                | (KeyCode::Char('$'), KeyModifiers::NONE) => {
+                    self.scroll_offset = u16::MAX; // clamped to max_scroll in render
+                    CommandResult::Handled
+                }
+                _ => CommandResult::NotHandled,
+            },
+            _ => CommandResult::NotHandled,
+        }
+    }
+
+    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+        match event.kind {
+            MouseEventKind::ScrollDown => {
+                self.scroll_offset = self.scroll_offset.saturating_add(1).min(self.max_scroll);
+                CommandResult::Handled
+            }
+            MouseEventKind::ScrollUp => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                CommandResult::Handled
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.scrollbar_area.contains(Position { x: event.column, y: event.row }) {
+                    self.is_dragging = true;
+                    self.apply_drag(event.row);
+                } else {
+                    return Command::ToggleHelp.into();
+                }
+                CommandResult::Handled
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.is_dragging = false;
+                CommandResult::Handled
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.is_dragging {
+                    self.apply_drag(event.row);
+                }
+                CommandResult::Handled
+            }
+            _ => CommandResult::Handled,
+        }
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.area.contains(Position { x: event.column, y: event.row })
+        // Accept scroll events globally (same as TableView), so the user doesn't need
+        // to position the cursor over the help panel to scroll it.
+        // Also accept all events while dragging, so Up/Drag are received wherever the
+        // cursor travels during a drag.
+        matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+            || self.is_dragging
+            || self.area.contains(Position { x: event.column, y: event.row })
     }
 }
 
@@ -119,6 +223,11 @@ impl View for HelpView {
             "(Press \"?\" to close)",
         );
 
+        let content_height = keyboard_shortcuts.len() as u16 + 1; // +1 for header
+        self.inner_height = bordered_area.height;
+        self.max_scroll = content_height.saturating_sub(self.inner_height);
+        let scroll = self.scroll_offset.min(self.max_scroll);
+
         let header_style = theme.help.header();
         let label_style = theme.help.label();
         let shortcut_style = theme.help.shortcuts();
@@ -138,8 +247,31 @@ impl View for HelpView {
             ])
         }));
 
-        Paragraph::new(lines)
-            .style(style)
-            .render(bordered_area, frame.buffer_mut());
+        if self.max_scroll > 0 {
+            let [content_area, scrollbar_area] = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .areas(bordered_area);
+            self.scrollbar_area = scrollbar_area;
+
+            Paragraph::new(lines)
+                .style(style)
+                .scroll((scroll, 0))
+                .render(content_area, frame.buffer_mut());
+
+            // content_length = max_scroll + 1 (number of scroll positions, not total rows).
+            // viewport_content_length = inner_height.
+            // This gives thumb size = inner_height / content_height fraction of the track.
+            self.scrollbar_state = ScrollbarState::default()
+                .content_length(self.max_scroll as usize + 1)
+                .viewport_content_length(self.inner_height as usize)
+                .position(scroll as usize);
+            StatefulWidget::render(super::scrollbar_widget(&theme.scrollbar), scrollbar_area, frame.buffer_mut(), &mut self.scrollbar_state);
+        } else {
+            self.scrollbar_area = Rect::default();
+            Paragraph::new(lines)
+                .style(style)
+                .render(bordered_area, frame.buffer_mut());
+        }
     }
 }
