@@ -2,15 +2,12 @@ mod handler;
 mod view;
 mod widgets;
 
-use ratatui::layout::Rect;
-
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 #[derive(Default)]
 pub(super) struct StatusView {
     directory: Option<PathInfo>,
     directory_len: usize,
-    area: Rect,
     selected: Option<PathInfo>,
 }
 

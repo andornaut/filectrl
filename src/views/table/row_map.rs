@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 #[derive(Default)]
 pub(super) struct LineItemMap {
     first_visible_item: usize,
@@ -59,10 +57,8 @@ impl LineItemMap {
     }
 
     pub(super) fn last_visible_line_starting_at(&self, first_line: usize) -> usize {
-        min(
-            first_line + self.visible_lines_count.saturating_sub(1),
-            self.total_lines_count().saturating_sub(1),
-        )
+        (first_line + self.visible_lines_count.saturating_sub(1))
+            .min(self.total_lines_count().saturating_sub(1))
     }
 
     pub(super) fn total_lines_count(&self) -> usize {

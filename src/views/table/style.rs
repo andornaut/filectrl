@@ -22,7 +22,7 @@ pub(super) fn clipboard_style(
 
 pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
     if sort_column == column {
-        theme.table.header_active()
+        theme.table.header_sorted()
     } else {
         theme.table.header()
     }
@@ -127,7 +127,6 @@ fn get_size_style(theme: &Theme, unit_index: usize) -> Style {
         2 => theme.file_size.mib(),
         3 => theme.file_size.gib(),
         4 => theme.file_size.tib(),
-        5 => theme.file_size.pib(),
         _ => theme.file_size.pib(),
     }
 }

@@ -58,37 +58,25 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
-    #[test_case("word1 word2 word3", 8, 11, "from_middle")]
-    #[test_case("word1 word2 word3", 6, 11, "from_start_of_word")]
-    #[test_case("word1 word2 word3", 5, 11, "from_space")]
-    #[test_case("word1/word2.word3", 11, 17, "with_punctuation")]
-    #[test_case("word1   word2 ", 8, 13, "with_multiple_spaces_in_word")]
-    #[test_case("word1   word2 ", 5, 13, "with_multiple_spaces_on_space")]
-    #[test_case("word1 word2 ", 0, 5, "from_start_of_doc")]
-    #[test_case("word1 word2 ", 12, 12, "at_end_of_doc")]
-    fn test_next_word_boundary(
-        text: &str,
-        start_offset: usize,
-        expected_offset: usize,
-        description: &str,
-    ) {
-        let result = next_word_boundary(text, start_offset);
-        assert_eq!(result, expected_offset, "next - {}", description);
+    #[test_case("word1 word2 word3", 8, 11 ; "from middle")]
+    #[test_case("word1 word2 word3", 6, 11 ; "from start of word")]
+    #[test_case("word1 word2 word3", 5, 11 ; "from space")]
+    #[test_case("word1/word2.word3", 11, 17 ; "with punctuation")]
+    #[test_case("word1   word2 ", 8, 13 ; "with multiple spaces in word")]
+    #[test_case("word1   word2 ", 5, 13 ; "with multiple spaces on space")]
+    #[test_case("word1 word2 ", 0, 5 ; "from start of doc")]
+    #[test_case("word1 word2 ", 12, 12 ; "at end of doc")]
+    fn test_next_word_boundary(text: &str, start_offset: usize, expected_offset: usize) {
+        assert_eq!(expected_offset, next_word_boundary(text, start_offset));
     }
 
-    #[test_case("word1 word2 word3", 8, 6, "from_middle")]
-    #[test_case("word1 word2 word3", 6, 0, "from_start_of_word")]
-    #[test_case("word1 word2 word3", 5, 0, "from_space")]
-    #[test_case("word1/word2.word3", 11, 6, "with_punctuation")]
-    #[test_case("word1   word2 ", 8, 0, "with_multiple_spaces")]
-    #[test_case("word1 word2 ", 0, 0, "at_start_of_doc")]
-    fn test_prev_word_boundary(
-        text: &str,
-        start_offset: usize,
-        expected_offset: usize,
-        description: &str,
-    ) {
-        let result = prev_word_boundary(text, start_offset);
-        assert_eq!(result, expected_offset, "prev - {}", description);
+    #[test_case("word1 word2 word3", 8, 6 ; "from middle")]
+    #[test_case("word1 word2 word3", 6, 0 ; "from start of word")]
+    #[test_case("word1 word2 word3", 5, 0 ; "from space")]
+    #[test_case("word1/word2.word3", 11, 6 ; "with punctuation")]
+    #[test_case("word1   word2 ", 8, 0 ; "with multiple spaces")]
+    #[test_case("word1 word2 ", 0, 0 ; "at start of doc")]
+    fn test_prev_word_boundary(text: &str, start_offset: usize, expected_offset: usize) {
+        assert_eq!(expected_offset, prev_word_boundary(text, start_offset));
     }
 }

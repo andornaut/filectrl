@@ -7,8 +7,6 @@ use ratatui::{
     Frame,
 };
 use std::collections::VecDeque;
-use unicode_width::UnicodeWidthStr;
-
 use super::{bordered, View};
 use crate::{
     app::{config::theme::Theme, state::AppState},
@@ -30,7 +28,7 @@ impl AlertKind {
     fn to_style(&self, theme: &Theme) -> Style {
         match self {
             AlertKind::Info => theme.alert.info(),
-            AlertKind::Warn => theme.alert.warning(),
+            AlertKind::Warn => theme.alert.warn(),
             AlertKind::Error => theme.alert.error(),
         }
     }
@@ -127,24 +125,13 @@ impl View for AlertsView {
             return;
         }
 
-        let style = theme.alert.style();
-        let title_left = "Alerts";
-        let title_right = "(Press \"a\" to clear)";
-        let title_left_width = title_left.width() as u16;
-        let title_right_width = title_right.width() as u16;
-        let has_extra_width = area.width > title_left_width + title_right_width + 2; // +2 for the borders
-
-        let title_right = if has_extra_width {
-            Some(title_right)
-        } else {
-            None
-        };
+        let style = theme.alert.base();
         let bordered_area = bordered(
             area,
             frame.buffer_mut(),
             style,
-            Some(title_left),
-            title_right,
+            "Alerts",
+            "(Press \"a\" to clear)",
         );
         let text = Text::from(
             self.alerts(bordered_area.width)
