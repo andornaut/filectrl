@@ -272,7 +272,7 @@ fg = "#1D1F21"
 modifiers = []
 
 [theme.prompt.selected]
-bg = "#006B6B"
+bg = "#59A799"
 fg = "#DDDCCC"
 modifiers = []
 
