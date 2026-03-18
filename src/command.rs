@@ -12,7 +12,7 @@ use self::{result::CommandResult, progress::Task};
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {
     #[default]
     Filter,
@@ -26,11 +26,11 @@ pub enum Command {
     AlertWarn(String),
     ClearClipboard,
     ClosePrompt,
-    Copy(PathInfo, PathInfo),
+    Copy { src: PathInfo, dest: PathInfo },
     DeletePath(PathInfo),
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
-    Move(PathInfo, PathInfo),
+    Move { src: PathInfo, dest: PathInfo },
     NavigateDirectory(PathInfo, Vec<PathInfo>),
     Open(PathInfo),
     OpenCustom(PathInfo),
@@ -40,7 +40,7 @@ pub enum Command {
     Refresh,
     RefreshDirectory(PathInfo, Vec<PathInfo>),
     RenamePath(PathInfo, String),
-    Resize(u16, u16), // w,h
+    Resize { width: u16, height: u16 },
     SetClipboard(ClipboardEntry),
     SetFilter(String),
     SetSelected(Option<PathInfo>),
@@ -57,15 +57,15 @@ impl Command {
                 Some(Self::Key(code, modifiers))
             }
             Event::Mouse(mouse_event) => {
-                if mouse_event.kind == MouseEventKind::Moved
-                    || matches!(mouse_event.kind, MouseEventKind::Up(_))
-                {
+                // Suppress Move events — they are too noisy and no handler uses them.
+                // Up events are kept: the scrollbar needs them to clear its drag state.
+                if mouse_event.kind == MouseEventKind::Moved {
                     None
                 } else {
                     Some(Self::Mouse(mouse_event))
                 }
             }
-            Event::Resize(w, h) => Some(Self::Resize(w, h)),
+            Event::Resize(w, h) => Some(Self::Resize { width: w, height: h }),
             _ => None,
         }
     }
@@ -84,10 +84,10 @@ impl TryFrom<CommandResult> for Command {
         match value {
             CommandResult::HandledWith(command) => Ok(*command),
             CommandResult::Handled => Err(anyhow!(
-                "Cannot convert CommandResult::Handled to Command, because it was not handled with a command"
+                "expected HandledWith, got Handled"
             )),
             CommandResult::NotHandled => Err(anyhow!(
-                "Cannot convert CommandResult::NotHandled to Command, because the CommandResult is not handled"
+                "expected HandledWith, got NotHandled"
             )),
         }
     }

@@ -8,40 +8,38 @@ use std::{
 
 use super::Command;
 
-// Progress (x,y) means "x progress" of "y total"
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Progress(pub u64, pub u64);
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Progress {
+    pub completed: u64,
+    pub total: u64,
+}
 
 impl Progress {
     pub fn percentage(&self) -> u32 {
         if self.is_done() {
             return 100;
         }
-        ((self.0 as f64 / self.1 as f64) * 100.0).round() as u32
+        ((self.completed as f64 / self.total as f64) * 100.0).round() as u32
     }
 
     pub fn scaled(&self, factor: u16) -> u16 {
         if self.is_done() {
             return factor;
         }
-        (self.0 * factor as u64 / self.1) as u16
-    }
-
-    fn combine(&self, progress: &Progress) -> Self {
-        Progress(self.0 + progress.0, self.1 + progress.1)
+        ((self.completed as f64 / self.total as f64 * factor as f64).round() as u16).min(factor)
     }
 
     fn done(&mut self) {
-        self.0 = self.1;
+        self.completed = self.total;
     }
 
     fn is_done(&self) -> bool {
-        // `Progress(n, 0)` is considered done
-        self.1 == 0 || self.0 == self.1
+        // `Progress { total: 0, .. }` is considered done
+        self.total == 0 || self.completed == self.total
     }
 
     fn increment(&mut self, additional: u64) {
-        self.0 += additional;
+        self.completed = (self.completed + additional).min(self.total);
     }
 }
 
@@ -51,9 +49,24 @@ impl Progress {
 /// error to finalize a task more than once or to report an error after it has already
 /// been marked done. This prevents the class of bugs where an async operation attempts
 /// to update a task that has already been removed from the UI.
+///
+/// If dropped without calling `done` or `error` (e.g. via an early `?` return), the
+/// `Drop` impl sends a final progress update marking the task as done, clearing any
+/// phantom progress bar from the UI.
 pub struct ActiveTask {
-    task: Task,
+    task: Option<Task>,
     tx: Sender<Command>,
+}
+
+impl Drop for ActiveTask {
+    fn drop(&mut self) {
+        if let Some(mut task) = self.task.take() {
+            // Dropped without finalization — the operation exited early
+            // Report as an error so the UI clears the progress bar and alerts the user.
+            task.error("Task interrupted");
+            let _ = self.tx.send(Command::Progress(task));
+        }
+    }
 }
 
 impl ActiveTask {
@@ -61,34 +74,48 @@ impl ActiveTask {
     pub fn new(total: u64, tx: Sender<Command>) -> (Self, Task) {
         let task = Task::new(total);
         let initial = task.clone();
-        (Self { task, tx }, initial)
+        (
+            Self {
+                task: Some(task),
+                tx,
+            },
+            initial,
+        )
     }
 
     pub fn total_size(&self) -> u64 {
-        self.task.progress.1
+        self.task.as_ref().map_or(0, |t| t.progress.total)
     }
 
     pub fn increment(&mut self, additional: u64) {
-        self.task.increment(additional);
+        if let Some(task) = &mut self.task {
+            task.increment(additional);
+        }
     }
 
     pub fn send_progress(&self) {
         // Err means the receiver was dropped (app is shutting down); silently ignore.
-        let _ = self.tx.send(Command::Progress(self.task.clone()));
+        if let Some(task) = &self.task {
+            let _ = self.tx.send(Command::Progress(task.clone()));
+        }
     }
 
     /// Marks the task as successfully completed. Consumes `self`.
     pub fn done(mut self) {
-        self.task.done();
-        // Err means the receiver was dropped (app is shutting down); silently ignore.
-        let _ = self.tx.send(Command::Progress(self.task));
+        if let Some(mut task) = self.task.take() {
+            task.done();
+            // Err means the receiver was dropped (app is shutting down); silently ignore.
+            let _ = self.tx.send(Command::Progress(task));
+        }
     }
 
     /// Marks the task as failed with an error message. Consumes `self`.
     pub fn error(mut self, message: String) {
-        self.task.error(message);
-        // Err means the receiver was dropped (app is shutting down); silently ignore.
-        let _ = self.tx.send(Command::Progress(self.task));
+        if let Some(mut task) = self.task.take() {
+            task.error(message);
+            // Err means the receiver was dropped (app is shutting down); silently ignore.
+            let _ = self.tx.send(Command::Progress(task));
+        }
     }
 }
 
@@ -99,12 +126,16 @@ pub struct Task {
     status: TaskStatus,
 }
 
+/// Identity-based equality: two `Task` values are the same task if they share the same `id`,
+/// regardless of their current progress or status. This allows tasks to be looked up and
+/// deduplicated by identity (e.g. in the notices `HashSet`) as progress snapshots arrive.
 impl PartialEq for Task {
     fn eq(&self, other: &Task) -> bool {
         self.id == other.id
     }
 }
 
+/// Hashed by `id` only, consistent with the identity-based `PartialEq` above.
 impl Hash for Task {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -115,23 +146,28 @@ impl Task {
     fn new(total: u64) -> Self {
         Self {
             id: next_id(),
-            progress: Progress(0, total),
+            progress: Progress {
+                completed: 0,
+                total,
+            },
             status: TaskStatus::default(),
         }
     }
 
     pub fn combine_progress(&self, progress: &Progress) -> Progress {
-        self.progress.combine(progress)
+        Progress {
+            completed: self.progress.completed + progress.completed,
+            total: self.progress.total + progress.total,
+        }
     }
 
     fn done(&mut self) {
-        // Calling .increment() may also set the status to done.
         self.progress.done();
         self.status = TaskStatus::Done;
     }
 
-    fn error(&mut self, message: String) {
-        self.status = TaskStatus::Error(message)
+    fn error(&mut self, message: impl Into<String>) {
+        self.status = TaskStatus::Error(message.into())
     }
 
     pub fn error_message(&self) -> Option<String> {
