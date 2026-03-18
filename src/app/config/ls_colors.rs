@@ -1,55 +1,6 @@
 use ratatui::style::{Color, Modifier};
 
-use super::theme::{FileType, ThemeStyle};
-
-pub(super) fn apply_ls_colors(theme: &mut FileType) {
-    let ls_colors = match std::env::var("LS_COLORS") {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-
-    for entry in ls_colors.split(':') {
-        let parts: Vec<&str> = entry.split('=').collect();
-        if parts.len() != 2 {
-            continue;
-        }
-
-        let (key, value) = (parts[0], parts[1]);
-        let (fg, bg, attrs) = parse(value);
-        if fg.is_none() && bg.is_none() && attrs == Modifier::empty() {
-            continue;
-        }
-
-        match key {
-            "bd" => theme.set_block_device(fg, bg, attrs),
-            "ca" => {} // capabilities not supported
-            "cd" => theme.set_character_device(fg, bg, attrs),
-            "di" => theme.set_directory(fg, bg, attrs),
-            "do" => theme.set_door(fg, bg, attrs),
-            "ex" => theme.set_executable(fg, bg, attrs),
-            "fi" => theme.set_regular_file(fg, bg, attrs),
-            "ln" => theme.set_symlink(fg, bg, attrs),
-            "mi" => theme.set_missing(fg, bg, attrs),
-            "no" => theme.set_normal_file(fg, bg, attrs),
-            "or" => theme.set_symlink_broken(fg, bg, attrs),
-            "ow" => theme.set_directory_other_writable(fg, bg, attrs),
-            "pi" => theme.set_pipe(fg, bg, attrs),
-            "sg" => theme.set_setgid(fg, bg, attrs),
-            "so" => theme.set_socket(fg, bg, attrs),
-            "st" => theme.set_directory_sticky(fg, bg, attrs),
-            "tw" => theme.set_directory_sticky_other_writable(fg, bg, attrs),
-            "su" => theme.set_setuid(fg, bg, attrs),
-
-            // File patterns (both extensions and names)
-            key if key.starts_with('*') => {
-                theme.add_pattern_style(key, ThemeStyle::new(fg, bg, attrs));
-            }
-            _ => continue,
-        }
-    }
-}
-
-fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
+pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     let mut fg: Option<Color> = None;
     let mut bg: Option<Color> = None;
     let mut attrs = Modifier::empty();
@@ -65,9 +16,11 @@ fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "02" | "2" => attrs |= Modifier::DIM,    // Dim
             "03" | "3" => attrs |= Modifier::ITALIC, // Italic
             "04" | "4" => attrs |= Modifier::UNDERLINED, // Underline
-            "05" | "5" => attrs |= Modifier::SLOW_BLINK, // Blink
-            "07" | "7" => attrs |= Modifier::REVERSED, // Reverse
-            "08" | "8" => {}                         // Hidden - not supported
+            "05" | "5" => attrs |= Modifier::SLOW_BLINK,  // Blink
+            "06" | "6" => attrs |= Modifier::RAPID_BLINK, // Rapid blink
+            "07" | "7" => attrs |= Modifier::REVERSED,    // Reverse
+            "08" | "8" => {}                               // Hidden - not supported
+            "09" | "9" => attrs |= Modifier::CROSSED_OUT, // Crossed out / strikethrough
 
             // Foreground colors (30-37, 90-97)
             "30" => fg = Some(Color::Black),
@@ -204,6 +157,18 @@ mod tests {
     fn bold_modifier() {
         let (_, _, attrs) = parse("01");
         assert_eq!(Modifier::BOLD, attrs);
+    }
+
+    #[test]
+    fn rapid_blink_modifier() {
+        let (_, _, attrs) = parse("06");
+        assert_eq!(Modifier::RAPID_BLINK, attrs);
+    }
+
+    #[test]
+    fn crossed_out_modifier() {
+        let (_, _, attrs) = parse("09");
+        assert_eq!(Modifier::CROSSED_OUT, attrs);
     }
 
     #[test]

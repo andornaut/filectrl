@@ -22,16 +22,16 @@ pub struct FileSystemConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Templates {
+pub struct Openers {
     pub open_current_directory: String,
     pub open_new_window: String,
     pub open_selected_file: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct OsTemplates {
-    linux: Templates,
-    macos: Templates,
+struct PlatformOpeners {
+    linux: Openers,
+    macos: Openers,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,7 +43,7 @@ pub struct UiConfig {
 struct RawConfig {
     file_system: FileSystemConfig,
     log_level: LevelFilter,
-    templates: OsTemplates,
+    openers: PlatformOpeners,
     theme: Theme,
     theme256: Theme,
     ui: UiConfig,
@@ -52,23 +52,12 @@ struct RawConfig {
 pub struct Config {
     pub file_system: FileSystemConfig,
     pub log_level: LevelFilter,
-    pub templates: Templates,
+    pub openers: Openers,
     pub theme: Theme,
     pub theme256: Theme,
     pub ui: UiConfig,
 }
 
-pub fn write_default_config() -> Result<()> {
-    let path = Config::default_path()?;
-    fs::create_dir_all(
-        path.parent()
-            .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
-    )?;
-    fs::write(&path, DEFAULT_CONFIG)
-        .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
-    info!("Wrote the default config to {path:?}");
-    Ok(())
-}
 
 impl TryFrom<Option<PathBuf>> for Config {
     type Error = anyhow::Error;
@@ -104,25 +93,38 @@ impl Config {
             .join(CONFIG_RELATIVE_PATH))
     }
 
+    pub fn write_default() -> Result<()> {
+        let path = Self::default_path()?;
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
+        )?;
+        fs::write(&path, DEFAULT_CONFIG)
+            .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
+        info!("Wrote the default config to {path:?}");
+        Ok(())
+    }
+
     fn parse(content: &str) -> Result<Self> {
         let raw = toml::from_str::<RawConfig>(content)
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
-        let templates = if cfg!(target_os = "macos") {
-            raw.templates.macos
+        let openers = if cfg!(target_os = "macos") {
+            raw.openers.macos
         } else {
-            raw.templates.linux
+            raw.openers.linux
         };
 
         let mut config = Config {
             file_system: raw.file_system,
             log_level: raw.log_level,
-            templates,
+            openers,
             theme: raw.theme,
             theme256: raw.theme256,
             ui: raw.ui,
         };
-        config.theme.maybe_apply_ls_colors();
+        config.theme.file_type.maybe_apply_ls_colors(false);
+        config.theme256.file_type.maybe_apply_ls_colors(true);
         Ok(config)
     }
 

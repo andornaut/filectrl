@@ -11,12 +11,12 @@ refresh_debounce_milliseconds = 100
 
 # Programs to use to open files or directories:
 # %s will be replaced by the relevant path
-[templates.linux]
+[openers.linux]
 open_current_directory = "xdg-open %s"
 open_new_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
 open_selected_file = "xdg-open %s"
 
-[templates.macos]
+[openers.macos]
 open_current_directory = "open %s"
 # Activates Terminal and opens filectrl in a new window
 open_new_window = "osascript -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl %s\"'"
@@ -29,6 +29,7 @@ double_click_interval_milliseconds = 300
 [theme]
 bg = "#423F2E"
 fg = "#DDDCCC"
+modifiers = []
 
 [theme.alert]
 bg = ""
@@ -45,24 +46,49 @@ bg = ""
 fg = "#73c991"
 modifiers = []
 
-[theme.alert.warning]
+[theme.alert.warn]
 bg = ""
 fg = "#d4731a"
 modifiers = []
 
-[theme.header]
+[theme.breadcrumbs]
 bg = ""
 fg = "#DDDCCC"
 modifiers = []
 
-[theme.header.active]
+[theme.breadcrumbs.basename]
 bg = "#006B6B"
 fg = "#DDDCCC"
+modifiers = []
+
+[theme.breadcrumbs.ancestor]
+bg = ""
+fg = "#DDDCCC"
+modifiers = []
+
+[theme.breadcrumbs.separator]
+bg = ""
+fg = "#9C9977"
 modifiers = []
 
 [theme.help]
 bg = ""
 fg = "#9C9977"
+modifiers = []
+
+[theme.help.header]
+bg = "#9C9977"
+fg = "#1D1F21"
+modifiers = []
+
+[theme.help.label]
+bg = ""
+fg = "#DDDCCC"
+modifiers = ["bold"]
+
+[theme.help.shortcuts]
+bg = ""
+fg = "#DDDCCC"
 modifiers = []
 
 [theme.notice.clipboard]
@@ -95,7 +121,7 @@ bg = "#2AA198"
 fg = "#1D1F21"
 modifiers = []
 
-[theme.prompt.selection]
+[theme.prompt.selected]
 bg = "#006B6B"
 fg = "#DDDCCC"
 modifiers = []
@@ -143,7 +169,7 @@ bg = "#777755"
 fg = "#1D1F21"
 modifiers = []
 
-[theme.table.header_active]
+[theme.table.header_sorted]
 bg = "#9C9977"
 fg = "#1D1F21"
 modifiers = []
@@ -328,6 +354,7 @@ modifiers = []
 [theme256]
 bg = "234" # #1c1c1c - near black
 fg = "252" # #d0d0d0 - light gray
+modifiers = []
 
 [theme256.alert]
 bg = ""
@@ -344,24 +371,49 @@ bg = ""
 fg = "114" # #87d787 - green
 modifiers = ["bold"]
 
-[theme256.alert.warning]
+[theme256.alert.warn]
 bg = ""
 fg = "173" # #d7875f - orange
 modifiers = ["bold"]
 
-[theme256.header]
+[theme256.breadcrumbs]
 bg = "234" # #1c1c1c
 fg = "44" # #00d7d7 - cyan
 modifiers = []
 
-[theme256.header.active]
+[theme256.breadcrumbs.basename]
 bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = ["bold"]
 
+[theme256.breadcrumbs.ancestor]
+bg = "234" # #1c1c1c
+fg = "44" # #00d7d7 - cyan
+modifiers = []
+
+[theme256.breadcrumbs.separator]
+bg = "234" # #1c1c1c
+fg = "240" # #585858 - dim gray
+modifiers = []
+
 [theme256.help]
 bg = "234" # #1c1c1c
 fg = "240" # #585858 - dim gray
+modifiers = []
+
+[theme256.help.header]
+bg = "26" # #005fd7 - blue
+fg = "231" # #ffffff - white
+modifiers = ["bold"]
+
+[theme256.help.label]
+bg = ""
+fg = "252" # #d0d0d0 - light gray
+modifiers = ["bold"]
+
+[theme256.help.shortcuts]
+bg = ""
+fg = "252" # #d0d0d0 - light gray
 modifiers = []
 
 [theme256.notice.clipboard]
@@ -394,7 +446,7 @@ bg = "30" # #008787 - teal
 fg = "234" # #1c1c1c
 modifiers = []
 
-[theme256.prompt.selection]
+[theme256.prompt.selected]
 bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = []
@@ -442,7 +494,7 @@ bg = "18" # #000087 - dark blue
 fg = "252" # #d0d0d0
 modifiers = []
 
-[theme256.table.header_active]
+[theme256.table.header_sorted]
 bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = ["bold"]
