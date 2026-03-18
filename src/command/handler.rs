@@ -3,21 +3,19 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 use super::{Command, mode::InputMode, result::CommandResult};
 
 pub trait CommandHandler {
-    fn command_handlers(&mut self) -> Vec<&mut dyn CommandHandler> {
-        vec![]
-    }
+    fn visit_command_handlers(&mut self, _visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {}
 
     fn handle_command(&mut self, _command: &Command) -> CommandResult {
         CommandResult::NotHandled
     }
 
     fn handle_key(&mut self, _code: &KeyCode, _modifiers: &KeyModifiers) -> CommandResult {
-        // Only invoked if self.should_receive_key() is true
+        // Only invoked if self.should_handle_key() returns true
         CommandResult::NotHandled
     }
 
     fn handle_mouse(&mut self, _event: &MouseEvent) -> CommandResult {
-        // Only invoked if self.should_receive_mouse() is true
+        // Only invoked if self.should_handle_mouse() returns true
         CommandResult::NotHandled
     }
 

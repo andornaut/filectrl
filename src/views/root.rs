@@ -6,22 +6,21 @@ use ratatui::{
 };
 
 use super::{
-    View, alerts::AlertsView, header::HeaderView, help::HelpView, notices::NoticesView,
+    View, alerts::AlertsView, breadcrumbs::BreadcrumbsView, help::HelpView, notices::NoticesView,
     prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
-    app::{config::Config, config::theme::Theme, state::AppState},
+    app::{clipboard::Clipboard, config::Config, config::theme::Theme, state::AppState},
     command::handler::CommandHandler,
 };
 
-const MIN_WIDTH: u16 = 14; // Must be 11 or larger to prevent clipboard notices from causing a panic
+const MIN_WIDTH: u16 = 14;
 const MIN_HEIGHT: u16 = 5;
 const RESIZE_WINDOW: &str = "Resize window";
 
-#[derive(Default)]
 pub struct RootView {
     alerts: AlertsView,
-    header: HeaderView,
+    breadcrumbs: BreadcrumbsView,
     help: HelpView,
     notices: NoticesView,
     prompt: PromptView,
@@ -30,18 +29,23 @@ pub struct RootView {
 }
 
 impl RootView {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, clipboard: Clipboard) -> Self {
         Self {
+            alerts: AlertsView::default(),
+            breadcrumbs: BreadcrumbsView::default(),
+            help: HelpView::default(),
+            notices: NoticesView::default(),
+            prompt: PromptView::new(clipboard),
+            status: StatusView::default(),
             table: TableView::new(config),
-            ..Self::default()
         }
     }
 
-    fn views(&mut self) -> Vec<&mut dyn View> {
-        vec![
+    fn views(&mut self) -> [&mut dyn View; 7] {
+        [
             // The order is significant
             &mut self.alerts,
-            &mut self.header,
+            &mut self.breadcrumbs,
             &mut self.help,
             &mut self.table,
             &mut self.notices,
@@ -52,17 +56,10 @@ impl RootView {
 }
 
 impl CommandHandler for RootView {
-    fn command_handlers(&mut self) -> Vec<&mut dyn CommandHandler> {
-        vec![
-            // The order is NOT significant
-            &mut self.alerts,
-            &mut self.header,
-            &mut self.help,
-            &mut self.notices,
-            &mut self.prompt,
-            &mut self.status,
-            &mut self.table,
-        ]
+    fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+        for view in self.views() {
+            visitor(view);
+        }
     }
 }
 
@@ -83,17 +80,13 @@ impl View for RootView {
         // (e.g. continuation lines of wrapped filenames, empty space below the last row)
         // show the correct color rather than the terminal default.
         Block::default()
-            .style(theme.background())
+            .style(theme.base())
             .render(area, frame.buffer_mut());
 
         let views = self.views();
-        let constraints: Vec<Constraint> = views
-            .iter()
-            .map(|view| view.constraint(area, state))
-            .collect();
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints)
+            .constraints(views.iter().map(|view| view.constraint(area, state)).collect::<Vec<_>>())
             .split(area)
             .iter()
             .zip(views)
