@@ -9,8 +9,15 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearClipboard => self.clear_clipboard(),
-            Command::Copy(_, _) | Command::Move(_, _) => Command::ClearClipboard.into(),
+            Command::ClearClipboard => {
+                self.clipboard_entry = None;
+                CommandResult::Handled
+            }
+            Command::SetClipboard(entry) => {
+                self.clipboard_entry = Some(entry.clone());
+                CommandResult::Handled
+            }
+            Command::Copy { .. } | Command::Move { .. } => Command::ClearClipboard.into(),
             Command::NavigateDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.to_vec(), false)
             }
@@ -18,7 +25,7 @@ impl CommandHandler for TableView {
                 self.set_directory(directory.clone(), children.to_vec(), true)
             }
             // self.handle_key() and PromptView may emit SetFilter()
-            Command::SetFilter(filter) => self.set_filter(filter.to_string()),
+            Command::SetFilter(filter) => self.set_filter(filter.clone()),
 
             _ => CommandResult::NotHandled,
         }
@@ -51,7 +58,7 @@ impl CommandHandler for TableView {
                 KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.select_first(),
                 KeyCode::Char('$') | KeyCode::End => self.select_last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
-                KeyCode::Char('c') => self.clear_clipboard(),
+                KeyCode::Char('c') => Command::ClearClipboard.into(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
                 KeyCode::Char('z') => self.select_middle_visible_item(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
@@ -94,7 +101,8 @@ impl CommandHandler for TableView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.table_area.contains(Position { x: event.column, y: event.row })
+        matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+            || self.table_area.contains(Position { x: event.column, y: event.row })
             || self.scrollbar_view.is_clicked(event.column, event.row)
     }
 }

@@ -2,7 +2,7 @@ use rat_text::HasScreenCursor;
 use rat_widget::textarea::TextArea;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     widgets::{Paragraph, StatefulWidget, Widget},
 };
 use unicode_width::UnicodeWidthStr;
@@ -22,16 +22,14 @@ impl View for PromptView {
 
         let label = self.label();
         let label_width = label.width() as u16;
-        let [label_area, input_area] = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(label_width), Constraint::Min(1)].as_ref())
+        let [label_area, input_area] = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(1)])
             .areas(area);
 
         let label_widget = Paragraph::new(label).style(theme.prompt.label());
         label_widget.render(label_area, frame.buffer_mut());
         let textarea_widget = TextArea::new()
             .style(theme.prompt.input())
-            .select_style(theme.prompt.selection())
+            .select_style(theme.prompt.selected())
             .cursor_style(theme.prompt.cursor());
         textarea_widget.render(input_area, frame.buffer_mut(), &mut self.text_area_state);
 

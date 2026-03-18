@@ -23,11 +23,10 @@ pub(super) fn table_widget<'a>(
     sort_direction: &'a SortDirection,
 ) -> Table<'a> {
     let header = header_row_widget(theme, sort_column, sort_direction);
-    Table::new(rows, vec![Constraint::Percentage(100)])
+    Table::new(rows, column_constraints)
         .header(header)
         .row_highlight_style(theme.table.selected())
         .style(theme.table.body())
-        .widths(&column_constraints)
 }
 
 fn header_row_widget<'a>(
@@ -106,7 +105,7 @@ pub(super) fn row_widget_and_height<'a>(
         Cell::from(name).style(name_style),
         Cell::from(item.modified(relative_to_datetime).unwrap_or_default()).style(date_style),
         Cell::from(item.size()).style(size_style),
-        Cell::from(item.mode()),
+        Cell::from(item.unix_mode()),
     ])
     .height(height)
     .style(row_style);

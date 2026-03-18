@@ -9,12 +9,12 @@ use ratatui::crossterm::event::Event;
 use super::View;
 use crate::{
     app::clipboard::Clipboard,
-    command::{mode::InputMode, result::CommandResult, Command, PromptKind},
+    command::{Command, PromptKind, mode::InputMode, result::CommandResult},
     file_system::path_info::PathInfo,
 };
 
-#[derive(Default)]
 pub(super) struct PromptView {
+    clipboard: Clipboard,
     directory: Option<PathInfo>,
     filter: String,
     kind: PromptKind,
@@ -23,10 +23,21 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    fn label(&self) -> String {
+    pub(super) fn new(clipboard: Clipboard) -> Self {
+        Self {
+            clipboard,
+            directory: None,
+            filter: String::new(),
+            kind: PromptKind::default(),
+            selected: None,
+            text_area_state: TextAreaState::default(),
+        }
+    }
+
+    fn label(&self) -> &'static str {
         match self.kind {
-            PromptKind::Filter => " Filter ".into(),
-            PromptKind::Rename => " Rename ".into(),
+            PromptKind::Filter => " Filter ",
+            PromptKind::Rename => " Rename ",
         }
     }
 
@@ -40,7 +51,7 @@ impl PromptView {
             .text_area_state
             .try_bytes_at_range(TextRange::new((0, 0), current_pos))
             .map(|r| r.end)
-            .unwrap_or(0); // Use unwrap_or for default
+            .unwrap_or(0);
 
         let new_byte_offset = find_boundary(&text, current_byte_offset);
         let new_pos = self
@@ -67,9 +78,9 @@ impl PromptView {
     }
 
     fn open(&mut self, kind: &PromptKind) -> CommandResult {
-        self.kind = kind.clone();
+        self.kind = *kind;
 
-        let text = match &self.kind {
+        let text = match kind {
             PromptKind::Filter => self.filter.clone(),
             PromptKind::Rename => self
                 .selected
@@ -78,7 +89,7 @@ impl PromptView {
         };
 
         let mut text_area_state = TextAreaState::new();
-        text_area_state.set_clipboard(Some(Clipboard::default().into_rat_clipboard()));
+        text_area_state.set_clipboard(Some(self.clipboard.to_rat_clipboard()));
         text_area_state.focus.set(true);
         text_area_state.set_text(&text);
         text_area_state.move_to_line_end(false);

@@ -51,7 +51,7 @@ impl Columns {
         &self.sort_column
     }
 
-    pub(super) fn sort_column_for_click(&mut self, x: u16) -> Option<SortColumn> {
+    pub(super) fn sort_column_for_click(&self, x: u16) -> Option<SortColumn> {
         if x <= self.name_width {
             Some(SortColumn::Name)
         } else if x <= self.name_width + MODIFIED_LEN {

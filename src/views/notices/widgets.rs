@@ -74,7 +74,7 @@ pub(super) fn progress_widget<'a>(
     // Combine the progress from all the tasks
     let progress = tasks
         .iter()
-        .fold(Progress(0, 0), |acc, task| task.combine_progress(&acc));
+        .fold(Progress::default(), |acc, task| task.combine_progress(&acc));
 
     let percentage = progress.percentage();
     let percentage_text = format!(" {}%", percentage);
@@ -82,7 +82,7 @@ pub(super) fn progress_widget<'a>(
     let progress_width = progress.scaled(bar_width);
 
     let filled = block::FULL.repeat(progress_width.into());
-    let empty = " ".repeat((bar_width - progress_width).into());
+    let empty = " ".repeat(bar_width.saturating_sub(progress_width).into());
     let progress_bar = format!("{}{}", filled, empty);
 
     let left = Line::from(progress_bar);
