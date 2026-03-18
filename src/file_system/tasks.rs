@@ -1,13 +1,14 @@
 use std::{
     fs::{self, File},
     io::{ErrorKind, Read, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::mpsc::Sender,
     thread,
 };
 
 use anyhow::{anyhow, Error, Result};
-use log::info;
+use log::{info, warn};
 
 use super::path_info::PathInfo;
 use crate::{
@@ -49,8 +50,8 @@ impl TryFrom<&Command> for TaskCommand {
 
     fn try_from(value: &Command) -> Result<Self, Self::Error> {
         match value {
-            Command::Copy(path, dir) => Ok(Self::Copy(path.clone(), dir.clone())),
-            Command::Move(path, dir) => Ok(Self::Move(path.clone(), dir.clone())),
+            Command::Copy { src, dest } => Ok(Self::Copy(src.clone(), dest.clone())),
+            Command::Move { src, dest } => Ok(Self::Move(src.clone(), dest.clone())),
             Command::DeletePath(path) => Ok(Self::DeletePath(path.clone())),
             _ => Err(anyhow!("Cannot convert Command:{value:?} to TaskCommand")),
         }
@@ -72,9 +73,11 @@ fn run_copy_task(
     info!("Copying {old_path:?} to {new_path:?}");
     let (active, initial) = ActiveTask::new(path.size, tx);
     let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
+    let source_mode = path.mode();
 
     thread::spawn(move || {
         if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
+            apply_permissions(source_mode, &new_path);
             active.done();
         }
     });
@@ -96,6 +99,7 @@ fn run_move_task(
 
     info!("Moving {old_path:?} to {new_path:?}");
     let (mut active, initial) = ActiveTask::new(path.size, tx);
+    let source_mode = path.mode();
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
         Ok(_) => {
@@ -108,7 +112,10 @@ fn run_move_task(
                 let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
                 if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
                     match fs::remove_file(&old_path) {
-                        Ok(_) => active.done(),
+                        Ok(_) => {
+                            apply_permissions(source_mode, &new_path);
+                            active.done()
+                        }
                         Err(error) => active.error(format!(
                             "Copy succeeded, but failed to delete original file {old_path:?}: {error}"
                         )),
@@ -126,11 +133,15 @@ fn run_move_task(
 
 fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
     let (active, initial) = ActiveTask::new(path.size, tx);
+    // Use PathInfo::is_directory() (lstat-based, does not follow symlinks) so that a
+    // symlink to a directory is removed with remove_file(), not remove_dir_all().
+    // PathBuf::is_dir() follows symlinks and would incorrectly recurse into the target.
+    let is_directory = path.is_directory();
     let path = PathBuf::from(&path.path);
     info!("Deleting {path:?}");
 
     thread::spawn(move || {
-        let result = if path.is_dir() {
+        let result = if is_directory {
             fs::remove_dir_all(&path)
         } else {
             fs::remove_file(&path)
@@ -208,6 +219,12 @@ fn copy_file(
                 }
             }
         }
+    }
+}
+
+fn apply_permissions(mode: u32, path: &Path) {
+    if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
+        warn!("Failed to set permissions on {path:?}: {e}");
     }
 }
 

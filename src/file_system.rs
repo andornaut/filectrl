@@ -36,9 +36,9 @@ impl FileSystem {
             buffer_min_bytes: config.file_system.buffer_min_bytes,
             command_tx,
             directory: None,
-            open_current_directory_template: config.templates.open_current_directory.clone(),
-            open_new_window_template: config.templates.open_new_window.clone(),
-            open_selected_file_template: config.templates.open_selected_file.clone(),
+            open_current_directory_template: config.openers.open_current_directory.clone(),
+            open_new_window_template: config.openers.open_new_window.clone(),
+            open_selected_file_template: config.openers.open_selected_file.clone(),
             watcher: DirectoryWatcher::try_new(config.file_system.refresh_debounce_milliseconds)
                 .expect("Can initialize DirectoryWatcher"),
         }
@@ -63,9 +63,12 @@ impl FileSystem {
         self.cd(directory, true).try_into()
     }
 
+    fn current_directory(&self) -> &PathInfo {
+        self.directory.as_ref().expect("directory is set before any navigation command")
+    }
+
     fn back(&mut self) -> CommandResult {
-        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
-        match directory.parent() {
+        match self.current_directory().parent() {
             Some(parent) => self.cd(parent, true),
             None => CommandResult::Handled,
         }
@@ -118,20 +121,15 @@ impl FileSystem {
     }
 
     fn open_current_directory(&self) -> CommandResult {
-        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
-        open_in(directory, &self.open_current_directory_template)
-            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
+        open_in(self.current_directory(), &self.open_current_directory_template).into()
     }
 
     fn open_custom(&self, path: &PathInfo) -> CommandResult {
-        open_in(path, &self.open_selected_file_template)
-            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
+        open_in(path, &self.open_selected_file_template).into()
     }
 
     fn open_new_window(&self) -> CommandResult {
-        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
-        open_in(directory, &self.open_new_window_template)
-            .map_or_else(|error| error.into(), |_| CommandResult::Handled)
+        open_in(self.current_directory(), &self.open_new_window_template).into()
     }
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
@@ -142,8 +140,7 @@ impl FileSystem {
     }
 
     fn refresh(&mut self) -> CommandResult {
-        let directory = self.directory.as_ref().expect("directory is set before any navigation command");
-        self.cd(directory.clone(), false)
+        self.cd(self.current_directory().clone(), false)
     }
 
     fn run_task(&mut self, task: TaskCommand) -> CommandResult {
