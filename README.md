@@ -89,6 +89,7 @@ Keys | Description
 --- | ---
 <kbd>Esc</kbd> | Cancel and exit filtering/renaming mode
 <kbd>Enter</kbd> | Submit your input and exit filtering/renaming mode
+<kbd>Ctrl</kbd>+<kbd>z</kbd> | Reset to initial value
 <kbd>←</kbd> / <kbd>→</kbd> | Move cursor
 <kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>→</kbd> | Move cursor by word (delimited by whitespaces or punctuation)
 <kbd>Ctrl</kbd>+<kbd>a</kbd> / <kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Jump to line start/end
