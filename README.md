@@ -30,7 +30,7 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [-c <config>] [--write-default-config] [--colors-256] [--] [<directory>]
+Usage: filectrl [-c <config>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -42,6 +42,8 @@ Options:
   --write-default-config
                     write the default config to ~/.config/filectrl/config.toml,
                     then exit
+  --write-default-themes
+                    write default theme files to ~/.config/filectrl/, then exit
   --colors-256      force 256-color theme (disables truecolor detection)
   --help, help      display usage information
 ```
@@ -58,47 +60,46 @@ Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements si
 
 _**Normal mode**_
 
-Keys | Description
+Description | Keys
 --- | ---
-<kbd>q</kbd> | Quit
-<kbd>←</kbd> / <kbd>h</kbd>, <kbd>↓</kbd> / <kbd>j</kbd>, <kbd>↑</kbd> / <kbd>k</kbd>,  <kbd>→</kbd> / <kbd>l</kbd> | Navigate left, down, up, right
-<kbd>~</kbd> | Go to home directory
-<kbd>←</kbd> / <kbd>b</kbd> / <kbd>Backspace</kbd> | Go to parent directory
-<kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> / <kbd>Space</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
-<kbd>o</kbd> | Open custom: open the selected file using the program configured by: `openers.open_selected_file`
-<kbd>Home</kbd> / <kbd>g</kbd> / <kbd>^</kbd> | Select first row
-<kbd>End</kbd> / <kbd>G</kbd> / <kbd>$</kbd> | Select last row
-<kbd>z</kbd> | Jump to middle row
-<kbd>Ctrl</kbd>+<kbd>f</kbd> / <kbd>Ctrl</kbd>+<kbd>d</kbd> / <kbd>PgDn</kbd> | Scroll down one page
-<kbd>Ctrl</kbd>+<kbd>b</kbd> / <kbd>Ctrl</kbd>+<kbd>u</kbd> / <kbd>PgUp</kbd> | Scroll up one page
-<kbd>Delete</kbd> | Delete the selected file or directory
-<kbd> / </kbd> | Filter by name
-<kbd>Esc</kbd> | Clear active filter
-<kbd>Ctrl</kbd>+<kbd>r</kbd> / <kbd>F5</kbd> | Refresh the current directory
-<kbd>r</kbd> / <kbd>F2</kbd> | Rename the selected file or directory
-<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
-<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
-<kbd>a</kbd>, <kbd>c</kbd>, <kbd>p</kbd> | Clear alerts, clipboard content, or progress bars
-<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste selected file or directory
-<kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd> | Sort by name, modified date, or size
-<kbd>?</kbd> | Toggle help
+Quit | <kbd>q</kbd>
+Navigate | <kbd>←</kbd>/<kbd>h</kbd>, <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>→</kbd>/<kbd>l</kbd>
+Go to home directory | <kbd>~</kbd>
+Go to parent directory | <kbd>←</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
+Open | <kbd>→</kbd>/<kbd>f</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd>
+Open custom | <kbd>o</kbd>
+Select first row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>
+Select last row | <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
+Jump to middle row | <kbd>z</kbd>
+Page down | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>
+Page up | <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>PgUp</kbd>
+Delete | <kbd>Delete</kbd>
+Filter | <kbd>/</kbd>
+Clear filter/alerts/clipboard/progress | <kbd>Esc</kbd>, <kbd>a</kbd>, <kbd>c</kbd>, <kbd>p</kbd>
+Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
+Rename | <kbd>r</kbd>/<kbd>F2</kbd>
+New window | <kbd>w</kbd>
+Open terminal | <kbd>t</kbd>
+Copy/Cut/Paste selected | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Toggle help | <kbd>?</kbd>
 
-_**Filtering / Renaming mode**_
+_**Prompt mode**_
 
-Keys | Description
+Description | Keys
 --- | ---
-<kbd>Esc</kbd> | Cancel and exit filtering/renaming mode
-<kbd>Enter</kbd> | Submit your input and exit filtering/renaming mode
-<kbd>Ctrl</kbd>+<kbd>z</kbd> | Reset to initial value
-<kbd>←</kbd> / <kbd>→</kbd> | Move cursor
-<kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>→</kbd> | Move cursor by word (delimited by whitespaces or punctuation)
-<kbd>Ctrl</kbd>+<kbd>a</kbd> / <kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Jump to line start/end
-<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Shift</kbd>+<kbd>→</kbd> | Select text
-<kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | Select to beginning/end of line
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd> | Select by word (delimited by whitespaces or punctuation)
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> | Select all
-<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste text
-<kbd>Backspace</kbd> / <kbd>Delete</kbd> | Delete character before/after cursor
+Submit | <kbd>Enter</kbd>
+Cancel | <kbd>Esc</kbd>
+Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
+Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
+Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>Ctrl</kbd>+<kbd>→</kbd>
+Jump to line start/end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd>/<kbd>End</kbd>
+Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>Shift</kbd>+<kbd>→</kbd>
+Select to beginning/end of line | <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>Shift</kbd>+<kbd>End</kbd>
+Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd>
+Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
+Copy/Cut/Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Delete before/after cursor | <kbd>Backspace</kbd>/<kbd>Delete</kbd>
 
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
@@ -148,7 +149,7 @@ open_selected_file = "open %s"
 
 ### Theming
 
-All colors can be changed by editing the configuration file:
+All colors can be changed by editing the `[theme]` (truecolor) and `[theme256]` (256-color) sections inline in the configuration file:
 
 ```bash
 filectrl --write-default-config
@@ -156,6 +157,44 @@ vim ~/.config/filectrl/config.toml
 ```
 
 You can see all of the available theme variables in the [default configuration](./src/app/config/default_config.toml).
+
+#### External theme files
+
+You can store themes in separate files and switch between them by setting `theme_file` and/or `theme256_file` in `config.toml`:
+
+```toml
+# Replaces the inline [theme] section with the contents of the specified file
+theme_file = "my-theme.toml"
+# Replaces the inline [theme256] section
+theme256_file = "my-theme-256.toml"
+```
+
+- **Relative paths** are resolved from the directory containing the config file (e.g. `~/.config/filectrl/`)
+- **Absolute paths** are used as-is
+- When set, the external file **completely replaces** the corresponding inline `[theme]`/`[theme256]` section
+- If the file doesn't exist or can't be parsed, FileCtrl exits with an error
+
+To get started with custom themes, export the built-in defaults as standalone files:
+
+```bash
+filectrl --write-default-themes
+# Creates:
+#   ~/.config/filectrl/default-theme.toml
+#   ~/.config/filectrl/default-theme-256.toml
+```
+
+Then copy, rename, and edit them:
+
+```bash
+cp ~/.config/filectrl/default-theme.toml ~/.config/filectrl/solarized.toml
+vim ~/.config/filectrl/solarized.toml
+```
+
+And point your config at the new file:
+
+```toml
+theme_file = "solarized.toml"
+```
 
 ### Desktop entry
 
