@@ -58,7 +58,7 @@ fn scrollbar_widget(theme: &ScrollbarConfig) -> Scrollbar<'_> {
         .thumb_symbol(block::FULL)
         .track_style(theme.track())
         .track_symbol(Some(line::VERTICAL));
-    if theme.show_begin_end_symbols() {
+    if theme.show_ends() {
         scrollbar = scrollbar
             .begin_symbol(Some("▲"))
             .begin_style(theme.ends())

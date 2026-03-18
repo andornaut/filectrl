@@ -251,7 +251,7 @@ impl View for HelpView {
         let scroll = self.scroll_offset.min(self.max_scroll);
 
         let header_style = theme.help.header();
-        let label_style = theme.help.label();
+        let label_style = theme.help.actions();
         let shortcut_style = theme.help.shortcuts();
         let header_padding = " ".repeat(max_label_width.saturating_sub("Actions".width()));
         let header = Line::from(vec![

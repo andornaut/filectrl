@@ -60,7 +60,7 @@ Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements si
 
 _**Normal mode**_
 
-Description | Keys
+Actions | Shortcuts
 --- | ---
 Quit | <kbd>q</kbd>
 Navigate | <kbd>←</kbd>/<kbd>h</kbd>, <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>→</kbd>/<kbd>l</kbd>
@@ -86,7 +86,7 @@ Toggle help | <kbd>?</kbd>
 
 _**Prompt mode**_
 
-Description | Keys
+Actions | Shortcuts
 --- | ---
 Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
