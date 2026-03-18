@@ -2,7 +2,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::Position,
 };
-use tui_textarea::{CursorMove, Input};
+use ratatui_textarea::{CursorMove, Input};
 
 use super::PromptView;
 use crate::command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command};
