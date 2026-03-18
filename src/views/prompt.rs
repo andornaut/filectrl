@@ -2,7 +2,7 @@ mod handler;
 mod view;
 mod word_navigation;
 
-use rat_text::TextRange;
+use rat_text::{TextPosition, TextRange};
 use rat_widget::textarea::{self, TextAreaState};
 use ratatui::crossterm::event::Event;
 
@@ -10,14 +10,11 @@ use super::View;
 use crate::{
     app::clipboard::Clipboard,
     command::{Command, PromptKind, mode::InputMode, result::CommandResult},
-    file_system::path_info::PathInfo,
 };
 
 pub(super) struct PromptView {
     clipboard: Clipboard,
-    directory: Option<PathInfo>,
     kind: PromptKind,
-    selected: Option<PathInfo>,
     text_area_state: TextAreaState,
 }
 
@@ -25,9 +22,7 @@ impl PromptView {
     pub(super) fn new(clipboard: Clipboard) -> Self {
         Self {
             clipboard,
-            directory: None,
             kind: PromptKind::default(),
-            selected: None,
             text_area_state: TextAreaState::default(),
         }
     }
@@ -87,29 +82,31 @@ impl PromptView {
         CommandResult::Handled
     }
 
-    fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
-        self.selected = selected;
-        CommandResult::Handled
-    }
-
     fn should_show(&self, mode: &InputMode) -> bool {
         *mode == InputMode::Prompt
+    }
+
+    fn workaround_navigate_right_when_at_edge(&mut self, event: &Event) -> CommandResult {
+        let text_area_state = &mut self.text_area_state;
+        let cursor_x_before = text_area_state.cursor().x;
+        textarea::handle_events(text_area_state, true, event);
+
+        // Workaround https://github.com/thscharler/rat-salsa/issues/6
+        // rat-widget wraps the cursor to x=0 when pressing Right at the right edge of the
+        // viewport. Detect this by checking if the cursor moved backwards and restore it.
+        let cursor_x_after = text_area_state.cursor().x;
+        if cursor_x_after < cursor_x_before {
+            // set_cursor clamps to end of text, so cursor_x_before + 1 is always safe
+            text_area_state.set_cursor(TextPosition::new(cursor_x_before + 1, 0), false);
+        }
+        CommandResult::Handled
     }
 
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area_state.text().to_string();
         match self.kind {
             PromptKind::Filter => Command::SetFilter(value).into(),
-            PromptKind::Rename => match &self.selected {
-                Some(selected_path) => Command::RenamePath(selected_path.clone(), value).into(),
-                None => CommandResult::Handled,
-            },
+            PromptKind::Rename => Command::RenameSelected(value).into(),
         }
-    }
-
-    fn workaround_navigate_right_when_at_edge(&mut self, event: &Event) -> CommandResult {
-        let text_area_state = &mut self.text_area_state;
-        textarea::handle_events(text_area_state, true, event);
-        CommandResult::Handled
     }
 }

@@ -35,11 +35,17 @@ pub enum Command {
     Open(PathInfo),
     OpenCustom(PathInfo),
     OpenPrompt(PromptKind, String),
+    /// Intent to paste the clipboard entry into the given directory.
+    /// Emitted by TableView; resolved by App into Copy or Move using AppState::clipboard_entry.
+    Paste(PathInfo),
     Progress(Task),
     Quit,
     Refresh,
     RefreshDirectory(PathInfo, Vec<PathInfo>),
     RenamePath(PathInfo, String),
+    /// Intent to rename the currently selected item to the given name.
+    /// Emitted by PromptView on submit; resolved by App into RenamePath using AppState::selected.
+    RenameSelected(String),
     Resize { width: u16, height: u16 },
     SetClipboard(ClipboardEntry),
     SetFilter(String),

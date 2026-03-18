@@ -9,14 +9,6 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearClipboard => {
-                self.clipboard_entry = None;
-                CommandResult::Handled
-            }
-            Command::SetClipboard(entry) => {
-                self.clipboard_entry = Some(entry.clone());
-                CommandResult::Handled
-            }
             Command::Copy { .. } | Command::Move { .. } => Command::ClearClipboard.into(),
             Command::NavigateDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.to_vec(), false)
