@@ -160,7 +160,7 @@ impl CommandHandler for App {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
-            Command::OpenPrompt(_) => {
+            Command::OpenPrompt(_, _) => {
                 self.state.mode = InputMode::Prompt;
                 CommandResult::Handled
             }

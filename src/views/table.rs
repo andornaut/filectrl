@@ -172,11 +172,14 @@ impl TableView {
     }
 
     fn open_filter_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Filter).into()
+        Command::OpenPrompt(PromptKind::Filter, self.filter.clone()).into()
     }
 
     fn open_rename_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Rename).into()
+        match self.selected_path() {
+            None => Command::AlertWarn("No file selected".into()).into(),
+            Some(path) => Command::OpenPrompt(PromptKind::Rename, path.basename.clone()).into(),
+        }
     }
 
     fn open_selected(&mut self) -> CommandResult {
