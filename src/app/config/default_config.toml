@@ -236,8 +236,13 @@ bg = ""
 fg = "#DDDCCC"
 modifiers = []
 
-[theme.notice.clipboard]
-bg = "#70C0B1"
+[theme.clipboard.copy]
+bg = "#859900" # Olive Green
+fg = "#1D1F21"
+modifiers = []
+
+[theme.clipboard.cut]
+bg = "#CB4B16" # Orange Red
 fg = "#1D1F21"
 modifiers = []
 
@@ -281,7 +286,7 @@ modifiers = []
 
 [theme.scrollbar.thumb]
 bg = "#373424"
-fg = "#DDDCCC"
+fg = "#9C9977"
 modifiers = []
 
 [theme.scrollbar.track]
@@ -312,16 +317,6 @@ modifiers = []
 [theme.table.body]
 bg = "#423F2E"
 fg = "#DDDCCC"
-modifiers = []
-
-[theme.table.copy]
-bg = "#70C0B1"
-fg = "#006400" # Dark Green
-modifiers = []
-
-[theme.table.cut]
-bg = "#70C0B1"
-fg = "#800080" # Purple
 modifiers = []
 
 [theme.table.header]
@@ -557,8 +552,13 @@ bg = ""
 fg = "252" # #d0d0d0 - light gray
 modifiers = []
 
-[theme256.notice.clipboard]
-bg = "28" # #008700 - green
+[theme256.clipboard.copy]
+bg = "100" # #878700 - olive green
+fg = "234" # #1c1c1c
+modifiers = []
+
+[theme256.clipboard.cut]
+bg = "166" # #d75f00 - orange red
 fg = "234" # #1c1c1c
 modifiers = []
 
@@ -602,7 +602,7 @@ modifiers = []
 
 [theme256.scrollbar.thumb]
 bg = "234" # #1c1c1c
-fg = "252" # #d0d0d0
+fg = "26" # #005fd7 - blue
 modifiers = []
 
 [theme256.scrollbar.track]
@@ -633,16 +633,6 @@ modifiers = []
 [theme256.table.body]
 bg = "234" # #1c1c1c
 fg = "252" # #d0d0d0
-modifiers = []
-
-[theme256.table.copy]
-bg = "28" # #008700 - green
-fg = "234" # #1c1c1c
-modifiers = []
-
-[theme256.table.cut]
-bg = "90" # #870087 - magenta
-fg = "231" # #ffffff - white
 modifiers = []
 
 [theme256.table.header]

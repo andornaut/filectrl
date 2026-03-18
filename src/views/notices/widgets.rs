@@ -15,8 +15,8 @@ use crate::{
     views::unicode::truncate_left,
 };
 
-const COPY_PREFIX: &str = " Copied ";
-const MOVE_PREFIX: &str = " Cut ";
+const COPY_PREFIX: &str = "[Copy] ";
+const MOVE_PREFIX: &str = "[Cut] ";
 const CLIPBOARD_SUFFIX: &str = "(Press \"c\" to cancel)";
 const FILTER_PREFIX: &str = " Filtered by ";
 const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
@@ -34,12 +34,14 @@ pub(super) fn clipboard_widget<'a>(
     let available_width = width.saturating_sub(prefix.width() as u16);
     let truncated_path = truncate_left(&path.path, available_width as usize);
 
+    let style = match clipboard_entry {
+        ClipboardEntry::Copy(_) => theme.clipboard.copy(),
+        ClipboardEntry::Move(_) => theme.clipboard.cut(),
+    };
+
     let left = Line::from(vec![
-        Span::raw(prefix),
-        Span::styled(
-            truncated_path,
-            theme.notice.clipboard().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
+        Span::styled(truncated_path, style),
     ]);
 
     let right = if width > (prefix.width() + path.path.width() + CLIPBOARD_SUFFIX.width()) as u16 {
@@ -48,7 +50,7 @@ pub(super) fn clipboard_widget<'a>(
         None
     };
 
-    create_notice_block(left, right, theme.notice.clipboard())
+    create_notice_block(left, right, style)
 }
 
 pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Block<'a> {
