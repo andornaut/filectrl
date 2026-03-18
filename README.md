@@ -65,10 +65,10 @@ Keys | Description
 <kbd>~</kbd> | Go to home directory
 <kbd>←</kbd> / <kbd>b</kbd> / <kbd>Backspace</kbd> | Go to parent directory
 <kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> / <kbd>Space</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
-<kbd>o</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
+<kbd>o</kbd> | Open custom: open the selected file using the program configured by: `openers.open_selected_file`
 <kbd>Home</kbd> / <kbd>g</kbd> / <kbd>^</kbd> | Select first row
 <kbd>End</kbd> / <kbd>G</kbd> / <kbd>$</kbd> | Select last row
-<kbd>z</kbd> | Select middle of visible rows
+<kbd>z</kbd> | Jump to middle row
 <kbd>Ctrl</kbd>+<kbd>f</kbd> / <kbd>Ctrl</kbd>+<kbd>d</kbd> / <kbd>PgDn</kbd> | Scroll down one page
 <kbd>Ctrl</kbd>+<kbd>b</kbd> / <kbd>Ctrl</kbd>+<kbd>u</kbd> / <kbd>PgUp</kbd> | Scroll up one page
 <kbd>Delete</kbd> | Delete the selected file or directory
@@ -91,11 +91,11 @@ Keys | Description
 <kbd>Enter</kbd> | Submit your input and exit filtering/renaming mode
 <kbd>←</kbd> / <kbd>→</kbd> | Move cursor
 <kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>→</kbd> | Move cursor by word (delimited by whitespaces or punctuation)
-<kbd>Ctrl</kbd>+<kbd>a</kbd> / <kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move cursor to beginning/end of line
+<kbd>Ctrl</kbd>+<kbd>a</kbd> / <kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Jump to line start/end
 <kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Shift</kbd>+<kbd>→</kbd> | Select text
 <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | Select to beginning/end of line
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd> | Select by word (delimited by whitespaces or punctuation)
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>a</kbd> | Select all
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> | Select all
 <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste text
 <kbd>Backspace</kbd> / <kbd>Delete</kbd> | Delete character before/after cursor
 
