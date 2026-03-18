@@ -80,7 +80,7 @@ pub(super) struct HelpView {
     scroll_offset: u16,
     scrollbar_area: Rect,
     scrollbar_state: ScrollbarState,
-    visible: bool,
+    is_visible: bool,
 }
 
 impl HelpView {
@@ -100,7 +100,7 @@ impl CommandHandler for HelpView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::ToggleHelp => {
-                self.visible = !self.visible;
+                self.is_visible = !self.is_visible;
                 self.scroll_offset = 0;
                 CommandResult::Handled
             }
@@ -111,7 +111,7 @@ impl CommandHandler for HelpView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
             (KeyCode::Char('?'), KeyModifiers::NONE) => Command::ToggleHelp.into(),
-            _ if self.visible => match (*code, *modifiers) {
+            _ if self.is_visible => match (*code, *modifiers) {
                 (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
                     self.scroll_offset = self.scroll_offset.saturating_add(1).min(self.max_scroll);
                     CommandResult::Handled
@@ -184,11 +184,12 @@ impl CommandHandler for HelpView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        // Accept scroll events globally (same as TableView), so the user doesn't need
-        // to position the cursor over the help panel to scroll it.
+        // Accept scroll events globally only when visible, so the user doesn't need to
+        // position the cursor over the help panel to scroll it, but table scroll is not
+        // affected when help is open.
         // Also accept all events while dragging, so Up/Drag are received wherever the
         // cursor travels during a drag.
-        matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+        (self.is_visible && matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
             || self.is_dragging
             || self.area.contains(Position { x: event.column, y: event.row })
     }

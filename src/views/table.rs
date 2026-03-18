@@ -28,6 +28,7 @@ pub(super) struct TableView {
     directory_items: Vec<PathInfo>,
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
+    is_visible: bool,
 
     table_area: Rect,
     table_state: TableState,
@@ -42,6 +43,7 @@ impl TableView {
     pub fn new(config: &Config) -> Self {
         Self {
             double_click: DoubleClick::new(config),
+            is_visible: true,
             ..Self::default()
         }
     }
