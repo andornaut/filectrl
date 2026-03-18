@@ -1,7 +1,7 @@
 mod handler;
 mod view;
 
-use tui_textarea::{CursorMove, TextArea};
+use ratatui_textarea::{CursorMove, TextArea};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
@@ -101,5 +101,111 @@ fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {
         cursor + 1 - len
     } else {
         prev_top
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    use test_case::test_case;
+
+    use super::*;
+    use crate::{
+        app::clipboard::Clipboard,
+        command::{Command, PromptKind, handler::CommandHandler},
+    };
+
+    fn prompt_with_text(kind: PromptKind, text: &str) -> PromptView {
+        let mut view = PromptView::new(Clipboard::default());
+        view.handle_command(&Command::OpenPrompt(kind, text.to_string()));
+        view
+    }
+
+    // ── next_scroll_top ──────────────────────────────────────────────────────
+
+    #[test_case(0, 5, 10 => 0; "cursor within viewport stays")]
+    #[test_case(0, 0, 10 => 0; "cursor at start stays")]
+    #[test_case(5, 3, 10 => 3; "cursor before viewport scrolls back")]
+    #[test_case(0, 10, 5 => 6; "cursor past viewport scrolls forward")]
+    #[test_case(0, 5,  5 => 1; "cursor at exact right boundary scrolls forward")]
+    #[test_case(3, 3,  5 => 3; "cursor at left edge of viewport stays")]
+    fn next_scroll_top_cases(prev_top: u16, cursor: u16, len: u16) -> u16 {
+        next_scroll_top(prev_top, cursor, len)
+    }
+
+    // ── display_col_to_char_idx ──────────────────────────────────────────────
+
+    #[test_case("hello", 0 => 0; "ascii: col 0 maps to char 0")]
+    #[test_case("hello", 3 => 3; "ascii: col 3 maps to char 3")]
+    #[test_case("hello", 5 => 5; "ascii: col past end clamps to len")]
+    #[test_case("hello", 9 => 5; "ascii: col far past end clamps to len")]
+    #[test_case("日本語",  0 => 0; "wide: col 0 maps to char 0")]
+    #[test_case("日本語",  1 => 0; "wide: col within first char clamps to 0")]
+    #[test_case("日本語",  2 => 1; "wide: col at second char boundary")]
+    #[test_case("日本語",  4 => 2; "wide: col at third char boundary")]
+    #[test_case("ab日",   2 => 2; "mixed: col at wide char boundary")]
+    #[test_case("ab日",   3 => 2; "mixed: col within wide char clamps")]
+    #[test_case("ab日",   4 => 3; "mixed: col past wide char maps to char 3")]
+    fn display_col_to_char_idx_cases(text: &str, col: u16) -> u16 {
+        let view = prompt_with_text(PromptKind::Filter, text);
+        view.display_col_to_char_idx(col)
+    }
+
+    // ── handle_key: Esc / Enter dispatch ─────────────────────────────────────
+
+    #[test]
+    fn esc_returns_close_prompt() {
+        let mut view = PromptView::new(Clipboard::default());
+        let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
+        assert_eq!(result, Command::ClosePrompt.into());
+    }
+
+    #[test]
+    fn enter_with_filter_returns_set_filter() {
+        let mut view = prompt_with_text(PromptKind::Filter, "foo");
+        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        assert_eq!(result, Command::SetFilter("foo".to_string()).into());
+    }
+
+    #[test]
+    fn enter_with_rename_returns_rename_selected() {
+        let mut view = prompt_with_text(PromptKind::Rename, "bar.txt");
+        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        assert_eq!(result, Command::RenameSelected("bar.txt".to_string()).into());
+    }
+
+    // ── open (via handle_command) ─────────────────────────────────────────────
+
+    #[test]
+    fn open_loads_initial_text_and_positions_cursor_at_end() {
+        let view = prompt_with_text(PromptKind::Filter, "hello");
+        assert_eq!(view.text_area.lines()[0], "hello");
+        assert_eq!(view.text_area.cursor(), (0, 5));
+    }
+
+    #[test]
+    fn open_resets_scroll_col() {
+        let mut view = prompt_with_text(PromptKind::Filter, "hello");
+        view.scroll_col = 99;
+        view.handle_command(&Command::OpenPrompt(PromptKind::Filter, "new".to_string()));
+        assert_eq!(view.scroll_col, 0);
+    }
+
+    // ── update_scroll_col ────────────────────────────────────────────────────
+
+    #[test]
+    fn update_scroll_col_tracks_cursor_past_viewport() {
+        // 11 ASCII chars, cursor at end (col 11); viewport width = 5
+        // next_scroll_top(0, 11, 5) = 11 + 1 - 5 = 7
+        let mut view = prompt_with_text(PromptKind::Filter, "hello world");
+        view.update_scroll_col(5);
+        assert_eq!(view.scroll_col, 7);
+    }
+
+    #[test]
+    fn update_scroll_col_stays_zero_when_text_fits() {
+        let mut view = prompt_with_text(PromptKind::Filter, "hi");
+        view.update_scroll_col(20);
+        assert_eq!(view.scroll_col, 0);
     }
 }
