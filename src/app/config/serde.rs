@@ -37,7 +37,12 @@ impl<'de> Deserialize<'de> for ModifierWrapper {
                 "rapid_blink" => acc | Modifier::RAPID_BLINK,
                 "reversed" => acc | Modifier::REVERSED,
                 "crossed_out" => acc | Modifier::CROSSED_OUT,
-                _ => acc, // Ignore unknown and unsupported (e.g. "hidden") modifiers
+                _ => {
+                    log::warn!(
+                        "Unknown modifier in config: {m:?} (valid values: bold, dim, italic, underlined, blink, rapid_blink, reversed, crossed_out)"
+                    );
+                    acc
+                }
             }
         });
 
@@ -57,6 +62,7 @@ where
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use test_case::test_case;
 
     #[derive(Deserialize)]
     struct ColorHolder {
@@ -109,15 +115,15 @@ mod tests {
         assert_eq!(Modifier::BOLD | Modifier::ITALIC, result);
     }
 
-    #[test]
-    fn modifier_names_are_case_insensitive() {
-        assert_eq!(Modifier::BOLD, modifier(r#"modifiers = ["BOLD"]"#));
-        assert_eq!(Modifier::ITALIC, modifier(r#"modifiers = ["Italic"]"#));
+    #[test_case("BOLD"   => Modifier::BOLD   ; "all caps")]
+    #[test_case("Italic" => Modifier::ITALIC ; "title case")]
+    fn modifier_name_is_case_insensitive(name: &str) -> Modifier {
+        modifier(&format!(r#"modifiers = ["{name}"]"#))
     }
 
     #[test]
-    fn unknown_modifier_is_silently_ignored_and_known_ones_still_apply() {
-        // "hidden" is not supported; "bold" should still take effect
+    fn unknown_modifier_is_ignored_and_known_ones_still_apply() {
+        // "hidden" is not supported; "bold" should still take effect (a warning is logged)
         let result = modifier(r#"modifiers = ["bold", "hidden"]"#);
         assert_eq!(Modifier::BOLD, result);
     }
