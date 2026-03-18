@@ -308,6 +308,11 @@ bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = ["bold"]
 
+[table.marked]
+bg = "58" # #5f5f00 - olive
+fg = "252" # #d0d0d0
+modifiers = []
+
 [table.selected]
 bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white

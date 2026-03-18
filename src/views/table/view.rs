@@ -65,12 +65,14 @@ impl TableView {
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
             .iter()
-            .map(|item| row_widget_and_height(
+            .enumerate()
+            .map(|(i, item)| row_widget_and_height(
                 theme,
                 &state.clipboard_entry,
                 self.columns.name_width(),
                 relative_to_datetime,
                 item,
+                self.marks.contains(&i),
             ))
             .unzip();
 

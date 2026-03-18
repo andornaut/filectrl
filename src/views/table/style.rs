@@ -13,11 +13,14 @@ pub(super) fn clipboard_style(
     clipboard_entry: &Option<ClipboardEntry>,
     item: &PathInfo,
 ) -> Option<Style> {
-    match clipboard_entry {
-        Some(ClipboardEntry::Copy(path)) if path == item => Some(theme.clipboard.copy()),
-        Some(ClipboardEntry::Move(path)) if path == item => Some(theme.clipboard.cut()),
-        _ => None,
+    let entry = clipboard_entry.as_ref()?;
+    if !entry.paths().iter().any(|p| p == item) {
+        return None;
     }
+    Some(match entry {
+        ClipboardEntry::Copy(_) => theme.clipboard.copy(),
+        ClipboardEntry::Move(_) => theme.clipboard.cut(),
+    })
 }
 
 pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {

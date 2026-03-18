@@ -15,7 +15,7 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 4;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 21] = [
+const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 24] = [
     ("Quit: ", "q"),
     ("Navigate: ", "←/h, ↓/j, ↑/k, →/l"),
     ("Go to home dir: ", "~"),
@@ -27,14 +27,17 @@ const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 21] = [
     ("Jump to middle row: ", "z"),
     ("Page down: ", "Ctrl+f/Ctrl+d/PgDn"),
     ("Page up: ", "Ctrl+b/Ctrl+u/PgUp"),
+    ("Mark/unmark item: ", "v"),
+    ("Range mark: ", "V"),
     ("Delete: ", "Delete"),
     ("Filter: ", "/"),
-    ("Clear filter/alerts/clipboard/progress: ", "Esc, a, c, p"),
+    ("Clear marks/filter/alerts/progress: ", "Esc, Esc, a, p"),
+    ("Clear clipboard: ", "c"),
     ("Refresh: ", "Ctrl+r/F5"),
     ("Rename: ", "r/F2"),
     ("New window: ", "w"),
     ("Open terminal: ", "t"),
-    ("Copy/Cut/Paste selected: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
+    ("Copy/Cut/Paste: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
     ("Sort by name, modified, size: ", "n, m, s"),
     ("Toggle help: ", "?"),
 ];

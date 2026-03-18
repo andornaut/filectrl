@@ -182,8 +182,8 @@ impl CommandHandler for App {
             // Intent resolution: TableView emits Paste(dest); App enriches it with the
             // clipboard entry from AppState, so TableView doesn't need to cache that state.
             Command::Paste(dest) => match &self.state.clipboard_entry {
-                Some(ClipboardEntry::Copy(src)) => Command::Copy { src: src.clone(), dest: dest.clone() }.into(),
-                Some(ClipboardEntry::Move(src)) => Command::Move { src: src.clone(), dest: dest.clone() }.into(),
+                Some(ClipboardEntry::Copy(srcs)) => Command::Copy { srcs: srcs.clone(), dest: dest.clone() }.into(),
+                Some(ClipboardEntry::Move(srcs)) => Command::Move { srcs: srcs.clone(), dest: dest.clone() }.into(),
                 None => CommandResult::Handled,
             },
             Command::SetClipboard(entry) => {

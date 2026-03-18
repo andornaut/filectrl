@@ -159,12 +159,18 @@ impl FileSystem {
         self.cd(self.current_directory().clone(), false)
     }
 
-    fn run_task(&mut self, task: TaskCommand) -> CommandResult {
-        task.run(
-            self.command_tx.clone(),
-            self.buffer_min_bytes,
-            self.buffer_max_bytes,
-        )
+    fn run_batch(&mut self, tasks: impl Iterator<Item = TaskCommand>) {
+        for task in tasks {
+            let result = task.run(
+                self.command_tx.clone(),
+                self.buffer_min_bytes,
+                self.buffer_max_bytes,
+            );
+            // Send initial progress commands through the channel so NoticesView picks them up
+            if let CommandResult::HandledWith(cmd) = result {
+                let _ = self.command_tx.send(*cmd);
+            }
+        }
     }
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {

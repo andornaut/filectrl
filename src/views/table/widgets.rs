@@ -81,6 +81,7 @@ pub(super) fn row_widget_and_height<'a>(
     name_column_width: u16,
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
+    is_marked: bool,
 ) -> (Row<'a>, u16) {
     let (name_style, date_style, size_style, row_style) =
         if let Some(clipboard_style) = clipboard_style(theme, clipboard_entry, item) {
@@ -90,6 +91,9 @@ pub(super) fn row_widget_and_height<'a>(
                 clipboard_style,
                 clipboard_style,
             )
+        } else if is_marked {
+            let marked = theme.table.marked();
+            (marked, marked, marked, marked)
         } else {
             (
                 name_style(&theme.file_type, item),
