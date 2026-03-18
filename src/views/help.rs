@@ -1,13 +1,13 @@
 use ratatui::{
+    Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Direction, Layout, Position, Rect},
     text::{Line, Span},
     widgets::{Paragraph, ScrollbarState, StatefulWidget, Widget},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::{bordered, View};
+use super::{View, bordered};
 use crate::{
     app::{config::theme::Theme, state::AppState},
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
@@ -76,11 +76,11 @@ pub(super) struct HelpView {
     area: Rect,
     inner_height: u16, // height of the bordered inner area; used to clamp page-scroll
     is_dragging: bool,
-    max_scroll: u16,   // cached in render; used by apply_drag
+    is_visible: bool,
+    max_scroll: u16, // cached in render; used by apply_drag
     scroll_offset: u16,
     scrollbar_area: Rect,
     scrollbar_state: ScrollbarState,
-    is_visible: bool,
 }
 
 impl HelpView {
@@ -123,7 +123,10 @@ impl CommandHandler for HelpView {
                 (KeyCode::PageDown, KeyModifiers::NONE)
                 | (KeyCode::Char('f'), KeyModifiers::CONTROL)
                 | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                    self.scroll_offset = self.scroll_offset.saturating_add(self.inner_height).min(self.max_scroll);
+                    self.scroll_offset = self
+                        .scroll_offset
+                        .saturating_add(self.inner_height)
+                        .min(self.max_scroll);
                     CommandResult::Handled
                 }
                 (KeyCode::PageUp, KeyModifiers::NONE)
@@ -161,7 +164,10 @@ impl CommandHandler for HelpView {
                 CommandResult::Handled
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.scrollbar_area.contains(Position { x: event.column, y: event.row }) {
+                if self.scrollbar_area.contains(Position {
+                    x: event.column,
+                    y: event.row,
+                }) {
                     self.is_dragging = true;
                     self.apply_drag(event.row);
                 } else {
@@ -189,9 +195,16 @@ impl CommandHandler for HelpView {
         // affected when help is open.
         // Also accept all events while dragging, so Up/Drag are received wherever the
         // cursor travels during a drag.
-        (self.is_visible && matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
+        (self.is_visible
+            && matches!(
+                event.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ))
             || self.is_dragging
-            || self.area.contains(Position { x: event.column, y: event.row })
+            || self.area.contains(Position {
+                x: event.column,
+                y: event.row,
+            })
     }
 }
 
@@ -212,8 +225,16 @@ impl View for HelpView {
 
         let style = theme.help.base();
         let (title_left, keyboard_shortcuts, max_label_width) = match state.mode {
-            InputMode::Normal => ("Help", &DEFAULT_KEYBOARD_SHORTCUTS[..], DEFAULT_MAX_LABEL_WIDTH),
-            InputMode::Prompt => ("Help (Prompt)", &PROMPT_KEYBOARD_SHORTCUTS[..], PROMPT_MAX_LABEL_WIDTH),
+            InputMode::Normal => (
+                "Help",
+                &DEFAULT_KEYBOARD_SHORTCUTS[..],
+                DEFAULT_MAX_LABEL_WIDTH,
+            ),
+            InputMode::Prompt => (
+                "Help (Prompt)",
+                &PROMPT_KEYBOARD_SHORTCUTS[..],
+                PROMPT_MAX_LABEL_WIDTH,
+            ),
         };
         let bordered_area = bordered(
             area,
@@ -266,7 +287,12 @@ impl View for HelpView {
                 .content_length(self.max_scroll as usize + 1)
                 .viewport_content_length(self.inner_height as usize)
                 .position(scroll as usize);
-            StatefulWidget::render(super::scrollbar_widget(&theme.scrollbar), scrollbar_area, frame.buffer_mut(), &mut self.scrollbar_state);
+            StatefulWidget::render(
+                super::scrollbar_widget(&theme.scrollbar),
+                scrollbar_area,
+                frame.buffer_mut(),
+                &mut self.scrollbar_state,
+            );
         } else {
             self.scrollbar_area = Rect::default();
             Paragraph::new(lines)

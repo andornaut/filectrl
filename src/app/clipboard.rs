@@ -6,8 +6,6 @@ use std::{
 use anyhow::{anyhow, Error};
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use log::warn;
-use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
-
 use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug)]
@@ -46,10 +44,13 @@ impl Clipboard {
         })
     }
 
-    pub(crate) fn to_rat_clipboard(&self) -> Box<dyn RatClipboard> {
-        match &self.backend {
-            Some(backend) => Box::new(backend.clone()),
-            None => Box::new(NoopClipboardBackend),
+    pub(crate) fn get_text(&self) -> Option<String> {
+        self.backend.as_ref().and_then(|b| b.get_string().ok())
+    }
+
+    pub(crate) fn set_text(&self, text: &str) {
+        if let Some(backend) = &self.backend {
+            let _ = backend.set_string(text);
         }
     }
 
@@ -150,25 +151,3 @@ impl ClipboardBackend {
     }
 }
 
-impl RatClipboard for ClipboardBackend {
-    fn get_string(&self) -> Result<String, ClipboardError> {
-        self.get_string().map_err(|_| ClipboardError)
-    }
-
-    fn set_string(&self, s: &str) -> Result<(), ClipboardError> {
-        self.set_string(s).map_err(|_| ClipboardError)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct NoopClipboardBackend;
-
-impl RatClipboard for NoopClipboardBackend {
-    fn get_string(&self) -> Result<String, ClipboardError> {
-        Ok(String::new())
-    }
-
-    fn set_string(&self, _s: &str) -> Result<(), ClipboardError> {
-        Ok(())
-    }
-}
