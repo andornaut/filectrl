@@ -162,12 +162,12 @@ impl TableView {
     }
 
     fn navigate_to_home_directory(&mut self) -> CommandResult {
-        match etcetera::home_dir() {
-            Ok(path) => match PathInfo::try_from(&path) {
+        match directories::BaseDirs::new() {
+            Some(base_dirs) => match PathInfo::try_from(base_dirs.home_dir()) {
                 Ok(path) => Command::Open(path).into(),
                 Err(_) => Command::AlertError("Could not access home directory".into()).into(),
             },
-            Err(_) => Command::AlertError("Could not determine home directory".into()).into(),
+            None => Command::AlertError("Could not determine home directory".into()).into(),
         }
     }
 

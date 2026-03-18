@@ -5,13 +5,13 @@ pub mod theme;
 use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use etcetera::{choose_base_strategy, BaseStrategy};
+use directories::ProjectDirs;
 use log::{debug, info, LevelFilter};
 use ::serde::Deserialize;
 
 use self::theme::Theme;
 
-const CONFIG_RELATIVE_PATH: &str = "filectrl/config.toml";
+const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG: &str = include_str!("config/default_config.toml");
 
 #[derive(Debug, Deserialize)]
@@ -87,8 +87,8 @@ impl Config {
     }
 
     fn default_path() -> Result<PathBuf> {
-        Ok(choose_base_strategy()
-            .map_err(|e| anyhow!("Cannot determine config directory: {e}"))?
+        Ok(ProjectDirs::from("", "", "filectrl")
+            .ok_or_else(|| anyhow!("Cannot determine config directory"))?
             .config_dir()
             .join(CONFIG_RELATIVE_PATH))
     }
