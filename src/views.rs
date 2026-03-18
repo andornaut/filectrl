@@ -1,5 +1,5 @@
 mod alerts;
-mod header;
+mod breadcrumbs;
 mod help;
 mod notices;
 mod prompt;
@@ -16,6 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{config::theme::Theme, state::AppState},
@@ -31,15 +32,16 @@ fn bordered(
     area: Rect,
     buf: &mut Buffer,
     style: Style,
-    title_left: Option<&str>,
-    title_right: Option<&str>,
+    title_left: &str,
+    title_right: &str,
 ) -> Rect {
-    let mut block = Block::default().borders(Borders::ALL).border_style(style);
-    if let Some(title) = title_left {
-        block = block.title(Line::from(title));
-    }
-    if let Some(title) = title_right {
-        block = block.title(Line::from(title).alignment(Alignment::Right));
+    let fits = (area.width as usize) > title_left.width() + title_right.width() + 2; // 2 = left + right border
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(style)
+        .title(Line::from(title_left));
+    if fits {
+        block = block.title(Line::from(title_right).alignment(Alignment::Right));
     }
     block.render(area, buf);
     area.inner(Margin {
