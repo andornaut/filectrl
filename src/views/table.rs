@@ -8,6 +8,8 @@ mod style;
 mod view;
 mod widgets;
 
+use std::collections::BTreeSet;
+
 use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
 
 use self::{
@@ -29,6 +31,8 @@ pub(super) struct TableView {
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
     is_visible: bool,
+    marks: BTreeSet<usize>,
+    range_anchor: Option<usize>,
 
     table_area: Rect,
     table_state: TableState,
@@ -49,16 +53,20 @@ impl TableView {
     }
 
     fn copy_to_clipboard(&self) -> CommandResult {
-        match self.selected_path() {
-            None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => Command::SetClipboard(ClipboardEntry::Copy(path.clone())).into(),
-        }
+        self.set_clipboard(ClipboardEntry::Copy)
     }
 
     fn cut_to_clipboard(&self) -> CommandResult {
+        self.set_clipboard(ClipboardEntry::Move)
+    }
+
+    fn set_clipboard(&self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
+        if self.has_marks() {
+            return Command::SetClipboard(make_entry(self.marked_paths())).into();
+        }
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => Command::SetClipboard(ClipboardEntry::Move(path.clone())).into(),
+            Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
         }
     }
 
@@ -104,6 +112,7 @@ impl TableView {
 
     fn select_next(&mut self) -> CommandResult {
         self.table_state.scroll_down_by(1);
+        self.update_range_marks();
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => CommandResult::Handled,
@@ -112,6 +121,7 @@ impl TableView {
 
     fn select_previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
+        self.update_range_marks();
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => CommandResult::Handled,
@@ -151,9 +161,14 @@ impl TableView {
         .map_or(CommandResult::Handled, |item| self.select(item))
     }
 
-    fn delete(&self) -> CommandResult {
+    fn delete(&mut self) -> CommandResult {
+        if self.has_marks() {
+            let paths = self.marked_paths();
+            self.clear_marks();
+            return Command::Delete(paths).into();
+        }
         match self.selected_path() {
-            Some(path) => Command::DeletePath(path.clone()).into(),
+            Some(path) => Command::Delete(vec![path.clone()]).into(),
             None => CommandResult::Handled,
         }
     }
@@ -195,6 +210,7 @@ impl TableView {
 
     fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
+        self.update_range_marks();
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => Command::SetSelected(None).into(),
@@ -218,6 +234,7 @@ impl TableView {
 
         if !is_refresh {
             self.filter.clear();
+            self.clear_marks();
             self.table_state.select(None); // An optimization to avoid attempting to re-select an item if we're in a different directory
         }
 
@@ -266,6 +283,8 @@ impl TableView {
     }
 
     fn sort(&mut self, is_refresh: bool) -> CommandResult {
+        self.clear_marks();
+
         // Clone the self.directory_items, so we can sort without affecting the original items
         let mut items = self.directory_items.clone();
 
@@ -322,5 +341,56 @@ impl TableView {
     fn sort_by(&mut self, column: SortColumn) -> CommandResult {
         self.columns.sort_by(column);
         self.sort(false)
+    }
+
+    // --- Mark methods ---
+
+    fn toggle_mark(&mut self) -> CommandResult {
+        self.range_anchor = None;
+        if let Some(i) = self.table_state.selected() {
+            if !self.marks.remove(&i) {
+                self.marks.insert(i);
+            }
+        }
+        CommandResult::Handled
+    }
+
+    fn enter_range_mode(&mut self) -> CommandResult {
+        if self.range_anchor.is_some() {
+            // Already in range mode — exit it
+            self.range_anchor = None;
+            return CommandResult::Handled;
+        }
+        if let Some(i) = self.table_state.selected() {
+            self.range_anchor = Some(i);
+            self.marks.insert(i);
+        }
+        CommandResult::Handled
+    }
+
+    fn clear_marks(&mut self) {
+        self.marks.clear();
+        self.range_anchor = None;
+    }
+
+    fn has_marks(&self) -> bool {
+        !self.marks.is_empty()
+    }
+
+    fn marked_paths(&self) -> Vec<PathInfo> {
+        self.marks
+            .iter()
+            .filter_map(|&i| self.directory_items_sorted.get(i).cloned())
+            .collect()
+    }
+
+    fn update_range_marks(&mut self) {
+        if let Some(anchor) = self.range_anchor {
+            if let Some(cursor) = self.table_state.selected() {
+                let start = anchor.min(cursor);
+                let end = anchor.max(cursor);
+                self.marks = (start..=end).collect();
+            }
+        }
     }
 }

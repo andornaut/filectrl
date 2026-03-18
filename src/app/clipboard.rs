@@ -67,17 +67,30 @@ impl Clipboard {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ClipboardEntry {
-    Copy(PathInfo),
-    Move(PathInfo),
+    Copy(Vec<PathInfo>),
+    Move(Vec<PathInfo>),
+}
+
+impl ClipboardEntry {
+    pub fn paths(&self) -> &[PathInfo] {
+        match self {
+            Self::Copy(paths) | Self::Move(paths) => paths,
+        }
+    }
 }
 
 impl Display for ClipboardEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let (name, path) = match self {
-            Self::Copy(path) => ("cp", path),
-            Self::Move(path) => ("mv", path),
+        let name = match self {
+            Self::Copy(_) => "cp",
+            Self::Move(_) => "mv",
         };
-        write!(f, "{} {}", name, path)
+        let paths = self.paths();
+        write!(f, "{} {}", name, paths[0])?;
+        for path in &paths[1..] {
+            write!(f, "\n{}", path)?;
+        }
+        Ok(())
     }
 }
 
@@ -85,21 +98,24 @@ impl TryFrom<&str> for ClipboardEntry {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut parts = value.splitn(2, ' ');
+        let mut lines = value.lines();
 
-        let Some(command_str) = parts.next() else {
-            return Err(anyhow!("Missing command"));
-        };
+        let first_line = lines.next().ok_or_else(|| anyhow!("Empty clipboard"))?;
+        let mut parts = first_line.splitn(2, ' ');
 
-        let Some(path_str) = parts.next() else {
-            return Err(anyhow!("Missing path"));
-        };
+        let command_str = parts.next().ok_or_else(|| anyhow!("Missing command"))?;
+        let path_str = parts.next().ok_or_else(|| anyhow!("Missing path"))?;
 
-        let path = PathInfo::try_from(path_str)?;
+        let mut paths = vec![PathInfo::try_from(path_str)?];
+        for line in lines {
+            if !line.is_empty() {
+                paths.push(PathInfo::try_from(line)?);
+            }
+        }
 
         match command_str {
-            "cp" => Ok(Self::Copy(path)),
-            "mv" => Ok(Self::Move(path)),
+            "cp" => Ok(Self::Copy(paths)),
+            "mv" => Ok(Self::Move(paths)),
             _ => Err(anyhow!("Invalid ClipboardEntry: {command_str}")),
         }
     }

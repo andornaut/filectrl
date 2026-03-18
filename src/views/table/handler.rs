@@ -9,7 +9,14 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Copy { .. } | Command::Move { .. } => Command::ClearClipboard.into(),
+            Command::Copy { .. } | Command::Move { .. } => {
+                self.clear_marks();
+                Command::ClearClipboard.into()
+            }
+            Command::Delete(_) => {
+                self.clear_marks();
+                CommandResult::Handled
+            }
             Command::ToggleHelp => {
                 self.is_visible = !self.is_visible;
                 CommandResult::NotHandled
@@ -36,6 +43,7 @@ impl CommandHandler for TableView {
             | (KeyCode::Char('b'), KeyModifiers::CONTROL)
             | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
             (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.select_last(),
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.enter_range_mode(),
             (KeyCode::Char('d'), KeyModifiers::CONTROL)
             | (KeyCode::Char('f'), KeyModifiers::CONTROL)
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
@@ -46,7 +54,14 @@ impl CommandHandler for TableView {
                 | KeyCode::Char('f')
                 | KeyCode::Char('l')
                 | KeyCode::Char(' ') => self.open_selected(),
-                KeyCode::Esc => Command::SetFilter("".into()).into(),
+                KeyCode::Esc => {
+                    if self.has_marks() || self.range_anchor.is_some() {
+                        self.clear_marks();
+                        CommandResult::Handled
+                    } else {
+                        Command::SetFilter("".into()).into()
+                    }
+                }
                 KeyCode::Char('~') => self.navigate_to_home_directory(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
@@ -56,6 +71,7 @@ impl CommandHandler for TableView {
                 KeyCode::Char('/') => self.open_filter_prompt(),
                 KeyCode::Char('c') => Command::ClearClipboard.into(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                KeyCode::Char('v') => self.toggle_mark(),
                 KeyCode::Char('z') => self.select_middle_visible_item(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),

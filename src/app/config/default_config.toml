@@ -334,6 +334,11 @@ bg = "#9C9977"
 fg = "#1D1F21"
 modifiers = []
 
+[theme.table.marked]
+bg = "#5F5F00"
+fg = "#DDDCCC"
+modifiers = []
+
 [theme.table.selected]
 bg = "#006B6B"
 fg = "#DDDCCC"
@@ -649,6 +654,11 @@ modifiers = []
 bg = "26" # #005fd7 - blue
 fg = "231" # #ffffff - white
 modifiers = ["bold"]
+
+[theme256.table.marked]
+bg = "58" # #5f5f00 - olive
+fg = "252" # #d0d0d0
+modifiers = []
 
 [theme256.table.selected]
 bg = "26" # #005fd7 - blue

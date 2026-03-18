@@ -5,16 +5,25 @@ use crate::command::{handler::CommandHandler, result::CommandResult, Command};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match TaskCommand::try_from(command) {
-            Ok(task) => self.run_task(task),
-            Err(_) => match command {
-                Command::Open(path) => self.open(path),
-                Command::OpenCustom(path) => self.open_custom(path),
-                Command::Progress(task) => self.check_progress_for_error(task),
-                Command::Refresh => self.refresh(),
-                Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
-                _ => CommandResult::NotHandled,
-            },
+        match command {
+            Command::Copy { srcs, dest } => {
+                self.run_batch(srcs.iter().map(|src| TaskCommand::Copy(src.clone(), dest.clone())));
+                CommandResult::Handled
+            }
+            Command::Move { srcs, dest } => {
+                self.run_batch(srcs.iter().map(|src| TaskCommand::Move(src.clone(), dest.clone())));
+                CommandResult::Handled
+            }
+            Command::Delete(paths) => {
+                self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));
+                CommandResult::Handled
+            }
+            Command::Open(path) => self.open(path),
+            Command::OpenCustom(path) => self.open_custom(path),
+            Command::Progress(task) => self.check_progress_for_error(task),
+            Command::Refresh => self.refresh(),
+            Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
+            _ => CommandResult::NotHandled,
         }
     }
 

@@ -19,6 +19,16 @@ pub struct StyleConfig {
     modifiers: Modifier,
 }
 
+impl Default for StyleConfig {
+    fn default() -> Self {
+        Self {
+            fg: None,
+            bg: None,
+            modifiers: Modifier::empty(),
+        }
+    }
+}
+
 impl StyleConfig {
     fn new(fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) -> Self {
         Self { fg, bg, modifiers }
@@ -326,6 +336,8 @@ pub struct Table {
     body: StyleConfig,
     header: StyleConfig,
     header_sorted: StyleConfig,
+    #[serde(default)]
+    marked: StyleConfig,
     selected: StyleConfig,
 }
 
@@ -333,6 +345,7 @@ impl Table {
     style_getter!(body);
     style_getter!(header);
     style_getter!(header_sorted);
+    style_getter!(marked);
     style_getter!(selected);
 }
 
