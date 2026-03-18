@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use paste::paste;
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 
@@ -9,7 +8,7 @@ use super::serde::{deserialize_color, deserialize_modifier};
 /// A triplet of style properties: foreground color, background color, and modifiers.
 /// `fg` and `bg` are optional — `None` (from `""` in config) means inherit from the parent widget.
 #[derive(Copy, Clone, Deserialize)]
-pub struct ThemeStyle {
+pub struct StyleConfig {
     #[serde(deserialize_with = "deserialize_color")]
     fg: Option<Color>,
 
@@ -20,20 +19,20 @@ pub struct ThemeStyle {
     modifiers: Modifier,
 }
 
-impl ThemeStyle {
-    pub(super) fn new(fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) -> Self {
+impl StyleConfig {
+    fn new(fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) -> Self {
         Self { fg, bg, modifiers }
     }
 }
 
-impl From<ThemeStyle> for Style {
-    fn from(style: ThemeStyle) -> Self {
+impl From<StyleConfig> for Style {
+    fn from(style: StyleConfig) -> Self {
         let mut s = Style::default().add_modifier(style.modifiers);
-        if let Some(fg) = style.fg {
-            s = s.fg(fg);
-        }
         if let Some(bg) = style.bg {
             s = s.bg(bg);
+        }
+        if let Some(fg) = style.fg {
+            s = s.fg(fg);
         }
         s
     }
@@ -47,88 +46,131 @@ macro_rules! style_getter {
     };
 }
 
-macro_rules! style_getter_and_setter {
-    ($name:ident) => {
-        style_getter!($name);
-
-        paste! {
-            pub(super) fn [<set_ $name>](&mut self, fg: Option<Color>, bg: Option<Color>, modifiers: Modifier) {
-                self.$name = ThemeStyle { fg, bg, modifiers };
-            }
-        }
-    };
-}
-
 #[derive(Deserialize)]
 pub struct FileType {
     // Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured below
-    pub ls_colors_take_precedence: bool,
+    ls_colors_take_precedence: bool,
 
-    block_device: ThemeStyle,
-    character_device: ThemeStyle,
-    directory: ThemeStyle,
-    directory_other_writable: ThemeStyle,
-    directory_sticky: ThemeStyle,
-    directory_sticky_other_writable: ThemeStyle,
-    door: ThemeStyle,
-    executable: ThemeStyle,
-    missing: ThemeStyle,
-    normal_file: ThemeStyle,
-    pipe: ThemeStyle,
-    regular_file: ThemeStyle,
-    setgid: ThemeStyle,
-    setuid: ThemeStyle,
-    socket: ThemeStyle,
-    symlink: ThemeStyle,
-    symlink_broken: ThemeStyle,
+    block_device: StyleConfig,
+    character_device: StyleConfig,
+    directory: StyleConfig,
+    directory_other_writable: StyleConfig,
+    directory_sticky: StyleConfig,
+    directory_sticky_other_writable: StyleConfig,
+    door: StyleConfig,
+    executable: StyleConfig,
+    missing: StyleConfig,
+    normal_file: StyleConfig,
+    pipe: StyleConfig,
+    regular_file: StyleConfig,
+    setgid: StyleConfig,
+    setuid: StyleConfig,
+    socket: StyleConfig,
+    symlink: StyleConfig,
+    symlink_broken: StyleConfig,
 
     // Pattern-based styles
     #[serde(skip)]
-    extension_styles: HashMap<String, ThemeStyle>,
+    extension_styles: HashMap<String, StyleConfig>,
     #[serde(skip)]
-    name_styles: HashMap<String, ThemeStyle>,
+    name_styles: HashMap<String, StyleConfig>,
 }
 
 impl FileType {
-    style_getter_and_setter!(block_device);
-    style_getter_and_setter!(character_device);
-    style_getter_and_setter!(directory);
-    style_getter_and_setter!(directory_other_writable);
-    style_getter_and_setter!(directory_sticky);
-    style_getter_and_setter!(directory_sticky_other_writable);
-    style_getter_and_setter!(door);
-    style_getter_and_setter!(executable);
-    style_getter_and_setter!(missing);
-    style_getter_and_setter!(normal_file);
-    style_getter_and_setter!(pipe);
-    style_getter_and_setter!(regular_file);
-    style_getter_and_setter!(setgid);
-    style_getter_and_setter!(setuid);
-    style_getter_and_setter!(socket);
-    style_getter_and_setter!(symlink);
-    style_getter_and_setter!(symlink_broken);
+    style_getter!(block_device);
+    style_getter!(character_device);
+    style_getter!(directory);
+    style_getter!(directory_other_writable);
+    style_getter!(directory_sticky);
+    style_getter!(directory_sticky_other_writable);
+    style_getter!(door);
+    style_getter!(executable);
+    style_getter!(missing);
+    style_getter!(normal_file);
+    style_getter!(pipe);
+    style_getter!(regular_file);
+    style_getter!(setgid);
+    style_getter!(setuid);
+    style_getter!(socket);
+    style_getter!(symlink);
+    style_getter!(symlink_broken);
 
-    pub(super) fn add_pattern_style(&mut self, key: &str, style: ThemeStyle) {
-        if key.starts_with("*.") {
-            // File extension patterns (*.ext=color)
-            let extension = key.trim_start_matches("*.");
-            self.extension_styles.insert(extension.to_string(), style);
-        } else if key.starts_with('*') {
-            // File name patterns (*name=color)
-            let name = key.trim_start_matches('*');
-            self.name_styles.insert(name.to_string(), style);
+    pub(super) fn maybe_apply_ls_colors(&mut self, warn_on_rgb: bool) {
+        if self.ls_colors_take_precedence
+            && let Ok(ls_colors) = std::env::var("LS_COLORS")
+        {
+            self.apply_ls_colors(&ls_colors, warn_on_rgb);
+        }
+    }
+
+    fn apply_ls_colors(&mut self, ls_colors: &str, warn_on_rgb: bool) {
+        let mut found_rgb = false;
+        for entry in ls_colors.split(':') {
+            let Some((key, value)) = entry.split_once('=') else {
+                continue;
+            };
+
+            let (fg, bg, attrs) = super::ls_colors::parse(value);
+            if fg.is_none() && bg.is_none() && attrs == Modifier::empty() {
+                continue;
+            }
+
+            if warn_on_rgb && matches!((fg, bg), (Some(Color::Rgb(..)), _) | (_, Some(Color::Rgb(..)))) {
+                found_rgb = true;
+            }
+
+            let style = StyleConfig::new(fg, bg, attrs);
+            match key {
+                "bd" => self.block_device = style,
+                "ca" => {} // capabilities not supported
+                "cd" => self.character_device = style,
+                "di" => self.directory = style,
+                "do" => self.door = style,
+                "ex" => self.executable = style,
+                "fi" => self.regular_file = style,
+                "ln" => self.symlink = style,
+                "mi" => self.missing = style,
+                "no" => self.normal_file = style,
+                "or" => self.symlink_broken = style,
+                "ow" => self.directory_other_writable = style,
+                "pi" => self.pipe = style,
+                "sg" => self.setgid = style,
+                "so" => self.socket = style,
+                "st" => self.directory_sticky = style,
+                "tw" => self.directory_sticky_other_writable = style,
+                "su" => self.setuid = style,
+                key if key.starts_with("*.") => {
+                    self.extension_styles
+                        .insert(key.trim_start_matches("*.").to_string(), style);
+                }
+                key if key.starts_with('*') => {
+                    self.name_styles
+                        .insert(key.trim_start_matches('*').to_string(), style);
+                }
+                _ => {}
+            }
+        }
+        if found_rgb {
+            log::warn!(
+                "$LS_COLORS contains truecolor (RGB) entries; these may not render correctly on a 256-color terminal"
+            );
         }
     }
 
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
-        // Extension pattern
-        if let Some(&style) = name.rsplit('.').next().and_then(|ext| self.extension_styles.get(ext)) {
+        // Extension pattern — only match if the dot is not the leading character,
+        // so that dotfiles like ".bashrc" are not treated as having extension "bashrc".
+        if let Some(&style) = name
+            .rsplit_once('.')
+            .filter(|(prefix, _)| !prefix.is_empty())
+            .and_then(|(_, ext)| self.extension_styles.get(ext))
+        {
             return Some(style.into());
         }
 
         // Name pattern
         for (pattern, &style) in &self.name_styles {
-            if name.contains(pattern) {
+            if name.ends_with(pattern.as_str()) {
                 return Some(style.into());
             }
         }
@@ -139,12 +181,12 @@ impl FileType {
 
 #[derive(Deserialize)]
 pub struct FileSize {
-    bytes: ThemeStyle,
-    kib: ThemeStyle,
-    mib: ThemeStyle,
-    gib: ThemeStyle,
-    tib: ThemeStyle,
-    pib: ThemeStyle,
+    bytes: StyleConfig,
+    kib: StyleConfig,
+    mib: StyleConfig,
+    gib: StyleConfig,
+    tib: StyleConfig,
+    pib: StyleConfig,
 }
 
 impl FileSize {
@@ -158,90 +200,62 @@ impl FileSize {
 
 #[derive(Deserialize)]
 pub struct FileModifiedDate {
-    less_than_minute: ThemeStyle,
-    less_than_hour: ThemeStyle,
-    less_than_day: ThemeStyle,
-    less_than_month: ThemeStyle,
-    less_than_year: ThemeStyle,
-    greater_than_year: ThemeStyle,
+    less_than_minute: StyleConfig,
+    less_than_hour: StyleConfig,
+    less_than_day: StyleConfig,
+    less_than_month: StyleConfig,
+    less_than_year: StyleConfig,
+    greater_than_year: StyleConfig,
 }
 
 impl FileModifiedDate {
-    style_getter!(greater_than_year);
-    style_getter!(less_than_day);
-    style_getter!(less_than_hour);
     style_getter!(less_than_minute);
+    style_getter!(less_than_hour);
+    style_getter!(less_than_day);
     style_getter!(less_than_month);
     style_getter!(less_than_year);
+    style_getter!(greater_than_year);
 }
 
 #[derive(Deserialize)]
 pub struct Alert {
-    #[serde(deserialize_with = "deserialize_color")]
-    fg: Option<Color>,
+    #[serde(flatten)]
+    base: StyleConfig,
 
-    #[serde(deserialize_with = "deserialize_color")]
-    bg: Option<Color>,
-
-    #[serde(deserialize_with = "deserialize_modifier")]
-    modifiers: Modifier,
-
-    error: ThemeStyle,
-    info: ThemeStyle,
-    warning: ThemeStyle,
+    error: StyleConfig,
+    info: StyleConfig,
+    warn: StyleConfig,
 }
 
 impl Alert {
-    pub fn style(&self) -> Style {
-        let mut s = Style::default().add_modifier(self.modifiers);
-        if let Some(fg) = self.fg {
-            s = s.fg(fg);
-        }
-        if let Some(bg) = self.bg {
-            s = s.bg(bg);
-        }
-        s
-    }
-
+    style_getter!(base);
     style_getter!(error);
     style_getter!(info);
-    style_getter!(warning);
+    style_getter!(warn);
 }
 
 #[derive(Deserialize)]
-pub struct Header {
-    #[serde(deserialize_with = "deserialize_color")]
-    fg: Option<Color>,
+pub struct Breadcrumbs {
+    #[serde(flatten)]
+    base: StyleConfig,
 
-    #[serde(deserialize_with = "deserialize_color")]
-    bg: Option<Color>,
-
-    #[serde(deserialize_with = "deserialize_modifier")]
-    modifiers: Modifier,
-
-    active: ThemeStyle,
+    basename: StyleConfig,
+    ancestor: StyleConfig,
+    separator: StyleConfig,
 }
 
-impl Header {
-    pub fn style(&self) -> Style {
-        let mut s = Style::default().add_modifier(self.modifiers);
-        if let Some(fg) = self.fg {
-            s = s.fg(fg);
-        }
-        if let Some(bg) = self.bg {
-            s = s.bg(bg);
-        }
-        s
-    }
-
-    style_getter!(active);
+impl Breadcrumbs {
+    style_getter!(base);
+    style_getter!(basename);
+    style_getter!(ancestor);
+    style_getter!(separator);
 }
 
 #[derive(Deserialize)]
 pub struct Notice {
-    clipboard: ThemeStyle,
-    filter: ThemeStyle,
-    progress: ThemeStyle,
+    clipboard: StyleConfig,
+    filter: StyleConfig,
+    progress: StyleConfig,
 }
 
 impl Notice {
@@ -252,25 +266,25 @@ impl Notice {
 
 #[derive(Deserialize)]
 pub struct Prompt {
-    cursor: ThemeStyle,
-    input: ThemeStyle,
-    label: ThemeStyle,
-    selection: ThemeStyle,
+    cursor: StyleConfig,
+    input: StyleConfig,
+    label: StyleConfig,
+    selected: StyleConfig,
 }
 
 impl Prompt {
     style_getter!(cursor);
     style_getter!(input);
     style_getter!(label);
-    style_getter!(selection);
+    style_getter!(selected);
 }
 
 #[derive(Deserialize)]
 pub struct Status {
-    directory: ThemeStyle,
-    directory_label: ThemeStyle,
-    selected: ThemeStyle,
-    selected_label: ThemeStyle,
+    directory: StyleConfig,
+    directory_label: StyleConfig,
+    selected: StyleConfig,
+    selected_label: StyleConfig,
 }
 
 impl Status {
@@ -282,17 +296,17 @@ impl Status {
 
 #[derive(Deserialize)]
 pub struct Table {
-    body: ThemeStyle,
-    copy: ThemeStyle,
-    cut: ThemeStyle,
-    header: ThemeStyle,
-    header_active: ThemeStyle,
-    scrollbar_begin: ThemeStyle,
-    scrollbar_end: ThemeStyle,
-    scrollbar_thumb: ThemeStyle,
-    scrollbar_track: ThemeStyle,
-    selected: ThemeStyle,
-    pub scrollbar_show_begin_end_symbols: bool,
+    body: StyleConfig,
+    copy: StyleConfig,
+    cut: StyleConfig,
+    header: StyleConfig,
+    header_sorted: StyleConfig,
+    scrollbar_begin: StyleConfig,
+    scrollbar_end: StyleConfig,
+    scrollbar_thumb: StyleConfig,
+    scrollbar_track: StyleConfig,
+    selected: StyleConfig,
+    scrollbar_show_begin_end_symbols: bool,
 }
 
 impl Table {
@@ -300,52 +314,152 @@ impl Table {
     style_getter!(copy);
     style_getter!(cut);
     style_getter!(header);
-    style_getter!(header_active);
+    style_getter!(header_sorted);
     style_getter!(scrollbar_begin);
     style_getter!(scrollbar_end);
     style_getter!(scrollbar_thumb);
     style_getter!(scrollbar_track);
     style_getter!(selected);
+
+    pub fn scrollbar_show_begin_end_symbols(&self) -> bool {
+        self.scrollbar_show_begin_end_symbols
+    }
+}
+
+#[derive(Deserialize)]
+pub struct Help {
+    #[serde(flatten)]
+    base: StyleConfig,
+
+    header: StyleConfig,
+    label: StyleConfig,
+    shortcuts: StyleConfig,
+}
+
+impl Help {
+    style_getter!(base);
+    style_getter!(header);
+    style_getter!(label);
+    style_getter!(shortcuts);
 }
 
 #[derive(Deserialize)]
 pub struct Theme {
-    #[serde(deserialize_with = "deserialize_color")]
-    bg: Option<Color>,
-
-    #[serde(deserialize_with = "deserialize_color")]
-    fg: Option<Color>,
+    #[serde(flatten)]
+    base: StyleConfig,
 
     pub alert: Alert,
-    pub header: Header,
-    help: ThemeStyle,
+    pub breadcrumbs: Breadcrumbs,
+    pub file_modified_date: FileModifiedDate,
+    pub file_size: FileSize,
+    pub file_type: FileType,
+    pub help: Help,
     pub notice: Notice,
     pub prompt: Prompt,
     pub status: Status,
     pub table: Table,
-
-    pub file_type: FileType,
-    pub file_size: FileSize,
-    pub file_modified_date: FileModifiedDate,
 }
 
 impl Theme {
-    pub fn background(&self) -> Style {
-        let mut s = Style::default();
-        if let Some(fg) = self.fg {
-            s = s.fg(fg);
+    style_getter!(base);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+    use test_case::test_case;
+
+    use super::*;
+
+    fn make_file_type() -> FileType {
+        let empty = StyleConfig::new(None, None, Modifier::empty());
+        FileType {
+            ls_colors_take_precedence: false,
+            block_device: empty,
+            character_device: empty,
+            directory: empty,
+            directory_other_writable: empty,
+            directory_sticky: empty,
+            directory_sticky_other_writable: empty,
+            door: empty,
+            executable: empty,
+            missing: empty,
+            normal_file: empty,
+            pipe: empty,
+            regular_file: empty,
+            setgid: empty,
+            setuid: empty,
+            socket: empty,
+            symlink: empty,
+            symlink_broken: empty,
+            extension_styles: HashMap::new(),
+            name_styles: HashMap::new(),
         }
-        if let Some(bg) = self.bg {
-            s = s.bg(bg);
-        }
-        s
     }
 
-    style_getter!(help);
+    fn red() -> StyleConfig {
+        StyleConfig::new(Some(Color::Red), None, Modifier::empty())
+    }
 
-    pub fn maybe_apply_ls_colors(&mut self) {
-        if self.file_type.ls_colors_take_precedence {
-            super::ls_colors::apply_ls_colors(&mut self.file_type);
-        }
+    // --- pattern_styles: extension branch ---
+
+    #[test_case("foo.rs", "rs", true ; "normal extension matches")]
+    #[test_case("foo.tar.gz", "gz", true ; "last segment of compound name matches")]
+    #[test_case(".bashrc", "bashrc", false ; "leading-dot file does not match extension pattern")]
+    #[test_case("Makefile", "rs", false ; "file with no extension returns no match")]
+    #[test_case("foo", "foo", false ; "extensionless file does not match")]
+    fn extension_pattern(filename: &str, ext: &str, should_match: bool) {
+        let mut ft = make_file_type();
+        ft.extension_styles.insert(ext.to_string(), red());
+        assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
+    }
+
+    // --- pattern_styles: name branch ---
+
+    #[test_case("Makefile", "Makefile", true ; "exact suffix match")]
+    #[test_case("OldMakefile", "Makefile", true ; "longer name ending with pattern matches")]
+    #[test_case("Makefile.bak", "Makefile", false ; "name with trailing suffix does not match")]
+    #[test_case(".bashrc", "bashrc", true ; "dotfile matches name pattern by suffix")]
+    fn name_pattern(filename: &str, pattern: &str, should_match: bool) {
+        let mut ft = make_file_type();
+        ft.name_styles.insert(pattern.to_string(), red());
+        assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
+    }
+
+    // --- apply_ls_colors round-trips ---
+
+    #[test]
+    fn apply_ls_colors_sets_directory_color() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("di=34", false);
+        assert_eq!(ft.directory().fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn apply_ls_colors_sets_executable_color() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("ex=32", false);
+        assert_eq!(ft.executable().fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn apply_ls_colors_extension_pattern_populates_extension_styles() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("*.rs=32", false);
+        assert!(ft.extension_styles.contains_key("rs"));
+    }
+
+    #[test]
+    fn apply_ls_colors_name_pattern_populates_name_styles() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("*Makefile=33", false);
+        assert!(ft.name_styles.contains_key("Makefile"));
+    }
+
+    #[test]
+    fn apply_ls_colors_skips_empty_colon_separated_entries() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("::di=34::", false);
+        assert_eq!(ft.directory().fg, Some(Color::Blue));
     }
 }
