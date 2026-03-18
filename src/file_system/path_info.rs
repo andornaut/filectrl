@@ -216,11 +216,16 @@ impl fmt::Debug for PathInfo {
 
 impl Default for PathInfo {
     fn default() -> Self {
-        env::current_dir()
-            .expect("Can get the CWD")
-            .as_path()
+        let path = env::current_dir()
+            .or_else(|_| {
+                directories::UserDirs::new()
+                    .map(|dirs| dirs.home_dir().to_path_buf())
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home directory"))
+            })
+            .unwrap_or_else(|_| PathBuf::from("/"));
+        path.as_path()
             .try_into()
-            .expect("Can create a PathInfo from the CWD")
+            .expect("Can create a PathInfo from the default directory")
     }
 }
 

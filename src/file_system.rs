@@ -8,7 +8,7 @@ mod watch;
 use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
-use log::info;
+use log::{info, warn};
 
 use self::{
     path_info::PathInfo, operations::open_in, tasks::TaskCommand, watch::DirectoryWatcher,
@@ -26,11 +26,19 @@ pub struct FileSystem {
     open_current_directory_template: String,
     open_new_window_template: String,
     open_selected_file_template: String,
-    watcher: DirectoryWatcher,
+    watcher: Option<DirectoryWatcher>,
 }
 
 impl FileSystem {
     pub fn new(config: &Config, command_tx: Sender<Command>) -> Self {
+        let watcher = DirectoryWatcher::try_new(config.file_system.refresh_debounce_milliseconds)
+            .inspect_err(|e| {
+                warn!("Failed to initialize directory watcher: {e}");
+                let _ = command_tx.send(Command::AlertWarn(format!(
+                    "Directory watcher unavailable: {e}. Use Ctrl+R to refresh manually."
+                )));
+            })
+            .ok();
         Self {
             buffer_max_bytes: config.file_system.buffer_max_bytes,
             buffer_min_bytes: config.file_system.buffer_min_bytes,
@@ -39,13 +47,14 @@ impl FileSystem {
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
             open_selected_file_template: config.openers.open_selected_file.clone(),
-            watcher: DirectoryWatcher::try_new(config.file_system.refresh_debounce_milliseconds)
-                .expect("Can initialize DirectoryWatcher"),
+            watcher,
         }
     }
 
     pub fn run_once(&mut self, directory: Option<PathBuf>) -> Result<Command> {
-        self.watcher.run_once(&self.command_tx);
+        if let Some(watcher) = &mut self.watcher {
+            watcher.run_once(&self.command_tx);
+        }
 
         let directory = directory
             .and_then(|path| {
@@ -76,10 +85,17 @@ impl FileSystem {
 
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
         match operations::cd(&directory) {
-            Ok(children) => {
+            Ok((children, error_count)) => {
+                if error_count > 0 {
+                    let _ = self.command_tx.send(Command::AlertWarn(format!(
+                        "{error_count} entries in {directory:?} could not be read"
+                    )));
+                }
                 self.directory = Some(directory.clone());
                 let path_buf = PathBuf::from(&directory.path);
-                if let Err(e) = self.watcher.watch_directory(path_buf.clone()) {
+                if let Some(watcher) = &mut self.watcher
+                    && let Err(e) = watcher.watch_directory(path_buf.clone())
+                {
                     self.send_directory_error(&path_buf, e);
                 }
                 if navigate {
