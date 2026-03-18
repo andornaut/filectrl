@@ -67,7 +67,6 @@ impl PathInfo {
         let mut breadcrumbs: Vec<_> = self
             .as_path()
             .ancestors()
-            .into_iter()
             .map(|path| path.to_basename())
             .collect();
         breadcrumbs.reverse();
@@ -82,7 +81,11 @@ impl PathInfo {
         maybe_time_to_string(&self.created, relative_to)
     }
 
-    pub fn mode(&self) -> String {
+    pub fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    pub fn unix_mode(&self) -> String {
         unix_mode::to_string(self.mode)
     }
 
@@ -102,7 +105,7 @@ impl PathInfo {
         }
     }
 
-    pub fn name_comparator(self: &PathInfo) -> String {
+    pub fn name_comparator(&self) -> String {
         self.basename.trim_start_matches('.').to_lowercase()
     }
 
@@ -355,12 +358,12 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
         DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
             // Show year if dates are from different calendar years
             if datetime.year() != relative_to.year() {
-                "%b %d, %Y"
+                "%b %-d, %Y"
             } else {
-                "%b %d"
+                "%b %-d"
             }
         }
-        DateTimeAge::GreaterThanYear => "%b %d, %Y",
+        DateTimeAge::GreaterThanYear => "%b %-d, %Y",
     };
     // Return eg. "6:00:00am" instead of "06:00:00am"
     let mut datetime = format!("{}", datetime.format(format));
@@ -414,6 +417,7 @@ mod tests {
     #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-07-13 12:30:10"; "different day")]
     #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-07-13 12:30:10"; "different month")]
     #[test_case("Jul 12, 2023", "2023-07-12 12:30:10", "2022-07-13 12:30:10"; "different year")]
+    #[test_case("Jul 9", "2023-07-09 12:30:10", "2023-07-13 12:30:10"; "single digit day has no leading zero")]
     fn humanize_datetime_is_correct(expected: &str, datetime: &str, relative_to: &str) {
         let result = humanize_datetime(to_local_datetime(datetime), to_local_datetime(relative_to));
 

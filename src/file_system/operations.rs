@@ -32,7 +32,7 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
     Ok(children.into_iter().flatten().collect())
 }
 
-pub(super) fn open_in(path: &PathInfo, template: &String) -> Result<()> {
+pub(super) fn open_in(path: &PathInfo, template: &str) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
     if template.is_empty() {
         return Ok(());

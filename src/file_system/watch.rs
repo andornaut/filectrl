@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::{error, warn};
+use log::{debug, error, warn};
 use notify::{recommended_watcher, Event, RecommendedWatcher, Watcher};
 
 use crate::{command::Command, file_system::debounce};
@@ -123,7 +123,7 @@ fn watch_for_delayed_commands(command_tx: Sender<Command>, delayed_rx: Receiver<
     while let Ok(command) = delayed_rx.recv() {
         thread::sleep(CHECK_DELAYED_THRESHOLD);
         if let Err(e) = command_tx.send(command) {
-            error!("Failed to send delayed refresh command: {}", e);
+            debug!("Delayed refresh not sent, likely due to shutdown: {}", e);
         }
     }
 }
