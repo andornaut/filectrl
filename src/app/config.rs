@@ -13,6 +13,10 @@ use self::theme::Theme;
 
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG: &str = include_str!("config/default_config.toml");
+const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
+const DEFAULT_THEME256: &str = include_str!("config/default_theme256.toml");
+const DEFAULT_THEME_FILENAME: &str = "default-theme.toml";
+const DEFAULT_THEME256_FILENAME: &str = "default-theme-256.toml";
 
 #[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
@@ -45,7 +49,9 @@ struct RawConfig {
     log_level: LevelFilter,
     openers: PlatformOpeners,
     theme: Theme,
+    theme_file: Option<String>,
     theme256: Theme,
+    theme256_file: Option<String>,
     ui: UiConfig,
 }
 
@@ -69,7 +75,7 @@ impl TryFrom<Option<PathBuf>> for Config {
 
         debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
-            Ok(content) => Self::parse(&content),
+            Ok(content) => Self::parse(&content, path.parent().map(|p| p.to_path_buf())),
             Err(err) => Err(anyhow!(
                 "Could not read config from user-supplied path ({}): {}",
                 path.display(),
@@ -81,14 +87,18 @@ impl TryFrom<Option<PathBuf>> for Config {
 
 impl Config {
     fn from_default_file() -> Result<Self> {
-        Self::parse(DEFAULT_CONFIG)
+        Self::parse(DEFAULT_CONFIG, None)
     }
 
-    fn default_path() -> Result<PathBuf> {
+    fn default_config_dir() -> Result<PathBuf> {
         Ok(ProjectDirs::from("", "", "filectrl")
             .ok_or_else(|| anyhow!("Cannot determine config directory"))?
             .config_dir()
-            .join(CONFIG_RELATIVE_PATH))
+            .to_path_buf())
+    }
+
+    fn default_path() -> Result<PathBuf> {
+        Ok(Self::default_config_dir()?.join(CONFIG_RELATIVE_PATH))
     }
 
     pub fn write_default() -> Result<()> {
@@ -103,7 +113,48 @@ impl Config {
         Ok(())
     }
 
-    fn parse(content: &str) -> Result<Self> {
+    pub fn write_default_themes() -> Result<()> {
+        let dir = Self::default_config_dir()?;
+        fs::create_dir_all(&dir)?;
+
+        let theme_path = dir.join(DEFAULT_THEME_FILENAME);
+        fs::write(&theme_path, DEFAULT_THEME)
+            .map_err(|error| anyhow!("Cannot write theme file to {theme_path:?}: {error}"))?;
+        info!("Wrote the default theme to {theme_path:?}");
+
+        let theme256_path = dir.join(DEFAULT_THEME256_FILENAME);
+        fs::write(&theme256_path, DEFAULT_THEME256).map_err(|error| {
+            anyhow!("Cannot write 256-color theme file to {theme256_path:?}: {error}")
+        })?;
+        info!("Wrote the default 256-color theme to {theme256_path:?}");
+        Ok(())
+    }
+
+    fn load_external_theme(theme_file: &str, config_dir: &PathBuf) -> Result<Theme> {
+        let path = PathBuf::from(theme_file);
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            config_dir.join(path)
+        };
+        debug!("Loading external theme from: {}", resolved.display());
+        let content = fs::read_to_string(&resolved).map_err(|error| {
+            anyhow!(
+                "Cannot read theme file ({}): {}",
+                resolved.display(),
+                error
+            )
+        })?;
+        toml::from_str::<Theme>(&content).map_err(|error| {
+            anyhow!(
+                "Cannot parse theme file ({}): {}",
+                resolved.display(),
+                error
+            )
+        })
+    }
+
+    fn parse(content: &str, config_dir: Option<PathBuf>) -> Result<Self> {
         let raw = toml::from_str::<RawConfig>(content)
             .map_err(|error| anyhow!("Cannot parse config file content: {error}"))?;
 
@@ -113,12 +164,31 @@ impl Config {
             raw.openers.linux
         };
 
+        let resolve_dir = || {
+            config_dir
+                .clone()
+                .or_else(|| Self::default_config_dir().ok())
+                .unwrap_or_default()
+        };
+
+        let theme = if let Some(ref theme_file) = raw.theme_file {
+            Self::load_external_theme(theme_file, &resolve_dir())?
+        } else {
+            raw.theme
+        };
+
+        let theme256 = if let Some(ref theme256_file) = raw.theme256_file {
+            Self::load_external_theme(theme256_file, &resolve_dir())?
+        } else {
+            raw.theme256
+        };
+
         let mut config = Config {
             file_system: raw.file_system,
             log_level: raw.log_level,
             openers,
-            theme: raw.theme,
-            theme256: raw.theme256,
+            theme,
+            theme256,
             ui: raw.ui,
         };
         config.theme.file_type.maybe_apply_ls_colors(false);
@@ -134,7 +204,7 @@ impl Config {
         );
 
         match fs::read_to_string(&default_path) {
-            Ok(content) => Self::parse(&content),
+            Ok(content) => Self::parse(&content, default_path.parent().map(|p| p.to_path_buf())),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
                 Self::from_default_file()
@@ -155,5 +225,15 @@ mod tests {
     #[test]
     fn default_config_parses_successfully() {
         Config::from_default_file().unwrap();
+    }
+
+    #[test]
+    fn default_theme_parses_successfully() {
+        toml::from_str::<Theme>(DEFAULT_THEME).unwrap();
+    }
+
+    #[test]
+    fn default_theme256_parses_successfully() {
+        toml::from_str::<Theme>(DEFAULT_THEME256).unwrap();
     }
 }

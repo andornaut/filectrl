@@ -17,6 +17,10 @@ struct Args {
     #[argh(switch)]
     write_default_config: bool,
 
+    /// write default theme files to ~/.config/filectrl/, then exit
+    #[argh(switch)]
+    write_default_themes: bool,
+
     /// force 256-color theme (disables truecolor detection)
     #[argh(switch)]
     colors_256: bool,
@@ -31,6 +35,10 @@ fn main() -> Result<()> {
 
     if args.write_default_config {
         return Config::write_default();
+    }
+
+    if args.write_default_themes {
+        return Config::write_default_themes();
     }
 
     let config = args.config.map(PathBuf::from);

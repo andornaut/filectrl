@@ -308,7 +308,7 @@ pub struct ScrollbarConfig {
     ends: StyleConfig,
     thumb: StyleConfig,
     track: StyleConfig,
-    show_begin_end_symbols: bool,
+    show_ends: bool,
 }
 
 impl ScrollbarConfig {
@@ -316,8 +316,8 @@ impl ScrollbarConfig {
     style_getter!(thumb);
     style_getter!(track);
 
-    pub fn show_begin_end_symbols(&self) -> bool {
-        self.show_begin_end_symbols
+    pub fn show_ends(&self) -> bool {
+        self.show_ends
     }
 }
 
@@ -341,15 +341,15 @@ pub struct Help {
     #[serde(flatten)]
     base: StyleConfig,
 
+    actions: StyleConfig,
     header: StyleConfig,
-    label: StyleConfig,
     shortcuts: StyleConfig,
 }
 
 impl Help {
+    style_getter!(actions);
     style_getter!(base);
     style_getter!(header);
-    style_getter!(label);
     style_getter!(shortcuts);
 }
 
