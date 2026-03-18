@@ -13,6 +13,7 @@ use crate::{
 
 pub(super) struct PromptView {
     clipboard: Clipboard,
+    initial_text: String,
     kind: PromptKind,
     text_area: TextArea<'static>,
     render_area: Rect,
@@ -24,6 +25,7 @@ impl PromptView {
     pub(super) fn new(clipboard: Clipboard) -> Self {
         Self {
             clipboard,
+            initial_text: String::new(),
             kind: PromptKind::default(),
             text_area: TextArea::default(),
             render_area: Rect::default(),
@@ -40,12 +42,17 @@ impl PromptView {
 
     fn open(&mut self, kind: &PromptKind, initial_text: &str) -> CommandResult {
         self.kind = *kind;
-        let mut text_area = TextArea::from([initial_text]);
+        self.initial_text = initial_text.to_string();
+        self.reset_text(&self.initial_text.clone());
+        CommandResult::Handled
+    }
+
+    fn reset_text(&mut self, text: &str) {
+        let mut text_area = TextArea::from([text]);
         text_area.move_cursor(CursorMove::End);
         text_area.set_cursor_line_style(ratatui::style::Style::default());
         self.text_area = text_area;
         self.scroll_col = 0;
-        CommandResult::Handled
     }
 
     /// Mirrors tui-textarea's internal `scroll_top_col` logic to track horizontal scroll offset
@@ -189,6 +196,21 @@ mod tests {
         view.scroll_col = 99;
         view.handle_command(&Command::OpenPrompt(PromptKind::Filter, "new".to_string()));
         assert_eq!(view.scroll_col, 0);
+    }
+
+    // ── Ctrl+Z resets to initial text ──────────────────────────────────────────
+
+    #[test]
+    fn ctrl_z_resets_to_initial_text() {
+        let mut view = prompt_with_text(PromptKind::Rename, "original.txt");
+        // Type a character to modify the text
+        view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
+        assert_ne!(view.text_area.lines()[0], "original.txt");
+
+        // Ctrl+Z resets
+        view.handle_key(&KeyCode::Char('z'), &KeyModifiers::CONTROL);
+        assert_eq!(view.text_area.lines()[0], "original.txt");
+        assert_eq!(view.text_area.cursor(), (0, 12));
     }
 
     // ── update_scroll_col ────────────────────────────────────────────────────
