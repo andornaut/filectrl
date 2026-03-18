@@ -304,6 +304,11 @@ bg = "#9C9977"
 fg = "#1D1F21"
 modifiers = []
 
+[table.marked]
+bg = "#5F5F00"
+fg = "#DDDCCC"
+modifiers = []
+
 [table.selected]
 bg = "#006B6B"
 fg = "#DDDCCC"

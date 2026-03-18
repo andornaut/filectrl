@@ -26,25 +26,34 @@ pub(super) fn clipboard_widget<'a>(
     width: u16,
     clipboard_entry: &'a ClipboardEntry,
 ) -> Block<'a> {
-    let (prefix, path) = match clipboard_entry {
-        ClipboardEntry::Move(path) => (MOVE_PREFIX, path),
-        ClipboardEntry::Copy(path) => (COPY_PREFIX, path),
+    let paths = clipboard_entry.paths();
+    let prefix = match clipboard_entry {
+        ClipboardEntry::Move(_) => MOVE_PREFIX,
+        ClipboardEntry::Copy(_) => COPY_PREFIX,
     };
-
-    let available_width = width.saturating_sub(prefix.width() as u16);
-    let truncated_path = truncate_left(&path.path, available_width as usize);
 
     let style = match clipboard_entry {
         ClipboardEntry::Copy(_) => theme.clipboard.copy(),
         ClipboardEntry::Move(_) => theme.clipboard.cut(),
     };
 
+    let (detail, detail_width) = if paths.len() > 1 {
+        let text = format!("{} items", paths.len());
+        let w = text.width();
+        (text, w)
+    } else {
+        let available_width = width.saturating_sub(prefix.width() as u16);
+        let truncated = truncate_left(&paths[0].path, available_width as usize);
+        let w = truncated.width();
+        (truncated, w)
+    };
+
     let left = Line::from(vec![
         Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
-        Span::styled(truncated_path, style),
+        Span::styled(detail, style),
     ]);
 
-    let right = if width > (prefix.width() + path.path.width() + CLIPBOARD_SUFFIX.width()) as u16 {
+    let right = if width > (prefix.width() + detail_width + CLIPBOARD_SUFFIX.width()) as u16 {
         Some(Line::from(CLIPBOARD_SUFFIX))
     } else {
         None

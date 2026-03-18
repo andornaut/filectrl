@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Result};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
@@ -22,7 +22,7 @@ const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskCommand {
     Copy(PathInfo, PathInfo),
-    DeletePath(PathInfo),
+    Delete(PathInfo),
     Move(PathInfo, PathInfo),
 }
 
@@ -37,23 +37,10 @@ impl TaskCommand {
             TaskCommand::Copy(path, dir) => {
                 run_copy_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
             }
-            TaskCommand::DeletePath(path) => run_delete_task(tx, path),
+            TaskCommand::Delete(path) => run_delete_task(tx, path),
             TaskCommand::Move(path, dir) => {
                 run_move_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
             }
-        }
-    }
-}
-
-impl TryFrom<&Command> for TaskCommand {
-    type Error = Error;
-
-    fn try_from(value: &Command) -> Result<Self, Self::Error> {
-        match value {
-            Command::Copy { src, dest } => Ok(Self::Copy(src.clone(), dest.clone())),
-            Command::Move { src, dest } => Ok(Self::Move(src.clone(), dest.clone())),
-            Command::DeletePath(path) => Ok(Self::DeletePath(path.clone())),
-            _ => Err(anyhow!("Cannot convert Command:{value:?} to TaskCommand")),
         }
     }
 }
