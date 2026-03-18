@@ -9,7 +9,7 @@ FileCtrl is a light, opinionated, responsive, theme-able, and simple Text User I
 You can [download and install a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux or macOS:
 
 ```bash
-curl -sL https://github.com/andornaut/filectrl/releases/download/main/filectrl-linux -o filectrl
+curl -sL https://github.com/andornaut/filectrl/releases/latest/download/filectrl-linux -o filectrl
 chmod +x filectrl
 sudo mv filectrl /usr/local/bin/
 ```
@@ -65,7 +65,7 @@ Keys | Description
 <kbd>~</kbd> | Go to home directory
 <kbd>←</kbd> / <kbd>b</kbd> / <kbd>Backspace</kbd> | Go to parent directory
 <kbd>→</kbd> / <kbd>f</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> / <kbd>Space</kbd> | Open the selected file using the default application configured in your environment, or navigate to the selected directory
-<kbd>o</kbd> | Open the selected file using the program configured by: `templates.open_selected_file`
+<kbd>o</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
 <kbd>Home</kbd> / <kbd>g</kbd> / <kbd>^</kbd> | Select first row
 <kbd>End</kbd> / <kbd>G</kbd> / <kbd>$</kbd> | Select last row
 <kbd>z</kbd> | Select middle of visible rows
@@ -75,8 +75,8 @@ Keys | Description
 <kbd> / </kbd> | Filter by name
 <kbd>Ctrl</kbd>+<kbd>r</kbd> / <kbd>F5</kbd> | Refresh the current directory
 <kbd>r</kbd> / <kbd>F2</kbd> | Rename the selected file or directory
-<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
-<kbd>t</kbd> | Open the current directory in the program configured by: `templates.open_current_directory`
+<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
+<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
 <kbd>a</kbd>, <kbd>c</kbd>, <kbd>p</kbd> | Clear alerts, clipboard content, or progress bars
 <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd> | Copy/Cut/Paste selected file or directory
 <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd> | Sort by name, modified date, or size
@@ -116,18 +116,24 @@ Run `filectrl --write-default-config` to write the [default configuration](./src
 Keyboard key | Description
 --- | ---
 <kbd>f</kbd> | Open the selected file using the default application configured in your environment
-<kbd>o</kbd> | Open the selected file using the program configured by: `templates.open_selected_file`
-<kbd>t</kbd> | Open the current directory in the program configured by: `templates.open_current_directory`
-<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `templates.open_new_window`
+<kbd>o</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
+<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
+<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
 
 ```toml
-[templates]
-# Programs to use to open files or directories:
+# Use [openers.linux] on Linux, or [openers.macos] on macOS.
+# %s is replaced by the relevant path at runtime.
+[openers.linux]
 # %s will be replaced by the path to the current working directory:
 open_current_directory = "alacritty --working-directory %s"
 open_new_window = "alacritty --command filectrl %s"
 # %s will be replaced by the path to the selected file or directory:
 open_selected_file = "pcmanfm %s"
+
+[openers.macos]
+open_current_directory = "open %s"
+open_new_window = "open -a Terminal %s"
+open_selected_file = "open %s"
 ```
 
 ### Theming
