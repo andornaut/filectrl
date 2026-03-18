@@ -8,7 +8,7 @@ use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use log::warn;
 use rat_widget::text::clipboard::{Clipboard as RatClipboard, ClipboardError};
 
-use crate::{command::Command, file_system::path_info::PathInfo};
+use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Clipboard {
@@ -30,23 +30,6 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    pub(crate) fn into_rat_clipboard(self) -> Box<dyn RatClipboard> {
-        match self.backend {
-            Some(backend) => Box::new(backend),
-            None => Box::new(NoopClipboardBackend),
-        }
-    }
-
-    pub(crate) fn copy_file(&self, path: &str) -> Result<(), Error> {
-        let path = PathInfo::try_from(path)?;
-        self.set_clipboard_entry(ClipboardEntry::Copy(path))
-    }
-
-    pub(crate) fn cut_file(&self, path: &str) -> Result<(), Error> {
-        let path = PathInfo::try_from(path)?;
-        self.set_clipboard_entry(ClipboardEntry::Move(path))
-    }
-
     pub(crate) fn clear(&self) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => backend.clear(),
@@ -63,16 +46,14 @@ impl Clipboard {
         })
     }
 
-    pub fn get_command(&self, destination: PathInfo) -> Option<Command> {
-        self.get_clipboard_entry()
-            .map(|entry| entry.to_command(destination))
+    pub(crate) fn to_rat_clipboard(&self) -> Box<dyn RatClipboard> {
+        match &self.backend {
+            Some(backend) => Box::new(backend.clone()),
+            None => Box::new(NoopClipboardBackend),
+        }
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.backend.is_some()
-    }
-
-    fn set_clipboard_entry(&self, entry: ClipboardEntry) -> Result<(), Error> {
+    pub(crate) fn set_clipboard_entry(&self, entry: &ClipboardEntry) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => {
                 let text = entry.to_string();
@@ -123,14 +104,6 @@ impl TryFrom<&str> for ClipboardEntry {
     }
 }
 
-impl ClipboardEntry {
-    fn to_command(&self, to: PathInfo) -> Command {
-        match self {
-            Self::Copy(path) => Command::Copy(path.clone(), to),
-            Self::Move(path) => Command::Move(path.clone(), to),
-        }
-    }
-}
 
 #[derive(Clone)]
 struct ClipboardBackend {
