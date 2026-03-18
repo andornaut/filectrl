@@ -1,9 +1,7 @@
-use rat_text::HasScreenCursor;
-use rat_widget::textarea::TextArea;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    widgets::{Paragraph, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -27,15 +25,12 @@ impl View for PromptView {
 
         let label_widget = Paragraph::new(label).style(theme.prompt.label());
         label_widget.render(label_area, frame.buffer_mut());
-        let textarea_widget = TextArea::new()
-            .style(theme.prompt.input())
-            .select_style(theme.prompt.selected())
-            .cursor_style(theme.prompt.cursor());
-        textarea_widget.render(input_area, frame.buffer_mut(), &mut self.text_area_state);
 
-        // .screen_cursor() returns None when there's an active selection.
-        if let Some((x, y)) = self.text_area_state.screen_cursor() {
-            frame.set_cursor_position((x, y));
-        }
+        self.text_area.set_style(theme.prompt.input());
+        self.text_area.set_selection_style(theme.prompt.selected());
+        self.text_area.set_cursor_style(theme.prompt.cursor());
+        self.render_area = input_area;
+        frame.render_widget(&self.text_area, input_area);
+        self.update_scroll_col(input_area.width);
     }
 }

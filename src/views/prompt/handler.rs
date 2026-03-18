@@ -1,10 +1,10 @@
-use rat_widget::textarea;
 use ratatui::{
-    crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::Position,
 };
+use tui_textarea::{CursorMove, Input};
 
-use super::{word_navigation, PromptView};
+use super::PromptView;
 use crate::command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command};
 
 impl CommandHandler for PromptView {
@@ -16,44 +16,52 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        let event = Event::Key(KeyEvent::new(*code, *modifiers));
         match (*code, *modifiers) {
-            (KeyCode::Esc, _) => Command::ClosePrompt.into(),
-            (KeyCode::Enter, _) => self.submit(),
-            (KeyCode::Left, KeyModifiers::CONTROL) => {
-                self.navigate_by_word(word_navigation::prev_word_boundary)
-            }
-            (KeyCode::Right, KeyModifiers::CONTROL) => {
-                self.navigate_by_word(word_navigation::next_word_boundary)
-            }
-            (KeyCode::Left, m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
-                self.select_by_word(word_navigation::prev_word_boundary)
-            }
-            (KeyCode::Right, m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
-                self.select_by_word(word_navigation::next_word_boundary)
-            }
-            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
-                self.text_area_state.move_to_line_start(false);
-                CommandResult::Handled
-            }
+            (KeyCode::Esc, _) => return Command::ClosePrompt.into(),
+            (KeyCode::Enter, _) => return self.submit(),
             (KeyCode::Char('a'), m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
-                self.text_area_state.select_all();
-                CommandResult::Handled
+                self.text_area.select_all();
+                return CommandResult::Handled;
             }
-            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-                self.text_area_state.move_to_line_end(false);
-                CommandResult::Handled
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
+                if let Some(text) = self.clipboard.get_text() {
+                    self.text_area.set_yank_text(text);
+                }
+                self.text_area.paste();
+                return CommandResult::Handled;
             }
-            (KeyCode::Right, _) => self.workaround_navigate_right_when_at_edge(&event),
-            (_, _) => {
-                textarea::handle_events(&mut self.text_area_state, true, &event);
-                CommandResult::Handled
-            }
+            _ => {}
         }
+
+        self.text_area.input(Input::from(KeyEvent::new(*code, *modifiers)));
+
+        if matches!(code, KeyCode::Char('c') | KeyCode::Char('x'))
+            && modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.clipboard.set_text(&self.text_area.yank_text());
+        }
+
+        CommandResult::Handled
     }
 
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
-        textarea::handle_mouse_events(&mut self.text_area_state, &Event::Mouse(*event));
+        let visual_col = event.column.saturating_sub(self.render_area.x);
+        let char_idx = self.display_col_to_char_idx(visual_col.saturating_add(self.scroll_col));
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.text_area.cancel_selection();
+                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if !self.text_area.is_selecting() {
+                    self.text_area.start_selection();
+                }
+                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
+            }
+            _ => {
+                self.text_area.input(Input::from(*event)); // handles scroll wheel
+            }
+        }
         CommandResult::Handled
     }
 
@@ -62,6 +70,6 @@ impl CommandHandler for PromptView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.text_area_state.area.contains(Position { x: event.column, y: event.row })
+        self.render_area.contains(Position { x: event.column, y: event.row })
     }
 }
