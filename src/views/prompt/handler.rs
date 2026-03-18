@@ -30,6 +30,10 @@ impl CommandHandler for PromptView {
                 self.text_area.paste();
                 return CommandResult::Handled;
             }
+            (KeyCode::Char('z'), KeyModifiers::CONTROL) => {
+                self.reset_text(&self.initial_text.clone());
+                return CommandResult::Handled;
+            }
             _ => {}
         }
 

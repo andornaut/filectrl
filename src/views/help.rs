@@ -39,9 +39,10 @@ const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 21] = [
     ("Toggle help: ", "?"),
 ];
 
-const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
+const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 12] = [
     ("Submit: ", "Enter"),
     ("Cancel: ", "Esc"),
+    ("Reset to initial value: ", "Ctrl+z"),
     ("Move cursor: ", "←/→"),
     ("Move cursor by word: ", "Ctrl+←/→"),
     ("Jump to line start/end: ", "Ctrl+a/Ctrl+e, Home/End"),
