@@ -5,7 +5,7 @@ use ratatui::{
 
 use crate::app::config::theme::Theme;
 
-pub fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
+pub(super) fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
     let mut scrollbar = Scrollbar::default()
         .orientation(ScrollbarOrientation::VerticalRight)
         .thumb_style(theme.table.scrollbar_thumb())
@@ -13,7 +13,7 @@ pub fn scrollbar(theme: &Theme) -> Scrollbar<'_> {
         .track_style(theme.table.scrollbar_track())
         .track_symbol(Some(line::VERTICAL));
 
-    if theme.table.scrollbar_show_begin_end_symbols {
+    if theme.table.scrollbar_show_begin_end_symbols() {
         scrollbar = scrollbar
             .begin_symbol(Some("▲"))
             .begin_style(theme.table.scrollbar_begin())

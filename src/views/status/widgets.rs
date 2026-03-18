@@ -14,7 +14,7 @@ pub(super) fn default_widget<'a>(
     theme: &Theme,
 ) -> Paragraph<'a> {
     let mut spans = Vec::new();
-    add_directory(&mut spans, theme, directory.mode(), directory_len);
+    add_directory(&mut spans, theme, directory.unix_mode(), directory_len);
 
     if let Some(selected) = &selected {
         add_selected(&mut spans, theme, selected);
@@ -96,7 +96,7 @@ fn kind_field(selected: &PathInfo) -> String {
 
     // Note: is_door() is not included as it's a Solaris-specific IPC mechanism
     // and would only be relevant on Solaris systems
-    kind.join(",")
+    kind.join(",") // No space after comma — intentional to save status bar width
 }
 
 fn to_entries(

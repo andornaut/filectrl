@@ -17,7 +17,7 @@ use self::{
     scrollbar::ScrollbarView,
 };
 use crate::{
-    app::{clipboard::{Clipboard, ClipboardEntry}, config::Config},
+    app::{clipboard::ClipboardEntry, config::Config},
     command::{Command, PromptKind, result::CommandResult},
     file_system::path_info::PathInfo,
 };
@@ -32,7 +32,7 @@ pub(super) struct TableView {
     table_area: Rect,
     table_state: TableState,
 
-    clipboard: Clipboard,
+    clipboard_entry: Option<ClipboardEntry>,
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
@@ -47,53 +47,25 @@ impl TableView {
         }
     }
 
-    fn clear_clipboard(&mut self) -> CommandResult {
-        if !self.clipboard.is_enabled() {
-            return CommandResult::Handled;
-        }
-
-        match self.clipboard.clear() {
-            Ok(_) => CommandResult::Handled,
-            Err(e) => Command::AlertError(format!("Failed to clear clipboard: {}", e)).into(),
-        }
-    }
-
-    fn copy_to_clipboard(&mut self) -> CommandResult {
-        if !self.clipboard.is_enabled() {
-            return CommandResult::Handled;
-        }
-
+    fn copy_to_clipboard(&self) -> CommandResult {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => match self.clipboard.copy_file(path.path.as_str()) {
-                Ok(_) => Command::SetClipboard(ClipboardEntry::Copy(path.clone())).into(),
-                Err(e) => Command::AlertError(format!("Failed to copy: {}", e)).into(),
-            },
+            Some(path) => Command::SetClipboard(ClipboardEntry::Copy(path.clone())).into(),
         }
     }
 
-    fn cut_to_clipboard(&mut self) -> CommandResult {
-        if !self.clipboard.is_enabled() {
-            return CommandResult::Handled;
-        }
-
+    fn cut_to_clipboard(&self) -> CommandResult {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => match self.clipboard.cut_file(path.path.as_str()) {
-                Ok(_) => Command::SetClipboard(ClipboardEntry::Move(path.clone())).into(),
-                Err(e) => Command::AlertError(format!("Failed to cut: {}", e)).into(),
-            },
+            Some(path) => Command::SetClipboard(ClipboardEntry::Move(path.clone())).into(),
         }
     }
 
-    fn paste_from_clipboard(&mut self) -> CommandResult {
-        if !self.clipboard.is_enabled() {
-            return CommandResult::Handled;
-        }
-
+    fn paste_from_clipboard(&self) -> CommandResult {
         let destination = self.directory.as_ref().expect("Directory is always set");
-        match self.clipboard.get_command(destination.clone()) {
-            Some(command) => command.into(),
+        match &self.clipboard_entry {
+            Some(ClipboardEntry::Copy(path)) => Command::Copy { src: path.clone(), dest: destination.clone() }.into(),
+            Some(ClipboardEntry::Move(path)) => Command::Move { src: path.clone(), dest: destination.clone() }.into(),
             None => CommandResult::Handled,
         }
     }

@@ -66,16 +66,13 @@ impl TableView {
         let (rows, item_heights): (Vec<_>, Vec<_>) = self
             .directory_items_sorted
             .iter()
-            .map(|item| {
-                let (row, height) = row_widget_and_height(
-                    theme,
-                    &state.clipboard_entry,
-                    self.columns.name_width(),
-                    relative_to_datetime,
-                    item,
-                );
-                (row, height)
-            })
+            .map(|item| row_widget_and_height(
+                theme,
+                &state.clipboard_entry,
+                self.columns.name_width(),
+                relative_to_datetime,
+                item,
+            ))
             .unzip();
 
         let table = table_widget(
@@ -85,7 +82,6 @@ impl TableView {
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );
-        let table = table.style(theme.table.body());
         StatefulWidget::render(table, area, buf, &mut self.table_state);
 
         // -1 for table header

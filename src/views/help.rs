@@ -1,7 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseEvent},
     layout::{Constraint, Position, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
     Frame,
@@ -52,6 +51,24 @@ const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 11] = [
     ("Delete before/after cursor: ", "Backspace/Delete"),
 ];
 
+// Labels are all ASCII, so byte length == display width. Using const fn avoids
+// recomputing the max on every render.
+const fn max_label_width(shortcuts: &[(&str, &str)]) -> usize {
+    let mut max = 0;
+    let mut i = 0;
+    while i < shortcuts.len() {
+        let len = shortcuts[i].0.len();
+        if len > max {
+            max = len;
+        }
+        i += 1;
+    }
+    max
+}
+
+const DEFAULT_MAX_LABEL_WIDTH: usize = max_label_width(&DEFAULT_KEYBOARD_SHORTCUTS);
+const PROMPT_MAX_LABEL_WIDTH: usize = max_label_width(&PROMPT_KEYBOARD_SHORTCUTS);
+
 #[derive(Default)]
 pub(super) struct HelpView {
     area: Rect,
@@ -60,15 +77,13 @@ pub(super) struct HelpView {
 impl CommandHandler for HelpView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => {
-                CommandResult::HandledWith(Box::new(Command::ToggleHelp))
-            }
+            (KeyCode::Char('?'), KeyModifiers::NONE) => Command::ToggleHelp.into(),
             (_, _) => CommandResult::NotHandled,
         }
     }
 
     fn handle_mouse(&mut self, _event: &MouseEvent) -> CommandResult {
-        CommandResult::HandledWith(Box::new(Command::ToggleHelp))
+        Command::ToggleHelp.into()
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
@@ -91,50 +106,37 @@ impl View for HelpView {
             return;
         }
 
-        let style = theme.help();
-        let title_left = match state.mode {
-            InputMode::Prompt => "Help (Prompt)",
-            _ => "Help",
-        };
-        let title_right = "(Press \"?\" to close)";
-        let title_left_width = title_left.width() as u16;
-        let title_right_width = title_right.width() as u16;
-        let has_extra_width = area.width > title_left_width + title_right_width + 2; // +2 for the borders
-
-        let title_right = if has_extra_width {
-            Some(title_right)
-        } else {
-            None
+        let style = theme.help.base();
+        let (title_left, keyboard_shortcuts, max_label_width) = match state.mode {
+            InputMode::Normal => ("Help", &DEFAULT_KEYBOARD_SHORTCUTS[..], DEFAULT_MAX_LABEL_WIDTH),
+            InputMode::Prompt => ("Help (Prompt)", &PROMPT_KEYBOARD_SHORTCUTS[..], PROMPT_MAX_LABEL_WIDTH),
         };
         let bordered_area = bordered(
             area,
             frame.buffer_mut(),
             style,
-            Some(title_left),
-            title_right,
+            title_left,
+            "(Press \"?\" to close)",
         );
-        let keyboard_shortcuts = match state.mode {
-            InputMode::Prompt => &PROMPT_KEYBOARD_SHORTCUTS[..],
-            _ => &DEFAULT_KEYBOARD_SHORTCUTS[..],
-        };
 
-        let label_style = Style::default().add_modifier(Modifier::BOLD);
-        let max_label_width = keyboard_shortcuts
-            .iter()
-            .map(|(label, _)| label.width())
-            .max()
-            .unwrap_or(0);
-        let lines: Vec<Line> = keyboard_shortcuts
-            .iter()
-            .map(|&(label, key)| {
-                let padding = " ".repeat(max_label_width - label.width());
-                Line::from(vec![
-                    Span::styled(label, label_style),
-                    Span::raw(padding),
-                    Span::raw(key),
-                ])
-            })
-            .collect();
+        let header_style = theme.help.header();
+        let label_style = theme.help.label();
+        let shortcut_style = theme.help.shortcuts();
+        let header_padding = " ".repeat(max_label_width.saturating_sub("Actions".width()));
+        let header = Line::from(vec![
+            Span::styled("Actions", header_style),
+            Span::raw(header_padding),
+            Span::styled("Shortcuts", header_style),
+        ]);
+        let mut lines: Vec<Line> = vec![header];
+        lines.extend(keyboard_shortcuts.iter().map(|&(label, key)| {
+            let padding = " ".repeat(max_label_width - label.width());
+            Line::from(vec![
+                Span::styled(label, label_style),
+                Span::raw(padding),
+                Span::styled(key, shortcut_style),
+            ])
+        }));
 
         Paragraph::new(lines)
             .style(style)
