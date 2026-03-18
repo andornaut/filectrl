@@ -16,7 +16,6 @@ use crate::{
 pub(super) struct PromptView {
     clipboard: Clipboard,
     directory: Option<PathInfo>,
-    filter: String,
     kind: PromptKind,
     selected: Option<PathInfo>,
     text_area_state: TextAreaState,
@@ -27,7 +26,6 @@ impl PromptView {
         Self {
             clipboard,
             directory: None,
-            filter: String::new(),
             kind: PromptKind::default(),
             selected: None,
             text_area_state: TextAreaState::default(),
@@ -77,28 +75,15 @@ impl PromptView {
         self.move_by_word(find_boundary, true)
     }
 
-    fn open(&mut self, kind: &PromptKind) -> CommandResult {
+    fn open(&mut self, kind: &PromptKind, initial_text: &str) -> CommandResult {
         self.kind = *kind;
-
-        let text = match kind {
-            PromptKind::Filter => self.filter.clone(),
-            PromptKind::Rename => self
-                .selected
-                .as_ref()
-                .map_or(String::new(), |s| s.basename.clone()),
-        };
 
         let mut text_area_state = TextAreaState::new();
         text_area_state.set_clipboard(Some(self.clipboard.to_rat_clipboard()));
         text_area_state.focus.set(true);
-        text_area_state.set_text(&text);
+        text_area_state.set_text(initial_text);
         text_area_state.move_to_line_end(false);
         self.text_area_state = text_area_state;
-        CommandResult::Handled
-    }
-
-    fn set_filter(&mut self, filter: String) -> CommandResult {
-        self.filter = filter;
         CommandResult::Handled
     }
 

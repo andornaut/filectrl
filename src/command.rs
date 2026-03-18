@@ -34,7 +34,7 @@ pub enum Command {
     NavigateDirectory(PathInfo, Vec<PathInfo>),
     Open(PathInfo),
     OpenCustom(PathInfo),
-    OpenPrompt(PromptKind),
+    OpenPrompt(PromptKind, String),
     Progress(Task),
     Quit,
     Refresh,
