@@ -47,14 +47,13 @@ impl TableView {
     }
 
     fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
-        let selected_line = self
-            .table_state
-            .selected()
-            .map_or(0, |item_index| self.mapper.first_line(item_index));
-        let total_lines_count = self.mapper.total_lines_count();
-
-        self.scrollbar_view
-            .render(area, buf, theme, selected_line, total_lines_count);
+        self.scrollbar_view.render(
+            area,
+            buf,
+            theme,
+            self.mapper.first_visible_line(),
+            self.mapper.total_lines_count(),
+        );
     }
 
     fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, state: &AppState) {
