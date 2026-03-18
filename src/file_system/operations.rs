@@ -10,7 +10,7 @@ use log::{info, warn};
 
 use super::path_info::PathInfo;
 
-pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
+pub(super) fn cd(directory: &PathInfo) -> Result<(Vec<PathInfo>, usize)> {
     info!("Changing directory to {directory:?}");
     let entries = fs::read_dir(&directory.path)?;
 
@@ -25,19 +25,25 @@ pub(super) fn cd(directory: &PathInfo) -> Result<Vec<PathInfo>> {
 
     let (children, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
-    if !errors.is_empty() {
+    let error_count = errors.len();
+    if error_count > 0 {
         warn!("Some paths could not be read: {:?}", errors);
     }
 
-    Ok(children.into_iter().flatten().collect())
+    Ok((children.into_iter().flatten().collect(), error_count))
 }
 
+/// Run a user-configured command template (e.g. `"xdg-open %s"`) with the
+/// file path substituted in. We delegate to `sh -c` rather than splitting the
+/// template ourselves, because templates can contain shell features (pipes,
+/// env vars, subcommands) that would be difficult to parse correctly.
+/// The path is single-quote escaped via `shell_words::quote` to prevent injection.
 pub(super) fn open_in(path: &PathInfo, template: &str) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
     if template.is_empty() {
         return Ok(());
     }
-    let command = template.replace("%s", &path.path);
+    let command = template.replace("%s", &shell_words::quote(&path.path));
     run_detached("sh", ["-c", &command])
         .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))
 }
