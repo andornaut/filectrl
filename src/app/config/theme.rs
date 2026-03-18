@@ -252,14 +252,23 @@ impl Breadcrumbs {
 }
 
 #[derive(Deserialize)]
+pub struct Clipboard {
+    copy: StyleConfig,
+    cut: StyleConfig,
+}
+
+impl Clipboard {
+    style_getter!(copy);
+    style_getter!(cut);
+}
+
+#[derive(Deserialize)]
 pub struct Notice {
-    clipboard: StyleConfig,
     filter: StyleConfig,
     progress: StyleConfig,
 }
 
 impl Notice {
-    style_getter!(clipboard);
     style_getter!(filter);
     style_getter!(progress);
 }
@@ -315,8 +324,6 @@ impl ScrollbarConfig {
 #[derive(Deserialize)]
 pub struct Table {
     body: StyleConfig,
-    copy: StyleConfig,
-    cut: StyleConfig,
     header: StyleConfig,
     header_sorted: StyleConfig,
     selected: StyleConfig,
@@ -324,8 +331,6 @@ pub struct Table {
 
 impl Table {
     style_getter!(body);
-    style_getter!(copy);
-    style_getter!(cut);
     style_getter!(header);
     style_getter!(header_sorted);
     style_getter!(selected);
@@ -355,6 +360,7 @@ pub struct Theme {
 
     pub alert: Alert,
     pub breadcrumbs: Breadcrumbs,
+    pub clipboard: Clipboard,
     pub file_modified_date: FileModifiedDate,
     pub file_size: FileSize,
     pub file_type: FileType,
