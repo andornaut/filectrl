@@ -63,25 +63,28 @@ _**Normal mode**_
 Actions | Shortcuts
 --- | ---
 Quit | <kbd>q</kbd>
-Navigate | <kbd>←</kbd>/<kbd>h</kbd>, <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>→</kbd>/<kbd>l</kbd>
-Go to home directory | <kbd>~</kbd>
-Go to parent directory | <kbd>←</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
-Open | <kbd>→</kbd>/<kbd>f</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd>
+Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
+Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>f</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd>
 Open custom | <kbd>o</kbd>
-Select first row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>
-Select last row | <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
-Jump to middle row | <kbd>z</kbd>
-Page down | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>
-Page up | <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>PgUp</kbd>
-Delete | <kbd>Delete</kbd>
-Filter | <kbd>/</kbd>
-Clear filter/alerts/clipboard/progress | <kbd>Esc</kbd>, <kbd>a</kbd>, <kbd>c</kbd>, <kbd>p</kbd>
-Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
-Rename | <kbd>r</kbd>/<kbd>F2</kbd>
-New window | <kbd>w</kbd>
+Open new window | <kbd>w</kbd>
 Open terminal | <kbd>t</kbd>
-Copy/Cut/Paste selected | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
-Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Go to home dir | <kbd>~</kbd>
+Select next/previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
+Select first/last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
+Jump to middle row | <kbd>z</kbd>
+Page down/up | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>u</kbd>/<kbd>PgUp</kbd>
+Mark/unmark item | <kbd>v</kbd>
+Range mark | <kbd>V</kbd>
+Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
+Cut | <kbd>Ctrl</kbd>+<kbd>x</kbd>
+Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Delete | <kbd>Delete</kbd>
+Rename | <kbd>r</kbd>/<kbd>F2</kbd>
+Filter | <kbd>/</kbd>
+Sort by name/modified/size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
+Clear clipboard/filter/marks | <kbd>Esc</kbd>
+Clear alerts/progress | <kbd>a</kbd>, <kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
 
 _**Prompt mode**_
@@ -92,13 +95,13 @@ Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
 Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
-Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>Ctrl</kbd>+<kbd>→</kbd>
-Jump to line start/end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Ctrl</kbd>+<kbd>e</kbd>, <kbd>Home</kbd>/<kbd>End</kbd>
-Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>Shift</kbd>+<kbd>→</kbd>
-Select to beginning/end of line | <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>Shift</kbd>+<kbd>End</kbd>
-Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd>
+Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
+Jump to line start/end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
+Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
+Select to line start/end | <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>End</kbd>
+Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
-Copy/Cut/Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Copy/Cut/Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>/<kbd>x</kbd>/<kbd>v</kbd>
 Delete before/after cursor | <kbd>Backspace</kbd>/<kbd>Delete</kbd>
 
 > [!NOTE]
@@ -160,19 +163,17 @@ You can see all of the available theme variables in the [default configuration](
 
 #### External theme files
 
-You can store themes in separate files and switch between them by setting `theme_file` and/or `theme256_file` in `config.toml`:
+You can split themes (or any config sections) into separate files using `include_files`:
 
 ```toml
-# Replaces the inline [theme] section with the contents of the specified file
-theme_file = "my-theme.toml"
-# Replaces the inline [theme256] section
-theme256_file = "my-theme-256.toml"
+include_files = ["my-theme.toml"]
 ```
 
 - **Relative paths** are resolved from the directory containing the config file (e.g. `~/.config/filectrl/`)
 - **Absolute paths** are used as-is
-- When set, the external file **completely replaces** the corresponding inline `[theme]`/`[theme256]` section
-- If the file doesn't exist or can't be parsed, FileCtrl exits with an error
+- Included files are **merged on top** of the base config — keys in included files override the base
+- Multiple files are merged in order; later files override earlier ones
+- If a file doesn't exist or can't be parsed, FileCtrl exits with an error
 
 To get started with custom themes, export the built-in defaults as standalone files:
 
@@ -190,10 +191,10 @@ cp ~/.config/filectrl/default-theme.toml ~/.config/filectrl/solarized.toml
 vim ~/.config/filectrl/solarized.toml
 ```
 
-And point your config at the new file:
+And include the new file in your config:
 
 ```toml
-theme_file = "solarized.toml"
+include_files = ["solarized.toml"]
 ```
 
 ### Desktop entry
