@@ -58,11 +58,11 @@ If you then paste into a second FileCtrl window, this second instance of FileCtr
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
 
-### Keyboard controls
+### Keybindings
 
 _**Normal mode**_
 
-Actions | Shortcuts
+Actions | Keys
 --- | ---
 Quit | <kbd>q</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
@@ -71,10 +71,10 @@ Open custom | <kbd>o</kbd>
 Open new window | <kbd>w</kbd>
 Open terminal | <kbd>t</kbd>
 Go to home dir | <kbd>~</kbd>
-Select next/previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
-Select first/last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
+Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
+Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Jump to middle row | <kbd>z</kbd>
-Page down/up | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>u</kbd>/<kbd>PgUp</kbd>
+Page down, up | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>u</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>
 Range mark | <kbd>V</kbd>
 Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
@@ -83,28 +83,28 @@ Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Delete | <kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>
-Sort by name/modified/size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
-Clear alerts/progress | <kbd>a</kbd>, <kbd>p</kbd>
+Clear alerts, progress | <kbd>a</kbd>, <kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
 
 _**Prompt mode**_
 
-Actions | Shortcuts
+Actions | Keys
 --- | ---
 Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
 Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
 Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
-Jump to line start/end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
+Jump to line start, end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
 Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
-Select to line start/end | <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>End</kbd>
+Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
-Copy/Cut/Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>/<kbd>x</kbd>/<kbd>v</kbd>
-Delete before/after cursor | <kbd>Backspace</kbd>/<kbd>Delete</kbd>
+Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
 
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
@@ -210,6 +210,87 @@ The flag is repeatable and files are merged in order (later files take precedenc
 ```bash
 filectrl -i base-theme.toml -i overrides.toml
 ```
+
+### Customizing keybindings
+
+All keybindings can be rebound via the `[keybindings]` section in `config.toml`. Only specify the keys you want to change — unspecified actions keep their defaults.
+
+Arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, and <kbd>Esc</kbd> are hardcoded and always work in addition to any configured keys.
+
+```toml
+[keybindings]
+# Values can be a single key or an array of keys.
+# Examples:
+quit = "q"
+back = ["h", "b", "Backspace"]
+open = ["l", "f", "Enter", "Space"]
+copy = "Ctrl+c"
+select_next = "j"
+select_previous = "k"
+sort_by_name = ["n", "N"]
+```
+
+Key strings support:
+
+- Single characters: `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
+- Uppercase characters (implies Shift): `"G"`, `"V"`, `"N"`
+- Named keys: `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
+- Function keys: `"F2"`, `"F5"`
+- Modifier prefixes: `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
+
+<details>
+<summary>All configurable actions and their defaults</summary>
+
+_**Normal mode**_
+
+Action | Default keys
+--- | ---
+`quit` | `q`
+`toggle_help` | `?`
+`clear_alerts` | `a`
+`clear_progress` | `p`
+`back` | `h`, `b`, `Backspace`
+`open` | `l`, `f`, `Enter`, `Space`
+`open_custom` | `o`
+`open_new_window` | `w`
+`open_terminal` | `t`
+`go_home` | `~`
+`refresh` | `Ctrl+r`, `F5`
+`select_next` | `j`
+`select_previous` | `k`
+`select_first` | `g`, `^`
+`select_last` | `G`, `$`
+`select_middle` | `z`
+`page_up` | `Ctrl+u`, `Ctrl+b`
+`page_down` | `Ctrl+d`, `Ctrl+f`
+`toggle_mark` | `v`
+`range_mark` | `V`
+`copy` | `Ctrl+c`
+`cut` | `Ctrl+x`
+`paste` | `Ctrl+v`
+`delete` | `Delete`
+`rename` | `r`, `F2`
+`filter` | `/`
+`sort_by_name` | `n`, `N`
+`sort_by_modified` | `m`, `M`
+`sort_by_size` | `s`, `S`
+
+_**Prompt mode**_
+
+Action | Default keys
+--- | ---
+`prompt_submit` | `Enter`
+`prompt_reset` | `Ctrl+z`
+`prompt_select_all` | `Ctrl+Shift+a`
+`prompt_copy` | `Ctrl+c`
+`prompt_cut` | `Ctrl+x`
+`prompt_paste` | `Ctrl+v`
+
+</details>
+
+Duplicate keybindings (the same key assigned to two different actions within the same mode) are detected at startup and cause an error.
+
+The help view (<kbd>?</kbd>) always reflects the currently configured keybindings.
 
 ### Desktop entry
 

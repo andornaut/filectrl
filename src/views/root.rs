@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -13,6 +15,7 @@ use super::{
 use crate::{
     app::{AppState, clipboard::Clipboard, config::Config, config::theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
+    keybindings::{Action, KeyBindings},
 };
 
 const MIN_WIDTH: u16 = 14;
@@ -24,6 +27,7 @@ pub struct RootView {
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
     is_help_visible: bool,
+    keybindings: Rc<KeyBindings>,
     notices: NoticesView,
     prompt: PromptView,
     status: StatusView,
@@ -32,13 +36,15 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(config: &Config, clipboard: Clipboard) -> Self {
+        let kb = Rc::clone(&config.keybindings);
         Self {
-            alerts: AlertsView::default(),
+            alerts: AlertsView::new(Rc::clone(&kb)),
             breadcrumbs: BreadcrumbsView::default(),
-            help: HelpView::default(),
+            help: HelpView::new(Rc::clone(&kb)),
             is_help_visible: false,
-            notices: NoticesView::default(),
-            prompt: PromptView::new(clipboard),
+            keybindings: Rc::clone(&kb),
+            notices: NoticesView::new(Rc::clone(&kb)),
+            prompt: PromptView::new(clipboard, Rc::clone(&kb)),
             status: StatusView::default(),
             table: TableView::new(config),
         }
@@ -63,18 +69,20 @@ impl RootView {
 
 impl CommandHandler for RootView {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => {
+        // Hardcoded: Esc closes help
+        if self.is_help_visible && *code == KeyCode::Esc {
+            self.is_help_visible = false;
+            return CommandResult::Handled;
+        }
+        // Rebindable keys
+        match self.keybindings.normal_action(code, modifiers) {
+            Some(Action::ToggleHelp) => {
                 self.is_help_visible = !self.is_help_visible;
                 if self.is_help_visible {
                     Command::ResetHelpScroll.into()
                 } else {
                     CommandResult::Handled
                 }
-            }
-            (KeyCode::Esc, KeyModifiers::NONE) if self.is_help_visible => {
-                self.is_help_visible = false;
-                CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
         }

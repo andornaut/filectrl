@@ -23,6 +23,7 @@ use self::{
 use crate::{
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::{FileSystem, path_info::PathInfo},
+    keybindings::Action,
     views::{View, root::RootView},
 };
 
@@ -223,10 +224,15 @@ impl CommandHandler for App {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Esc, KeyModifiers::NONE) => Command::Reset.into(),
-            (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
-            (_, _) => CommandResult::NotHandled,
+        // Hardcoded keys
+        if let (KeyCode::Esc, KeyModifiers::NONE) = (*code, *modifiers) {
+            return Command::Reset.into();
+        }
+        // Rebindable keys
+        match self.config.keybindings.normal_action(code, modifiers) {
+            Some(Action::Quit) => Command::Quit.into(),
+            Some(Action::Reset) => Command::Reset.into(),
+            _ => CommandResult::NotHandled,
         }
     }
 }

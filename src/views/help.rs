@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
@@ -11,71 +13,106 @@ use super::{ScrollbarView, View, bordered};
 use crate::{
     app::{AppState, config::theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
+    keybindings::{Action, KeyBindings},
 };
 
 const MIN_HEIGHT: u16 = 5;
 
-const NORMAL_MODE_SHORTCUTS: [(&str, &str); 24] = [
-    ("Quit: ", "q"),
-    ("Go to parent dir: ", "←/h/b/Backspace"),
-    ("Open: ", "→/l/f/Enter/Space"),
-    ("Open custom: ", "o"),
-    ("Open new window: ", "w"),
-    ("Open terminal: ", "t"),
-    ("Go to home dir: ", "~"),
-    ("Select next/previous row: ", "↓/j, ↑/k"),
-    ("Select first/last row: ", "Home/g/^, End/G/$"),
-    ("Jump to middle row: ", "z"),
-    ("Page down/up: ", "Ctrl+f/d/PgDn, Ctrl+b/u/PgUp"),
-    ("Mark/unmark item: ", "v"),
-    ("Range mark: ", "V"),
-    ("Copy: ", "Ctrl+c"),
-    ("Cut: ", "Ctrl+x"),
-    ("Paste: ", "Ctrl+v"),
-    ("Delete: ", "Delete"),
-    ("Rename: ", "r/F2"),
-    ("Filter: ", "/"),
-    ("Sort by name/modified/size: ", "n, m, s"),
-    ("Refresh: ", "Ctrl+r/F5"),
-    ("Clear clipboard/filter/marks: ", "Esc"),
-    ("Clear alerts/progress: ", "a, p"),
-    ("Toggle help: ", "?"),
+/// Labels for normal mode keybindings. The order matches the help view display.
+/// Convention: "/" separates alternatives for one action, ", " separates different actions.
+const NORMAL_MODE_LABELS: [&str; 24] = [
+    "Quit: ",
+    "Go to parent dir: ",
+    "Open: ",
+    "Open custom: ",
+    "Open new window: ",
+    "Open terminal: ",
+    "Go to home dir: ",
+    "Select next, previous row: ",
+    "Select first, last row: ",
+    "Jump to middle row: ",
+    "Page down, up: ",
+    "Mark/unmark item: ",
+    "Range mark: ",
+    "Copy: ",
+    "Cut: ",
+    "Paste: ",
+    "Delete: ",
+    "Rename: ",
+    "Filter: ",
+    "Sort by name, modified, size: ",
+    "Refresh: ",
+    "Clear clipboard/filter/marks: ",
+    "Clear alerts, progress: ",
+    "Toggle help: ",
 ];
 
-const PROMPT_MODE_SHORTCUTS: [(&str, &str); 12] = [
-    ("Submit: ", "Enter"),
-    ("Cancel: ", "Esc"),
-    ("Reset to initial value: ", "Ctrl+z"),
+/// Labels for prompt mode keybindings that are rebindable.
+const PROMPT_REBINDABLE_LABELS: [&str; 5] = [
+    "Submit: ",
+    "Cancel: ",
+    "Reset to initial value: ",
+    "Select all: ",
+    "Copy, Cut, Paste text: ",
+];
+
+/// Labels for prompt mode keybindings that are hardcoded (cursor/selection keys).
+const PROMPT_HARDCODED_KEYBINDINGS: [(&str, &str); 7] = [
     ("Move cursor: ", "←/→"),
     ("Move cursor by word: ", "Ctrl+←/→"),
-    ("Jump to line start/end: ", "Ctrl+a/Home, Ctrl+e/End"),
+    ("Jump to line start, end: ", "Ctrl+a/Home, Ctrl+e/End"),
     ("Select text: ", "Shift+←/→"),
-    ("Select to line start/end: ", "Shift+Home, Shift+End"),
+    ("Select to line start, end: ", "Shift+Home, Shift+End"),
     ("Select by word: ", "Ctrl+Shift+←/→"),
-    ("Select all: ", "Ctrl+Shift+A"),
-    ("Copy/Cut/Paste text: ", "Ctrl+c/x/v"),
-    ("Delete before/after cursor: ", "Backspace/Delete"),
+    ("Delete before, after cursor: ", "Backspace, Delete"),
 ];
 
 use std::sync::LazyLock;
 
-// Uses UnicodeWidthStr::width() for correct display width with non-ASCII labels
 static MAX_LABEL_WIDTH: LazyLock<usize> = LazyLock::new(|| {
-    NORMAL_MODE_SHORTCUTS
+    NORMAL_MODE_LABELS
         .iter()
-        .chain(PROMPT_MODE_SHORTCUTS.iter())
-        .map(|(label, _)| label.width())
+        .chain(PROMPT_REBINDABLE_LABELS.iter())
+        .chain(PROMPT_HARDCODED_KEYBINDINGS.iter().map(|(label, _)| label))
+        .map(|label| label.width())
         .max()
         .unwrap_or(0)
 });
 
-#[derive(Default)]
 pub(super) struct HelpView {
     area: Rect,
+    /// Bordered header hint, cached at construction.
+    hint: String,
     inner_height: u16,
+    keybindings: Rc<KeyBindings>,
     max_scroll: u16,
+    /// Keybinding display strings, cached at construction (keybindings never change).
+    normal_keybindings: Vec<(String, String)>,
+    prompt_keybindings: Vec<(String, String)>,
     scroll_offset: u16,
     scrollbar_view: ScrollbarView,
+}
+
+impl HelpView {
+    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+        let hint = format!(
+            "(Press \"{}\" or Esc to close)",
+            keybindings.display_for(Action::ToggleHelp)
+        );
+        let normal_keybindings = build_normal_keybindings(&keybindings);
+        let prompt_keybindings = build_prompt_keybindings(&keybindings);
+        Self {
+            area: Rect::default(),
+            hint,
+            inner_height: 0,
+            keybindings,
+            max_scroll: 0,
+            normal_keybindings,
+            prompt_keybindings,
+            scroll_offset: 0,
+            scrollbar_view: ScrollbarView::default(),
+        }
+    }
 }
 
 impl HelpView {
@@ -107,36 +144,57 @@ impl CommandHandler for HelpView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        // Hardcoded keys (arrow keys, Home/End, PageUp/PageDown)
         match (*code, *modifiers) {
-            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+            (KeyCode::Down, KeyModifiers::NONE) => {
+                self.scroll_down(1);
+                return CommandResult::Handled;
+            }
+            (KeyCode::Up, KeyModifiers::NONE) => {
+                self.scroll_up(1);
+                return CommandResult::Handled;
+            }
+            (KeyCode::PageDown, KeyModifiers::NONE) => {
+                self.scroll_down(self.inner_height);
+                return CommandResult::Handled;
+            }
+            (KeyCode::PageUp, KeyModifiers::NONE) => {
+                self.scroll_up(self.inner_height);
+                return CommandResult::Handled;
+            }
+            (KeyCode::Home, KeyModifiers::NONE) => {
+                self.reset_scroll();
+                return CommandResult::Handled;
+            }
+            (KeyCode::End, KeyModifiers::NONE) => {
+                self.scroll_offset = self.max_scroll;
+                return CommandResult::Handled;
+            }
+            _ => {}
+        }
+        // Rebindable keys (mirrors table navigation)
+        match self.keybindings.normal_action(code, modifiers) {
+            Some(Action::SelectNext) => {
                 self.scroll_down(1);
                 CommandResult::Handled
             }
-            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+            Some(Action::SelectPrevious) => {
                 self.scroll_up(1);
                 CommandResult::Handled
             }
-            (KeyCode::PageDown, KeyModifiers::NONE)
-            | (KeyCode::Char('f'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+            Some(Action::PageDown) => {
                 self.scroll_down(self.inner_height);
                 CommandResult::Handled
             }
-            (KeyCode::PageUp, KeyModifiers::NONE)
-            | (KeyCode::Char('b'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+            Some(Action::PageUp) => {
                 self.scroll_up(self.inner_height);
                 CommandResult::Handled
             }
-            (KeyCode::Home, KeyModifiers::NONE)
-            | (KeyCode::Char('g'), KeyModifiers::NONE)
-            | (KeyCode::Char('^'), KeyModifiers::NONE) => {
+            Some(Action::SelectFirst) => {
                 self.reset_scroll();
                 CommandResult::Handled
             }
-            (KeyCode::End, KeyModifiers::NONE)
-            | (KeyCode::Char('G'), KeyModifiers::SHIFT)
-            | (KeyCode::Char('$'), KeyModifiers::NONE) => {
+            Some(Action::SelectLast) => {
                 self.scroll_offset = self.max_scroll;
                 CommandResult::Handled
             }
@@ -183,26 +241,107 @@ impl CommandHandler for HelpView {
 
 use crate::app::config::theme::Help;
 
-fn add_section<'a>(
+fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, help: &Help) {
+    let header_padding = " ".repeat(MAX_LABEL_WIDTH.saturating_sub(title.width()));
+    lines.push(Line::from(vec![
+        Span::styled(title.to_string(), help.header()),
+        Span::raw(header_padding),
+        Span::styled("Keybindings", help.header()),
+    ]));
+}
+
+fn add_keybinding_lines<'a>(
     lines: &mut Vec<Line<'a>>,
-    title: &'a str,
-    shortcuts: &[(&'a str, &'a str)],
+    keybindings: &'a [(String, String)],
     help: &Help,
 ) {
-    let header_padding = " ".repeat((*MAX_LABEL_WIDTH).saturating_sub(title.width()));
-    lines.push(Line::from(vec![
-        Span::styled(title, help.header()),
-        Span::raw(header_padding),
-        Span::styled("Shortcuts", help.header()),
-    ]));
-    lines.extend(shortcuts.iter().map(|&(label, key)| {
-        let padding = " ".repeat(*MAX_LABEL_WIDTH - label.width());
+    lines.extend(keybindings.iter().map(|(label, keys)| {
+        let padding = " ".repeat(MAX_LABEL_WIDTH.saturating_sub(label.width()));
         Line::from(vec![
-            Span::styled(label, help.actions()),
+            Span::styled(label.as_str(), help.actions()),
             Span::raw(padding),
-            Span::styled(key, help.shortcuts()),
+            Span::styled(keys.as_str(), help.shortcuts()),
         ])
     }));
+}
+
+/// Build normal mode keybinding display strings from KeyBindings.
+fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+    let d = |a: Action| kb.display_for(a).to_string();
+
+    let keys: Vec<String> = vec![
+        d(Action::Quit),
+        d(Action::Back),
+        d(Action::Open),
+        d(Action::OpenCustom),
+        d(Action::OpenNewWindow),
+        d(Action::OpenTerminal),
+        d(Action::GoHome),
+        format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
+        format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
+        d(Action::SelectMiddle),
+        format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
+        d(Action::ToggleMark),
+        d(Action::RangeMark),
+        d(Action::Copy),
+        d(Action::Cut),
+        d(Action::Paste),
+        d(Action::Delete),
+        d(Action::Rename),
+        d(Action::Filter),
+        format!(
+            "{}, {}, {}",
+            d(Action::SortByName),
+            d(Action::SortByModified),
+            d(Action::SortBySize)
+        ),
+        d(Action::Refresh),
+        d(Action::Reset),
+        format!(
+            "{}, {}",
+            d(Action::ClearAlerts),
+            d(Action::ClearProgress)
+        ),
+        d(Action::ToggleHelp),
+    ];
+
+    NORMAL_MODE_LABELS
+        .iter()
+        .zip(keys)
+        .map(|(label, keys)| (label.to_string(), keys))
+        .collect()
+}
+
+/// Build prompt mode keybinding display strings from KeyBindings.
+fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+    let d = |a: Action| kb.display_for(a).to_string();
+
+    let rebindable_keys: Vec<String> = vec![
+        d(Action::PromptSubmit),
+        d(Action::PromptCancel),
+        d(Action::PromptReset),
+        d(Action::PromptSelectAll),
+        format!(
+            "{}, {}, {}",
+            d(Action::PromptCopy),
+            d(Action::PromptCut),
+            d(Action::PromptPaste)
+        ),
+    ];
+
+    let mut result: Vec<(String, String)> = PROMPT_REBINDABLE_LABELS
+        .iter()
+        .zip(rebindable_keys)
+        .map(|(label, keys)| (label.to_string(), keys))
+        .collect();
+
+    result.extend(
+        PROMPT_HARDCODED_KEYBINDINGS
+            .iter()
+            .map(|(label, keys)| (label.to_string(), keys.to_string())),
+    );
+
+    result
 }
 
 impl View for HelpView {
@@ -217,28 +356,14 @@ impl View for HelpView {
         }
 
         let style = theme.help.base();
-        let bordered_area = bordered(
-            area,
-            frame.buffer_mut(),
-            style,
-            "Help",
-            "(Press \"?\" or Esc to close)",
-        );
+        let bordered_area = bordered(area, frame.buffer_mut(), style, "Help", &self.hint);
 
         let mut lines: Vec<Line> = Vec::new();
-        add_section(
-            &mut lines,
-            "Normal Mode",
-            &NORMAL_MODE_SHORTCUTS,
-            &theme.help,
-        );
+        add_section_header(&mut lines, "Normal Mode", &theme.help);
+        add_keybinding_lines(&mut lines, &self.normal_keybindings, &theme.help);
         lines.push(Line::raw(""));
-        add_section(
-            &mut lines,
-            "Prompt Mode",
-            &PROMPT_MODE_SHORTCUTS,
-            &theme.help,
-        );
+        add_section_header(&mut lines, "Prompt Mode", &theme.help);
+        add_keybinding_lines(&mut lines, &self.prompt_keybindings, &theme.help);
 
         let content_height = lines.len() as u16;
         self.inner_height = bordered_area.height;

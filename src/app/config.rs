@@ -2,7 +2,7 @@ mod ls_colors;
 mod serde;
 pub mod theme;
 
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{fs, io::ErrorKind, path::PathBuf, rc::Rc};
 
 use ::serde::Deserialize;
 use anyhow::{Result, anyhow};
@@ -11,6 +11,7 @@ use log::{LevelFilter, debug, info};
 use toml::Value;
 
 use self::theme::Theme;
+use crate::keybindings::{KeyBindings, TomlKeybindings};
 
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
@@ -50,6 +51,8 @@ struct RawConfig {
     #[serde(default)]
     #[allow(dead_code)] // Consumed from raw Value before deserialization
     include_files: Vec<String>,
+    #[serde(default)]
+    keybindings: Option<TomlKeybindings>,
     log_level: LevelFilter,
     openers: PlatformOpeners,
     theme: Theme,
@@ -59,6 +62,7 @@ struct RawConfig {
 
 pub struct Config {
     pub file_system: FileSystemConfig,
+    pub keybindings: Rc<KeyBindings>,
     pub log_level: LevelFilter,
     pub openers: Openers,
     pub theme: Theme,
@@ -199,8 +203,11 @@ impl Config {
             raw.openers.linux
         };
 
+        let keybindings = Rc::new(KeyBindings::new(raw.keybindings.as_ref())?);
+
         let mut config = Config {
             file_system: raw.file_system,
+            keybindings,
             log_level: raw.log_level,
             openers,
             theme: raw.theme,
