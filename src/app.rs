@@ -3,7 +3,6 @@ pub mod config;
 #[cfg(debug_assertions)]
 mod debug;
 mod events;
-pub mod state;
 pub mod terminal;
 
 use std::{
@@ -19,14 +18,30 @@ use self::{
     clipboard::{Clipboard, ClipboardEntry},
     config::Config,
     events::{receive_commands, spawn_command_sender},
-    state::AppState,
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
-    file_system::FileSystem,
+    file_system::{FileSystem, path_info::PathInfo},
     views::{View, root::RootView},
 };
+
+#[derive(Default)]
+pub struct AppState {
+    pub clipboard_entry: Option<ClipboardEntry>,
+    pub mode: InputMode,
+    pub selected: Option<PathInfo>,
+}
+
+impl AppState {
+    fn new(clipboard: &Clipboard) -> Self {
+        let clipboard_entry = clipboard.get_clipboard_entry();
+        Self {
+            clipboard_entry,
+            ..Self::default()
+        }
+    }
+}
 
 const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigateDirectory/RefreshDirectory → SetSelected
 
@@ -156,39 +171,33 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClosePrompt | Command::RenamePath(_, _) => {
-                self.state.mode = InputMode::Normal;
+            Command::ClearClipboard | Command::Reset => {
+                if let Err(e) = self.clipboard.clear() {
+                    return Command::AlertError(format!("Failed to clear clipboard: {e}")).into();
+                }
+                self.state.clipboard_entry = None;
                 CommandResult::Handled
             }
-            // Intent resolution: PromptView emits RenameSelected; App enriches it with the
-            // selected path from AppState, so PromptView doesn't need to cache that state.
-            Command::RenameSelected(value) => match &self.state.selected {
-                Some(path) => Command::RenamePath(path.clone(), value.clone()).into(),
-                None => CommandResult::Handled,
-            },
-            Command::SetSelected(selected) => {
-                self.state.selected = selected.clone();
+            Command::ClosePrompt | Command::RenamePath(_, _) | Command::SetFilter(_) => {
+                self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
             Command::OpenPrompt(_, _) => {
                 self.state.mode = InputMode::Prompt;
                 CommandResult::Handled
             }
-            Command::SetFilter(filter) => {
-                self.state.filter = filter.clone();
-                self.state.mode = InputMode::Normal;
-                CommandResult::Handled
-            }
-            // Intent resolution: TableView emits Paste(dest); App enriches it with the
-            // clipboard entry from AppState, so TableView doesn't need to cache that state.
+            // Intent: TableView emits Paste(dest); App enriches with AppState::clipboard_entry
             Command::Paste(dest) => match &self.state.clipboard_entry {
                 Some(ClipboardEntry::Copy(srcs)) => Command::Copy { srcs: srcs.clone(), dest: dest.clone() }.into(),
                 Some(ClipboardEntry::Move(srcs)) => Command::Move { srcs: srcs.clone(), dest: dest.clone() }.into(),
                 None => CommandResult::Handled,
             },
+            // Intent: PromptView emits RenameSelected; App enriches with AppState::selected
+            Command::RenameSelected(value) => match &self.state.selected {
+                Some(path) => Command::RenamePath(path.clone(), value.clone()).into(),
+                None => CommandResult::Handled,
+            },
             Command::SetClipboard(entry) => {
-                // set_clipboard_entry is a silent no-op when the system clipboard is unavailable,
-                // so in-session copy/cut/paste still works even without a system clipboard.
                 match self.clipboard.set_clipboard_entry(entry) {
                     Ok(()) => {
                         self.state.clipboard_entry = Some(entry.clone());
@@ -197,19 +206,16 @@ impl CommandHandler for App {
                     Err(e) => Command::AlertError(format!("Failed to update clipboard: {e}")).into(),
                 }
             }
-            Command::ClearClipboard => {
-                if let Err(e) = self.clipboard.clear() {
-                    return Command::AlertError(format!("Failed to clear clipboard: {e}")).into();
+            Command::SetMarkCount(count) => {
+                // Marks and clipboard are mutually exclusive
+                if *count > 0 {
+                    let _ = self.clipboard.clear();
+                    self.state.clipboard_entry = None;
                 }
-                self.state.clipboard_entry = None;
                 CommandResult::Handled
             }
-            Command::NavigateDirectory(_, _) => {
-                self.state.filter.clear();
-                CommandResult::Handled
-            }
-            Command::ToggleHelp => {
-                self.state.is_help_visible = !self.state.is_help_visible;
+            Command::SetSelected(selected) => {
+                self.state.selected = selected.clone();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
@@ -218,6 +224,7 @@ impl CommandHandler for App {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
+            (KeyCode::Esc, KeyModifiers::NONE) => Command::Reset.into(),
             (KeyCode::Char('q'), KeyModifiers::NONE) => Command::Quit.into(),
             (_, _) => CommandResult::NotHandled,
         }
@@ -256,7 +263,7 @@ fn recursively_handle_command(
 
     // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
     // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
-    // Non-key commands (NavigateDirectory, ToggleHelp, …) are always broadcast to all handlers.
+    // Non-key commands (NavigateDirectory, Reset, …) are always broadcast to all handlers.
     let is_key = matches!(command, Command::Key(_, _));
     let mut key_consumed = is_key && handled;
     handler.visit_command_handlers(&mut |child| {

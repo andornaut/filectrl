@@ -17,9 +17,10 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 CommandResult::Handled
             }
-            Command::ToggleHelp => {
-                self.is_visible = !self.is_visible;
-                CommandResult::NotHandled
+            Command::Reset => {
+                self.clear_marks();
+                self.set_filter(String::new());
+                CommandResult::Handled
             }
             Command::NavigateDirectory(directory, children) => {
                 self.set_directory(directory.clone(), children.to_vec(), false)
@@ -54,14 +55,6 @@ impl CommandHandler for TableView {
                 | KeyCode::Char('f')
                 | KeyCode::Char('l')
                 | KeyCode::Char(' ') => self.open_selected(),
-                KeyCode::Esc => {
-                    if self.has_marks() || self.range_anchor.is_some() {
-                        self.clear_marks();
-                        CommandResult::Handled
-                    } else {
-                        Command::SetFilter("".into()).into()
-                    }
-                }
                 KeyCode::Char('~') => self.navigate_to_home_directory(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
@@ -69,7 +62,6 @@ impl CommandHandler for TableView {
                 KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.select_first(),
                 KeyCode::Char('$') | KeyCode::End => self.select_last(),
                 KeyCode::Char('/') => self.open_filter_prompt(),
-                KeyCode::Char('c') => Command::ClearClipboard.into(),
                 KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
                 KeyCode::Char('v') => self.toggle_mark(),
                 KeyCode::Char('z') => self.select_middle_visible_item(),
@@ -114,7 +106,7 @@ impl CommandHandler for TableView {
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
         let is_scroll = matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
-        (is_scroll && self.is_visible)
+        is_scroll
             || self.table_area.contains(Position { x: event.column, y: event.row })
             || self.scrollbar_view.is_clicked(event.column, event.row)
     }

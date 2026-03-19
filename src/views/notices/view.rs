@@ -6,7 +6,7 @@ use ratatui::{
 
 use super::NoticesView;
 use crate::{
-    app::{config::theme::Theme, state::AppState},
+    app::{config::theme::Theme, AppState},
     views::View,
 };
 

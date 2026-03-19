@@ -20,7 +20,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{config::theme::{ScrollbarConfig, Theme}, state::AppState},
+    app::{config::theme::{ScrollbarConfig, Theme}, AppState},
     command::handler::CommandHandler,
 };
 

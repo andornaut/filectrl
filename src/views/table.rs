@@ -30,7 +30,6 @@ pub(super) struct TableView {
     directory_items: Vec<PathInfo>,
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
-    is_visible: bool,
     marks: BTreeSet<usize>,
     range_anchor: Option<usize>,
 
@@ -47,27 +46,29 @@ impl TableView {
     pub fn new(config: &Config) -> Self {
         Self {
             double_click: DoubleClick::new(config),
-            is_visible: true,
             ..Self::default()
         }
     }
 
-    fn copy_to_clipboard(&self) -> CommandResult {
+    fn copy_to_clipboard(&mut self) -> CommandResult {
         self.set_clipboard(ClipboardEntry::Copy)
     }
 
-    fn cut_to_clipboard(&self) -> CommandResult {
+    fn cut_to_clipboard(&mut self) -> CommandResult {
         self.set_clipboard(ClipboardEntry::Move)
     }
 
-    fn set_clipboard(&self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
-        if self.has_marks() {
-            return Command::SetClipboard(make_entry(self.marked_paths())).into();
-        }
-        match self.selected_path() {
-            None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
-        }
+    fn set_clipboard(&mut self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
+        let result = if self.has_marks() {
+            Command::SetClipboard(make_entry(self.marked_paths())).into()
+        } else {
+            match self.selected_path() {
+                None => return Command::AlertWarn("No file selected".into()).into(),
+                Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
+            }
+        };
+        self.clear_marks();
+        result
     }
 
     fn paste_from_clipboard(&self) -> CommandResult {
@@ -113,6 +114,9 @@ impl TableView {
     fn select_next(&mut self) -> CommandResult {
         self.table_state.scroll_down_by(1);
         self.update_range_marks();
+        if self.range_anchor.is_some() {
+            return Command::SetMarkCount(self.marks.len()).into();
+        }
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => CommandResult::Handled,
@@ -122,6 +126,9 @@ impl TableView {
     fn select_previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
         self.update_range_marks();
+        if self.range_anchor.is_some() {
+            return Command::SetMarkCount(self.marks.len()).into();
+        }
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => CommandResult::Handled,
@@ -211,6 +218,9 @@ impl TableView {
     fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
         self.update_range_marks();
+        if self.range_anchor.is_some() {
+            return Command::SetMarkCount(self.marks.len()).into();
+        }
         match self.selected_path() {
             Some(path) => Command::SetSelected(Some(path.clone())).into(),
             None => Command::SetSelected(None).into(),
@@ -346,26 +356,25 @@ impl TableView {
     // --- Mark methods ---
 
     fn toggle_mark(&mut self) -> CommandResult {
-        self.range_anchor = None;
         if let Some(i) = self.table_state.selected() {
             if !self.marks.remove(&i) {
                 self.marks.insert(i);
             }
         }
-        CommandResult::Handled
+        Command::SetMarkCount(self.marks.len()).into()
     }
 
     fn enter_range_mode(&mut self) -> CommandResult {
         if self.range_anchor.is_some() {
             // Already in range mode — exit it
             self.range_anchor = None;
-            return CommandResult::Handled;
+            return Command::SetMarkCount(self.marks.len()).into();
         }
         if let Some(i) = self.table_state.selected() {
             self.range_anchor = Some(i);
             self.marks.insert(i);
         }
-        CommandResult::Handled
+        Command::SetMarkCount(self.marks.len()).into()
     }
 
     fn clear_marks(&mut self) {

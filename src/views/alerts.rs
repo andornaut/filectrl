@@ -9,13 +9,13 @@ use ratatui::{
 use std::collections::VecDeque;
 use super::{bordered, View};
 use crate::{
-    app::{config::theme::Theme, state::AppState},
+    app::{config::theme::Theme, AppState},
     command::{handler::CommandHandler, result::CommandResult, Command},
     views::unicode::split_with_ellipsis,
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
-const MIN_HEIGHT: u16 = 2;
+const MIN_HEIGHT: u16 = 3; // border(2) + 1 alert line
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AlertKind {

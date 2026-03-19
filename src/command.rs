@@ -41,16 +41,19 @@ pub enum Command {
     Progress(Task),
     Quit,
     Refresh,
+    /// Clears marks, clipboard, and filter. Emitted by TableView on Esc in normal mode.
+    Reset,
     RefreshDirectory(PathInfo, Vec<PathInfo>),
     RenamePath(PathInfo, String),
     /// Intent to rename the currently selected item to the given name.
     /// Emitted by PromptView on submit; resolved by App into RenamePath using AppState::selected.
     RenameSelected(String),
+    ResetHelpScroll,
     Resize { width: u16, height: u16 },
     SetClipboard(ClipboardEntry),
     SetFilter(String),
+    SetMarkCount(usize),
     SetSelected(Option<PathInfo>),
-    ToggleHelp,
 }
 
 impl Command {

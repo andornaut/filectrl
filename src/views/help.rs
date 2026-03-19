@@ -9,86 +9,93 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{View, bordered};
 use crate::{
-    app::{config::theme::Theme, state::AppState},
-    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
+    app::{AppState, config::theme::Theme},
+    command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
-const MIN_HEIGHT: u16 = 4;
+const MIN_HEIGHT: u16 = 5;
 
-const DEFAULT_KEYBOARD_SHORTCUTS: [(&str, &str); 24] = [
+const NORMAL_MODE_SHORTCUTS: [(&str, &str); 24] = [
     ("Quit: ", "q"),
-    ("Navigate: ", "←/h, ↓/j, ↑/k, →/l"),
-    ("Go to home dir: ", "~"),
-    ("Go to parent dir: ", "←/b/Backspace"),
-    ("Open: ", "→/f/l/Enter/Space"),
+    ("Go to parent dir: ", "←/h/b/Backspace"),
+    ("Open: ", "→/l/f/Enter/Space"),
     ("Open custom: ", "o"),
-    ("Select first row: ", "Home/g/^"),
-    ("Select last row: ", "End/G/$"),
+    ("Open new window: ", "w"),
+    ("Open terminal: ", "t"),
+    ("Go to home dir: ", "~"),
+    ("Select next/previous row: ", "↓/j, ↑/k"),
+    ("Select first/last row: ", "Home/g/^, End/G/$"),
     ("Jump to middle row: ", "z"),
-    ("Page down: ", "Ctrl+f/Ctrl+d/PgDn"),
-    ("Page up: ", "Ctrl+b/Ctrl+u/PgUp"),
+    ("Page down/up: ", "Ctrl+f/d/PgDn, Ctrl+b/u/PgUp"),
     ("Mark/unmark item: ", "v"),
     ("Range mark: ", "V"),
+    ("Copy: ", "Ctrl+c"),
+    ("Cut: ", "Ctrl+x"),
+    ("Paste: ", "Ctrl+v"),
     ("Delete: ", "Delete"),
-    ("Filter: ", "/"),
-    ("Clear marks/filter/alerts/progress: ", "Esc, Esc, a, p"),
-    ("Clear clipboard: ", "c"),
-    ("Refresh: ", "Ctrl+r/F5"),
     ("Rename: ", "r/F2"),
-    ("New window: ", "w"),
-    ("Open terminal: ", "t"),
-    ("Copy/Cut/Paste: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
-    ("Sort by name, modified, size: ", "n, m, s"),
+    ("Filter: ", "/"),
+    ("Sort by name/modified/size: ", "n, m, s"),
+    ("Refresh: ", "Ctrl+r/F5"),
+    ("Clear clipboard/filter/marks: ", "Esc"),
+    ("Clear alerts/progress: ", "a, p"),
     ("Toggle help: ", "?"),
 ];
 
-const PROMPT_KEYBOARD_SHORTCUTS: [(&str, &str); 12] = [
+const PROMPT_MODE_SHORTCUTS: [(&str, &str); 12] = [
     ("Submit: ", "Enter"),
     ("Cancel: ", "Esc"),
     ("Reset to initial value: ", "Ctrl+z"),
     ("Move cursor: ", "←/→"),
     ("Move cursor by word: ", "Ctrl+←/→"),
-    ("Jump to line start/end: ", "Ctrl+a/Ctrl+e, Home/End"),
+    ("Jump to line start/end: ", "Ctrl+a/Home, Ctrl+e/End"),
     ("Select text: ", "Shift+←/→"),
-    ("Select to beginning/end of line: ", "Shift+Home/End"),
+    ("Select to line start/end: ", "Shift+Home, Shift+End"),
     ("Select by word: ", "Ctrl+Shift+←/→"),
     ("Select all: ", "Ctrl+Shift+A"),
-    ("Copy/Cut/Paste text: ", "Ctrl+c, Ctrl+x, Ctrl+v"),
+    ("Copy/Cut/Paste text: ", "Ctrl+c/x/v"),
     ("Delete before/after cursor: ", "Backspace/Delete"),
 ];
 
-// Labels are all ASCII, so byte length == display width. Using const fn avoids
-// recomputing the max on every render.
-const fn max_label_width(shortcuts: &[(&str, &str)]) -> usize {
-    let mut max = 0;
-    let mut i = 0;
-    while i < shortcuts.len() {
-        let len = shortcuts[i].0.len();
-        if len > max {
-            max = len;
-        }
-        i += 1;
-    }
-    max
-}
+use std::sync::LazyLock;
 
-const DEFAULT_MAX_LABEL_WIDTH: usize = max_label_width(&DEFAULT_KEYBOARD_SHORTCUTS);
-const PROMPT_MAX_LABEL_WIDTH: usize = max_label_width(&PROMPT_KEYBOARD_SHORTCUTS);
+// Uses UnicodeWidthStr::width() for correct display width with non-ASCII labels
+static MAX_LABEL_WIDTH: LazyLock<usize> = LazyLock::new(|| {
+    NORMAL_MODE_SHORTCUTS
+        .iter()
+        .chain(PROMPT_MODE_SHORTCUTS.iter())
+        .map(|(label, _)| label.width())
+        .max()
+        .unwrap_or(0)
+});
 
 #[derive(Default)]
 pub(super) struct HelpView {
     area: Rect,
-    inner_height: u16, // height of the bordered inner area; used to clamp page-scroll
+    inner_height: u16,
     is_dragging: bool,
-    is_visible: bool,
-    max_scroll: u16, // cached in render; used by apply_drag
+    max_scroll: u16,
     scroll_offset: u16,
     scrollbar_area: Rect,
     scrollbar_state: ScrollbarState,
 }
 
 impl HelpView {
-    // Maps a drag y-position to a scroll offset proportional to the scrollbar area.
+    pub(super) fn reset_scroll(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    fn scroll_down(&mut self, lines: u16) {
+        self.scroll_offset = self
+            .scroll_offset
+            .saturating_add(lines)
+            .min(self.max_scroll);
+    }
+
+    fn scroll_up(&mut self, lines: u16) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
     fn apply_drag(&mut self, y: u16) {
         let last_relative = self.scrollbar_area.height.saturating_sub(1) as f32;
         if last_relative == 0.0 || self.max_scroll == 0 {
@@ -103,9 +110,8 @@ impl HelpView {
 impl CommandHandler for HelpView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ToggleHelp => {
-                self.is_visible = !self.is_visible;
-                self.scroll_offset = 0;
+            Command::ResetHelpScroll => {
+                self.reset_scroll();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
@@ -114,45 +120,38 @@ impl CommandHandler for HelpView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
-            (KeyCode::Char('?'), KeyModifiers::NONE) => Command::ToggleHelp.into(),
-            _ if self.is_visible => match (*code, *modifiers) {
-                (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-                    self.scroll_offset = self.scroll_offset.saturating_add(1).min(self.max_scroll);
-                    CommandResult::Handled
-                }
-                (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    CommandResult::Handled
-                }
-                (KeyCode::PageDown, KeyModifiers::NONE)
-                | (KeyCode::Char('f'), KeyModifiers::CONTROL)
-                | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                    self.scroll_offset = self
-                        .scroll_offset
-                        .saturating_add(self.inner_height)
-                        .min(self.max_scroll);
-                    CommandResult::Handled
-                }
-                (KeyCode::PageUp, KeyModifiers::NONE)
-                | (KeyCode::Char('b'), KeyModifiers::CONTROL)
-                | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(self.inner_height);
-                    CommandResult::Handled
-                }
-                (KeyCode::Home, KeyModifiers::NONE)
-                | (KeyCode::Char('g'), KeyModifiers::NONE)
-                | (KeyCode::Char('^'), KeyModifiers::NONE) => {
-                    self.scroll_offset = 0;
-                    CommandResult::Handled
-                }
-                (KeyCode::End, KeyModifiers::NONE)
-                | (KeyCode::Char('G'), KeyModifiers::SHIFT)
-                | (KeyCode::Char('$'), KeyModifiers::NONE) => {
-                    self.scroll_offset = u16::MAX; // clamped to max_scroll in render
-                    CommandResult::Handled
-                }
-                _ => CommandResult::NotHandled,
-            },
+            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                self.scroll_down(1);
+                CommandResult::Handled
+            }
+            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                self.scroll_up(1);
+                CommandResult::Handled
+            }
+            (KeyCode::PageDown, KeyModifiers::NONE)
+            | (KeyCode::Char('f'), KeyModifiers::CONTROL)
+            | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.scroll_down(self.inner_height);
+                CommandResult::Handled
+            }
+            (KeyCode::PageUp, KeyModifiers::NONE)
+            | (KeyCode::Char('b'), KeyModifiers::CONTROL)
+            | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.scroll_up(self.inner_height);
+                CommandResult::Handled
+            }
+            (KeyCode::Home, KeyModifiers::NONE)
+            | (KeyCode::Char('g'), KeyModifiers::NONE)
+            | (KeyCode::Char('^'), KeyModifiers::NONE) => {
+                self.scroll_offset = 0;
+                CommandResult::Handled
+            }
+            (KeyCode::End, KeyModifiers::NONE)
+            | (KeyCode::Char('G'), KeyModifiers::SHIFT)
+            | (KeyCode::Char('$'), KeyModifiers::NONE) => {
+                self.scroll_offset = self.max_scroll;
+                CommandResult::Handled
+            }
             _ => CommandResult::NotHandled,
         }
     }
@@ -160,11 +159,11 @@ impl CommandHandler for HelpView {
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::ScrollDown => {
-                self.scroll_offset = self.scroll_offset.saturating_add(1).min(self.max_scroll);
+                self.scroll_down(1);
                 CommandResult::Handled
             }
             MouseEventKind::ScrollUp => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                self.scroll_up(1);
                 CommandResult::Handled
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -174,8 +173,6 @@ impl CommandHandler for HelpView {
                 }) {
                     self.is_dragging = true;
                     self.apply_drag(event.row);
-                } else {
-                    return Command::ToggleHelp.into();
                 }
                 CommandResult::Handled
             }
@@ -194,17 +191,10 @@ impl CommandHandler for HelpView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        // Accept scroll events globally only when visible, so the user doesn't need to
-        // position the cursor over the help panel to scroll it, but table scroll is not
-        // affected when help is open.
-        // Also accept all events while dragging, so Up/Drag are received wherever the
-        // cursor travels during a drag.
-        (self.is_visible
-            && matches!(
-                event.kind,
-                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-            ))
-            || self.is_dragging
+        matches!(
+            event.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) || self.is_dragging
             || self.area.contains(Position {
                 x: event.column,
                 y: event.row,
@@ -212,65 +202,59 @@ impl CommandHandler for HelpView {
     }
 }
 
+use crate::app::config::theme::Help;
+
+fn add_section<'a>(
+    lines: &mut Vec<Line<'a>>,
+    title: &'a str,
+    shortcuts: &[(&'a str, &'a str)],
+    help: &Help,
+) {
+    let header_padding = " ".repeat((*MAX_LABEL_WIDTH).saturating_sub(title.width()));
+    lines.push(Line::from(vec![
+        Span::styled(title, help.header()),
+        Span::raw(header_padding),
+        Span::styled("Shortcuts", help.header()),
+    ]));
+    lines.extend(shortcuts.iter().map(|&(label, key)| {
+        let padding = " ".repeat(*MAX_LABEL_WIDTH - label.width());
+        Line::from(vec![
+            Span::styled(label, help.actions()),
+            Span::raw(padding),
+            Span::styled(key, help.shortcuts()),
+        ])
+    }));
+}
+
 impl View for HelpView {
-    fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
-        if state.is_help_visible {
-            Constraint::Min(MIN_HEIGHT)
-        } else {
-            Constraint::Length(0)
-        }
+    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
+        Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _state: &AppState, theme: &Theme) {
         self.area = area;
-        if !state.is_help_visible || area.height < MIN_HEIGHT {
+        if area.height < MIN_HEIGHT {
             return;
         }
 
         let style = theme.help.base();
-        let (title_left, keyboard_shortcuts, max_label_width) = match state.mode {
-            InputMode::Normal => (
-                "Help",
-                &DEFAULT_KEYBOARD_SHORTCUTS[..],
-                DEFAULT_MAX_LABEL_WIDTH,
-            ),
-            InputMode::Prompt => (
-                "Help: Prompt",
-                &PROMPT_KEYBOARD_SHORTCUTS[..],
-                PROMPT_MAX_LABEL_WIDTH,
-            ),
-        };
         let bordered_area = bordered(
             area,
             frame.buffer_mut(),
             style,
-            title_left,
-            "(Press \"?\" to close)",
+            "Help",
+            "(Press \"?\" or Esc to close)",
         );
 
-        let content_height = keyboard_shortcuts.len() as u16 + 1; // +1 for header
+        let mut lines: Vec<Line> = Vec::new();
+        add_section(&mut lines, "Normal Mode", &NORMAL_MODE_SHORTCUTS, &theme.help);
+        lines.push(Line::raw(""));
+        add_section(&mut lines, "Prompt Mode", &PROMPT_MODE_SHORTCUTS, &theme.help);
+
+        let content_height = lines.len() as u16;
         self.inner_height = bordered_area.height;
         self.max_scroll = content_height.saturating_sub(self.inner_height);
         let scroll = self.scroll_offset.min(self.max_scroll);
-
-        let header_style = theme.help.header();
-        let label_style = theme.help.actions();
-        let shortcut_style = theme.help.shortcuts();
-        let header_padding = " ".repeat(max_label_width.saturating_sub("Actions".width()));
-        let header = Line::from(vec![
-            Span::styled("Actions", header_style),
-            Span::raw(header_padding),
-            Span::styled("Shortcuts", header_style),
-        ]);
-        let mut lines: Vec<Line> = vec![header];
-        lines.extend(keyboard_shortcuts.iter().map(|&(label, key)| {
-            let padding = " ".repeat(max_label_width - label.width());
-            Line::from(vec![
-                Span::styled(label, label_style),
-                Span::raw(padding),
-                Span::styled(key, shortcut_style),
-            ])
-        }));
 
         if self.max_scroll > 0 {
             let [content_area, scrollbar_area] = Layout::default()
@@ -284,9 +268,6 @@ impl View for HelpView {
                 .scroll((scroll, 0))
                 .render(content_area, frame.buffer_mut());
 
-            // content_length = max_scroll + 1 (number of scroll positions, not total rows).
-            // viewport_content_length = inner_height.
-            // This gives thumb size = inner_height / content_height fraction of the track.
             self.scrollbar_state = ScrollbarState::default()
                 .content_length(self.max_scroll as usize + 1)
                 .viewport_content_length(self.inner_height as usize)

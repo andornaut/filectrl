@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use super::{widgets::default_widget, StatusView};
-use crate::{app::{config::theme::Theme, state::AppState}, views::View};
+use crate::{app::{config::theme::Theme, AppState}, views::View};
 
 impl View for StatusView {
     fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
