@@ -18,8 +18,8 @@ const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
 const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
 const DEFAULT_THEME256: &str = include_str!("config/default_theme256.toml");
-const DEFAULT_THEME_FILENAME: &str = "default-theme.toml";
-const DEFAULT_THEME256_FILENAME: &str = "default-theme-256.toml";
+const DEFAULT_THEME_FILENAME: &str = "theme.toml";
+const DEFAULT_THEME256_FILENAME: &str = "theme256.toml";
 
 #[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
