@@ -66,7 +66,11 @@ impl TableView {
 
     fn toggle_mark(&mut self) -> CommandResult {
         if let Some(i) = self.table_state.selected() {
-            self.marks.toggle(i);
+            if self.marks.in_range_mode() {
+                self.marks.enter_range(i); // toggles range mode off
+            } else {
+                self.marks.toggle(i);
+            }
         }
         Command::SetMarkCount(self.marks.len()).into()
     }
