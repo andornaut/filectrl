@@ -1,4 +1,4 @@
-use ratatui::crossterm::event::MouseEvent;
+use ratatui::crossterm::event::{KeyModifiers, MouseEvent};
 
 use super::{marks::ClickMarkResult, TableView};
 use crate::command::{Command, result::CommandResult};
@@ -10,7 +10,7 @@ impl TableView {
             .map_or(CommandResult::Handled, |column| self.sort_by(column))
     }
 
-    pub(super) fn click_table(&mut self, y: u16) -> CommandResult {
+    pub(super) fn click_table(&mut self, y: u16, modifiers: KeyModifiers) -> CommandResult {
         let y = y as usize - 1; // -1 for the header
         let line = self.mapper.first_visible_line() + y;
         if line >= self.mapper.total_lines_count() {
@@ -22,6 +22,13 @@ impl TableView {
         let path = &self.content.items_sorted()[item];
         if self.double_click.click_and_is_double_click(path) {
             return self.open_selected();
+        }
+
+        // Shift+Click enters range mode from current selection, then extends to clicked item
+        if modifiers.contains(KeyModifiers::SHIFT) && !self.marks.in_range_mode() {
+            if let Some(current) = self.table_state.selected() {
+                self.marks.enter_range(current);
+            }
         }
 
         match self.marks.click(item) {
