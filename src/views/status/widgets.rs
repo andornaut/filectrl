@@ -19,20 +19,20 @@ pub(super) fn default_widget<'a>(
     if let Some(selected) = &selected {
         add_selected(&mut spans, theme, selected);
     }
-    Paragraph::new(Line::from(spans)).style(theme.status.selected())
+    Paragraph::new(Line::from(spans)).style(theme.status.detail())
 }
 
 fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {
-    spans.push(Span::styled(" Directory ", theme.status.directory_label()));
+    spans.push(Span::styled(" Directory ", theme.status.label()));
     let fields = vec![(" Mode:", mode), (" #Items:", format!("{} ", len))];
-    let default_style = theme.status.directory();
+    let default_style = theme.status.detail();
     let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
 }
 
 fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     let now = Local::now();
-    spans.push(Span::styled(" Selected ", theme.status.selected_label()));
+    spans.push(Span::styled(" Selected ", theme.status.label()));
     let mut fields = Vec::new();
     if let Some(owner) = selected.owner() {
         fields.push((" Owner:", owner));
@@ -47,7 +47,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     if let Some(created) = selected.created(now) {
         fields.push((" Created:", created));
     }
-    let default_style = theme.status.selected();
+    let default_style = theme.status.detail();
     let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
 }
