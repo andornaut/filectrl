@@ -44,12 +44,16 @@ impl TableView {
     }
 
     fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        let total = self.mapper.total_lines_count();
+        let visible = self.mapper.visible_lines_count();
+        let max_position = total.saturating_sub(visible);
         self.scrollbar_view.render(
             area,
             buf,
             theme,
             self.mapper.first_visible_line(),
-            self.mapper.total_lines_count(),
+            max_position,
+            visible,
         );
     }
 
@@ -59,18 +63,22 @@ impl TableView {
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
 
-        let (rows, item_heights): (Vec<_>, Vec<_>) = self
-            .directory_items_sorted
+        let (rows, item_heights): (Vec<_>, Vec<usize>) = self
+            .content
+            .items_sorted()
             .iter()
             .enumerate()
-            .map(|(i, item)| row_widget_and_height(
-                theme,
-                &state.clipboard_entry,
-                self.columns.name_width(),
-                relative_to_datetime,
-                item,
-                self.marks.contains(&i),
-            ))
+            .map(|(i, item)| {
+                let (row, height) = row_widget_and_height(
+                    theme,
+                    &state.clipboard_entry,
+                    self.columns.name_width(),
+                    relative_to_datetime,
+                    item,
+                    self.marks.contains(&i),
+                );
+                (row, height as usize)
+            })
             .unzip();
 
         let table = table_widget(

@@ -46,7 +46,7 @@ impl TableView {
     }
 
     pub(super) fn select_last(&mut self) -> CommandResult {
-        self.select(self.directory_items_sorted.len().saturating_sub(1))
+        self.select(self.content.len().saturating_sub(1))
     }
 
     pub(super) fn select_middle_visible_item(&mut self) -> CommandResult {
@@ -60,7 +60,7 @@ impl TableView {
         scroll::next_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),
-            self.directory_items_sorted.len(),
+            self.content.len(),
         )
         .map_or(CommandResult::Handled, |item| self.select(item))
     }
@@ -77,7 +77,6 @@ impl TableView {
     pub(super) fn selected_path(&self) -> Option<&PathInfo> {
         self.table_state
             .selected()
-            .filter(|&i| i < self.directory_items_sorted.len())
-            .map(|i| &self.directory_items_sorted[i])
+            .and_then(|i| self.content.get(i))
     }
 }
