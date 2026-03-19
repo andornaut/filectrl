@@ -9,13 +9,15 @@ use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    app::state::AppState,
+    app::AppState,
     command::{result::CommandResult, progress::Task},
 };
 
 #[derive(Default)]
 pub(super) struct NoticesView {
     area: Rect,
+    filter: String,
+    mark_count: usize,
     tasks: HashSet<Task>,
     /// Cached at render time so the mouse handler can map y-position → action
     notices: Vec<Notice>,
@@ -25,8 +27,9 @@ impl NoticesView {
     fn build_notices(&self, state: &AppState) -> Vec<Notice> {
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
+            (self.mark_count > 0).then_some(Notice::Marked(self.mark_count)),
             state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone())),
-            (!state.filter.is_empty()).then_some(Notice::Filter(state.filter.clone())),
+            (!self.filter.is_empty()).then_some(Notice::Filter(self.filter.clone())),
         ]
         .into_iter()
         .flatten()

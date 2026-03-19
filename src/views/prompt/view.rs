@@ -6,7 +6,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{PromptView, View};
-use crate::app::{config::theme::Theme, state::AppState};
+use crate::app::{config::theme::Theme, AppState};
 
 impl View for PromptView {
     fn constraint(&self, _: Rect, state: &AppState) -> Constraint {

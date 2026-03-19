@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     buffer::Buffer,
+    crossterm::event::{KeyCode, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, Paragraph, Widget, Wrap},
 };
@@ -10,8 +11,8 @@ use super::{
     prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
-    app::{clipboard::Clipboard, config::Config, config::theme::Theme, state::AppState},
-    command::handler::CommandHandler,
+    app::{AppState, clipboard::Clipboard, config::Config, config::theme::Theme},
+    command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
 const MIN_WIDTH: u16 = 14;
@@ -22,6 +23,7 @@ pub struct RootView {
     alerts: AlertsView,
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
+    is_help_visible: bool,
     notices: NoticesView,
     prompt: PromptView,
     status: StatusView,
@@ -34,6 +36,7 @@ impl RootView {
             alerts: AlertsView::default(),
             breadcrumbs: BreadcrumbsView::default(),
             help: HelpView::default(),
+            is_help_visible: false,
             notices: NoticesView::default(),
             prompt: PromptView::new(clipboard),
             status: StatusView::default(),
@@ -41,21 +44,42 @@ impl RootView {
         }
     }
 
-    fn views(&mut self) -> [&mut dyn View; 7] {
-        [
-            // The order is significant
-            &mut self.alerts,
-            &mut self.breadcrumbs,
-            &mut self.help,
-            &mut self.table,
-            &mut self.notices,
-            &mut self.status,
-            &mut self.prompt,
-        ]
+    fn views(&mut self) -> Vec<&mut dyn View> {
+        // The order is significant for layout
+        if self.is_help_visible {
+            vec![&mut self.help]
+        } else {
+            vec![
+                &mut self.alerts,
+                &mut self.breadcrumbs,
+                &mut self.table,
+                &mut self.notices,
+                &mut self.status,
+                &mut self.prompt,
+            ]
+        }
     }
 }
 
 impl CommandHandler for RootView {
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        match (*code, *modifiers) {
+            (KeyCode::Char('?'), KeyModifiers::NONE) => {
+                self.is_help_visible = !self.is_help_visible;
+                if self.is_help_visible {
+                    Command::ResetHelpScroll.into()
+                } else {
+                    CommandResult::Handled
+                }
+            }
+            (KeyCode::Esc, KeyModifiers::NONE) if self.is_help_visible => {
+                self.is_help_visible = false;
+                CommandResult::Handled
+            }
+            _ => CommandResult::NotHandled,
+        }
+    }
+
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
         for view in self.views() {
             visitor(view);
@@ -86,7 +110,12 @@ impl View for RootView {
         let views = self.views();
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints(views.iter().map(|view| view.constraint(area, state)).collect::<Vec<_>>())
+            .constraints(
+                views
+                    .iter()
+                    .map(|view| view.constraint(area, state))
+                    .collect::<Vec<_>>(),
+            )
             .split(area)
             .iter()
             .zip(views)
