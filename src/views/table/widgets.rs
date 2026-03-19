@@ -72,7 +72,7 @@ fn header_cell_widget<'a>(
         Span::raw(text)
     };
 
-    Cell::from(label.style(header_style(theme, sort_column, &column)))
+    Cell::from(label.style(header_style(&theme.table, sort_column, &column)))
 }
 
 pub(super) fn row_widget_and_height<'a>(
@@ -84,7 +84,7 @@ pub(super) fn row_widget_and_height<'a>(
     is_marked: bool,
 ) -> (Row<'a>, u16) {
     let (name_style, date_style, size_style, row_style) =
-        if let Some(clipboard_style) = clipboard_style(theme, clipboard_entry, item) {
+        if let Some(clipboard_style) = clipboard_style(&theme.clipboard, clipboard_entry, item) {
             (
                 clipboard_style,
                 clipboard_style,

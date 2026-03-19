@@ -3,11 +3,11 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Direction, Layout, Position, Rect},
     text::{Line, Span},
-    widgets::{Paragraph, ScrollbarState, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::{View, bordered};
+use super::{ScrollbarView, View, bordered};
 use crate::{
     app::{AppState, config::theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
@@ -73,15 +73,13 @@ static MAX_LABEL_WIDTH: LazyLock<usize> = LazyLock::new(|| {
 pub(super) struct HelpView {
     area: Rect,
     inner_height: u16,
-    is_dragging: bool,
     max_scroll: u16,
     scroll_offset: u16,
-    scrollbar_area: Rect,
-    scrollbar_state: ScrollbarState,
+    scrollbar_view: ScrollbarView,
 }
 
 impl HelpView {
-    pub(super) fn reset_scroll(&mut self) {
+    fn reset_scroll(&mut self) {
         self.scroll_offset = 0;
     }
 
@@ -94,16 +92,6 @@ impl HelpView {
 
     fn scroll_up(&mut self, lines: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
-    }
-
-    fn apply_drag(&mut self, y: u16) {
-        let last_relative = self.scrollbar_area.height.saturating_sub(1) as f32;
-        if last_relative == 0.0 || self.max_scroll == 0 {
-            return;
-        }
-        let relative_y = y.saturating_sub(self.scrollbar_area.y);
-        let percentage = (relative_y as f32 / last_relative).min(1.0);
-        self.scroll_offset = (percentage * self.max_scroll as f32).round() as u16;
     }
 }
 
@@ -143,7 +131,7 @@ impl CommandHandler for HelpView {
             (KeyCode::Home, KeyModifiers::NONE)
             | (KeyCode::Char('g'), KeyModifiers::NONE)
             | (KeyCode::Char('^'), KeyModifiers::NONE) => {
-                self.scroll_offset = 0;
+                self.reset_scroll();
                 CommandResult::Handled
             }
             (KeyCode::End, KeyModifiers::NONE)
@@ -166,23 +154,14 @@ impl CommandHandler for HelpView {
                 self.scroll_up(1);
                 CommandResult::Handled
             }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if self.scrollbar_area.contains(Position {
-                    x: event.column,
-                    y: event.row,
-                }) {
-                    self.is_dragging = true;
-                    self.apply_drag(event.row);
-                }
-                CommandResult::Handled
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.is_dragging = false;
-                CommandResult::Handled
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if self.is_dragging {
-                    self.apply_drag(event.row);
+            MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(pos) = self
+                    .scrollbar_view
+                    .handle_mouse(event, self.max_scroll as usize)
+                {
+                    self.scroll_offset = pos as u16;
                 }
                 CommandResult::Handled
             }
@@ -194,7 +173,7 @@ impl CommandHandler for HelpView {
         matches!(
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) || self.is_dragging
+        ) || self.scrollbar_view.is_dragging()
             || self.area.contains(Position {
                 x: event.column,
                 y: event.row,
@@ -247,9 +226,19 @@ impl View for HelpView {
         );
 
         let mut lines: Vec<Line> = Vec::new();
-        add_section(&mut lines, "Normal Mode", &NORMAL_MODE_SHORTCUTS, &theme.help);
+        add_section(
+            &mut lines,
+            "Normal Mode",
+            &NORMAL_MODE_SHORTCUTS,
+            &theme.help,
+        );
         lines.push(Line::raw(""));
-        add_section(&mut lines, "Prompt Mode", &PROMPT_MODE_SHORTCUTS, &theme.help);
+        add_section(
+            &mut lines,
+            "Prompt Mode",
+            &PROMPT_MODE_SHORTCUTS,
+            &theme.help,
+        );
 
         let content_height = lines.len() as u16;
         self.inner_height = bordered_area.height;
@@ -261,25 +250,23 @@ impl View for HelpView {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .areas(bordered_area);
-            self.scrollbar_area = scrollbar_area;
 
             Paragraph::new(lines)
                 .style(style)
                 .scroll((scroll, 0))
                 .render(content_area, frame.buffer_mut());
 
-            self.scrollbar_state = ScrollbarState::default()
-                .content_length(self.max_scroll as usize + 1)
-                .viewport_content_length(self.inner_height as usize)
-                .position(scroll as usize);
-            StatefulWidget::render(
-                super::scrollbar_widget(&theme.scrollbar),
+            self.scrollbar_view.render(
                 scrollbar_area,
                 frame.buffer_mut(),
-                &mut self.scrollbar_state,
+                theme,
+                scroll as usize,
+                self.max_scroll as usize,
+                self.inner_height as usize,
             );
         } else {
-            self.scrollbar_area = Rect::default();
+            self.scrollbar_view
+                .render(Rect::default(), frame.buffer_mut(), theme, 0, 0, 0);
             Paragraph::new(lines)
                 .style(style)
                 .render(bordered_area, frame.buffer_mut());

@@ -11,7 +11,7 @@ pub(super) struct LineItemMap {
 
 impl LineItemMap {
     pub(super) fn new(
-        item_heights: Vec<u16>,
+        item_heights: Vec<usize>,
         visible_lines_count: usize,
         first_visible_item: usize,
     ) -> Self {
@@ -19,7 +19,7 @@ impl LineItemMap {
         let mut item_first_lines = Vec::with_capacity(item_heights.len());
         for (i, &height) in item_heights.iter().enumerate() {
             item_first_lines.push(lines_to_items.len());
-            lines_to_items.extend(std::iter::repeat_n(i, height as usize));
+            lines_to_items.extend(std::iter::repeat_n(i, height));
         }
         Self {
             first_visible_item,
@@ -74,7 +74,7 @@ impl LineItemMap {
 mod tests {
     use super::*;
 
-    fn map(heights: Vec<u16>, visible: usize) -> LineItemMap {
+    fn map(heights: Vec<usize>, visible: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, 0)
     }
 

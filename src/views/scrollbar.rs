@@ -4,7 +4,7 @@ mod view;
 use ratatui::{layout::Rect, widgets::ScrollbarState};
 
 #[derive(Default)]
-pub(super) struct ScrollbarView {
+pub(crate) struct ScrollbarView {
     area: Rect,
     is_dragging: bool,
     state: ScrollbarState,

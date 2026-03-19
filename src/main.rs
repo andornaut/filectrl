@@ -13,6 +13,10 @@ struct Args {
     #[argh(option, short = 'c')]
     config: Option<String>,
 
+    /// include a TOML file to merge on top of the config (repeatable; later files take precedence)
+    #[argh(option, short = 'i')]
+    include: Vec<String>,
+
     /// write the default config to ~/.config/filectrl/config.toml, then exit
     #[argh(switch)]
     write_default_config: bool,
@@ -42,6 +46,7 @@ fn main() -> Result<()> {
     }
 
     let config = args.config.map(PathBuf::from);
+    let include: Vec<PathBuf> = args.include.into_iter().map(PathBuf::from).collect();
     let directory = args.directory.map(PathBuf::from);
-    run(config, directory, args.colors_256)
+    run(config, include, directory, args.colors_256)
 }

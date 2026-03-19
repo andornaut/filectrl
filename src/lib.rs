@@ -19,6 +19,7 @@ const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
 pub fn run(
     config_path: Option<PathBuf>,
+    include_paths: Vec<PathBuf>,
     initial_directory: Option<PathBuf>,
     colors_256: bool,
 ) -> Result<()> {
@@ -26,7 +27,7 @@ pub fn run(
     // config initialization are logged
     configure_logging();
 
-    let config = config_path.try_into()?;
+    let config = Config::load(config_path, include_paths)?;
     apply_log_level(&config);
 
     let is_truecolor = supports_truecolor() && !colors_256;

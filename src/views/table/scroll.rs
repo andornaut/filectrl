@@ -64,7 +64,7 @@ pub(super) fn previous_page(
 mod tests {
     use super::{next_page, previous_page, LineItemMap};
 
-    fn map(heights: Vec<u16>, visible: usize, first: usize) -> LineItemMap {
+    fn map(heights: Vec<usize>, visible: usize, first: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, first)
     }
 

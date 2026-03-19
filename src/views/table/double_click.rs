@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{app::config::Config, file_system::path_info::PathInfo};
 
@@ -6,14 +6,15 @@ use crate::{app::config::Config, file_system::path_info::PathInfo};
 pub(super) struct DoubleClick {
     last_path: Option<PathInfo>,
     start: Option<Instant>,
-    threshold_milliseconds: u16,
+    threshold: Duration,
 }
 
 impl DoubleClick {
     pub(super) fn new(config: &Config) -> Self {
-        let threshold_milliseconds = config.ui.double_click_interval_milliseconds;
+        let threshold =
+            Duration::from_millis(config.ui.double_click_interval_milliseconds as u64);
         Self {
-            threshold_milliseconds,
+            threshold,
             ..Default::default()
         }
     }
@@ -21,7 +22,7 @@ impl DoubleClick {
     pub(super) fn click_and_is_double_click(&mut self, path: &PathInfo) -> bool {
         let item = Some(path.clone());
         if let Some(start) = self.start
-            && start.elapsed().as_millis() <= self.threshold_milliseconds as u128
+            && start.elapsed() <= self.threshold
             && self.last_path == item
         {
             self.start = None;

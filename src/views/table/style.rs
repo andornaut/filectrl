@@ -3,13 +3,13 @@ use ratatui::style::Style;
 
 use super::columns::SortColumn;
 use crate::{
-    app::config::theme::{FileType, Theme},
     app::clipboard::ClipboardEntry,
+    app::config::theme::{Clipboard, FileType, Table, Theme},
     file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
 };
 
 pub(super) fn clipboard_style(
-    theme: &Theme,
+    clipboard: &Clipboard,
     clipboard_entry: &Option<ClipboardEntry>,
     item: &PathInfo,
 ) -> Option<Style> {
@@ -18,16 +18,16 @@ pub(super) fn clipboard_style(
         return None;
     }
     Some(match entry {
-        ClipboardEntry::Copy(_) => theme.clipboard.copy(),
-        ClipboardEntry::Move(_) => theme.clipboard.cut(),
+        ClipboardEntry::Copy(_) => clipboard.copy(),
+        ClipboardEntry::Move(_) => clipboard.cut(),
     })
 }
 
-pub(super) fn header_style(theme: &Theme, sort_column: &SortColumn, column: &SortColumn) -> Style {
+pub(super) fn header_style(table: &Table, sort_column: &SortColumn, column: &SortColumn) -> Style {
     if sort_column == column {
-        theme.table.header_sorted()
+        table.header_sorted()
     } else {
-        theme.table.header()
+        table.header()
     }
 }
 
