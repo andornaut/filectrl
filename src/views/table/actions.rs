@@ -28,7 +28,7 @@ impl TableView {
     }
 
     pub(super) fn open_filter_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Filter, self.filter.clone()).into()
+        Command::OpenPrompt(PromptKind::Filter, self.content.filter().to_string()).into()
     }
 
     pub(super) fn open_rename_prompt(&self) -> CommandResult {

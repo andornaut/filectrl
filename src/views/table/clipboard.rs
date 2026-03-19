@@ -31,7 +31,7 @@ impl TableView {
     }
 
     pub(super) fn paste_from_clipboard(&self) -> CommandResult {
-        let destination = self.directory.as_ref().expect("Directory is always set");
+        let destination = self.content.directory().expect("Directory is always set");
         Command::Paste(destination.clone()).into()
     }
 }

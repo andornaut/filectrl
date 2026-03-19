@@ -19,7 +19,7 @@ impl TableView {
         }
 
         let item = self.mapper.item(line);
-        let path = &self.directory_items_sorted[item];
+        let path = &self.content.items_sorted()[item];
         if self.double_click.click_and_is_double_click(path) {
             return self.open_selected();
         }
@@ -45,12 +45,9 @@ impl TableView {
     }
 
     pub(super) fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
+        let max_position = self.mapper.total_lines_count().saturating_sub(1);
         self.scrollbar_view
-            .handle_mouse(
-                event,
-                self.mapper.total_lines_count(),
-                self.mapper.visible_lines_count(),
-            )
+            .handle_mouse(event, max_position)
             .map_or(CommandResult::Handled, |line| {
                 self.select(self.mapper.item(line))
             })
