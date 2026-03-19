@@ -39,10 +39,16 @@ impl NoticesView {
 
 impl NoticesView {
     fn build_notices(&self, state: &AppState) -> Vec<Notice> {
+        let clipboard = state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
+        let marked = if clipboard.is_none() && self.mark_count > 0 {
+            Some(Notice::Marked(self.mark_count))
+        } else {
+            None
+        };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
-            (self.mark_count > 0).then_some(Notice::Marked(self.mark_count)),
-            state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone())),
+            marked,
+            clipboard,
             (!self.filter.is_empty()).then_some(Notice::Filter(self.filter.clone())),
         ]
         .into_iter()
