@@ -16,10 +16,10 @@ use crate::{
 };
 
 const COPY_PREFIX: &str = "[Copy] ";
+const MARKED_PREFIX: &str = "[Marked] ";
 const MOVE_PREFIX: &str = "[Cut] ";
-const CLIPBOARD_SUFFIX: &str = "(Press \"c\" to cancel)";
+const ESC_SUFFIX: &str = "(Press \"Esc\" to clear)";
 const FILTER_PREFIX: &str = " Filtered by ";
-const FILTER_SUFFIX: &str = "(Press \"Esc\" to clear)";
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Theme,
@@ -53,13 +53,22 @@ pub(super) fn clipboard_widget<'a>(
         Span::styled(detail, style),
     ]);
 
-    let right = if width > (prefix.width() + detail_width + CLIPBOARD_SUFFIX.width()) as u16 {
-        Some(Line::from(CLIPBOARD_SUFFIX))
+    let right = if width > (prefix.width() + detail_width + ESC_SUFFIX.width()) as u16 {
+        Some(Line::from(ESC_SUFFIX))
     } else {
         None
     };
 
     create_notice_block(left, right, style)
+}
+
+pub(super) fn marked_widget(theme: &Theme, count: usize) -> Block<'_> {
+    let style = theme.table.marked();
+    let left = Line::from(vec![
+        Span::styled(MARKED_PREFIX, style.add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{} items", count), style),
+    ]);
+    create_notice_block(left, None, style)
 }
 
 pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Block<'a> {
@@ -68,8 +77,8 @@ pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> B
         Span::styled(filter, theme.notice.filter().add_modifier(Modifier::BOLD)),
     ]);
 
-    let right = if width > (FILTER_PREFIX.width() + filter.width() + FILTER_SUFFIX.width()) as u16 {
-        Some(Line::from(FILTER_SUFFIX))
+    let right = if width > (FILTER_PREFIX.width() + filter.width() + ESC_SUFFIX.width()) as u16 {
+        Some(Line::from(ESC_SUFFIX))
     } else {
         None
     };

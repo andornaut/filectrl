@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::View;
 use crate::{
-    app::{config::theme::Theme, state::AppState},
+    app::{config::theme::Theme, AppState},
     command::{Command, handler::CommandHandler, result::CommandResult},
     file_system::path_info::PathInfo,
 };
@@ -97,12 +97,8 @@ impl CommandHandler for BreadcrumbsView {
 }
 
 impl View for BreadcrumbsView {
-    fn constraint(&self, area: Rect, state: &AppState) -> Constraint {
-        if state.is_help_visible {
-            Constraint::Length(0)
-        } else {
-            Constraint::Length(self.height(area.width))
-        }
+    fn constraint(&self, area: Rect, _: &AppState) -> Constraint {
+        Constraint::Length(self.height(area.width))
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {
