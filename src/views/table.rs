@@ -1,14 +1,14 @@
 mod actions;
 mod clipboard;
 mod columns;
-mod directory;
+mod content;
+mod navigation;
 mod double_click;
 mod handler;
 mod marks;
 mod mouse;
 mod row_map;
 mod scroll;
-mod scrollbar;
 mod selection;
 mod style;
 mod view;
@@ -18,11 +18,12 @@ use ratatui::{layout::Rect, widgets::TableState};
 
 use self::{
     columns::Columns,
+    content::DirectoryContent,
     double_click::DoubleClick,
     marks::Marks,
     row_map::LineItemMap,
-    scrollbar::ScrollbarView,
 };
+use super::ScrollbarView;
 use crate::{
     app::config::Config,
     command::{Command, result::CommandResult},
@@ -31,10 +32,7 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct TableView {
-    directory: Option<PathInfo>,
-    directory_items: Vec<PathInfo>,
-    directory_items_sorted: Vec<PathInfo>,
-    filter: String,
+    content: DirectoryContent,
     marks: Marks,
 
     table_area: Rect,
@@ -81,7 +79,7 @@ impl TableView {
     fn marked_paths(&self) -> Vec<PathInfo> {
         self.marks
             .iter()
-            .filter_map(|&i| self.directory_items_sorted.get(i).cloned())
+            .filter_map(|&i| self.content.get(i).cloned())
             .collect()
     }
 
