@@ -19,21 +19,19 @@ pub(super) struct Marks {
 impl Marks {
     /// Handle a mouse click on `item`.
     ///
-    /// - If `item` is already marked, unmark it (and clear range anchor if it was the anchor).
-    /// - Else if range mode is active, expand the range from anchor to `item`.
+    /// - If range mode is active, expand the range from anchor to `item`.
+    /// - Else if `item` is already marked, unmark it.
     /// - Else if other marks exist, add `item` to the discrete mark set.
     /// - Otherwise, return `Ignored` so the caller can do a normal select.
     pub(super) fn click(&mut self, item: usize) -> ClickMarkResult {
-        if self.set.remove(&item) {
-            if self.range_anchor == Some(item) {
-                self.range_anchor = None;
-            }
-            ClickMarkResult::Unmarked
-        } else if let Some(anchor) = self.range_anchor {
+        // Range mode: always extend the range, even if the clicked item is already marked
+        if let Some(anchor) = self.range_anchor {
             let start = anchor.min(item);
             let end = anchor.max(item);
             self.set = (start..=end).collect();
             ClickMarkResult::MarksChanged
+        } else if self.set.remove(&item) {
+            ClickMarkResult::Unmarked
         } else if !self.set.is_empty() {
             self.set.insert(item);
             ClickMarkResult::MarksChanged
@@ -130,13 +128,14 @@ mod tests {
     }
 
     #[test]
-    fn click_range_anchor_clears_range_mode() {
+    fn click_in_range_mode_extends_range_even_on_anchor() {
         let mut marks = Marks::default();
         marks.enter_range(2);
         assert!(marks.in_range_mode());
-        assert!(matches!(marks.click(2), ClickMarkResult::Unmarked));
-        assert!(!marks.in_range_mode());
-        assert!(marks.is_empty());
+        // Clicking the anchor itself still extends (anchor..=anchor), keeping range mode
+        assert!(matches!(marks.click(2), ClickMarkResult::MarksChanged));
+        assert!(marks.in_range_mode());
+        assert!(marks.contains(&2));
     }
 
     #[test]
