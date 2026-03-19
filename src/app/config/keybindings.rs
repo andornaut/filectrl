@@ -553,6 +553,7 @@ mod tests {
             r#"
             [keybindings]
             quit = "x"
+            cut = "Ctrl+x"
             "#,
         )
         .unwrap();
