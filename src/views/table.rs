@@ -14,6 +14,8 @@ mod style;
 mod view;
 mod widgets;
 
+use std::rc::Rc;
+
 use ratatui::{layout::Rect, widgets::TableState};
 
 use self::{
@@ -28,11 +30,12 @@ use crate::{
     app::config::Config,
     command::{Command, result::CommandResult},
     file_system::path_info::PathInfo,
+    keybindings::KeyBindings,
 };
 
-#[derive(Default)]
 pub(super) struct TableView {
     content: DirectoryContent,
+    keybindings: Rc<KeyBindings>,
     marks: Marks,
 
     table_area: Rect,
@@ -47,8 +50,15 @@ pub(super) struct TableView {
 impl TableView {
     pub fn new(config: &Config) -> Self {
         Self {
+            content: DirectoryContent::default(),
+            keybindings: Rc::clone(&config.keybindings),
+            marks: Marks::default(),
+            table_area: Rect::default(),
+            table_state: TableState::default(),
+            columns: Columns::default(),
             double_click: DoubleClick::new(config),
-            ..Self::default()
+            mapper: LineItemMap::default(),
+            scrollbar_view: ScrollbarView::default(),
         }
     }
 

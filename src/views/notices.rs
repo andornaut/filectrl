@@ -3,7 +3,7 @@ mod notice;
 mod view;
 mod widgets;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, rc::Rc};
 
 use notice::Notice;
 use ratatui::layout::Rect;
@@ -11,16 +11,30 @@ use ratatui::layout::Rect;
 use crate::{
     app::AppState,
     command::{result::CommandResult, progress::Task},
+    keybindings::KeyBindings,
 };
 
-#[derive(Default)]
 pub(super) struct NoticesView {
     area: Rect,
     filter: String,
+    keybindings: Rc<KeyBindings>,
     mark_count: usize,
     tasks: HashSet<Task>,
     /// Cached at render time so the mouse handler can map y-position → action
     notices: Vec<Notice>,
+}
+
+impl NoticesView {
+    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+        Self {
+            area: Rect::default(),
+            filter: String::new(),
+            keybindings,
+            mark_count: 0,
+            tasks: HashSet::new(),
+            notices: Vec::new(),
+        }
+    }
 }
 
 impl NoticesView {

@@ -5,7 +5,10 @@ use ratatui::{
 use ratatui_textarea::{CursorMove, Input};
 
 use super::PromptView;
-use crate::command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command};
+use crate::{
+    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    keybindings::Action,
+};
 
 impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -16,21 +19,27 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Esc, _) => return Command::ClosePrompt.into(),
-            (KeyCode::Enter, _) => return self.submit(),
-            (KeyCode::Char('a'), m) if m == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
+        // Hardcoded: Esc always cancels
+        if *code == KeyCode::Esc {
+            return Command::ClosePrompt.into();
+        }
+
+        // Rebindable prompt keys (lookup once, reuse after textarea input)
+        let action = self.keybindings.prompt_action(code, modifiers);
+        match action {
+            Some(Action::PromptSubmit) => return self.submit(),
+            Some(Action::PromptSelectAll) => {
                 self.text_area.select_all();
                 return CommandResult::Handled;
             }
-            (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
+            Some(Action::PromptPaste) => {
                 if let Some(text) = self.clipboard.get_text() {
                     self.text_area.set_yank_text(text);
                 }
                 self.text_area.paste();
                 return CommandResult::Handled;
             }
-            (KeyCode::Char('z'), KeyModifiers::CONTROL) => {
+            Some(Action::PromptReset) => {
                 self.reset_text(&self.initial_text.clone());
                 return CommandResult::Handled;
             }
@@ -39,9 +48,9 @@ impl CommandHandler for PromptView {
 
         self.text_area.input(Input::from(KeyEvent::new(*code, *modifiers)));
 
-        if matches!(code, KeyCode::Char('c') | KeyCode::Char('x'))
-            && modifiers.contains(KeyModifiers::CONTROL)
-        {
+        // Copy/Cut must be checked after textarea processes the key, because
+        // ratatui-textarea populates yank_text from the current selection during input().
+        if matches!(action, Some(Action::PromptCopy) | Some(Action::PromptCut)) {
             self.clipboard.set_text(&self.text_area.yank_text());
         }
 
