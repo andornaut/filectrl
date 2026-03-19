@@ -29,3 +29,48 @@ open_selected_file = "open %s"
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
 double_click_interval_milliseconds = 300
+
+# Keybindings for normal mode and prompt mode.
+# Arrow keys, Home/End, PageUp/PageDown, and Esc are always hardcoded.
+# Values can be a single key string or an array of key strings.
+# Key strings: single chars ("q"), uppercase implies Shift ("G"), named keys
+# ("Enter", "Esc", "Backspace", "Delete", "Space", "Tab", "PgUp", "PgDn", "F2"),
+# and modifier prefixes ("Ctrl+c", "Ctrl+Shift+a").
+[keybindings]
+# Normal mode
+quit = "q"
+toggle_help = "?"
+clear_alerts = "a"
+clear_progress = "p"
+back = ["h", "b", "Backspace"]
+open = ["l", "f", "Enter", "Space"]
+open_custom = "o"
+open_new_window = "w"
+open_terminal = "t"
+go_home = "~"
+refresh = ["Ctrl+r", "F5"]
+select_next = "j"
+select_previous = "k"
+select_first = ["g", "^"]
+select_last = ["G", "$"]
+select_middle = "z"
+page_up = ["Ctrl+u", "Ctrl+b"]
+page_down = ["Ctrl+d", "Ctrl+f"]
+toggle_mark = "v"
+range_mark = "V"
+copy = "Ctrl+c"
+cut = "Ctrl+x"
+paste = "Ctrl+v"
+delete = "Delete"
+rename = ["r", "F2"]
+filter = "/"
+sort_by_name = ["n", "N"]
+sort_by_modified = ["m", "M"]
+sort_by_size = ["s", "S"]
+# Prompt mode
+prompt_submit = "Enter"
+prompt_reset = "Ctrl+z"
+prompt_select_all = "Ctrl+Shift+a"
+prompt_copy = "Ctrl+c"
+prompt_cut = "Ctrl+x"
+prompt_paste = "Ctrl+v"

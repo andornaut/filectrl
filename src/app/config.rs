@@ -51,8 +51,7 @@ struct RawConfig {
     #[serde(default)]
     #[allow(dead_code)] // Consumed from raw Value before deserialization
     include_files: Vec<String>,
-    #[serde(default)]
-    keybindings: Option<TomlKeybindings>,
+    keybindings: TomlKeybindings,
     log_level: LevelFilter,
     openers: PlatformOpeners,
     theme: Theme,
@@ -203,7 +202,8 @@ impl Config {
             raw.openers.linux
         };
 
-        let keybindings = Rc::new(KeyBindings::new(raw.keybindings.as_ref())?);
+        let keybindings = Rc::new(KeyBindings::new(&raw.keybindings)?);
+
 
         let mut config = Config {
             file_system: raw.file_system,
@@ -272,7 +272,7 @@ fn merge_default_config() -> Result<Value> {
 
 /// Deep-merges two TOML values. Tables are merged recursively;
 /// all other value types in `overlay` replace those in `base`.
-fn merge_toml_values(base: Value, overlay: Value) -> Value {
+pub fn merge_toml_values(base: Value, overlay: Value) -> Value {
     match (base, overlay) {
         (Value::Table(mut base_table), Value::Table(overlay_table)) => {
             for (key, overlay_val) in overlay_table {
