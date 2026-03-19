@@ -1,6 +1,7 @@
 mod columns;
 mod double_click;
 mod handler;
+mod marks;
 mod row_map;
 mod scroll;
 mod scrollbar;
@@ -8,13 +9,12 @@ mod style;
 mod view;
 mod widgets;
 
-use std::collections::BTreeSet;
-
 use ratatui::{crossterm::event::MouseEvent, layout::Rect, widgets::TableState};
 
 use self::{
     columns::{Columns, SortColumn, SortDirection},
     double_click::DoubleClick,
+    marks::{ClickMarkResult, Marks},
     row_map::LineItemMap,
     scrollbar::ScrollbarView,
 };
@@ -30,8 +30,7 @@ pub(super) struct TableView {
     directory_items: Vec<PathInfo>,
     directory_items_sorted: Vec<PathInfo>,
     filter: String,
-    marks: BTreeSet<usize>,
-    range_anchor: Option<usize>,
+    marks: Marks,
 
     table_area: Rect,
     table_state: TableState,
@@ -96,7 +95,24 @@ impl TableView {
             return self.open_selected();
         }
 
-        self.select(item)
+        match self.marks.click(item) {
+            ClickMarkResult::Unmarked => {
+                self.table_state.select(Some(item));
+                if self.marks.is_empty() {
+                    match self.selected_path() {
+                        Some(path) => Command::SetSelected(Some(path.clone())).into(),
+                        None => Command::SetSelected(None).into(),
+                    }
+                } else {
+                    Command::SetMarkCount(self.marks.len()).into()
+                }
+            }
+            ClickMarkResult::MarksChanged => {
+                self.table_state.select(Some(item));
+                Command::SetMarkCount(self.marks.len()).into()
+            }
+            ClickMarkResult::Ignored => self.select(item),
+        }
     }
 
     fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
@@ -114,7 +130,7 @@ impl TableView {
     fn select_next(&mut self) -> CommandResult {
         self.table_state.scroll_down_by(1);
         self.update_range_marks();
-        if self.range_anchor.is_some() {
+        if self.marks.in_range_mode() {
             return Command::SetMarkCount(self.marks.len()).into();
         }
         match self.selected_path() {
@@ -126,7 +142,7 @@ impl TableView {
     fn select_previous(&mut self) -> CommandResult {
         self.table_state.scroll_up_by(1);
         self.update_range_marks();
-        if self.range_anchor.is_some() {
+        if self.marks.in_range_mode() {
             return Command::SetMarkCount(self.marks.len()).into();
         }
         match self.selected_path() {
@@ -218,7 +234,7 @@ impl TableView {
     fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
         self.update_range_marks();
-        if self.range_anchor.is_some() {
+        if self.marks.in_range_mode() {
             return Command::SetMarkCount(self.marks.len()).into();
         }
         match self.selected_path() {
@@ -357,29 +373,20 @@ impl TableView {
 
     fn toggle_mark(&mut self) -> CommandResult {
         if let Some(i) = self.table_state.selected() {
-            if !self.marks.remove(&i) {
-                self.marks.insert(i);
-            }
+            self.marks.toggle(i);
         }
         Command::SetMarkCount(self.marks.len()).into()
     }
 
     fn enter_range_mode(&mut self) -> CommandResult {
-        if self.range_anchor.is_some() {
-            // Already in range mode — exit it
-            self.range_anchor = None;
-            return Command::SetMarkCount(self.marks.len()).into();
-        }
         if let Some(i) = self.table_state.selected() {
-            self.range_anchor = Some(i);
-            self.marks.insert(i);
+            self.marks.enter_range(i);
         }
         Command::SetMarkCount(self.marks.len()).into()
     }
 
     fn clear_marks(&mut self) {
         self.marks.clear();
-        self.range_anchor = None;
     }
 
     fn has_marks(&self) -> bool {
@@ -394,12 +401,8 @@ impl TableView {
     }
 
     fn update_range_marks(&mut self) {
-        if let Some(anchor) = self.range_anchor {
-            if let Some(cursor) = self.table_state.selected() {
-                let start = anchor.min(cursor);
-                let end = anchor.max(cursor);
-                self.marks = (start..=end).collect();
-            }
+        if let Some(cursor) = self.table_state.selected() {
+            self.marks.update_range(cursor);
         }
     }
 }
