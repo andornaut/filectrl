@@ -58,6 +58,18 @@ If you then paste into a second FileCtrl window, this second instance of FileCtr
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
 
+### Marking files
+
+Mark files to apply bulk operations (copy, cut, delete) to multiple items at once.
+
+- <kbd>v</kbd> toggles a mark on the current item
+- <kbd>V</kbd> enters **range mode**: the current row becomes the anchor, and moving the cursor (arrow keys or clicking) extends the marked range from the anchor to the cursor
+- Press <kbd>V</kbd> again to exit range mode (marks are kept)
+- While marks exist, clicking an unmarked row adds it to the marks; clicking a marked row removes it
+- In range mode, clicking always extends the range from the anchor to the clicked row
+- <kbd>Esc</kbd> clears all marks and exits range mode
+- Marks and clipboard are mutually exclusive — marking clears the clipboard
+
 ### Keybindings
 
 _**Normal mode**_
