@@ -1,6 +1,6 @@
-# FileCtrl
+# FileCTRL
 
-FileCtrl is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 ![image](./screenshot.png)
 
@@ -60,11 +60,11 @@ Options:
 
 ### Copy / paste
 
-When you copy/cut a file or directory, FileCtrl puts `${operation} ${path}` into your clipboard buffer
+When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` into your clipboard buffer
 (where `operation` is "cp" or "mv").
-If you then paste into a second FileCtrl window, this second instance of FileCtrl will perform the equivalent of:
+If you then paste into a second FileCTRL window, this second instance of FileCTRL will perform the equivalent of:
 `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
-Under the hood, FileCtrl doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
+Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
 
 ### Multi-select
 
@@ -197,7 +197,7 @@ include_files = ["my-theme.toml"]
 - **Absolute paths** are used as-is
 - Included files are **merged on top** of the base config -keys in included files override the base
 - Multiple files are merged in order; later files override earlier ones
-- If a file doesn't exist or can't be parsed, FileCtrl exits with an error
+- If a file doesn't exist or can't be parsed, FileCTRL exits with an error
 
 To get started with custom themes, export the built-in defaults as standalone files:
 
@@ -244,40 +244,11 @@ Arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd
 # Normal mode
 quit = "q"
 toggle_help = "?"
-clear_alerts = "a"
-clear_progress = "p"
-back = ["h", "b", "Backspace"]
-open = ["l", "f", "Enter", "Space"]
-open_custom = "o"
-open_new_window = "w"
-open_terminal = "t"
-go_home = "~"
-refresh = ["Ctrl+r", "F5"]
-select_next = "j"
-select_previous = "k"
-select_first = ["g", "^"]
-select_last = ["G", "$"]
-select_middle = "z"
-page_up = ["Ctrl+u", "Ctrl+b"]
-page_down = ["Ctrl+d", "Ctrl+f"]
-toggle_mark = "v"
-range_mark = "V"
-copy = ["c", "Ctrl+c"]
-cut = ["x", "Ctrl+x"]
-paste = "Ctrl+v"
-delete = ["d", "Delete"]
-rename = ["r", "F2"]
-filter = "/"
-sort_by_name = ["n", "N"]
-sort_by_modified = ["m", "M"]
-sort_by_size = ["s", "S"]
+...
 # Prompt mode
 prompt_submit = "Enter"
 prompt_reset = "Ctrl+z"
-prompt_select_all = "Ctrl+Shift+a"
-prompt_copy = "Ctrl+c"
-prompt_cut = "Ctrl+x"
-prompt_paste = "Ctrl+v"
+...
 ```
 
 Key strings support:
@@ -309,13 +280,15 @@ update-desktop-database ~/.local/share/applications/
 - [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
 - See [Cargo.toml](./Cargo.toml) for dependencies.
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
-- The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
-  - **`file_dates/`** -files with mtimes in each date-colour bucket (< 1 min, < 1 hour, < 1 day, < 1 month, < 1 year, > 1 year)
-  - **`file_sizes/`** -sparse files covering every size-colour bucket (bytes → GiB)
-  - **`file_types/`** -named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
-  - **`no_delete/`** -read-only parent directory (`chmod 555`); navigate here to trigger delete/rename permission errors
-  - **`scrolling/`** -53 entries with long filenames interspersed to exercise scrolling and multi-row truncation
-  - Plus: executables, symlinks, hidden files, Unicode names, special characters, and long filenames
+
+The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
+
+- **`file_dates/`** - files with mtimes in each date-colour bucket (< 1 min, < 1 hour, < 1 day, < 1 month, < 1 year, > 1 year)
+- **`file_sizes/`** - sparse files covering every size-colour bucket (bytes → GiB)
+- **`file_types/`** - named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
+- **`no_delete/`** - read-only parent directory (`chmod 555`); navigate here to trigger delete/rename permission errors
+- **`scrolling/`** - 53 entries with long filenames interspersed to exercise scrolling and multi-row truncation
+- Plus: executables, symlinks, hidden files, Unicode names, special characters, and long filenames
 
 ```bash
 cargo clippy
