@@ -1,6 +1,7 @@
 pub mod app;
 mod command;
 mod file_system;
+mod keybindings;
 mod views;
 
 use std::{env, io::Write, path::PathBuf};

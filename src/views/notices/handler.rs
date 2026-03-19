@@ -4,7 +4,10 @@ use ratatui::{
 };
 
 use super::{NoticesView, notice::Notice};
-use crate::command::{Command, handler::CommandHandler, result::CommandResult};
+use crate::{
+    command::{Command, handler::CommandHandler, result::CommandResult},
+    keybindings::Action,
+};
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -28,8 +31,8 @@ impl CommandHandler for NoticesView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Char('p'), KeyModifiers::NONE) => self.clear_progress(),
+        match self.keybindings.normal_action(code, modifiers) {
+            Some(Action::ClearProgress) => self.clear_progress(),
             _ => CommandResult::NotHandled,
         }
     }

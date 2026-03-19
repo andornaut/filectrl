@@ -1,3 +1,5 @@
+use std::{collections::VecDeque, rc::Rc};
+
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Position, Rect},
@@ -6,11 +8,12 @@ use ratatui::{
     widgets::{Paragraph, Widget},
     Frame,
 };
-use std::collections::VecDeque;
+
 use super::{bordered, View};
 use crate::{
     app::{config::theme::Theme, AppState},
     command::{handler::CommandHandler, result::CommandResult, Command},
+    keybindings::{Action, KeyBindings},
     views::unicode::split_with_ellipsis,
 };
 
@@ -34,10 +37,20 @@ impl AlertKind {
     }
 }
 
-#[derive(Default)]
 pub(super) struct AlertsView {
     alerts: VecDeque<(AlertKind, String)>,
     area: Rect,
+    keybindings: Rc<KeyBindings>,
+}
+
+impl AlertsView {
+    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+        Self {
+            alerts: VecDeque::new(),
+            area: Rect::default(),
+            keybindings,
+        }
+    }
 }
 
 impl AlertsView {
@@ -97,9 +110,9 @@ impl CommandHandler for AlertsView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match (*code, *modifiers) {
-            (KeyCode::Char('a'), KeyModifiers::NONE) => self.clear_alerts(),
-            (_, _) => CommandResult::NotHandled,
+        match self.keybindings.normal_action(code, modifiers) {
+            Some(Action::ClearAlerts) => self.clear_alerts(),
+            _ => CommandResult::NotHandled,
         }
     }
     fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
@@ -126,13 +139,11 @@ impl View for AlertsView {
         }
 
         let style = theme.alert.base();
-        let bordered_area = bordered(
-            area,
-            frame.buffer_mut(),
-            style,
-            "Alerts",
-            "(Press \"a\" to clear)",
+        let hint = format!(
+            "(Press \"{}\" to clear)",
+            self.keybindings.display_for(Action::ClearAlerts)
         );
+        let bordered_area = bordered(area, frame.buffer_mut(), style, "Alerts", &hint);
         let text = Text::from(
             self.alerts(bordered_area.width)
                 .into_iter()

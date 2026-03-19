@@ -1,6 +1,8 @@
 mod handler;
 mod view;
 
+use std::rc::Rc;
+
 use ratatui_textarea::{CursorMove, TextArea};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
@@ -9,11 +11,13 @@ use super::View;
 use crate::{
     app::clipboard::Clipboard,
     command::{Command, PromptKind, mode::InputMode, result::CommandResult},
+    keybindings::KeyBindings,
 };
 
 pub(super) struct PromptView {
     clipboard: Clipboard,
     initial_text: String,
+    keybindings: Rc<KeyBindings>,
     kind: PromptKind,
     text_area: TextArea<'static>,
     render_area: Rect,
@@ -22,10 +26,11 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub(super) fn new(clipboard: Clipboard) -> Self {
+    pub(super) fn new(clipboard: Clipboard, keybindings: Rc<KeyBindings>) -> Self {
         Self {
             clipboard,
             initial_text: String::new(),
+            keybindings,
             kind: PromptKind::default(),
             text_area: TextArea::default(),
             render_area: Rect::default(),
@@ -120,10 +125,12 @@ mod tests {
     use crate::{
         app::clipboard::Clipboard,
         command::{Command, PromptKind, handler::CommandHandler},
+        keybindings::KeyBindings,
     };
 
     fn prompt_with_text(kind: PromptKind, text: &str) -> PromptView {
-        let mut view = PromptView::new(Clipboard::default());
+        let kb = Rc::new(KeyBindings::new(None).unwrap());
+        let mut view = PromptView::new(Clipboard::default(), kb);
         view.handle_command(&Command::OpenPrompt(kind, text.to_string()));
         view
     }
@@ -162,7 +169,8 @@ mod tests {
 
     #[test]
     fn esc_returns_close_prompt() {
-        let mut view = PromptView::new(Clipboard::default());
+        let kb = Rc::new(KeyBindings::new(None).unwrap());
+        let mut view = PromptView::new(Clipboard::default(), kb);
         let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
         assert_eq!(result, Command::ClosePrompt.into());
     }

@@ -4,7 +4,10 @@ use ratatui::{
 };
 
 use super::{columns::SortColumn, TableView};
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::{
+    command::{handler::CommandHandler, result::CommandResult, Command},
+    keybindings::Action,
+};
 
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -36,57 +39,53 @@ impl CommandHandler for TableView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        // Hardcoded keys (arrow keys, Home/End, PageUp/PageDown)
         match (*code, *modifiers) {
+            (KeyCode::Down, KeyModifiers::NONE) => return self.select_next(),
+            (KeyCode::Up, KeyModifiers::NONE) => return self.select_previous(),
+            (KeyCode::Left, KeyModifiers::NONE) => return Command::Back.into(),
+            (KeyCode::Right, KeyModifiers::NONE) => return self.open_selected(),
+            (KeyCode::Home, KeyModifiers::NONE) => return self.select_first(),
+            (KeyCode::End, KeyModifiers::NONE) => return self.select_last(),
+            (KeyCode::PageUp, KeyModifiers::NONE) => return self.previous_page(),
+            (KeyCode::PageDown, KeyModifiers::NONE) => return self.next_page(),
+            _ => {}
+        }
+        // Rebindable keys
+        match self.keybindings.normal_action(code, modifiers) {
             // Clipboard
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy_to_clipboard(),
-            (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut_to_clipboard(),
-            (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste_from_clipboard(),
+            Some(Action::Copy) => self.copy_to_clipboard(),
+            Some(Action::Cut) => self.cut_to_clipboard(),
+            Some(Action::Paste) => self.paste_from_clipboard(),
             // Navigation (page)
-            (KeyCode::Char('u'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('b'), KeyModifiers::CONTROL)
-            | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
-            (KeyCode::Char('d'), KeyModifiers::CONTROL)
-            | (KeyCode::Char('f'), KeyModifiers::CONTROL)
-            | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
+            Some(Action::PageUp) => self.previous_page(),
+            Some(Action::PageDown) => self.next_page(),
             // Navigation (filesystem)
-            (KeyCode::Char('r'), KeyModifiers::CONTROL)
-            | (KeyCode::F(5), KeyModifiers::NONE) => Command::Refresh.into(),
+            Some(Action::Refresh) => Command::Refresh.into(),
+            Some(Action::Back) => Command::Back.into(),
+            Some(Action::Open) => self.open_selected(),
+            Some(Action::OpenCustom) => self.open_selected_in_custom_program(),
+            Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
+            Some(Action::OpenTerminal) => Command::OpenTerminal.into(),
+            Some(Action::GoHome) => self.navigate_to_home_directory(),
+            // Selection
+            Some(Action::SelectNext) => self.select_next(),
+            Some(Action::SelectPrevious) => self.select_previous(),
+            Some(Action::SelectFirst) => self.select_first(),
+            Some(Action::SelectLast) => self.select_last(),
+            Some(Action::SelectMiddle) => self.select_middle_visible_item(),
             // Marks
-            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.select_last(),
-            (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.enter_range_mode(),
-            (_, KeyModifiers::NONE) => match code {
-                // Navigation (filesystem)
-                KeyCode::Backspace
-                | KeyCode::Left
-                | KeyCode::Char('b')
-                | KeyCode::Char('h') => Command::Back.into(),
-                KeyCode::Enter
-                | KeyCode::Right
-                | KeyCode::Char('f')
-                | KeyCode::Char('l')
-                | KeyCode::Char(' ') => self.open_selected(),
-                KeyCode::Char('~') => self.navigate_to_home_directory(),
-                KeyCode::Char('o') => self.open_selected_in_custom_program(),
-                KeyCode::Char('w') => Command::OpenNewWindow.into(),
-                KeyCode::Char('t') => Command::OpenTerminal.into(),
-                // Selection
-                KeyCode::Down | KeyCode::Char('j') => self.select_next(),
-                KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
-                KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.select_first(),
-                KeyCode::Char('$') | KeyCode::End => self.select_last(),
-                KeyCode::Char('z') => self.select_middle_visible_item(),
-                // File operations
-                KeyCode::Delete => self.delete(),
-                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
-                KeyCode::Char('/') => self.open_filter_prompt(),
-                KeyCode::Char('v') => self.toggle_mark(),
-                // Sort
-                KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
-                KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
-                KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
-                _ => CommandResult::NotHandled,
-            },
-            (_, _) => CommandResult::NotHandled,
+            Some(Action::ToggleMark) => self.toggle_mark(),
+            Some(Action::RangeMark) => self.enter_range_mode(),
+            // File operations
+            Some(Action::Delete) => self.delete(),
+            Some(Action::Rename) => self.open_rename_prompt(),
+            Some(Action::Filter) => self.open_filter_prompt(),
+            // Sort
+            Some(Action::SortByName) => self.sort_by(SortColumn::Name),
+            Some(Action::SortByModified) => self.sort_by(SortColumn::Modified),
+            Some(Action::SortBySize) => self.sort_by(SortColumn::Size),
+            _ => CommandResult::NotHandled,
         }
     }
 
