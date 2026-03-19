@@ -68,12 +68,17 @@ impl RootView {
 }
 
 impl CommandHandler for RootView {
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        // Hardcoded: Esc closes help
-        if self.is_help_visible && *code == KeyCode::Esc {
-            self.is_help_visible = false;
-            return CommandResult::Handled;
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        if let Command::Reset = command {
+            if self.is_help_visible {
+                self.is_help_visible = false;
+                return CommandResult::Handled;
+            }
         }
+        CommandResult::NotHandled
+    }
+
+    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         // Rebindable keys
         match self.keybindings.normal_action(code, modifiers) {
             Some(Action::ToggleHelp) => {
