@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-use self::{result::CommandResult, progress::Task};
+use self::{progress::Task, result::CommandResult};
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
@@ -21,39 +21,58 @@ pub enum PromptKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
-    AlertError(String),
-    AlertInfo(String),
-    AlertWarn(String),
-    ClearClipboard,
-    ClosePrompt,
-    Copy { srcs: Vec<PathInfo>, dest: PathInfo },
-    Delete(Vec<PathInfo>),
+    // Terminal input events
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
-    Move { srcs: Vec<PathInfo>, dest: PathInfo },
-    NavigateDirectory(PathInfo, Vec<PathInfo>),
+    Resize { width: u16, height: u16 },
+
+    // Navigation intents — resolved by FileSystem
+    Back,
     Open(PathInfo),
     OpenCustom(PathInfo),
-    OpenPrompt(PromptKind, String),
-    /// Intent to paste the clipboard entry into the given directory.
-    /// Emitted by TableView; resolved by App into Copy or Move using AppState::clipboard_entry.
-    Paste(PathInfo),
-    Progress(Task),
-    Quit,
+    OpenNewWindow,
+    OpenTerminal,
     Refresh,
-    /// Clears marks, clipboard, and filter. Emitted by TableView on Esc in normal mode.
-    Reset,
+
+    // Navigation results — emitted by FileSystem
+    NavigateDirectory(PathInfo, Vec<PathInfo>),
     RefreshDirectory(PathInfo, Vec<PathInfo>),
+
+    // File operations
+    Copy { srcs: Vec<PathInfo>, dest: PathInfo },
+    Move { srcs: Vec<PathInfo>, dest: PathInfo },
+    Delete(Vec<PathInfo>),
     RenamePath(PathInfo, String),
-    /// Intent to rename the currently selected item to the given name.
-    /// Emitted by PromptView on submit; resolved by App into RenamePath using AppState::selected.
-    RenameSelected(String),
-    ResetHelpScroll,
-    Resize { width: u16, height: u16 },
+
+    // File operation intents — resolved by App
+    Paste(PathInfo),        // Resolved into Copy or Move using clipboard_entry
+    RenameSelected(String), // Resolved into RenamePath using selected
+
+    // Clipboard
+    ClearClipboard,
     SetClipboard(ClipboardEntry),
+
+    // Prompt
+    OpenPrompt(PromptKind, String),
+    ClosePrompt,
+
+    // View state
     SetFilter(String),
     SetMarkCount(usize),
     SetSelected(Option<PathInfo>),
+    Reset, // Clears marks, clipboard, and filter
+    ResetHelpScroll,
+
+    // Alerts
+    AlertError(String),
+    AlertInfo(String),
+    AlertWarn(String),
+
+    // Task progress
+    Progress(Task),
+
+    // Control
+    Quit,
 }
 
 impl Command {
@@ -74,7 +93,10 @@ impl Command {
                     Some(Self::Mouse(mouse_event))
                 }
             }
-            Event::Resize(w, h) => Some(Self::Resize { width: w, height: h }),
+            Event::Resize(w, h) => Some(Self::Resize {
+                width: w,
+                height: h,
+            }),
             _ => None,
         }
     }
@@ -92,12 +114,8 @@ impl TryFrom<CommandResult> for Command {
     fn try_from(value: CommandResult) -> Result<Self, Self::Error> {
         match value {
             CommandResult::HandledWith(command) => Ok(*command),
-            CommandResult::Handled => Err(anyhow!(
-                "expected HandledWith, got Handled"
-            )),
-            CommandResult::NotHandled => Err(anyhow!(
-                "expected HandledWith, got NotHandled"
-            )),
+            CommandResult::Handled => Err(anyhow!("expected HandledWith, got Handled")),
+            CommandResult::NotHandled => Err(anyhow!("expected HandledWith, got NotHandled")),
         }
     }
 }
