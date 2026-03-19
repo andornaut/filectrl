@@ -18,16 +18,14 @@ impl TableView {
         &mut self,
         make_entry: fn(Vec<PathInfo>) -> ClipboardEntry,
     ) -> CommandResult {
-        let result = if self.has_marks() {
+        if self.has_marks() {
             Command::SetClipboard(make_entry(self.marked_paths())).into()
         } else {
             match self.selected_path() {
                 None => return Command::AlertWarn("No file selected".into()).into(),
                 Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
             }
-        };
-        self.clear_marks();
-        result
+        }
     }
 
     pub(super) fn paste_from_clipboard(&self) -> CommandResult {
