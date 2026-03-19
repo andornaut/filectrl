@@ -82,46 +82,104 @@ pub enum KeySpec {
     Multiple(Vec<String>),
 }
 
-/// User-configurable keybindings from TOML `[keybindings]` section.
-#[derive(Debug, Default, Deserialize)]
+/// Keybindings from the TOML `[keybindings]` section.
+/// All fields are required — defaults are provided by the embedded default_config.toml.
+#[derive(Debug, Deserialize)]
 pub struct TomlKeybindings {
-    quit: Option<KeySpec>,
-    reset: Option<KeySpec>,
-    toggle_help: Option<KeySpec>,
-    clear_alerts: Option<KeySpec>,
-    clear_progress: Option<KeySpec>,
-    back: Option<KeySpec>,
-    open: Option<KeySpec>,
-    open_custom: Option<KeySpec>,
-    open_new_window: Option<KeySpec>,
-    open_terminal: Option<KeySpec>,
-    go_home: Option<KeySpec>,
-    refresh: Option<KeySpec>,
-    select_next: Option<KeySpec>,
-    select_previous: Option<KeySpec>,
-    select_first: Option<KeySpec>,
-    select_last: Option<KeySpec>,
-    select_middle: Option<KeySpec>,
-    page_up: Option<KeySpec>,
-    page_down: Option<KeySpec>,
-    toggle_mark: Option<KeySpec>,
-    range_mark: Option<KeySpec>,
-    copy: Option<KeySpec>,
-    cut: Option<KeySpec>,
-    paste: Option<KeySpec>,
-    delete: Option<KeySpec>,
-    rename: Option<KeySpec>,
-    filter: Option<KeySpec>,
-    sort_by_name: Option<KeySpec>,
-    sort_by_modified: Option<KeySpec>,
-    sort_by_size: Option<KeySpec>,
-    prompt_submit: Option<KeySpec>,
-    prompt_cancel: Option<KeySpec>,
-    prompt_reset: Option<KeySpec>,
-    prompt_select_all: Option<KeySpec>,
-    prompt_copy: Option<KeySpec>,
-    prompt_cut: Option<KeySpec>,
-    prompt_paste: Option<KeySpec>,
+    // Normal mode
+    quit: KeySpec,
+    toggle_help: KeySpec,
+    clear_alerts: KeySpec,
+    clear_progress: KeySpec,
+    back: KeySpec,
+    open: KeySpec,
+    open_custom: KeySpec,
+    open_new_window: KeySpec,
+    open_terminal: KeySpec,
+    go_home: KeySpec,
+    refresh: KeySpec,
+    select_next: KeySpec,
+    select_previous: KeySpec,
+    select_first: KeySpec,
+    select_last: KeySpec,
+    select_middle: KeySpec,
+    page_up: KeySpec,
+    page_down: KeySpec,
+    toggle_mark: KeySpec,
+    range_mark: KeySpec,
+    copy: KeySpec,
+    cut: KeySpec,
+    paste: KeySpec,
+    delete: KeySpec,
+    rename: KeySpec,
+    filter: KeySpec,
+    sort_by_name: KeySpec,
+    sort_by_modified: KeySpec,
+    sort_by_size: KeySpec,
+    // Prompt mode
+    prompt_submit: KeySpec,
+    prompt_reset: KeySpec,
+    prompt_select_all: KeySpec,
+    prompt_copy: KeySpec,
+    prompt_cut: KeySpec,
+    prompt_paste: KeySpec,
+}
+
+type BindingList = Vec<(Action, Vec<KeyCombo>)>;
+
+impl TomlKeybindings {
+    /// Convert TOML fields into (normal, prompt) binding lists.
+    fn to_bindings(&self) -> Result<(BindingList, BindingList)> {
+        let mut normal = Vec::new();
+        let mut prompt = Vec::new();
+
+        macro_rules! bind {
+            ($list:expr, $field:expr, $action:expr) => {
+                $list.push(($action, parse_key_spec(&$field)?));
+            };
+        }
+
+        // Normal mode
+        bind!(normal, self.quit, Action::Quit);
+        bind!(normal, self.toggle_help, Action::ToggleHelp);
+        bind!(normal, self.clear_alerts, Action::ClearAlerts);
+        bind!(normal, self.clear_progress, Action::ClearProgress);
+        bind!(normal, self.back, Action::Back);
+        bind!(normal, self.open, Action::Open);
+        bind!(normal, self.open_custom, Action::OpenCustom);
+        bind!(normal, self.open_new_window, Action::OpenNewWindow);
+        bind!(normal, self.open_terminal, Action::OpenTerminal);
+        bind!(normal, self.go_home, Action::GoHome);
+        bind!(normal, self.refresh, Action::Refresh);
+        bind!(normal, self.select_next, Action::SelectNext);
+        bind!(normal, self.select_previous, Action::SelectPrevious);
+        bind!(normal, self.select_first, Action::SelectFirst);
+        bind!(normal, self.select_last, Action::SelectLast);
+        bind!(normal, self.select_middle, Action::SelectMiddle);
+        bind!(normal, self.page_up, Action::PageUp);
+        bind!(normal, self.page_down, Action::PageDown);
+        bind!(normal, self.toggle_mark, Action::ToggleMark);
+        bind!(normal, self.range_mark, Action::RangeMark);
+        bind!(normal, self.copy, Action::Copy);
+        bind!(normal, self.cut, Action::Cut);
+        bind!(normal, self.paste, Action::Paste);
+        bind!(normal, self.delete, Action::Delete);
+        bind!(normal, self.rename, Action::Rename);
+        bind!(normal, self.filter, Action::Filter);
+        bind!(normal, self.sort_by_name, Action::SortByName);
+        bind!(normal, self.sort_by_modified, Action::SortByModified);
+        bind!(normal, self.sort_by_size, Action::SortBySize);
+
+        // Prompt mode
+        bind!(prompt, self.prompt_submit, Action::PromptSubmit);
+        bind!(prompt, self.prompt_reset, Action::PromptReset);
+        bind!(prompt, self.prompt_select_all, Action::PromptSelectAll);
+        bind!(prompt, self.prompt_copy, Action::PromptCopy);
+        bind!(prompt, self.prompt_cut, Action::PromptCut);
+        bind!(prompt, self.prompt_paste, Action::PromptPaste);
+
+        Ok((normal, prompt))
+    }
 }
 
 /// Resolved keybindings with fast lookup in both directions.
@@ -133,13 +191,8 @@ pub struct KeyBindings {
 }
 
 impl KeyBindings {
-    pub fn new(overrides: Option<&TomlKeybindings>) -> Result<Self> {
-        let mut normal_bindings = default_normal_bindings();
-        let mut prompt_bindings = default_prompt_bindings();
-
-        if let Some(toml) = overrides {
-            apply_overrides(&mut normal_bindings, &mut prompt_bindings, toml)?;
-        }
+    pub fn new(toml: &TomlKeybindings) -> Result<Self> {
+        let (normal_bindings, prompt_bindings) = toml.to_bindings()?;
 
         let normal = build_action_map(&normal_bindings)?;
         let prompt = build_action_map(&prompt_bindings)?;
@@ -189,14 +242,10 @@ impl KeyBindings {
     }
 }
 
-// Helper to create a KeyCombo concisely
-const fn kc(code: KeyCode, modifiers: KeyModifiers) -> KeyCombo {
-    KeyCombo::new(code, modifiers)
-}
-
 /// Hardcoded keys per action (arrow keys, Home/End, PageUp/PageDown, Esc).
 /// These are always active regardless of config and are included in display strings.
 fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
+    let kc = KeyCombo::new;
     match action {
         Action::Back => vec![kc(KeyCode::Left, KeyModifiers::NONE)],
         Action::Open => vec![kc(KeyCode::Right, KeyModifiers::NONE)],
@@ -210,101 +259,6 @@ fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
         Action::PromptCancel => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         _ => vec![],
     }
-}
-
-/// Default rebindable bindings for normal mode.
-fn default_normal_bindings() -> Vec<(Action, Vec<KeyCombo>)> {
-    use KeyCode::*;
-    let none = KeyModifiers::NONE;
-    let ctrl = KeyModifiers::CONTROL;
-    let shift = KeyModifiers::SHIFT;
-
-    vec![
-        // Global
-        (Action::Quit, vec![kc(Char('q'), none)]),
-        (Action::ToggleHelp, vec![kc(Char('?'), none)]),
-        (Action::ClearAlerts, vec![kc(Char('a'), none)]),
-        (Action::ClearProgress, vec![kc(Char('p'), none)]),
-        // Navigation (filesystem)
-        (
-            Action::Back,
-            vec![kc(Char('h'), none), kc(Char('b'), none), kc(Backspace, none)],
-        ),
-        (
-            Action::Open,
-            vec![
-                kc(Char('l'), none),
-                kc(Char('f'), none),
-                kc(Enter, none),
-                kc(Char(' '), none),
-            ],
-        ),
-        (Action::OpenCustom, vec![kc(Char('o'), none)]),
-        (Action::OpenNewWindow, vec![kc(Char('w'), none)]),
-        (Action::OpenTerminal, vec![kc(Char('t'), none)]),
-        (Action::GoHome, vec![kc(Char('~'), none)]),
-        (Action::Refresh, vec![kc(Char('r'), ctrl), kc(F(5), none)]),
-        // Selection
-        (Action::SelectNext, vec![kc(Char('j'), none)]),
-        (Action::SelectPrevious, vec![kc(Char('k'), none)]),
-        (
-            Action::SelectFirst,
-            vec![kc(Char('g'), none), kc(Char('^'), none)],
-        ),
-        (
-            Action::SelectLast,
-            vec![kc(Char('G'), shift), kc(Char('$'), none)],
-        ),
-        (Action::SelectMiddle, vec![kc(Char('z'), none)]),
-        (
-            Action::PageUp,
-            vec![kc(Char('u'), ctrl), kc(Char('b'), ctrl)],
-        ),
-        (
-            Action::PageDown,
-            vec![kc(Char('d'), ctrl), kc(Char('f'), ctrl)],
-        ),
-        // Marks
-        (Action::ToggleMark, vec![kc(Char('v'), none)]),
-        (Action::RangeMark, vec![kc(Char('V'), shift)]),
-        // Clipboard
-        (Action::Copy, vec![kc(Char('c'), ctrl)]),
-        (Action::Cut, vec![kc(Char('x'), ctrl)]),
-        (Action::Paste, vec![kc(Char('v'), ctrl)]),
-        // File operations
-        (Action::Delete, vec![kc(Delete, none)]),
-        (Action::Rename, vec![kc(Char('r'), none), kc(F(2), none)]),
-        (Action::Filter, vec![kc(Char('/'), none)]),
-        // Sort
-        (
-            Action::SortByName,
-            vec![kc(Char('n'), none), kc(Char('N'), shift)],
-        ),
-        (
-            Action::SortByModified,
-            vec![kc(Char('m'), none), kc(Char('M'), shift)],
-        ),
-        (
-            Action::SortBySize,
-            vec![kc(Char('s'), none), kc(Char('S'), shift)],
-        ),
-    ]
-}
-
-/// Default rebindable bindings for prompt mode.
-fn default_prompt_bindings() -> Vec<(Action, Vec<KeyCombo>)> {
-    use KeyCode::*;
-    let ctrl = KeyModifiers::CONTROL;
-    let ctrl_shift = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
-
-    vec![
-        (Action::PromptSubmit, vec![kc(Enter, KeyModifiers::NONE)]),
-        (Action::PromptReset, vec![kc(Char('z'), ctrl)]),
-        (Action::PromptSelectAll, vec![kc(Char('a'), ctrl_shift)]),
-        (Action::PromptCopy, vec![kc(Char('c'), ctrl)]),
-        (Action::PromptCut, vec![kc(Char('x'), ctrl)]),
-        (Action::PromptPaste, vec![kc(Char('v'), ctrl)]),
-    ]
 }
 
 /// Build the key→action HashMap, detecting duplicate key mappings.
@@ -354,69 +308,6 @@ fn build_display_map(
     }
 
     map
-}
-
-/// Apply user TOML overrides to the default bindings.
-fn apply_overrides(
-    normal: &mut Vec<(Action, Vec<KeyCombo>)>,
-    prompt: &mut Vec<(Action, Vec<KeyCombo>)>,
-    toml: &TomlKeybindings,
-) -> Result<()> {
-    macro_rules! override_binding {
-        ($bindings:expr, $field:expr, $action:expr) => {
-            if let Some(spec) = &$field {
-                let combos = parse_key_spec(spec)?;
-                if let Some(entry) = $bindings.iter_mut().find(|(a, _)| *a == $action) {
-                    entry.1 = combos;
-                } else {
-                    $bindings.push(($action, combos));
-                }
-            }
-        };
-    }
-
-    // Normal mode overrides
-    override_binding!(normal, toml.quit, Action::Quit);
-    override_binding!(normal, toml.reset, Action::Reset);
-    override_binding!(normal, toml.toggle_help, Action::ToggleHelp);
-    override_binding!(normal, toml.clear_alerts, Action::ClearAlerts);
-    override_binding!(normal, toml.clear_progress, Action::ClearProgress);
-    override_binding!(normal, toml.back, Action::Back);
-    override_binding!(normal, toml.open, Action::Open);
-    override_binding!(normal, toml.open_custom, Action::OpenCustom);
-    override_binding!(normal, toml.open_new_window, Action::OpenNewWindow);
-    override_binding!(normal, toml.open_terminal, Action::OpenTerminal);
-    override_binding!(normal, toml.go_home, Action::GoHome);
-    override_binding!(normal, toml.refresh, Action::Refresh);
-    override_binding!(normal, toml.select_next, Action::SelectNext);
-    override_binding!(normal, toml.select_previous, Action::SelectPrevious);
-    override_binding!(normal, toml.select_first, Action::SelectFirst);
-    override_binding!(normal, toml.select_last, Action::SelectLast);
-    override_binding!(normal, toml.select_middle, Action::SelectMiddle);
-    override_binding!(normal, toml.page_up, Action::PageUp);
-    override_binding!(normal, toml.page_down, Action::PageDown);
-    override_binding!(normal, toml.toggle_mark, Action::ToggleMark);
-    override_binding!(normal, toml.range_mark, Action::RangeMark);
-    override_binding!(normal, toml.copy, Action::Copy);
-    override_binding!(normal, toml.cut, Action::Cut);
-    override_binding!(normal, toml.paste, Action::Paste);
-    override_binding!(normal, toml.delete, Action::Delete);
-    override_binding!(normal, toml.rename, Action::Rename);
-    override_binding!(normal, toml.filter, Action::Filter);
-    override_binding!(normal, toml.sort_by_name, Action::SortByName);
-    override_binding!(normal, toml.sort_by_modified, Action::SortByModified);
-    override_binding!(normal, toml.sort_by_size, Action::SortBySize);
-
-    // Prompt mode overrides
-    override_binding!(prompt, toml.prompt_submit, Action::PromptSubmit);
-    override_binding!(prompt, toml.prompt_cancel, Action::PromptCancel);
-    override_binding!(prompt, toml.prompt_reset, Action::PromptReset);
-    override_binding!(prompt, toml.prompt_select_all, Action::PromptSelectAll);
-    override_binding!(prompt, toml.prompt_copy, Action::PromptCopy);
-    override_binding!(prompt, toml.prompt_cut, Action::PromptCut);
-    override_binding!(prompt, toml.prompt_paste, Action::PromptPaste);
-
-    Ok(())
 }
 
 fn parse_key_spec(spec: &KeySpec) -> Result<Vec<KeyCombo>> {
@@ -516,6 +407,33 @@ fn format_key_combo(combo: &KeyCombo) -> String {
 mod tests {
     use super::*;
 
+    const DEFAULT_CONFIG: &str = include_str!("app/config/default_config.toml");
+
+    /// Parse the embedded default config's `[keybindings]` section into a `TomlKeybindings`.
+    fn default_toml_keybindings() -> TomlKeybindings {
+        let value: toml::Value = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let kb_value = value.get("keybindings").unwrap().clone();
+        kb_value.try_into().unwrap()
+    }
+
+    /// Build `KeyBindings` from the embedded default config.
+    fn default_keybindings() -> KeyBindings {
+        KeyBindings::new(&default_toml_keybindings()).unwrap()
+    }
+
+    /// Parse a TOML string with a `[keybindings]` section that overrides specific
+    /// keys on top of the defaults (using TOML deep merge, same as the config system).
+    fn keybindings_with_override(toml_fragment: &str) -> Result<KeyBindings> {
+        use crate::app::config::merge_toml_values;
+
+        let base: toml::Value = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let overlay: toml::Value = toml::from_str(toml_fragment).unwrap();
+        let merged = merge_toml_values(base, overlay);
+        let kb_value = merged.get("keybindings").unwrap().clone();
+        let toml_kb: TomlKeybindings = kb_value.try_into().unwrap();
+        KeyBindings::new(&toml_kb)
+    }
+
     #[test]
     fn parse_single_char() {
         let combo = parse_key_combo("q").unwrap();
@@ -611,18 +529,19 @@ mod tests {
     }
 
     #[test]
-    fn default_bindings_have_no_conflicts() {
-        KeyBindings::new(None).unwrap();
+    fn default_config_keybindings_have_no_conflicts() {
+        default_keybindings();
     }
 
     #[test]
     fn duplicate_key_detected() {
-        let toml = TomlKeybindings {
-            quit: Some(KeySpec::Single("j".to_string())),
-            select_next: Some(KeySpec::Single("j".to_string())),
-            ..Default::default()
-        };
-        let result = KeyBindings::new(Some(&toml));
+        let result = keybindings_with_override(
+            r#"
+            [keybindings]
+            quit = "j"
+            select_next = "j"
+            "#,
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("j"), "Error should mention the key: {err}");
@@ -630,17 +549,19 @@ mod tests {
 
     #[test]
     fn override_replaces_default() {
-        let toml = TomlKeybindings {
-            quit: Some(KeySpec::Single("x".to_string())),
-            ..Default::default()
-        };
-        let kb = KeyBindings::new(Some(&toml)).unwrap();
+        let kb = keybindings_with_override(
+            r#"
+            [keybindings]
+            quit = "x"
+            "#,
+        )
+        .unwrap();
         // 'x' should now be Quit
         assert_eq!(
             kb.normal_action(&KeyCode::Char('x'), &KeyModifiers::NONE),
             Some(Action::Quit)
         );
-        // 'q' should no longer be Quit
+        // 'q' should no longer be Quit (overridden)
         assert_eq!(
             kb.normal_action(&KeyCode::Char('q'), &KeyModifiers::NONE),
             None
@@ -649,7 +570,7 @@ mod tests {
 
     #[test]
     fn display_includes_hardcoded_keys() {
-        let kb = KeyBindings::new(None).unwrap();
+        let kb = default_keybindings();
         let display = kb.display_for(Action::SelectNext);
         assert!(
             display.contains('↓'),
@@ -657,22 +578,22 @@ mod tests {
         );
         assert!(
             display.contains('j'),
-            "SelectNext display should include rebindable j: {display}"
+            "SelectNext display should include configurable j: {display}"
         );
     }
 
     #[test]
     fn display_for_reset_shows_esc() {
-        let kb = KeyBindings::new(None).unwrap();
+        let kb = default_keybindings();
         let display = kb.display_for(Action::Reset);
         assert_eq!(display, "Esc");
     }
 
     #[test]
     fn uppercase_fallback_with_shift() {
-        let kb = KeyBindings::new(None).unwrap();
-        // SelectLast has default kc(Char('G'), SHIFT)
-        // Terminal might send Char('G') with NONE — fallback should find it
+        let kb = default_keybindings();
+        // SelectLast default is "G" which parses to Char('G') + SHIFT.
+        // Terminal might send Char('G') with NONE — fallback should find it.
         assert_eq!(
             kb.normal_action(&KeyCode::Char('G'), &KeyModifiers::NONE),
             Some(Action::SelectLast)
@@ -681,9 +602,9 @@ mod tests {
 
     #[test]
     fn uppercase_fallback_without_shift() {
-        let kb = KeyBindings::new(None).unwrap();
-        // SortByName has default kc(Char('N'), SHIFT)
-        // Terminal might send Char('N') with SHIFT — direct match
+        let kb = default_keybindings();
+        // SortByName default includes "N" which parses to Char('N') + SHIFT.
+        // Direct match with SHIFT.
         assert_eq!(
             kb.normal_action(&KeyCode::Char('N'), &KeyModifiers::SHIFT),
             Some(Action::SortByName)
@@ -692,7 +613,7 @@ mod tests {
 
     #[test]
     fn prompt_action_lookup() {
-        let kb = KeyBindings::new(None).unwrap();
+        let kb = default_keybindings();
         assert_eq!(
             kb.prompt_action(&KeyCode::Enter, &KeyModifiers::NONE),
             Some(Action::PromptSubmit)

@@ -125,12 +125,19 @@ mod tests {
     use crate::{
         app::clipboard::Clipboard,
         command::{Command, PromptKind, handler::CommandHandler},
-        keybindings::KeyBindings,
+        keybindings::{KeyBindings, TomlKeybindings},
     };
 
+    fn default_keybindings() -> Rc<KeyBindings> {
+        let config: toml::Value =
+            toml::from_str(include_str!("../app/config/default_config.toml")).unwrap();
+        let kb_toml: TomlKeybindings =
+            config.get("keybindings").unwrap().clone().try_into().unwrap();
+        Rc::new(KeyBindings::new(&kb_toml).unwrap())
+    }
+
     fn prompt_with_text(kind: PromptKind, text: &str) -> PromptView {
-        let kb = Rc::new(KeyBindings::new(None).unwrap());
-        let mut view = PromptView::new(Clipboard::default(), kb);
+        let mut view = PromptView::new(Clipboard::default(), default_keybindings());
         view.handle_command(&Command::OpenPrompt(kind, text.to_string()));
         view
     }
@@ -169,8 +176,7 @@ mod tests {
 
     #[test]
     fn esc_returns_close_prompt() {
-        let kb = Rc::new(KeyBindings::new(None).unwrap());
-        let mut view = PromptView::new(Clipboard::default(), kb);
+        let mut view = PromptView::new(Clipboard::default(), default_keybindings());
         let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
         assert_eq!(result, Command::ClosePrompt.into());
     }
