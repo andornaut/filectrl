@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 use crate::{
     app::AppState,
     command::{result::CommandResult, progress::Task},
-    keybindings::KeyBindings,
+    app::config::keybindings::KeyBindings,
 };
 
 pub(super) struct NoticesView {

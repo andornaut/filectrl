@@ -7,7 +7,7 @@ use ratatui_textarea::{CursorMove, Input};
 use super::PromptView;
 use crate::{
     command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-    keybindings::Action,
+    app::config::keybindings::Action,
 };
 
 impl CommandHandler for PromptView {

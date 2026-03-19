@@ -15,7 +15,7 @@ use super::{
 use crate::{
     app::{AppState, clipboard::Clipboard, config::Config, config::theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
-    keybindings::{Action, KeyBindings},
+    app::config::keybindings::{Action, KeyBindings},
 };
 
 const MIN_WIDTH: u16 = 14;

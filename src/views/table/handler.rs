@@ -6,7 +6,7 @@ use ratatui::{
 use super::{columns::SortColumn, TableView};
 use crate::{
     command::{handler::CommandHandler, result::CommandResult, Command},
-    keybindings::Action,
+    app::config::keybindings::Action,
 };
 
 impl CommandHandler for TableView {

@@ -13,7 +13,7 @@ use super::{ScrollbarView, View, bordered};
 use crate::{
     app::{AppState, config::theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
-    keybindings::{Action, KeyBindings},
+    app::config::keybindings::{Action, KeyBindings},
 };
 
 const MIN_HEIGHT: u16 = 5;

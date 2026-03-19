@@ -407,7 +407,7 @@ fn format_key_combo(combo: &KeyCombo) -> String {
 mod tests {
     use super::*;
 
-    const DEFAULT_CONFIG: &str = include_str!("app/config/default_config.toml");
+    const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
 
     /// Parse the embedded default config's `[keybindings]` section into a `TomlKeybindings`.
     fn default_toml_keybindings() -> TomlKeybindings {

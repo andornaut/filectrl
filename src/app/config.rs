@@ -1,3 +1,4 @@
+pub mod keybindings;
 mod ls_colors;
 mod serde;
 pub mod theme;
@@ -11,7 +12,7 @@ use log::{LevelFilter, debug, info};
 use toml::Value;
 
 use self::theme::Theme;
-use crate::keybindings::{KeyBindings, TomlKeybindings};
+use self::keybindings::{KeyBindings, TomlKeybindings};
 
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");

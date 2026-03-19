@@ -30,7 +30,7 @@ use crate::{
     app::config::Config,
     command::{Command, result::CommandResult},
     file_system::path_info::PathInfo,
-    keybindings::KeyBindings,
+    app::config::keybindings::KeyBindings,
 };
 
 pub(super) struct TableView {

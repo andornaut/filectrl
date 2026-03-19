@@ -6,7 +6,7 @@ use ratatui::{
 use super::{NoticesView, notice::Notice};
 use crate::{
     command::{Command, handler::CommandHandler, result::CommandResult},
-    keybindings::Action,
+    app::config::keybindings::Action,
 };
 
 impl CommandHandler for NoticesView {
