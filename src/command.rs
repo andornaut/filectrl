@@ -60,7 +60,7 @@ pub enum Command {
     SetFilter(String),
     SetMarkCount(usize),
     SetSelected(Option<PathInfo>),
-    Reset, // Clears marks, clipboard, and filter
+    Reset, // Clears clipboard, filter, and marks
     ResetHelpScroll,
 
     // Alerts
@@ -68,10 +68,7 @@ pub enum Command {
     AlertInfo(String),
     AlertWarn(String),
 
-    // Task progress
     Progress(Task),
-
-    // Control
     Quit,
 }
 

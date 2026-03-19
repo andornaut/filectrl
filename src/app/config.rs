@@ -2,7 +2,7 @@ mod ls_colors;
 mod serde;
 pub mod theme;
 
-use std::{convert::TryFrom, fs, io::ErrorKind, path::PathBuf};
+use std::{fs, io::ErrorKind, path::PathBuf};
 
 use ::serde::Deserialize;
 use anyhow::{Result, anyhow};
@@ -66,18 +66,19 @@ pub struct Config {
     pub ui: UiConfig,
 }
 
-impl TryFrom<Option<PathBuf>> for Config {
-    type Error = anyhow::Error;
-
-    fn try_from(value: Option<PathBuf>) -> Result<Self> {
-        // Try to use the user-provided path if available
-        let Some(path) = value else {
-            return Self::try_from_default_path();
+impl Config {
+    pub fn load(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<Self> {
+        let Some(path) = config_path else {
+            return Self::try_from_default_path(include_paths);
         };
 
         debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
-            Ok(content) => Self::parse(&content, path.parent().map(|p| p.to_path_buf())),
+            Ok(content) => Self::parse(
+                &content,
+                path.parent().map(|p| p.to_path_buf()),
+                &include_paths,
+            ),
             Err(err) => Err(anyhow!(
                 "Could not read config from user-supplied path ({}): {}",
                 path.display(),
@@ -88,8 +89,9 @@ impl TryFrom<Option<PathBuf>> for Config {
 }
 
 impl Config {
-    fn from_default_file() -> Result<Self> {
-        let merged = merge_default_config()?;
+    fn from_default_file(include_paths: &[PathBuf]) -> Result<Self> {
+        let mut merged = merge_default_config()?;
+        merged = merge_include_paths(merged, include_paths)?;
         Self::parse_value(merged)
     }
 
@@ -136,7 +138,11 @@ impl Config {
         Ok(())
     }
 
-    fn parse(content: &str, config_dir: Option<PathBuf>) -> Result<Self> {
+    fn parse(
+        content: &str,
+        config_dir: Option<PathBuf>,
+        include_paths: &[PathBuf],
+    ) -> Result<Self> {
         let mut value = parse_toml(content)?;
 
         // Process include_files: merge each include on top of the base config
@@ -176,6 +182,9 @@ impl Config {
             }
         }
 
+        // CLI --include paths are merged last, so they take precedence over everything
+        value = merge_include_paths(value, include_paths)?;
+
         Self::parse_value(value)
     }
 
@@ -203,7 +212,7 @@ impl Config {
         Ok(config)
     }
 
-    fn try_from_default_path() -> Result<Self> {
+    fn try_from_default_path(include_paths: Vec<PathBuf>) -> Result<Self> {
         let default_path = Self::default_path()?;
         debug!(
             "Attempting to load the config from the default path: {}",
@@ -211,10 +220,14 @@ impl Config {
         );
 
         match fs::read_to_string(&default_path) {
-            Ok(content) => Self::parse(&content, default_path.parent().map(|p| p.to_path_buf())),
+            Ok(content) => Self::parse(
+                &content,
+                default_path.parent().map(|p| p.to_path_buf()),
+                &include_paths,
+            ),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Self::from_default_file()
+                Self::from_default_file(&include_paths)
             }
             Err(err) => Err(anyhow!(
                 "Could not read the config file from the default path ({}): {}",
@@ -227,6 +240,18 @@ impl Config {
 
 fn parse_toml(content: &str) -> Result<Value> {
     toml::from_str::<Value>(content).map_err(|error| anyhow!("Cannot parse TOML: {error}"))
+}
+
+/// Merges CLI --include files on top of an existing config value.
+fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Value> {
+    for path in include_paths {
+        debug!("Loading CLI include file: {}", path.display());
+        let content = fs::read_to_string(path)
+            .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
+        let include_value = parse_toml(&content)?;
+        value = merge_toml_values(value, include_value);
+    }
+    Ok(value)
 }
 
 /// Merges the embedded default config from its three source files:
@@ -262,7 +287,7 @@ mod tests {
 
     #[test]
     fn default_config_parses_successfully() {
-        Config::from_default_file().unwrap();
+        Config::from_default_file(&[]).unwrap();
     }
 
     #[test]

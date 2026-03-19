@@ -30,7 +30,7 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [-c <config>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
+Usage: filectrl [-c <config>] [-i <include>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -39,6 +39,8 @@ Positional Arguments:
 
 Options:
   -c, --config      path to a configuration file
+  -i, --include     include a TOML file to merge on top of the config
+                    (repeatable; later files take precedence)
   --write-default-config
                     write the default config to ~/.config/filectrl/config.toml,
                     then exit
@@ -195,6 +197,18 @@ And include the new file in your config:
 
 ```toml
 include_files = ["solarized.toml"]
+```
+
+Alternatively, use the `--include` CLI flag to apply a theme without editing your config:
+
+```bash
+filectrl --include ~/.config/filectrl/solarized.toml
+```
+
+The flag is repeatable and files are merged in order (later files take precedence):
+
+```bash
+filectrl -i base-theme.toml -i overrides.toml
 ```
 
 ### Desktop entry

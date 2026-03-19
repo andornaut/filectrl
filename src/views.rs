@@ -4,23 +4,25 @@ mod help;
 mod notices;
 mod prompt;
 pub mod root;
+mod scrollbar;
 mod status;
 mod table;
 mod unicode;
+
+pub(crate) use scrollbar::ScrollbarView;
 
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Alignment, Constraint, Margin, Rect},
     style::Style,
-    symbols::{block, line},
     text::Line,
-    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, Widget},
+    widgets::{Block, Borders, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{config::theme::{ScrollbarConfig, Theme}, AppState},
+    app::{config::theme::Theme, AppState},
     command::handler::CommandHandler,
 };
 
@@ -49,23 +51,4 @@ fn bordered(
         horizontal: 1,
         vertical: 1,
     })
-}
-
-fn scrollbar_widget(theme: &ScrollbarConfig) -> Scrollbar<'_> {
-    let mut scrollbar = Scrollbar::default()
-        .orientation(ScrollbarOrientation::VerticalRight)
-        .thumb_style(theme.thumb())
-        .thumb_symbol(block::FULL)
-        .track_style(theme.track())
-        .track_symbol(Some(line::VERTICAL));
-    if theme.show_ends() {
-        scrollbar = scrollbar
-            .begin_symbol(Some("▲"))
-            .begin_style(theme.ends())
-            .end_symbol(Some("▼"))
-            .end_style(theme.ends());
-    } else {
-        scrollbar = scrollbar.begin_symbol(None).end_symbol(None);
-    }
-    scrollbar
 }
