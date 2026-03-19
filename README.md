@@ -89,10 +89,10 @@ Jump to middle row | <kbd>z</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>u</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>
 Range mark | <kbd>V</kbd>
-Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
-Cut | <kbd>Ctrl</kbd>+<kbd>x</kbd>
+Copy | <kbd>c</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
+Cut | <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>
 Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
-Delete | <kbd>Delete</kbd>
+Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
@@ -277,10 +277,10 @@ Action | Default keys
 `page_down` | `Ctrl+d`, `Ctrl+f`
 `toggle_mark` | `v`
 `range_mark` | `V`
-`copy` | `Ctrl+c`
-`cut` | `Ctrl+x`
+`copy` | `c`, `Ctrl+c`
+`cut` | `x`, `Ctrl+x`
 `paste` | `Ctrl+v`
-`delete` | `Delete`
+`delete` | `d`, `Delete`
 `rename` | `r`, `F2`
 `filter` | `/`
 `sort_by_name` | `n`, `N`
