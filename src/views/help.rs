@@ -18,67 +18,6 @@ use crate::{
 
 const MIN_HEIGHT: u16 = 5;
 
-/// Labels for normal mode keybindings. The order matches the help view display.
-/// Convention: "/" separates alternatives for one action, ", " separates different actions.
-const NORMAL_MODE_LABELS: [&str; 24] = [
-    "Quit: ",
-    "Go to parent dir: ",
-    "Open: ",
-    "Open custom: ",
-    "Open new window: ",
-    "Open terminal: ",
-    "Go to home dir: ",
-    "Select next, previous row: ",
-    "Select first, last row: ",
-    "Jump to middle row: ",
-    "Page down, up: ",
-    "Mark/unmark item: ",
-    "Range mark: ",
-    "Copy: ",
-    "Cut: ",
-    "Paste: ",
-    "Delete: ",
-    "Rename: ",
-    "Filter: ",
-    "Sort by name, modified, size: ",
-    "Refresh: ",
-    "Clear clipboard/filter/marks: ",
-    "Clear alerts, progress: ",
-    "Toggle help: ",
-];
-
-/// Labels for prompt mode keybindings that are rebindable.
-const PROMPT_REBINDABLE_LABELS: [&str; 5] = [
-    "Submit: ",
-    "Cancel: ",
-    "Reset to initial value: ",
-    "Select all: ",
-    "Copy, Cut, Paste text: ",
-];
-
-/// Labels for prompt mode keybindings that are hardcoded (cursor/selection keys).
-const PROMPT_HARDCODED_KEYBINDINGS: [(&str, &str); 7] = [
-    ("Move cursor: ", "←/→"),
-    ("Move cursor by word: ", "Ctrl+←/→"),
-    ("Jump to line start, end: ", "Ctrl+a/Home, Ctrl+e/End"),
-    ("Select text: ", "Shift+←/→"),
-    ("Select to line start, end: ", "Shift+Home, Shift+End"),
-    ("Select by word: ", "Ctrl+Shift+←/→"),
-    ("Delete before, after cursor: ", "Backspace, Delete"),
-];
-
-use std::sync::LazyLock;
-
-static MAX_LABEL_WIDTH: LazyLock<usize> = LazyLock::new(|| {
-    NORMAL_MODE_LABELS
-        .iter()
-        .chain(PROMPT_REBINDABLE_LABELS.iter())
-        .chain(PROMPT_HARDCODED_KEYBINDINGS.iter().map(|(label, _)| label))
-        .map(|label| label.width())
-        .max()
-        .unwrap_or(0)
-});
-
 pub(super) struct HelpView {
     area: Rect,
     /// Bordered header hint, cached at construction.
@@ -241,8 +180,20 @@ impl CommandHandler for HelpView {
 
 use crate::app::config::theme::Help;
 
-fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, help: &Help) {
-    let header_padding = " ".repeat(MAX_LABEL_WIDTH.saturating_sub(title.width()));
+fn max_label_width(
+    normal: &[(String, String)],
+    prompt: &[(String, String)],
+) -> usize {
+    normal
+        .iter()
+        .chain(prompt.iter())
+        .map(|(label, _)| label.width())
+        .max()
+        .unwrap_or(0)
+}
+
+fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, max_label_width: usize, help: &Help) {
+    let header_padding = " ".repeat(max_label_width.saturating_sub(title.width()));
     lines.push(Line::from(vec![
         Span::styled(title.to_string(), help.header()),
         Span::raw(header_padding),
@@ -253,10 +204,11 @@ fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, help: &Help) {
 fn add_keybinding_lines<'a>(
     lines: &mut Vec<Line<'a>>,
     keybindings: &'a [(String, String)],
+    max_label_width: usize,
     help: &Help,
 ) {
     lines.extend(keybindings.iter().map(|(label, keys)| {
-        let padding = " ".repeat(MAX_LABEL_WIDTH.saturating_sub(label.width()));
+        let padding = " ".repeat(max_label_width.saturating_sub(label.width()));
         Line::from(vec![
             Span::styled(label.as_str(), help.actions()),
             Span::raw(padding),
@@ -269,79 +221,52 @@ fn add_keybinding_lines<'a>(
 fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| kb.display_for(a).to_string();
 
-    let keys: Vec<String> = vec![
-        d(Action::Quit),
-        d(Action::Back),
-        d(Action::Open),
-        d(Action::OpenCustom),
-        d(Action::OpenNewWindow),
-        d(Action::OpenTerminal),
-        d(Action::GoHome),
-        format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
-        format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
-        d(Action::SelectMiddle),
-        format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
-        d(Action::ToggleMark),
-        d(Action::RangeMark),
-        d(Action::Copy),
-        d(Action::Cut),
-        d(Action::Paste),
-        d(Action::Delete),
-        d(Action::Rename),
-        d(Action::Filter),
-        format!(
-            "{}, {}, {}",
-            d(Action::SortByName),
-            d(Action::SortByModified),
-            d(Action::SortBySize)
-        ),
-        d(Action::Refresh),
-        d(Action::Reset),
-        format!(
-            "{}, {}",
-            d(Action::ClearAlerts),
-            d(Action::ClearProgress)
-        ),
-        d(Action::ToggleHelp),
-    ];
-
-    NORMAL_MODE_LABELS
-        .iter()
-        .zip(keys)
-        .map(|(label, keys)| (label.to_string(), keys))
-        .collect()
+    vec![
+        ("Quit: ".into(), d(Action::Quit)),
+        ("Go to parent dir: ".into(), d(Action::Back)),
+        ("Open: ".into(), d(Action::Open)),
+        ("Open custom: ".into(), d(Action::OpenCustom)),
+        ("Open new window: ".into(), d(Action::OpenNewWindow)),
+        ("Open terminal: ".into(), d(Action::OpenTerminal)),
+        ("Go to home dir: ".into(), d(Action::GoHome)),
+        ("Select next, previous row: ".into(), format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious))),
+        ("Select first, last row: ".into(), format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast))),
+        ("Jump to middle row: ".into(), d(Action::SelectMiddle)),
+        ("Page down, up: ".into(), format!("{}, {}", d(Action::PageDown), d(Action::PageUp))),
+        ("Mark/unmark item: ".into(), d(Action::ToggleMark)),
+        ("Range mark: ".into(), d(Action::RangeMark)),
+        ("Copy: ".into(), d(Action::Copy)),
+        ("Cut: ".into(), d(Action::Cut)),
+        ("Paste: ".into(), d(Action::Paste)),
+        ("Delete: ".into(), d(Action::Delete)),
+        ("Rename: ".into(), d(Action::Rename)),
+        ("Filter: ".into(), d(Action::Filter)),
+        ("Sort by name, modified, size: ".into(), format!("{}, {}, {}", d(Action::SortByName), d(Action::SortByModified), d(Action::SortBySize))),
+        ("Refresh: ".into(), d(Action::Refresh)),
+        ("Clear clipboard/filter/marks: ".into(), d(Action::Reset)),
+        ("Clear alerts, progress: ".into(), format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress))),
+        ("Toggle help: ".into(), d(Action::ToggleHelp)),
+    ]
 }
 
 /// Build prompt mode keybinding display strings from KeyBindings.
 fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| kb.display_for(a).to_string();
 
-    let rebindable_keys: Vec<String> = vec![
-        d(Action::PromptSubmit),
-        d(Action::PromptCancel),
-        d(Action::PromptReset),
-        d(Action::PromptSelectAll),
-        format!(
-            "{}, {}, {}",
-            d(Action::PromptCopy),
-            d(Action::PromptCut),
-            d(Action::PromptPaste)
-        ),
-    ];
-
-    let mut result: Vec<(String, String)> = PROMPT_REBINDABLE_LABELS
-        .iter()
-        .zip(rebindable_keys)
-        .map(|(label, keys)| (label.to_string(), keys))
-        .collect();
-
-    result.extend(
-        PROMPT_HARDCODED_KEYBINDINGS
-            .iter()
-            .map(|(label, keys)| (label.to_string(), keys.to_string())),
-    );
-
-    result
+    vec![
+        ("Submit: ".into(), d(Action::PromptSubmit)),
+        ("Cancel: ".into(), d(Action::PromptCancel)),
+        ("Reset to initial value: ".into(), d(Action::PromptReset)),
+        ("Select all: ".into(), d(Action::PromptSelectAll)),
+        ("Copy, Cut, Paste text: ".into(), format!("{}, {}, {}", d(Action::PromptCopy), d(Action::PromptCut), d(Action::PromptPaste))),
+        ("Move cursor: ".into(), "←/→".into()),
+        ("Move cursor by word: ".into(), "Ctrl+←/→".into()),
+        ("Jump to line start, end: ".into(), "Ctrl+a/Home, Ctrl+e/End".into()),
+        ("Select text: ".into(), "Shift+←/→".into()),
+        ("Select to line start, end: ".into(), "Shift+Home, Shift+End".into()),
+        ("Select by word: ".into(), "Ctrl+Shift+←/→".into()),
+        ("Delete before, after cursor: ".into(), "Backspace, Delete".into()),
+    ]
 }
 
 impl View for HelpView {
@@ -358,12 +283,13 @@ impl View for HelpView {
         let style = theme.help.base();
         let bordered_area = bordered(area, frame.buffer_mut(), style, "Help", &self.hint);
 
+        let max_width = max_label_width(&self.normal_keybindings, &self.prompt_keybindings);
         let mut lines: Vec<Line> = Vec::new();
-        add_section_header(&mut lines, "Normal Mode", &theme.help);
-        add_keybinding_lines(&mut lines, &self.normal_keybindings, &theme.help);
+        add_section_header(&mut lines, "Normal Mode", max_width, &theme.help);
+        add_keybinding_lines(&mut lines, &self.normal_keybindings, max_width, &theme.help);
         lines.push(Line::raw(""));
-        add_section_header(&mut lines, "Prompt Mode", &theme.help);
-        add_keybinding_lines(&mut lines, &self.prompt_keybindings, &theme.help);
+        add_section_header(&mut lines, "Prompt Mode", max_width, &theme.help);
+        add_keybinding_lines(&mut lines, &self.prompt_keybindings, max_width, &theme.help);
 
         let content_height = lines.len() as u16;
         self.inner_height = bordered_area.height;
