@@ -37,19 +37,29 @@ impl CommandHandler for TableView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match (*code, *modifiers) {
+            // Clipboard
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy_to_clipboard(),
             (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut_to_clipboard(),
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste_from_clipboard(),
+            // Navigation (page)
             (KeyCode::Char('u'), KeyModifiers::CONTROL)
             | (KeyCode::Char('b'), KeyModifiers::CONTROL)
             | (KeyCode::PageUp, KeyModifiers::NONE) => self.previous_page(),
-            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.select_last(),
-            (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.enter_range_mode(),
             (KeyCode::Char('d'), KeyModifiers::CONTROL)
             | (KeyCode::Char('f'), KeyModifiers::CONTROL)
             | (KeyCode::PageDown, KeyModifiers::NONE) => self.next_page(),
+            // Navigation (filesystem)
+            (KeyCode::Char('r'), KeyModifiers::CONTROL)
+            | (KeyCode::F(5), KeyModifiers::NONE) => Command::Refresh.into(),
+            // Marks
+            (KeyCode::Char('G'), KeyModifiers::SHIFT) => self.select_last(),
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.enter_range_mode(),
             (_, KeyModifiers::NONE) => match code {
-                KeyCode::Delete => self.delete(),
+                // Navigation (filesystem)
+                KeyCode::Backspace
+                | KeyCode::Left
+                | KeyCode::Char('b')
+                | KeyCode::Char('h') => Command::Back.into(),
                 KeyCode::Enter
                 | KeyCode::Right
                 | KeyCode::Char('f')
@@ -57,14 +67,20 @@ impl CommandHandler for TableView {
                 | KeyCode::Char(' ') => self.open_selected(),
                 KeyCode::Char('~') => self.navigate_to_home_directory(),
                 KeyCode::Char('o') => self.open_selected_in_custom_program(),
+                KeyCode::Char('w') => Command::OpenNewWindow.into(),
+                KeyCode::Char('t') => Command::OpenTerminal.into(),
+                // Selection
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
                 KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
                 KeyCode::Char('^') | KeyCode::Home | KeyCode::Char('g') => self.select_first(),
                 KeyCode::Char('$') | KeyCode::End => self.select_last(),
-                KeyCode::Char('/') => self.open_filter_prompt(),
-                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
-                KeyCode::Char('v') => self.toggle_mark(),
                 KeyCode::Char('z') => self.select_middle_visible_item(),
+                // File operations
+                KeyCode::Delete => self.delete(),
+                KeyCode::Char('r') | KeyCode::F(2) => self.open_rename_prompt(),
+                KeyCode::Char('/') => self.open_filter_prompt(),
+                KeyCode::Char('v') => self.toggle_mark(),
+                // Sort
                 KeyCode::Char('n') | KeyCode::Char('N') => self.sort_by(SortColumn::Name),
                 KeyCode::Char('m') | KeyCode::Char('M') => self.sort_by(SortColumn::Modified),
                 KeyCode::Char('s') | KeyCode::Char('S') => self.sort_by(SortColumn::Size),
