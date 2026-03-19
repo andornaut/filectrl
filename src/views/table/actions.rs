@@ -1,0 +1,54 @@
+use super::TableView;
+use crate::{
+    command::{Command, PromptKind, result::CommandResult},
+    file_system::path_info::PathInfo,
+};
+
+impl TableView {
+    pub(super) fn delete(&mut self) -> CommandResult {
+        if self.has_marks() {
+            let paths = self.marked_paths();
+            self.clear_marks();
+            return Command::Delete(paths).into();
+        }
+        match self.selected_path() {
+            Some(path) => Command::Delete(vec![path.clone()]).into(),
+            None => CommandResult::Handled,
+        }
+    }
+
+    pub(super) fn navigate_to_home_directory(&mut self) -> CommandResult {
+        match directories::BaseDirs::new() {
+            Some(base_dirs) => match PathInfo::try_from(base_dirs.home_dir()) {
+                Ok(path) => Command::Open(path).into(),
+                Err(_) => Command::AlertError("Could not access home directory".into()).into(),
+            },
+            None => Command::AlertError("Could not determine home directory".into()).into(),
+        }
+    }
+
+    pub(super) fn open_filter_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptKind::Filter, self.filter.clone()).into()
+    }
+
+    pub(super) fn open_rename_prompt(&self) -> CommandResult {
+        match self.selected_path() {
+            None => Command::AlertWarn("No file selected".into()).into(),
+            Some(path) => Command::OpenPrompt(PromptKind::Rename, path.basename.clone()).into(),
+        }
+    }
+
+    pub(super) fn open_selected(&mut self) -> CommandResult {
+        match self.selected_path() {
+            Some(path) => Command::Open(path.clone()).into(),
+            None => CommandResult::Handled,
+        }
+    }
+
+    pub(super) fn open_selected_in_custom_program(&mut self) -> CommandResult {
+        match self.selected_path() {
+            Some(path) => Command::OpenCustom(path.clone()).into(),
+            None => CommandResult::Handled,
+        }
+    }
+}

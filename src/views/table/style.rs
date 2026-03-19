@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 use ratatui::style::Style;
 
-use super::SortColumn;
+use super::columns::SortColumn;
 use crate::{
     app::config::theme::{FileType, Theme},
     app::clipboard::ClipboardEntry,
