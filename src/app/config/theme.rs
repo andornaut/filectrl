@@ -300,17 +300,13 @@ impl Prompt {
 
 #[derive(Deserialize)]
 pub struct Status {
-    directory: StyleConfig,
-    directory_label: StyleConfig,
-    selected: StyleConfig,
-    selected_label: StyleConfig,
+    detail: StyleConfig,
+    label: StyleConfig,
 }
 
 impl Status {
-    style_getter!(directory);
-    style_getter!(directory_label);
-    style_getter!(selected);
-    style_getter!(selected_label);
+    style_getter!(detail);
+    style_getter!(label);
 }
 
 #[derive(Deserialize)]
