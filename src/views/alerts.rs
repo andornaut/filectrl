@@ -13,7 +13,7 @@ use super::{bordered, View};
 use crate::{
     app::{config::theme::Theme, AppState},
     command::{handler::CommandHandler, result::CommandResult, Command},
-    keybindings::{Action, KeyBindings},
+    app::config::keybindings::{Action, KeyBindings},
     views::unicode::split_with_ellipsis,
 };
 

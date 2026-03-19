@@ -23,7 +23,7 @@ use self::{
 use crate::{
     command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::{FileSystem, path_info::PathInfo},
-    keybindings::Action,
+    app::config::keybindings::Action,
     views::{View, root::RootView},
 };
 

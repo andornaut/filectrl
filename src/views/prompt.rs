@@ -11,7 +11,7 @@ use super::View;
 use crate::{
     app::clipboard::Clipboard,
     command::{Command, PromptKind, mode::InputMode, result::CommandResult},
-    keybindings::KeyBindings,
+    app::config::keybindings::KeyBindings,
 };
 
 pub(super) struct PromptView {
@@ -125,7 +125,7 @@ mod tests {
     use crate::{
         app::clipboard::Clipboard,
         command::{Command, PromptKind, handler::CommandHandler},
-        keybindings::{KeyBindings, TomlKeybindings},
+        app::config::keybindings::{KeyBindings, TomlKeybindings},
     };
 
     fn default_keybindings() -> Rc<KeyBindings> {
