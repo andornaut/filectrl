@@ -222,6 +222,11 @@ bg = "#CB4B16" # Orange Red
 fg = "#1D1F21"
 modifiers = []
 
+[theme.clipboard.delete]
+bg = "#B58900" # Amber
+fg = "#1D1F21"
+modifiers = []
+
 [theme.notice.filter]
 bg = "#70C0B1"
 fg = "#1D1F21"
@@ -283,6 +288,11 @@ modifiers = []
 [theme.table.body]
 bg = "#423F2E"
 fg = "#DDDCCC"
+modifiers = []
+
+[theme.table.delete]
+bg = "#B58900" # Amber
+fg = "#1D1F21"
 modifiers = []
 
 [theme.table.header]

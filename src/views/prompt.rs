@@ -7,7 +7,7 @@ use ratatui_textarea::{CursorMove, TextArea};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
-use super::View;
+use super::{View, unicode::pluralize_items};
 use crate::{
     app::clipboard::Clipboard,
     command::{Command, PromptKind, mode::InputMode, result::CommandResult},
@@ -38,10 +38,14 @@ impl PromptView {
         }
     }
 
-    fn label(&self) -> &'static str {
+    fn label(&self) -> String {
         match self.kind {
-            PromptKind::Filter => " Filter ",
-            PromptKind::Rename => " Rename ",
+            PromptKind::Delete => {
+                let count: usize = self.initial_text.parse().unwrap_or(0);
+                format!(" Delete {}? (y/n) ", pluralize_items(count))
+            }
+            PromptKind::Filter => " Filter ".to_string(),
+            PromptKind::Rename => " Rename ".to_string(),
         }
     }
 
@@ -99,6 +103,7 @@ impl PromptView {
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
         match self.kind {
+            PromptKind::Delete => Command::ConfirmDelete.into(),
             PromptKind::Filter => Command::SetFilter(value).into(),
             PromptKind::Rename => Command::RenameSelected(value).into(),
         }

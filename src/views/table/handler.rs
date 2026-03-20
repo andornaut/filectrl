@@ -16,6 +16,18 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 Command::ClearClipboard.into()
             }
+            Command::ConfirmDelete => {
+                let paths = std::mem::take(&mut self.pending_delete);
+                if paths.is_empty() {
+                    CommandResult::Handled
+                } else {
+                    Command::Delete(paths).into()
+                }
+            }
+            Command::ClosePrompt => {
+                self.pending_delete.clear();
+                CommandResult::Handled
+            }
             Command::Delete(_) => {
                 self.clear_marks();
                 CommandResult::Handled

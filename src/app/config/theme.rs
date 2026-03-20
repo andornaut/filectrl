@@ -265,11 +265,13 @@ impl Breadcrumbs {
 pub struct Clipboard {
     copy: StyleConfig,
     cut: StyleConfig,
+    delete: StyleConfig,
 }
 
 impl Clipboard {
     style_getter!(copy);
     style_getter!(cut);
+    style_getter!(delete);
 }
 
 #[derive(Deserialize)]
@@ -330,6 +332,8 @@ impl ScrollbarConfig {
 #[derive(Deserialize)]
 pub struct Table {
     body: StyleConfig,
+    #[serde(default)]
+    delete: StyleConfig,
     header: StyleConfig,
     header_sorted: StyleConfig,
     #[serde(default)]
@@ -339,6 +343,7 @@ pub struct Table {
 
 impl Table {
     style_getter!(body);
+    style_getter!(delete);
     style_getter!(header);
     style_getter!(header_sorted);
     style_getter!(marked);
