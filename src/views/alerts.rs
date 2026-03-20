@@ -18,7 +18,8 @@ use crate::{
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
-const MIN_HEIGHT: u16 = 3; // border(2) + 1 alert line
+const MIN_HEIGHT_BORDERED: u16 = 3; // border(2) + 1 alert line
+const MIN_HEIGHT_BORDERLESS: u16 = MIN_HEIGHT_BORDERED - 2; // 1 alert line
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AlertKind {
@@ -67,18 +68,22 @@ impl AlertsView {
         CommandResult::Handled
     }
 
+    fn has_border(&self, area: &Rect) -> bool {
+        area.height >= MIN_HEIGHT_BORDERED
+    }
+
     fn height(&self, area: &Rect) -> u16 {
         if !self.should_show(area) {
             return 0;
         }
-        // First subtract borders from the outer area
-        let inner_width = area.width.saturating_sub(2);
+        let border_size = if self.has_border(area) { 2 } else { 0 };
+        let inner_width = area.width.saturating_sub(border_size);
         let items = self.alerts(inner_width);
-        items.len() as u16 + 2 // +2 for vertical borders
+        items.len() as u16 + border_size
     }
 
-    fn alerts(&self, width_without_borders: u16) -> Vec<(AlertKind, Line<'_>)> {
-        let width_without_prefix = width_without_borders.saturating_sub(2);
+    fn alerts(&self, inner_width: u16) -> Vec<(AlertKind, Line<'_>)> {
+        let width_without_prefix = inner_width.saturating_sub(2);
 
         self.alerts
             .iter()
@@ -95,7 +100,7 @@ impl AlertsView {
     }
 
     fn should_show(&self, area: &Rect) -> bool {
-        !self.alerts.is_empty() && area.height >= MIN_HEIGHT
+        !self.alerts.is_empty() && area.height >= MIN_HEIGHT_BORDERLESS
     }
 }
 
@@ -139,18 +144,22 @@ impl View for AlertsView {
         }
 
         let style = theme.alert.base();
-        let hint = format!(
-            "(Press \"{}\" to clear)",
-            self.keybindings.display_for(Action::ClearAlerts)
-        );
-        let bordered_area = bordered(area, frame.buffer_mut(), style, "Alerts", &hint);
+        let inner_area = if self.has_border(&area) {
+            let hint = format!(
+                "(Press \"{}\" to clear)",
+                self.keybindings.display_for(Action::ClearAlerts)
+            );
+            bordered(area, frame.buffer_mut(), style, "Alerts", &hint)
+        } else {
+            area
+        };
         let text = Text::from(
-            self.alerts(bordered_area.width)
+            self.alerts(inner_area.width)
                 .into_iter()
                 .map(|(kind, line)| line.style(kind.to_style(theme)))
                 .collect::<Vec<_>>(),
         );
         let widget = Paragraph::new(text).style(style);
-        widget.render(bordered_area, frame.buffer_mut());
+        widget.render(inner_area, frame.buffer_mut());
     }
 }
