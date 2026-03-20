@@ -16,12 +16,12 @@ refresh_debounce_milliseconds = 100
 # Programs to use to open files or directories:
 # %s will be replaced by the relevant path
 [openers.linux]
-open_current_directory = "xdg-open %s"
+open_current_directory = "xterm -e 'cd %s'"
 open_new_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
 open_selected_file = "xdg-open %s"
 
 [openers.macos]
-open_current_directory = "open %s"
+open_current_directory = "open -a Terminal %s"
 # Activates Terminal and opens filectrl in a new window
 open_new_window = "osascript -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl %s\"'"
 open_selected_file = "open %s"
