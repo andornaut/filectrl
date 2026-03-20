@@ -24,7 +24,7 @@ pub(super) fn default_widget<'a>(
 
 fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {
     spans.push(Span::styled(" Directory ", theme.status.label()));
-    let fields = vec![(" Mode:", mode), (" #Items:", format!("{} ", len))];
+    let fields = vec![(" Mode:", mode), (" # Items:", format!("{} ", len))];
     let default_style = theme.status.detail();
     let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
