@@ -226,6 +226,11 @@ bg = "166" # #d75f00 - orange red
 fg = "234" # #1c1c1c
 modifiers = []
 
+[theme256.clipboard.delete]
+bg = "136" # #af8700 - amber
+fg = "234" # #1c1c1c
+modifiers = []
+
 [theme256.notice.filter]
 bg = "28" # #008700 - green
 fg = "234" # #1c1c1c
@@ -287,6 +292,11 @@ modifiers = []
 [theme256.table.body]
 bg = "234" # #1c1c1c
 fg = "252" # #d0d0d0
+modifiers = []
+
+[theme256.table.delete]
+bg = "136" # #af8700 - amber
+fg = "234" # #1c1c1c
 modifiers = []
 
 [theme256.table.header]

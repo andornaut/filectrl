@@ -5,6 +5,14 @@ use unicode_width::UnicodeWidthStr;
 const ELLIPSIS: &str = "…";
 const ELLIPSIS_WIDTH: usize = 1;
 
+pub(super) fn pluralize_items(count: usize) -> String {
+    if count == 1 {
+        "1 item".into()
+    } else {
+        format!("{} items", count)
+    }
+}
+
 pub(super) fn split_with_ellipsis(line: &str, width: usize) -> Vec<String> {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 

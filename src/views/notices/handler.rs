@@ -5,7 +5,7 @@ use ratatui::{
 
 use super::{NoticesView, notice::Notice};
 use crate::{
-    command::{Command, handler::CommandHandler, result::CommandResult},
+    command::{Command, PromptKind, handler::CommandHandler, result::CommandResult},
     app::config::keybindings::Action,
 };
 
@@ -15,6 +15,15 @@ impl CommandHandler for NoticesView {
             Command::NavigateDirectory(_, _) | Command::Reset => {
                 self.filter.clear();
                 self.mark_count = 0;
+                self.pending_delete_count = 0;
+                CommandResult::Handled
+            }
+            Command::ClosePrompt | Command::ConfirmDelete => {
+                self.pending_delete_count = 0;
+                CommandResult::Handled
+            }
+            Command::OpenPrompt(PromptKind::Delete, count_str) => {
+                self.pending_delete_count = count_str.parse().unwrap_or(0);
                 CommandResult::Handled
             }
             Command::SetFilter(filter) => {
@@ -44,7 +53,8 @@ impl CommandHandler for NoticesView {
                 match self.notices.get(y) {
                     Some(Notice::Clipboard(_))
                     | Some(Notice::Filter(_))
-                    | Some(Notice::Marked(_)) => Command::Reset.into(),
+                    | Some(Notice::Marked(_))
+                    | Some(Notice::PendingDelete(_)) => Command::Reset.into(),
                     Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }

@@ -15,6 +15,7 @@ use crate::file_system::path_info::PathInfo;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {
     #[default]
+    Delete,
     Filter,
     Rename,
 }
@@ -45,6 +46,7 @@ pub enum Command {
     RenamePath(PathInfo, String),
 
     // File operation intents — resolved by App
+    ConfirmDelete,          // Resolved into Delete using TableView::pending_delete
     Paste(PathInfo),        // Resolved into Copy or Move using clipboard_entry
     RenameSelected(String), // Resolved into RenamePath using selected
 

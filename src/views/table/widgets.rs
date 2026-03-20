@@ -82,26 +82,24 @@ pub(super) fn row_widget_and_height<'a>(
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
     is_marked: bool,
+    is_pending_delete: bool,
 ) -> (Row<'a>, u16) {
-    let (name_style, date_style, size_style, row_style) =
-        if let Some(clipboard_style) = clipboard_style(&theme.clipboard, clipboard_entry, item) {
-            (
-                clipboard_style,
-                clipboard_style,
-                clipboard_style,
-                clipboard_style,
-            )
-        } else if is_marked {
-            let marked = theme.table.marked();
-            (marked, marked, marked, marked)
-        } else {
-            (
-                name_style(&theme.file_type, item),
-                modified_date_style(theme, item, relative_to_datetime),
-                size_style(theme, item),
-                theme.table.body(),
-            )
-        };
+    let (name_style, date_style, size_style, row_style) = if is_pending_delete {
+        let delete = theme.table.delete();
+        (delete, delete, delete, delete)
+    } else if let Some(clipboard) = clipboard_style(&theme.clipboard, clipboard_entry, item) {
+        (clipboard, clipboard, clipboard, clipboard)
+    } else if is_marked {
+        let marked = theme.table.marked();
+        (marked, marked, marked, marked)
+    } else {
+        (
+            name_style(&theme.file_type, item),
+            modified_date_style(&theme.file_modified_date, item, relative_to_datetime),
+            size_style(&theme.file_size, item),
+            theme.table.body(),
+        )
+    };
 
     let name = split_name(item, name_column_width as usize);
     let height = name.len() as u16;

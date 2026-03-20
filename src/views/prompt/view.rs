@@ -7,6 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{PromptView, View};
 use crate::app::{config::theme::Theme, AppState};
+use crate::command::PromptKind;
 
 impl View for PromptView {
     fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
@@ -20,6 +21,13 @@ impl View for PromptView {
 
         let label = self.label();
         let label_width = label.width() as u16;
+
+        if self.kind == PromptKind::Delete {
+            let label_widget = Paragraph::new(label).style(theme.prompt.label());
+            label_widget.render(area, frame.buffer_mut());
+            return;
+        }
+
         let [label_area, input_area] = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(1)])
             .areas(area);
 

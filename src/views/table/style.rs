@@ -4,8 +4,8 @@ use ratatui::style::Style;
 use super::columns::SortColumn;
 use crate::{
     app::clipboard::ClipboardEntry,
-    app::config::theme::{Clipboard, FileType, Table, Theme},
-    file_system::path_info::{datetime_age, DateTimeAge, PathInfo},
+    app::config::theme::{Clipboard, FileModifiedDate, FileSize, FileType, Table},
+    file_system::path_info::{DateTimeAge, PathInfo, datetime_age},
 };
 
 pub(super) fn clipboard_style(
@@ -98,38 +98,30 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
 }
 
 pub(super) fn modified_date_style(
-    theme: &Theme,
+    file_modified_date: &FileModifiedDate,
     item: &PathInfo,
     relative_to: DateTime<Local>,
 ) -> Style {
     let modified = item.modified.unwrap_or(relative_to);
     let age = datetime_age(modified, relative_to);
 
-    get_date_style(theme, age)
-}
-
-pub(super) fn size_style(theme: &Theme, item: &PathInfo) -> Style {
-    get_size_style(theme, item.size_unit_index())
-}
-
-fn get_date_style(theme: &Theme, age: DateTimeAge) -> Style {
     match age {
-        DateTimeAge::LessThanMinute => theme.file_modified_date.less_than_minute(),
-        DateTimeAge::LessThanHour => theme.file_modified_date.less_than_hour(),
-        DateTimeAge::LessThanDay => theme.file_modified_date.less_than_day(),
-        DateTimeAge::LessThanMonth => theme.file_modified_date.less_than_month(),
-        DateTimeAge::LessThanYear => theme.file_modified_date.less_than_year(),
-        DateTimeAge::GreaterThanYear => theme.file_modified_date.greater_than_year(),
+        DateTimeAge::LessThanMinute => file_modified_date.less_than_minute(),
+        DateTimeAge::LessThanHour => file_modified_date.less_than_hour(),
+        DateTimeAge::LessThanDay => file_modified_date.less_than_day(),
+        DateTimeAge::LessThanMonth => file_modified_date.less_than_month(),
+        DateTimeAge::LessThanYear => file_modified_date.less_than_year(),
+        DateTimeAge::GreaterThanYear => file_modified_date.greater_than_year(),
     }
 }
 
-fn get_size_style(theme: &Theme, unit_index: usize) -> Style {
-    match unit_index {
-        0 => theme.file_size.bytes(),
-        1 => theme.file_size.kib(),
-        2 => theme.file_size.mib(),
-        3 => theme.file_size.gib(),
-        4 => theme.file_size.tib(),
-        _ => theme.file_size.pib(),
+pub(super) fn size_style(file_size: &FileSize, item: &PathInfo) -> Style {
+    match item.size_unit_index() {
+        0 => file_size.bytes(),
+        1 => file_size.kib(),
+        2 => file_size.mib(),
+        3 => file_size.gib(),
+        4 => file_size.tib(),
+        _ => file_size.pib(),
     }
 }
