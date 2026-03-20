@@ -10,19 +10,20 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{clipboard::ClipboardEntry, config::theme::Theme},
+    app::{clipboard::ClipboardEntry, config::theme::{Clipboard, Notice as NoticeTheme, Table}},
     command::progress::{Progress, Task},
-    views::unicode::truncate_left,
+    views::unicode::{pluralize_items, truncate_left},
 };
 
 const COPY_PREFIX: &str = "[Copy] ";
-const MARKED_PREFIX: &str = "[Marked] ";
+const DELETE_PREFIX: &str = "[Delete] ";
+const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const ESC_SUFFIX: &str = "(Press \"Esc\" to clear)";
-const FILTER_PREFIX: &str = " Filtered by ";
+const FILTER_PREFIX: &str = "[Filter] ";
 
 pub(super) fn clipboard_widget<'a>(
-    theme: &Theme,
+    theme: &Clipboard,
     width: u16,
     clipboard_entry: &'a ClipboardEntry,
 ) -> Block<'a> {
@@ -33,12 +34,12 @@ pub(super) fn clipboard_widget<'a>(
     };
 
     let style = match clipboard_entry {
-        ClipboardEntry::Copy(_) => theme.clipboard.copy(),
-        ClipboardEntry::Move(_) => theme.clipboard.cut(),
+        ClipboardEntry::Copy(_) => theme.copy(),
+        ClipboardEntry::Move(_) => theme.cut(),
     };
 
-    let (detail, detail_width) = if paths.len() > 1 {
-        let text = format!("{} items", paths.len());
+    let (detail, _) = if paths.len() > 1 {
+        let text = pluralize_items(paths.len());
         let w = text.width();
         (text, w)
     } else {
@@ -53,41 +54,37 @@ pub(super) fn clipboard_widget<'a>(
         Span::styled(detail, style),
     ]);
 
-    let right = if width > (prefix.width() + detail_width + ESC_SUFFIX.width()) as u16 {
-        Some(Line::from(ESC_SUFFIX))
-    } else {
-        None
-    };
-
-    create_notice_block(left, right, style)
+    create_notice_block(left, style, width)
 }
 
-pub(super) fn marked_widget(theme: &Theme, count: usize) -> Block<'_> {
-    let style = theme.table.marked();
+pub(super) fn delete_widget(theme: &Clipboard, width: u16, count: usize) -> Block<'_> {
+    let style = theme.delete();
+    let left = Line::from(vec![
+        Span::styled(DELETE_PREFIX, style.add_modifier(Modifier::BOLD)),
+        Span::styled(pluralize_items(count), style),
+    ]);
+    create_notice_block(left, style, width)
+}
+
+pub(super) fn marked_widget(theme: &Table, width: u16, count: usize) -> Block<'_> {
+    let style = theme.marked();
     let left = Line::from(vec![
         Span::styled(MARKED_PREFIX, style.add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{} items", count), style),
+        Span::styled(pluralize_items(count), style),
     ]);
-    create_notice_block(left, None, style)
+    create_notice_block(left, style, width)
 }
 
-pub(super) fn filter_widget<'a>(theme: &Theme, width: u16, filter: &'a str) -> Block<'a> {
+pub(super) fn filter_widget<'a>(theme: &NoticeTheme, width: u16, filter: &'a str) -> Block<'a> {
     let left = Line::from(vec![
         FILTER_PREFIX.into(),
-        Span::styled(filter, theme.notice.filter().add_modifier(Modifier::BOLD)),
+        Span::styled(filter, theme.filter().add_modifier(Modifier::BOLD)),
     ]);
-
-    let right = if width > (FILTER_PREFIX.width() + filter.width() + ESC_SUFFIX.width()) as u16 {
-        Some(Line::from(ESC_SUFFIX))
-    } else {
-        None
-    };
-
-    create_notice_block(left, right, theme.notice.filter())
+    create_notice_block(left, theme.filter(), width)
 }
 
 pub(super) fn progress_widget<'a>(
-    theme: &Theme,
+    theme: &NoticeTheme,
     width: u16,
     tasks: &'a HashSet<Task>,
 ) -> Block<'a> {
@@ -106,19 +103,26 @@ pub(super) fn progress_widget<'a>(
     let progress_bar = format!("{}{}", filled, empty);
 
     let left = Line::from(progress_bar);
-    let right = Some(Line::from(percentage_text));
+    let right = Line::from(percentage_text).alignment(Alignment::Right);
 
-    create_notice_block(left, right, theme.notice.progress())
+    Block::default()
+        .borders(Borders::NONE)
+        .title(left)
+        .title(right)
+        .style(theme.progress())
 }
 
-fn create_notice_block<'a>(left: Line<'a>, right: Option<Line<'a>>, style: Style) -> Block<'a> {
+fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16) -> Block<'a> {
+    let left_width = left.width();
     let block = Block::default()
         .borders(Borders::NONE)
         .title(left)
         .style(style);
 
-    match right {
-        Some(right_text) => block.title(right_text.alignment(Alignment::Right)),
-        None => block,
+    if width as usize > left_width + ESC_SUFFIX.width() {
+        let right = Line::from(ESC_SUFFIX).alignment(Alignment::Right);
+        block.title(right)
+    } else {
+        block
     }
 }

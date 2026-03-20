@@ -6,7 +6,7 @@ use ratatui_textarea::{CursorMove, Input};
 
 use super::PromptView;
 use crate::{
-    command::{handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
+    command::{PromptKind, handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
     app::config::keybindings::Action,
 };
 
@@ -19,6 +19,14 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+        // Delete confirmation: single-keypress y/Y confirms, anything else cancels
+        if self.kind == PromptKind::Delete {
+            return match code {
+                KeyCode::Char('y' | 'Y') => Command::ConfirmDelete.into(),
+                _ => Command::ClosePrompt.into(),
+            };
+        }
+
         // Hardcoded: Esc always cancels
         if *code == KeyCode::Esc {
             return Command::ClosePrompt.into();

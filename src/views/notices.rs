@@ -19,8 +19,9 @@ pub(super) struct NoticesView {
     filter: String,
     keybindings: Rc<KeyBindings>,
     mark_count: usize,
+    pending_delete_count: usize,
     tasks: HashSet<Task>,
-    /// Cached at render time so the mouse handler can map y-position → action
+    /// Cached at render time so the mouse handler can map y-position -> action
     notices: Vec<Notice>,
 }
 
@@ -31,6 +32,7 @@ impl NoticesView {
             filter: String::new(),
             keybindings,
             mark_count: 0,
+            pending_delete_count: 0,
             tasks: HashSet::new(),
             notices: Vec::new(),
         }
@@ -40,13 +42,19 @@ impl NoticesView {
 impl NoticesView {
     fn build_notices(&self, state: &AppState) -> Vec<Notice> {
         let clipboard = state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
-        let marked = if clipboard.is_none() && self.mark_count > 0 {
+        let pending_delete = if self.pending_delete_count > 0 {
+            Some(Notice::PendingDelete(self.pending_delete_count))
+        } else {
+            None
+        };
+        let marked = if clipboard.is_none() && pending_delete.is_none() && self.mark_count > 0 {
             Some(Notice::Marked(self.mark_count))
         } else {
             None
         };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
+            pending_delete,
             marked,
             clipboard,
             (!self.filter.is_empty()).then_some(Notice::Filter(self.filter.clone())),

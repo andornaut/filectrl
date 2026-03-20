@@ -37,6 +37,7 @@ pub(super) struct TableView {
     content: DirectoryContent,
     keybindings: Rc<KeyBindings>,
     marks: Marks,
+    pending_delete: Vec<PathInfo>,
 
     table_area: Rect,
     table_state: TableState,
@@ -53,6 +54,7 @@ impl TableView {
             content: DirectoryContent::default(),
             keybindings: Rc::clone(&config.keybindings),
             marks: Marks::default(),
+            pending_delete: Vec::new(),
             table_area: Rect::default(),
             table_state: TableState::default(),
             columns: Columns::default(),

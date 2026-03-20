@@ -21,7 +21,7 @@ use self::{
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
+    command::{Command, PromptKind, handler::CommandHandler, mode::InputMode, result::CommandResult},
     file_system::{FileSystem, path_info::PathInfo},
     app::config::keybindings::Action,
     views::{View, root::RootView},
@@ -179,12 +179,16 @@ impl CommandHandler for App {
                 self.state.clipboard_entry = None;
                 CommandResult::Handled
             }
-            Command::ClosePrompt | Command::RenamePath(_, _) | Command::SetFilter(_) => {
+            Command::ClosePrompt | Command::ConfirmDelete | Command::RenamePath(_, _) | Command::SetFilter(_) => {
                 self.state.mode = InputMode::Normal;
                 CommandResult::Handled
             }
-            Command::OpenPrompt(_, _) => {
+            Command::OpenPrompt(kind, _) => {
                 self.state.mode = InputMode::Prompt;
+                if *kind == PromptKind::Delete {
+                    let _ = self.clipboard.clear();
+                    self.state.clipboard_entry = None;
+                }
                 CommandResult::Handled
             }
             // Intent: TableView emits Paste(dest); App enriches with AppState::clipboard_entry

@@ -6,15 +6,17 @@ use crate::{
 
 impl TableView {
     pub(super) fn delete(&mut self) -> CommandResult {
-        if self.has_marks() {
-            let paths = self.marked_paths();
-            self.clear_marks();
-            return Command::Delete(paths).into();
-        }
-        match self.selected_path() {
-            Some(path) => Command::Delete(vec![path.clone()]).into(),
-            None => CommandResult::Handled,
-        }
+        let paths = if self.has_marks() {
+            self.marked_paths()
+        } else {
+            match self.selected_path() {
+                Some(path) => vec![path.clone()],
+                None => return CommandResult::Handled,
+            }
+        };
+        let count = paths.len();
+        self.pending_delete = paths;
+        Command::OpenPrompt(PromptKind::Delete, count.to_string()).into()
     }
 
     pub(super) fn navigate_to_home_directory(&mut self) -> CommandResult {

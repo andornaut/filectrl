@@ -63,12 +63,15 @@ impl TableView {
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
 
+        let has_pending_delete = !self.pending_delete.is_empty();
         let (rows, item_heights): (Vec<_>, Vec<usize>) = self
             .content
             .items_sorted()
             .iter()
             .enumerate()
             .map(|(i, item)| {
+                let is_pending_delete =
+                    has_pending_delete && self.pending_delete.iter().any(|p| p == item);
                 let (row, height) = row_widget_and_height(
                     theme,
                     &state.clipboard_entry,
@@ -76,6 +79,7 @@ impl TableView {
                     relative_to_datetime,
                     item,
                     self.marks.contains(&i),
+                    is_pending_delete,
                 );
                 (row, height as usize)
             })
