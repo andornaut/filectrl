@@ -60,8 +60,8 @@ impl RootView {
                 &mut self.breadcrumbs,
                 &mut self.table,
                 &mut self.notices,
-                &mut self.status,
                 &mut self.prompt,
+                &mut self.status,
             ]
         }
     }
