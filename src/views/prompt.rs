@@ -85,7 +85,7 @@ impl PromptView {
         match &self.actions {
             PromptAction::Delete(_) => Command::ConfirmDelete.into(),
             PromptAction::Filter(_) => Command::SetFilter(value).into(),
-            PromptAction::Rename(path, _) => Command::RenamePath(path.clone(), value).into(),
+            PromptAction::Rename(path, _) => Command::Rename(path.clone(), value).into(),
         }
     }
 }
@@ -183,7 +183,7 @@ mod tests {
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
         assert_eq!(
             result,
-            Command::RenamePath(path, "bar.txt".to_string()).into()
+            Command::Rename(path, "bar.txt".to_string()).into()
         );
     }
 
