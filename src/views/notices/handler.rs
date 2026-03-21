@@ -5,34 +5,48 @@ use ratatui::{
 
 use super::{NoticesView, notice::Notice};
 use crate::{
-    command::{Command, PromptKind, handler::CommandHandler, result::CommandResult},
     app::config::{Config, keybindings::Action},
+    command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
 };
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::ClearClipboard => {
+                self.clipboard_entry = None;
+                CommandResult::Handled
+            }
             Command::NavigateDirectory(_, _) | Command::Reset => {
+                self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
                 self.pending_delete_count = 0;
                 CommandResult::Handled
             }
-            Command::ClosePrompt | Command::ConfirmDelete => {
+            Command::CancelPrompt | Command::ConfirmDelete => {
                 self.pending_delete_count = 0;
                 CommandResult::Handled
             }
-            Command::OpenPrompt(PromptKind::Delete, count_str) => {
-                self.pending_delete_count = count_str.parse().unwrap_or(0);
+            Command::OpenPrompt(PromptAction::Delete(count)) => {
+                self.pending_delete_count = *count;
                 CommandResult::Handled
             }
             Command::SetFilter(filter) => {
                 self.filter.clone_from(filter);
                 CommandResult::Handled
             }
+            Command::SetClipboard(entry) => {
+                self.clipboard_entry = Some(entry.clone());
+                CommandResult::Handled
+            }
             Command::SetMarkCount(count) => {
                 self.mark_count = *count;
-                CommandResult::Handled
+                // Marks and clipboard are mutually exclusive
+                if *count > 0 && self.clipboard_entry.is_some() {
+                    Command::ClearClipboard.into()
+                } else {
+                    CommandResult::Handled
+                }
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
             _ => CommandResult::NotHandled,

@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
 
-use super::{Command, mode::InputMode, result::CommandResult};
+use super::{Command, InputMode, result::CommandResult};
 
 pub trait CommandHandler {
     fn visit_command_handlers(&mut self, _visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {}

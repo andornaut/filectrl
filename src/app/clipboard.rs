@@ -79,6 +79,10 @@ impl ClipboardEntry {
     }
 }
 
+/// Serialized as `"cp /path\n/path2..."` or `"mv /path\n/path2..."` in the system clipboard.
+/// Paths are stored unquoted because they are never passed to a shell -- they are parsed back
+/// into `PathInfo` values and used directly with Rust filesystem APIs (`fs::copy`, `fs::rename`,
+/// etc.), so there is no shell injection risk.
 impl Display for ClipboardEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let name = match self {

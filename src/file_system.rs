@@ -136,10 +136,6 @@ impl FileSystem {
         open_in(self.current_directory(), &self.open_current_directory_template).into()
     }
 
-    fn open_custom(&self, path: &PathInfo) -> CommandResult {
-        open_in(path, &self.open_selected_file_template).into()
-    }
-
     fn open_new_window(&self) -> CommandResult {
         open_in(self.current_directory(), &self.open_new_window_template).into()
     }
