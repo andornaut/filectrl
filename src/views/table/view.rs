@@ -11,7 +11,7 @@ use super::{
     widgets::{row_widget_and_height, table_widget},
     TableView,
 };
-use crate::{app::{config::theme::Theme, AppState}, views::View};
+use crate::{app::{config::Config, AppState}, views::View};
 
 const MIN_HEIGHT: u16 = 3; // header + 1 data row + scrollbar
 const MIN_WIDTH: u16 = 8;
@@ -21,7 +21,7 @@ impl View for TableView {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState) {
         if area.height < MIN_HEIGHT || area.width < MIN_WIDTH {
             return;
         }
@@ -29,35 +29,36 @@ impl View for TableView {
         let (block_area, scrollbar_area, table_area) = layout(area);
 
         // We must render the table first to initialize the mapper, which is used by the scrollbar
-        self.render_table_and_init_mapper(table_area, frame.buffer_mut(), theme, state);
+        self.render_table_and_init_mapper(table_area, frame.buffer_mut(), state);
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
-        self.render_scrollbar(scrollbar_area, frame.buffer_mut(), theme);
-        self.render_1x1_block(block_area, frame.buffer_mut(), theme);
+        self.render_scrollbar(scrollbar_area, frame.buffer_mut());
+        self.render_1x1_block(block_area, frame.buffer_mut());
     }
 }
 
 impl TableView {
-    fn render_1x1_block(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    fn render_1x1_block(&self, area: Rect, buf: &mut Buffer) {
+        let theme = Config::global().theme();
         // Extend the table header above the scrollbar as a 1x1 block
         let block = Block::default().style(theme.table.header());
         block.render(Rect { height: 1, ..area }, buf);
     }
 
-    fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer) {
         let total = self.mapper.total_lines_count();
         let visible = self.mapper.visible_lines_count();
         let max_position = total.saturating_sub(visible);
         self.scrollbar_view.render(
             area,
             buf,
-            theme,
             self.mapper.first_visible_line(),
             max_position,
             visible,
         );
     }
 
-    fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, state: &AppState) {
+    fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer, state: &AppState) {
+        let theme = Config::global().theme();
         self.table_area = area;
 
         let column_constraints = self.columns.constraints(self.table_area.width);

@@ -225,7 +225,7 @@ impl Default for PathInfo {
             .unwrap_or_else(|_| PathBuf::from("/"));
         path.as_path()
             .try_into()
-            .expect("Can create a PathInfo from the default directory")
+            .expect("default directory should be a valid PathInfo")
     }
 }
 

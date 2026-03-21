@@ -3,22 +3,21 @@ mod notice;
 mod view;
 mod widgets;
 
-use std::{collections::HashSet, rc::Rc};
+use std::collections::HashSet;
 
 use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    app::AppState,
+    app::{AppState, config::Config},
     command::{result::CommandResult, progress::Task},
-    app::config::keybindings::{Action, KeyBindings},
+    app::config::keybindings::Action,
 };
 
 pub(super) struct NoticesView {
     area: Rect,
     hint: String,
     filter: String,
-    keybindings: Rc<KeyBindings>,
     mark_count: usize,
     pending_delete_count: usize,
     tasks: HashSet<Task>,
@@ -27,16 +26,15 @@ pub(super) struct NoticesView {
 }
 
 impl NoticesView {
-    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+    pub fn new() -> Self {
         let hint = format!(
             "(Press {} to clear)",
-            keybindings.hint_for(&[Action::Reset])
+            Config::global().keybindings.hint_for(&[Action::Reset])
         );
         Self {
             area: Rect::default(),
             hint,
             filter: String::new(),
-            keybindings,
             mark_count: 0,
             pending_delete_count: 0,
             tasks: HashSet::new(),

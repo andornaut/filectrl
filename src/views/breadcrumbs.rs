@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::View;
 use crate::{
-    app::{config::theme::Theme, AppState},
+    app::{config::Config, AppState},
     command::{Command, handler::CommandHandler, result::CommandResult},
     file_system::path_info::PathInfo,
 };
@@ -101,8 +101,9 @@ impl View for BreadcrumbsView {
         Constraint::Length(self.height(area.width))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState) {
         self.area = area;
+        let theme = Config::global().theme();
 
         let (mut container, mut positions) = spans(
             &self.breadcrumbs,
