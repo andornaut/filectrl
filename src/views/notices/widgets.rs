@@ -19,13 +19,13 @@ const COPY_PREFIX: &str = "[Copy] ";
 const DELETE_PREFIX: &str = "[Delete] ";
 const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
-const ESC_SUFFIX: &str = "(Press \"Esc\" to clear)";
 const FILTER_PREFIX: &str = "[Filter] ";
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Clipboard,
     width: u16,
     clipboard_entry: &'a ClipboardEntry,
+    hint: &'a str,
 ) -> Block<'a> {
     let paths = clipboard_entry.paths();
     let prefix = match clipboard_entry {
@@ -54,33 +54,33 @@ pub(super) fn clipboard_widget<'a>(
         Span::styled(detail, style),
     ]);
 
-    create_notice_block(left, style, width)
+    create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn delete_widget(theme: &Clipboard, width: u16, count: usize) -> Block<'_> {
+pub(super) fn delete_widget<'a>(theme: &Clipboard, width: u16, count: usize, hint: &'a str) -> Block<'a> {
     let style = theme.delete();
     let left = Line::from(vec![
         Span::styled(DELETE_PREFIX, style.add_modifier(Modifier::BOLD)),
         Span::styled(pluralize_items(count), style),
     ]);
-    create_notice_block(left, style, width)
+    create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn marked_widget(theme: &Table, width: u16, count: usize) -> Block<'_> {
+pub(super) fn marked_widget<'a>(theme: &Table, width: u16, count: usize, hint: &'a str) -> Block<'a> {
     let style = theme.marked();
     let left = Line::from(vec![
         Span::styled(MARKED_PREFIX, style.add_modifier(Modifier::BOLD)),
         Span::styled(pluralize_items(count), style),
     ]);
-    create_notice_block(left, style, width)
+    create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn filter_widget<'a>(theme: &NoticeTheme, width: u16, filter: &'a str) -> Block<'a> {
+pub(super) fn filter_widget<'a>(theme: &NoticeTheme, width: u16, filter: &'a str, hint: &'a str) -> Block<'a> {
     let left = Line::from(vec![
         FILTER_PREFIX.into(),
         Span::styled(filter, theme.filter().add_modifier(Modifier::BOLD)),
     ]);
-    create_notice_block(left, theme.filter(), width)
+    create_notice_block(left, theme.filter(), width, hint)
 }
 
 pub(super) fn progress_widget<'a>(
@@ -112,15 +112,15 @@ pub(super) fn progress_widget<'a>(
         .style(theme.progress())
 }
 
-fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16) -> Block<'a> {
+fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a str) -> Block<'a> {
     let left_width = left.width();
     let block = Block::default()
         .borders(Borders::NONE)
         .title(left)
         .style(style);
 
-    if width as usize > left_width + ESC_SUFFIX.width() {
-        let right = Line::from(ESC_SUFFIX).alignment(Alignment::Right);
+    if width as usize > left_width + hint.width() {
+        let right = Line::from(hint).alignment(Alignment::Right);
         block.title(right)
     } else {
         block

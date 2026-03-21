@@ -41,14 +41,20 @@ impl AlertKind {
 pub(super) struct AlertsView {
     alerts: VecDeque<(AlertKind, String)>,
     area: Rect,
+    hint: String,
     keybindings: Rc<KeyBindings>,
 }
 
 impl AlertsView {
     pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+        let hint = format!(
+            "(Press {} to clear)",
+            keybindings.hint_for(&[Action::ClearAlerts])
+        );
         Self {
             alerts: VecDeque::new(),
             area: Rect::default(),
+            hint,
             keybindings,
         }
     }
@@ -145,11 +151,7 @@ impl View for AlertsView {
 
         let style = theme.alert.base();
         let inner_area = if self.has_border(&area) {
-            let hint = format!(
-                "(Press \"{}\" to clear)",
-                self.keybindings.display_for(Action::ClearAlerts)
-            );
-            bordered(area, frame.buffer_mut(), style, "Alerts", &hint)
+            bordered(area, frame.buffer_mut(), style, "Alerts", &self.hint)
         } else {
             area
         };

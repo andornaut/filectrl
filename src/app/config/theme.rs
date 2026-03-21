@@ -5,17 +5,22 @@ use serde::Deserialize;
 
 use super::serde::{deserialize_color, deserialize_modifier};
 
+fn empty_modifier() -> Modifier {
+    Modifier::empty()
+}
+
 /// A triplet of style properties: foreground color, background color, and modifiers.
-/// `fg` and `bg` are optional — `None` (from `""` in config) means inherit from the parent widget.
+/// All fields are optional — omitted fields inherit defaults (no color, no modifiers).
+/// `fg` and `bg` accept `""` in config to explicitly inherit from the parent widget.
 #[derive(Copy, Clone, Deserialize)]
 pub struct StyleConfig {
-    #[serde(deserialize_with = "deserialize_color")]
+    #[serde(default, deserialize_with = "deserialize_color")]
     fg: Option<Color>,
 
-    #[serde(deserialize_with = "deserialize_color")]
+    #[serde(default, deserialize_with = "deserialize_color")]
     bg: Option<Color>,
 
-    #[serde(deserialize_with = "deserialize_modifier")]
+    #[serde(default = "empty_modifier", deserialize_with = "deserialize_modifier")]
     modifiers: Modifier,
 }
 

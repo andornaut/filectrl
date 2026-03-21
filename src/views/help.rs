@@ -35,8 +35,8 @@ pub(super) struct HelpView {
 impl HelpView {
     pub fn new(keybindings: Rc<KeyBindings>) -> Self {
         let hint = format!(
-            "(Press \"{}\" or Esc to close)",
-            keybindings.display_for(Action::ToggleHelp)
+            "(Press {} to close)",
+            keybindings.hint_for(&[Action::ToggleHelp, Action::Reset])
         );
         let normal_keybindings = build_normal_keybindings(&keybindings);
         let prompt_keybindings = build_prompt_keybindings(&keybindings);

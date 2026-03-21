@@ -11,11 +11,12 @@ use ratatui::layout::Rect;
 use crate::{
     app::AppState,
     command::{result::CommandResult, progress::Task},
-    app::config::keybindings::KeyBindings,
+    app::config::keybindings::{Action, KeyBindings},
 };
 
 pub(super) struct NoticesView {
     area: Rect,
+    hint: String,
     filter: String,
     keybindings: Rc<KeyBindings>,
     mark_count: usize,
@@ -27,8 +28,13 @@ pub(super) struct NoticesView {
 
 impl NoticesView {
     pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+        let hint = format!(
+            "(Press {} to clear)",
+            keybindings.hint_for(&[Action::Reset])
+        );
         Self {
             area: Rect::default(),
+            hint,
             filter: String::new(),
             keybindings,
             mark_count: 0,

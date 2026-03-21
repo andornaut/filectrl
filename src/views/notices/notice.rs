@@ -22,14 +22,15 @@ impl Notice {
         theme: &'a Theme,
         width: u16,
         tasks: &'a HashSet<Task>,
+        hint: &'a str,
     ) -> Block<'a> {
         match self {
             Notice::Clipboard(clipboard_entry) => {
-                clipboard_widget(&theme.clipboard, width, clipboard_entry)
+                clipboard_widget(&theme.clipboard, width, clipboard_entry, hint)
             }
-            Notice::Filter(filter) => filter_widget(&theme.notice, width, filter),
-            Notice::Marked(count) => marked_widget(&theme.table, width, *count),
-            Notice::PendingDelete(count) => delete_widget(&theme.clipboard, width, *count),
+            Notice::Filter(filter) => filter_widget(&theme.notice, width, filter, hint),
+            Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
+            Notice::PendingDelete(count) => delete_widget(&theme.clipboard, width, *count, hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
         }
     }

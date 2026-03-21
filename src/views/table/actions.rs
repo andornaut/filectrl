@@ -36,7 +36,7 @@ impl TableView {
     pub(super) fn open_rename_prompt(&self) -> CommandResult {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => Command::OpenPrompt(PromptKind::Rename, path.basename.clone()).into(),
+            Some(path) => Command::OpenPrompt(PromptKind::Rename(path.clone()), path.basename.clone()).into(),
         }
     }
 

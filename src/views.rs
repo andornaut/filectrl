@@ -9,7 +9,7 @@ mod status;
 mod table;
 mod unicode;
 
-pub(crate) use scrollbar::ScrollbarView;
+pub use scrollbar::ScrollbarView;
 
 use ratatui::{
     Frame,

@@ -22,7 +22,7 @@ use self::{
 };
 use crate::{
     command::{Command, PromptKind, handler::CommandHandler, mode::InputMode, result::CommandResult},
-    file_system::{FileSystem, path_info::PathInfo},
+    file_system::FileSystem,
     app::config::keybindings::Action,
     views::{View, root::RootView},
 };
@@ -31,7 +31,6 @@ use crate::{
 pub struct AppState {
     pub clipboard_entry: Option<ClipboardEntry>,
     pub mode: InputMode,
-    pub selected: Option<PathInfo>,
 }
 
 impl AppState {
@@ -197,11 +196,6 @@ impl CommandHandler for App {
                 Some(ClipboardEntry::Move(srcs)) => Command::Move { srcs: srcs.clone(), dest: dest.clone() }.into(),
                 None => CommandResult::Handled,
             },
-            // Intent: PromptView emits RenameSelected; App enriches with AppState::selected
-            Command::RenameSelected(value) => match &self.state.selected {
-                Some(path) => Command::RenamePath(path.clone(), value.clone()).into(),
-                None => CommandResult::Handled,
-            },
             Command::SetClipboard(entry) => {
                 match self.clipboard.set_clipboard_entry(entry) {
                     Ok(()) => {
@@ -217,10 +211,6 @@ impl CommandHandler for App {
                     let _ = self.clipboard.clear();
                     self.state.clipboard_entry = None;
                 }
-                CommandResult::Handled
-            }
-            Command::SetSelected(selected) => {
-                self.state.selected = selected.clone();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
