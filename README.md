@@ -176,18 +176,70 @@ open_selected_file = "open %s"
 
 ### Theming
 
-All colors can be changed by editing the `[theme]` (truecolor) and `[theme256]` (256-color) sections inline in the configuration file:
+FileCTRL supports two theme sections: `[theme]` for truecolor terminals and `[theme256]` for 256-color terminals. At startup, FileCTRL detects truecolor support via the `$COLORTERM` environment variable. Use `--colors-256` to force the 256-color theme.
 
-```bash
-filectrl --write-default-config
-vim ~/.config/filectrl/config.toml
+#### Style properties
+
+Each theme entry is a style with three optional properties:
+
+Property | Format | Default | Description
+--- | --- | --- | ---
+`fg` | Color string | Inherited | Foreground color
+`bg` | Color string | Inherited | Background color
+`modifiers` | Array of strings | `[]` | Text modifiers
+
+All properties are optional. Omit any property to use its default. Set `fg` or `bg` to `""` to explicitly inherit the parent widget's color.
+
+**Color formats:**
+
+- **Truecolor** (`[theme]`): hex strings like `"#FF0000"`, or named colors like `"Red"`
+- **256-color** (`[theme256]`): decimal indexes `"0"` through `"255"`
+
+**Available modifiers:** `"bold"`, `"dim"`, `"italic"`, `"underlined"`, `"blink"`, `"rapid_blink"`, `"reversed"`, `"crossed_out"`
+
+#### Example: minimal custom theme
+
+You only need to specify the properties you want to change:
+
+```toml
+[theme.table.selected]
+bg = "#1A1A2E"
+
+[theme.file_type.directory]
+fg = "#E94560"
+modifiers = ["bold"]
 ```
 
-The config file contains all available theme variables.
+#### Theme sections
+
+Section | Description
+--- | ---
+`[theme]` / `[theme256]` | Base foreground, background, and modifiers
+`alert` | Alert bar (`base`, `error`, `info`, `warn`)
+`breadcrumbs` | Path breadcrumbs (`base`, `ancestor`, `basename`, `separator`)
+`clipboard` | Clipboard status indicators (`copy`, `cut`, `delete`)
+`file_modified_date` | Date column colors by age (`less_than_minute`, `less_than_hour`, `less_than_day`, `less_than_month`, `less_than_year`, `greater_than_year`)
+`file_size` | Size column colors by magnitude (`bytes`, `kib`, `mib`, `gib`, `tib`, `pib`)
+`file_type` | Row colors by file type (`directory`, `executable`, `symlink`, `regular_file`, etc.)
+`help` | Help panel (`base`, `header`, `actions`, `shortcuts`)
+`notice` | Notice bar (`filter`, `progress`)
+`prompt` | Input prompt (`cursor`, `input`, `label`, `selected`)
+`scrollbar` | Scrollbar (`ends`, `thumb`, `track`, plus `show_ends` boolean)
+`status` | Status bar (`detail`, `label`)
+`table` | File table (`body`, `header`, `header_sorted`, `selected`, `marked`, `delete`)
+
+#### LS_COLORS integration
+
+The `file_type` section has a `ls_colors_take_precedence` boolean. When `true`, colors from the `$LS_COLORS` environment variable are applied on top of the configured file type colors, including extension-based patterns (e.g. `*.tar=01;31`).
+
+```toml
+[theme.file_type]
+ls_colors_take_precedence = true
+```
 
 #### External theme files
 
-You can split themes (or any config sections) into separate files using `include_files`:
+You can split themes into separate files using `include_files`:
 
 ```toml
 include_files = ["my-theme.toml"]
@@ -195,7 +247,7 @@ include_files = ["my-theme.toml"]
 
 - **Relative paths** are resolved from the directory containing the config file (e.g. `~/.config/filectrl/`)
 - **Absolute paths** are used as-is
-- Included files are **merged on top** of the base config -keys in included files override the base
+- Included files are **merged on top** of the base config - keys in included files override the base
 - Multiple files are merged in order; later files override earlier ones
 - If a file doesn't exist or can't be parsed, FileCTRL exits with an error
 

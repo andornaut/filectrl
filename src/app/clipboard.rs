@@ -9,7 +9,7 @@ use log::warn;
 use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Clipboard {
+pub struct Clipboard {
     backend: Option<ClipboardBackend>,
 }
 
@@ -28,7 +28,7 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    pub(crate) fn clear(&self) -> Result<(), Error> {
+    pub fn clear(&self) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => backend.clear(),
             None => Ok(()),
@@ -44,17 +44,17 @@ impl Clipboard {
         })
     }
 
-    pub(crate) fn get_text(&self) -> Option<String> {
+    pub fn get_text(&self) -> Option<String> {
         self.backend.as_ref().and_then(|b| b.get_string().ok())
     }
 
-    pub(crate) fn set_text(&self, text: &str) {
+    pub fn set_text(&self, text: &str) {
         if let Some(backend) = &self.backend {
             let _ = backend.set_string(text);
         }
     }
 
-    pub(crate) fn set_clipboard_entry(&self, entry: &ClipboardEntry) -> Result<(), Error> {
+    pub fn set_clipboard_entry(&self, entry: &ClipboardEntry) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => {
                 let text = entry.to_string();

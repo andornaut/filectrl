@@ -12,12 +12,12 @@ use self::{progress::Task, result::CommandResult};
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptKind {
     #[default]
     Delete,
     Filter,
-    Rename,
+    Rename(PathInfo),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -48,7 +48,6 @@ pub enum Command {
     // File operation intents — resolved by App
     ConfirmDelete,          // Resolved into Delete using TableView::pending_delete
     Paste(PathInfo),        // Resolved into Copy or Move using clipboard_entry
-    RenameSelected(String), // Resolved into RenamePath using selected
 
     // Clipboard
     ClearClipboard,

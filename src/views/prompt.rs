@@ -39,18 +39,18 @@ impl PromptView {
     }
 
     fn label(&self) -> String {
-        match self.kind {
+        match &self.kind {
             PromptKind::Delete => {
                 let count: usize = self.initial_text.parse().unwrap_or(0);
                 format!(" Delete {}? (y/n) ", pluralize_items(count))
             }
             PromptKind::Filter => " Filter ".to_string(),
-            PromptKind::Rename => " Rename ".to_string(),
+            PromptKind::Rename(_) => " Rename ".to_string(),
         }
     }
 
     fn open(&mut self, kind: &PromptKind, initial_text: &str) -> CommandResult {
-        self.kind = *kind;
+        self.kind = kind.clone();
         self.initial_text = initial_text.to_string();
         self.reset_text(&self.initial_text.clone());
         CommandResult::Handled
@@ -102,10 +102,10 @@ impl PromptView {
 
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
-        match self.kind {
+        match &self.kind {
             PromptKind::Delete => Command::ConfirmDelete.into(),
             PromptKind::Filter => Command::SetFilter(value).into(),
-            PromptKind::Rename => Command::RenameSelected(value).into(),
+            PromptKind::Rename(path) => Command::RenamePath(path.clone(), value).into(),
         }
     }
 }
@@ -131,7 +131,12 @@ mod tests {
         app::clipboard::Clipboard,
         command::{Command, PromptKind, handler::CommandHandler},
         app::config::keybindings::{KeyBindings, TomlKeybindings},
+        file_system::path_info::PathInfo,
     };
+
+    fn test_path() -> PathInfo {
+        PathInfo::try_from("/tmp").unwrap()
+    }
 
     fn default_keybindings() -> Rc<KeyBindings> {
         let config: toml::Value =
@@ -194,10 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn enter_with_rename_returns_rename_selected() {
-        let mut view = prompt_with_text(PromptKind::Rename, "bar.txt");
+    fn enter_with_rename_returns_rename_path() {
+        let path = test_path();
+        let mut view = prompt_with_text(PromptKind::Rename(path.clone()), "bar.txt");
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        assert_eq!(result, Command::RenameSelected("bar.txt".to_string()).into());
+        assert_eq!(result, Command::RenamePath(path, "bar.txt".to_string()).into());
     }
 
     // ── open (via handle_command) ─────────────────────────────────────────────
@@ -221,7 +227,7 @@ mod tests {
 
     #[test]
     fn ctrl_z_resets_to_initial_text() {
-        let mut view = prompt_with_text(PromptKind::Rename, "original.txt");
+        let mut view = prompt_with_text(PromptKind::Rename(test_path()), "original.txt");
         // Type a character to modify the text
         view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");
