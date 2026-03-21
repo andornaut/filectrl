@@ -6,7 +6,7 @@ use ratatui::{
 use super::{NoticesView, notice::Notice};
 use crate::{
     command::{Command, PromptKind, handler::CommandHandler, result::CommandResult},
-    app::config::keybindings::Action,
+    app::config::{Config, keybindings::Action},
 };
 
 impl CommandHandler for NoticesView {
@@ -40,7 +40,7 @@ impl CommandHandler for NoticesView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match self.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ClearProgress) => self.clear_progress(),
             _ => CommandResult::NotHandled,
         }

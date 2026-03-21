@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -13,9 +11,9 @@ use super::{
     prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
-    app::{AppState, clipboard::Clipboard, config::Config, config::theme::Theme},
+    app::config::keybindings::Action,
+    app::{AppState, clipboard::Clipboard, config::Config},
     command::{Command, handler::CommandHandler, result::CommandResult},
-    app::config::keybindings::{Action, KeyBindings},
 };
 
 const MIN_WIDTH: u16 = 14;
@@ -27,7 +25,6 @@ pub struct RootView {
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
     is_help_visible: bool,
-    keybindings: Rc<KeyBindings>,
     notices: NoticesView,
     prompt: PromptView,
     status: StatusView,
@@ -35,18 +32,17 @@ pub struct RootView {
 }
 
 impl RootView {
-    pub fn new(config: &Config, clipboard: Clipboard) -> Self {
-        let kb = Rc::clone(&config.keybindings);
+    pub fn new(clipboard: Clipboard) -> Self {
+        let config = Config::global();
         Self {
-            alerts: AlertsView::new(Rc::clone(&kb)),
+            alerts: AlertsView::new(),
             breadcrumbs: BreadcrumbsView::default(),
-            help: HelpView::new(Rc::clone(&kb)),
+            help: HelpView::new(),
             is_help_visible: false,
-            keybindings: Rc::clone(&kb),
-            notices: NoticesView::new(Rc::clone(&kb)),
-            prompt: PromptView::new(clipboard, Rc::clone(&kb)),
+            notices: NoticesView::new(),
+            prompt: PromptView::new(clipboard),
             status: StatusView::default(),
-            table: TableView::new(config),
+            table: TableView::new(config.ui.double_click_interval_milliseconds),
         }
     }
 
@@ -80,7 +76,7 @@ impl CommandHandler for RootView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         // Rebindable keys
-        match self.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ToggleHelp) => {
                 self.is_help_visible = !self.is_help_visible;
                 if self.is_help_visible {
@@ -107,9 +103,10 @@ impl View for RootView {
         )
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState) {
+        let theme = Config::global().theme();
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            render_resize_message(frame.buffer_mut(), area, theme);
+            render_resize_message(frame.buffer_mut(), area);
             return;
         }
 
@@ -132,11 +129,12 @@ impl View for RootView {
             .split(area)
             .iter()
             .zip(views)
-            .for_each(|(area, handler)| handler.render(*area, frame, state, theme));
+            .for_each(|(area, handler)| handler.render(*area, frame, state));
     }
 }
 
-fn render_resize_message(buf: &mut Buffer, area: Rect, theme: &Theme) {
+fn render_resize_message(buf: &mut Buffer, area: Rect) {
+    let theme = Config::global().theme();
     let widget = Paragraph::new(RESIZE_WINDOW)
         .style(theme.alert.error())
         .wrap(Wrap { trim: true });

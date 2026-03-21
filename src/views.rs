@@ -22,13 +22,13 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{config::theme::Theme, AppState},
+    app::AppState,
     command::handler::CommandHandler,
 };
 
 pub(super) trait View: CommandHandler {
     fn constraint(&self, area: Rect, state: &AppState) -> Constraint;
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme);
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState);
 }
 
 fn bordered(

@@ -7,7 +7,7 @@ use ratatui_textarea::{CursorMove, Input};
 use super::PromptView;
 use crate::{
     command::{PromptKind, handler::CommandHandler, mode::InputMode, result::CommandResult, Command},
-    app::config::keybindings::Action,
+    app::config::{Config, keybindings::Action},
 };
 
 impl CommandHandler for PromptView {
@@ -33,7 +33,7 @@ impl CommandHandler for PromptView {
         }
 
         // Rebindable prompt keys (lookup once, reuse after textarea input)
-        let action = self.keybindings.prompt_action(code, modifiers);
+        let action = Config::global().keybindings.prompt_action(code, modifiers);
         match action {
             Some(Action::PromptSubmit) => return self.submit(),
             Some(Action::PromptSelectAll) => {
