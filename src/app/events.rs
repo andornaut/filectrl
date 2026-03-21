@@ -31,9 +31,9 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
     thread::spawn(move || loop {
         // Blocking read
         // Ref. https://docs.rs/crossterm/latest/crossterm/event/fn.read.html
-        let event = read().expect("Can read events");
+        let event = read().expect("terminal events should be readable");
         if let Some(command) = Command::maybe_from(event) {
-            tx.send(command).expect("Can send events");
+            tx.send(command).expect("event channel should be open");
         }
     });
 }

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{app::config::Config, file_system::path_info::PathInfo};
+use crate::file_system::path_info::PathInfo;
 
 #[derive(Default)]
 pub(super) struct DoubleClick {
@@ -10,9 +10,8 @@ pub(super) struct DoubleClick {
 }
 
 impl DoubleClick {
-    pub(super) fn new(config: &Config) -> Self {
-        let threshold =
-            Duration::from_millis(config.ui.double_click_interval_milliseconds as u64);
+    pub(super) fn new(double_click_interval_milliseconds: u16) -> Self {
+        let threshold = Duration::from_millis(double_click_interval_milliseconds as u64);
         Self {
             threshold,
             ..Default::default()

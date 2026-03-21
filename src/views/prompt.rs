@@ -1,8 +1,6 @@
 mod handler;
 mod view;
 
-use std::rc::Rc;
-
 use ratatui_textarea::{CursorMove, TextArea};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
@@ -11,13 +9,11 @@ use super::{View, unicode::pluralize_items};
 use crate::{
     app::clipboard::Clipboard,
     command::{Command, PromptKind, mode::InputMode, result::CommandResult},
-    app::config::keybindings::KeyBindings,
 };
 
 pub(super) struct PromptView {
     clipboard: Clipboard,
     initial_text: String,
-    keybindings: Rc<KeyBindings>,
     kind: PromptKind,
     text_area: TextArea<'static>,
     render_area: Rect,
@@ -26,11 +22,10 @@ pub(super) struct PromptView {
 }
 
 impl PromptView {
-    pub(super) fn new(clipboard: Clipboard, keybindings: Rc<KeyBindings>) -> Self {
+    pub(super) fn new(clipboard: Clipboard) -> Self {
         Self {
             clipboard,
             initial_text: String::new(),
-            keybindings,
             kind: PromptKind::default(),
             text_area: TextArea::default(),
             render_area: Rect::default(),
@@ -129,8 +124,8 @@ mod tests {
     use super::*;
     use crate::{
         app::clipboard::Clipboard,
+        app::config::Config,
         command::{Command, PromptKind, handler::CommandHandler},
-        app::config::keybindings::{KeyBindings, TomlKeybindings},
         file_system::path_info::PathInfo,
     };
 
@@ -138,16 +133,14 @@ mod tests {
         PathInfo::try_from("/tmp").unwrap()
     }
 
-    fn default_keybindings() -> Rc<KeyBindings> {
-        let config: toml::Value =
-            toml::from_str(include_str!("../app/config/default_config.toml")).unwrap();
-        let kb_toml: TomlKeybindings =
-            config.get("keybindings").unwrap().clone().try_into().unwrap();
-        Rc::new(KeyBindings::new(&kb_toml).unwrap())
+    fn ensure_config_initialized() {
+        let config = Config::load(None, vec![]).unwrap();
+        Config::init(config);
     }
 
     fn prompt_with_text(kind: PromptKind, text: &str) -> PromptView {
-        let mut view = PromptView::new(Clipboard::default(), default_keybindings());
+        ensure_config_initialized();
+        let mut view = PromptView::new(Clipboard::default());
         view.handle_command(&Command::OpenPrompt(kind, text.to_string()));
         view
     }
@@ -186,7 +179,8 @@ mod tests {
 
     #[test]
     fn esc_returns_close_prompt() {
-        let mut view = PromptView::new(Clipboard::default(), default_keybindings());
+        ensure_config_initialized();
+        let mut view = PromptView::new(Clipboard::default());
         let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
         assert_eq!(result, Command::ClosePrompt.into());
     }

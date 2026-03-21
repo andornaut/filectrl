@@ -3,7 +3,7 @@ mod ls_colors;
 mod serde;
 pub mod theme;
 
-use std::{fs, io::ErrorKind, path::PathBuf, rc::Rc};
+use std::{fs, io::ErrorKind, path::PathBuf, sync::OnceLock};
 
 use ::serde::Deserialize;
 use anyhow::{Result, anyhow};
@@ -13,6 +13,8 @@ use toml::Value;
 
 use self::theme::Theme;
 use self::keybindings::{KeyBindings, TomlKeybindings};
+
+static CONFIG: OnceLock<Config> = OnceLock::new();
 
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
@@ -62,12 +64,31 @@ struct RawConfig {
 
 pub struct Config {
     pub file_system: FileSystemConfig,
-    pub keybindings: Rc<KeyBindings>,
+    pub is_truecolor: bool,
+    pub keybindings: KeyBindings,
     pub log_level: LevelFilter,
     pub openers: Openers,
     pub theme: Theme,
     pub theme256: Theme,
     pub ui: UiConfig,
+}
+
+impl Config {
+    pub fn init(config: Config) {
+        let _ = CONFIG.set(config);
+    }
+
+    pub fn global() -> &'static Config {
+        CONFIG.get().expect("config should be initialized")
+    }
+
+    pub fn theme(&self) -> &Theme {
+        if self.is_truecolor {
+            &self.theme
+        } else {
+            &self.theme256
+        }
+    }
 }
 
 impl Config {
@@ -203,11 +224,11 @@ impl Config {
             raw.openers.linux
         };
 
-        let keybindings = Rc::new(KeyBindings::new(&raw.keybindings)?);
-
+        let keybindings = KeyBindings::new(&raw.keybindings)?;
 
         let mut config = Config {
             file_system: raw.file_system,
+            is_truecolor: false,
             keybindings,
             log_level: raw.log_level,
             openers,

@@ -2,7 +2,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::{App, clipboard::ClipboardEntry};
 use crate::{
-    app::config::keybindings::Action,
+    app::config::{Config, keybindings::Action},
     command::{Command, PromptKind, handler::CommandHandler, mode::InputMode, result::CommandResult},
 };
 
@@ -68,7 +68,7 @@ impl CommandHandler for App {
             return Command::Reset.into();
         }
         // Rebindable keys
-        match self.config.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::Quit) => Command::Quit.into(),
             Some(Action::Reset) => Command::Reset.into(),
             _ => CommandResult::NotHandled,

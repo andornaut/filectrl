@@ -174,6 +174,6 @@ impl FileSystem {
             .send(Command::AlertWarn(format!(
                 "Failed to read directory {dir:?}: {error}"
             )))
-            .expect("Can send command messages");
+            .expect("command channel should be open");
     }
 }

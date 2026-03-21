@@ -27,14 +27,16 @@ pub fn run(
     // config initialization are logged
     configure_logging();
 
-    let config = Config::load(config_path, include_paths)?;
+    let mut config = Config::load(config_path, include_paths)?;
     apply_log_level(&config);
 
     let is_truecolor = supports_truecolor() && !colors_256;
     info!("Terminal truecolor support: {is_truecolor}");
+    config.is_truecolor = is_truecolor;
+    Config::init(config);
 
     let terminal = CleanupOnDropTerminal::try_new()?;
-    App::new(config, terminal, is_truecolor).run(initial_directory)
+    App::new(terminal).run(initial_directory)
 }
 
 fn apply_log_level(config: &Config) {

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
@@ -11,9 +9,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{ScrollbarView, View, bordered};
 use crate::{
-    app::{AppState, config::theme::Theme},
+    app::{AppState, config::Config},
     command::{Command, handler::CommandHandler, result::CommandResult},
-    app::config::keybindings::{Action, KeyBindings},
+    app::config::keybindings::Action,
 };
 
 const MIN_HEIGHT: u16 = 5;
@@ -23,7 +21,6 @@ pub(super) struct HelpView {
     /// Bordered header hint, cached at construction.
     hint: String,
     inner_height: u16,
-    keybindings: Rc<KeyBindings>,
     max_scroll: u16,
     /// Keybinding display strings, cached at construction (keybindings never change).
     normal_keybindings: Vec<(String, String)>,
@@ -33,18 +30,18 @@ pub(super) struct HelpView {
 }
 
 impl HelpView {
-    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+    pub fn new() -> Self {
+        let kb = &Config::global().keybindings;
         let hint = format!(
             "(Press {} to close)",
-            keybindings.hint_for(&[Action::ToggleHelp, Action::Reset])
+            kb.hint_for(&[Action::ToggleHelp, Action::Reset])
         );
-        let normal_keybindings = build_normal_keybindings(&keybindings);
-        let prompt_keybindings = build_prompt_keybindings(&keybindings);
+        let normal_keybindings = build_normal_keybindings(kb);
+        let prompt_keybindings = build_prompt_keybindings(kb);
         Self {
             area: Rect::default(),
             hint,
             inner_height: 0,
-            keybindings,
             max_scroll: 0,
             normal_keybindings,
             prompt_keybindings,
@@ -112,7 +109,7 @@ impl CommandHandler for HelpView {
             _ => {}
         }
         // Rebindable keys (mirrors table navigation)
-        match self.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::SelectNext) => {
                 self.scroll_down(1);
                 CommandResult::Handled
@@ -178,7 +175,7 @@ impl CommandHandler for HelpView {
     }
 }
 
-use crate::app::config::theme::Help;
+use crate::app::config::{keybindings::KeyBindings, theme::Help};
 
 fn max_label_width(
     normal: &[(String, String)],
@@ -274,12 +271,13 @@ impl View for HelpView {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _state: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _state: &AppState) {
         self.area = area;
         if area.height < MIN_HEIGHT {
             return;
         }
 
+        let theme = Config::global().theme();
         let style = theme.help.base();
         let bordered_area = bordered(area, frame.buffer_mut(), style, "Help", &self.hint);
 
@@ -310,14 +308,13 @@ impl View for HelpView {
             self.scrollbar_view.render(
                 scrollbar_area,
                 frame.buffer_mut(),
-                theme,
                 scroll as usize,
                 self.max_scroll as usize,
                 self.inner_height as usize,
             );
         } else {
             self.scrollbar_view
-                .render(Rect::default(), frame.buffer_mut(), theme, 0, 0, 0);
+                .render(Rect::default(), frame.buffer_mut(), 0, 0, 0);
             Paragraph::new(lines)
                 .style(style)
                 .render(bordered_area, frame.buffer_mut());

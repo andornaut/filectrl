@@ -6,7 +6,7 @@ use ratatui::{
 
 use super::NoticesView;
 use crate::{
-    app::{config::theme::Theme, AppState},
+    app::{config::Config, AppState},
     views::View,
 };
 
@@ -15,13 +15,14 @@ impl View for NoticesView {
         Constraint::Length(self.build_notices(state).len() as u16)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState) {
         self.notices = self.build_notices(state);
         if self.notices.is_empty() {
             return;
         }
 
         self.area = area;
+        let theme = Config::global().theme();
 
         let constraints = vec![Constraint::Length(1); self.notices.len()];
         let layout = Layout::default()

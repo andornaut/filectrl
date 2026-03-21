@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, rc::Rc};
+use std::collections::VecDeque;
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
@@ -11,9 +11,9 @@ use ratatui::{
 
 use super::{bordered, View};
 use crate::{
-    app::{config::theme::Theme, AppState},
+    app::{config::{Config, theme::Theme}, AppState},
     command::{handler::CommandHandler, result::CommandResult, Command},
-    app::config::keybindings::{Action, KeyBindings},
+    app::config::keybindings::Action,
     views::unicode::split_with_ellipsis,
 };
 
@@ -42,20 +42,18 @@ pub(super) struct AlertsView {
     alerts: VecDeque<(AlertKind, String)>,
     area: Rect,
     hint: String,
-    keybindings: Rc<KeyBindings>,
 }
 
 impl AlertsView {
-    pub fn new(keybindings: Rc<KeyBindings>) -> Self {
+    pub fn new() -> Self {
         let hint = format!(
             "(Press {} to clear)",
-            keybindings.hint_for(&[Action::ClearAlerts])
+            Config::global().keybindings.hint_for(&[Action::ClearAlerts])
         );
         Self {
             alerts: VecDeque::new(),
             area: Rect::default(),
             hint,
-            keybindings,
         }
     }
 }
@@ -121,7 +119,7 @@ impl CommandHandler for AlertsView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        match self.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ClearAlerts) => self.clear_alerts(),
             _ => CommandResult::NotHandled,
         }
@@ -143,12 +141,13 @@ impl View for AlertsView {
         Constraint::Length(self.height(&area))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState, theme: &Theme) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState) {
         self.area = area;
         if !self.should_show(&area) {
             return;
         }
 
+        let theme = Config::global().theme();
         let style = theme.alert.base();
         let inner_area = if self.has_border(&area) {
             bordered(area, frame.buffer_mut(), style, "Alerts", &self.hint)

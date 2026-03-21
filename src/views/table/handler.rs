@@ -6,7 +6,7 @@ use ratatui::{
 use super::{columns::SortColumn, TableView};
 use crate::{
     command::{handler::CommandHandler, result::CommandResult, Command},
-    app::config::keybindings::Action,
+    app::config::{Config, keybindings::Action},
 };
 
 impl CommandHandler for TableView {
@@ -64,7 +64,7 @@ impl CommandHandler for TableView {
             _ => {}
         }
         // Rebindable keys
-        match self.keybindings.normal_action(code, modifiers) {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             // Clipboard
             Some(Action::Copy) => self.copy_to_clipboard(),
             Some(Action::Cut) => self.cut_to_clipboard(),

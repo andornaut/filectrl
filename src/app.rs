@@ -46,11 +46,9 @@ const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigateDir
 
 pub struct App {
     clipboard: Clipboard,
-    config: Config,
     #[cfg(debug_assertions)]
     debug: debug::DebugHandler,
     file_system: FileSystem,
-    is_truecolor: bool,
     root: RootView,
     state: AppState,
     terminal: CleanupOnDropTerminal,
@@ -59,22 +57,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config, terminal: CleanupOnDropTerminal, is_truecolor: bool) -> Self {
+    pub fn new(terminal: CleanupOnDropTerminal) -> Self {
         let (tx, rx) = mpsc::channel();
+        let config = Config::global();
         let clipboard = Clipboard::default();
-        let file_system = FileSystem::new(&config, tx.clone());
-        let root = RootView::new(&config, clipboard.clone());
+        let file_system = FileSystem::new(config, tx.clone());
+        let root = RootView::new(clipboard.clone());
         let state = AppState::new(&clipboard);
         Self {
             clipboard,
-            config,
             #[cfg(debug_assertions)]
             debug: debug::DebugHandler,
             file_system,
             state,
             root,
             terminal,
-            is_truecolor,
             rx,
             tx,
         }
@@ -149,12 +146,7 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            let theme = if self.is_truecolor {
-                &self.config.theme
-            } else {
-                &self.config.theme256
-            };
-            self.root.render(area, frame, &self.state, theme);
+            self.root.render(area, frame, &self.state);
         })?;
         Ok(())
     }
