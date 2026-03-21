@@ -22,7 +22,7 @@ impl CommandHandler for FileSystem {
             Command::OpenNewWindow => self.open_new_window(),
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::Refresh => self.refresh(),
-            Command::RenamePath(old_path, new_basename) => self.rename(old_path, new_basename),
+            Command::Rename(old_path, new_basename) => self.rename(old_path, new_basename),
             _ => CommandResult::NotHandled,
         }
     }
