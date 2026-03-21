@@ -235,10 +235,24 @@ impl KeyBindings {
     }
 
     /// Get the display string for an action (includes hardcoded + rebindable keys).
+    /// Keys are separated by "/", e.g. "↓/j". Suitable for help table columns.
     pub fn display_for(&self, action: Action) -> &str {
         self.action_display
             .get(&action)
             .map_or("", |s| s.as_str())
+    }
+
+    /// Get a display string for use in hints, e.g. `"D" or "x"`.
+    /// Each key is quoted and joined with " or ".
+    /// Accepts multiple actions to combine all their keys into one list.
+    pub fn hint_for(&self, actions: &[Action]) -> String {
+        actions
+            .iter()
+            .filter_map(|action| self.action_display.get(action))
+            .flat_map(|s| s.split('/'))
+            .map(|k| format!("\"{}\"", k))
+            .collect::<Vec<_>>()
+            .join(" or ")
     }
 }
 
@@ -588,6 +602,25 @@ mod tests {
         let kb = default_keybindings();
         let display = kb.display_for(Action::Reset);
         assert_eq!(display, "Esc");
+    }
+
+    #[test]
+    fn hint_for_quotes_each_key() {
+        let kb = default_keybindings();
+        let hint = kb.hint_for(&[Action::SelectNext]);
+        // Should quote each key individually and join with " or "
+        assert!(
+            hint.contains("\"↓\""),
+            "hint should quote hardcoded ↓: {hint}"
+        );
+        assert!(
+            hint.contains("\"j\""),
+            "hint should quote configurable j: {hint}"
+        );
+        assert!(
+            hint.contains(" or "),
+            "hint should join keys with ' or ': {hint}"
+        );
     }
 
     #[test]
