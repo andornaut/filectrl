@@ -6,24 +6,20 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{PromptView, View};
-use crate::app::{AppState, config::Config};
-use crate::command::PromptKind;
+use crate::app::config::Config;
+use crate::command::PromptAction;
 
 impl View for PromptView {
-    fn constraint(&self, _: Rect, state: &AppState) -> Constraint {
-        Constraint::Length(if self.should_show(&state.mode) { 1 } else { 0 })
+    fn constraint(&self, _: Rect) -> Constraint {
+        Constraint::Length(1)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState) {
-        if !self.should_show(&state.mode) {
-            return;
-        }
-
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let theme = Config::global().theme();
         let label = self.label();
         let label_width = label.width() as u16;
 
-        if self.kind == PromptKind::Delete {
+        if matches!(self.actions, PromptAction::Delete(_)) {
             let label_widget = Paragraph::new(label).style(theme.prompt.label());
             label_widget.render(area, frame.buffer_mut());
             return;

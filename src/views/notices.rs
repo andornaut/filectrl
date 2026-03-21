@@ -9,13 +9,14 @@ use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    app::{AppState, config::Config},
+    app::{clipboard::ClipboardEntry, config::Config},
     command::{result::CommandResult, progress::Task},
     app::config::keybindings::Action,
 };
 
 pub(super) struct NoticesView {
     area: Rect,
+    clipboard_entry: Option<ClipboardEntry>,
     hint: String,
     filter: String,
     mark_count: usize,
@@ -33,6 +34,7 @@ impl NoticesView {
         );
         Self {
             area: Rect::default(),
+            clipboard_entry: None,
             hint,
             filter: String::new(),
             mark_count: 0,
@@ -44,8 +46,8 @@ impl NoticesView {
 }
 
 impl NoticesView {
-    fn build_notices(&self, state: &AppState) -> Vec<Notice> {
-        let clipboard = state.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
+    fn build_notices(&self) -> Vec<Notice> {
+        let clipboard = self.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
         let pending_delete = if self.pending_delete_count > 0 {
             Some(Notice::PendingDelete(self.pending_delete_count))
         } else {

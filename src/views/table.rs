@@ -21,9 +21,11 @@ use self::{
     row_map::LineItemMap,
 };
 use super::ScrollbarView;
-use crate::file_system::path_info::PathInfo;
+use crate::{app::clipboard::ClipboardEntry, file_system::path_info::PathInfo};
 
+#[derive(Default)]
 pub(super) struct TableView {
+    clipboard_entry: Option<ClipboardEntry>,
     content: DirectoryContent,
     marks: Marks,
     pending_delete: Vec<PathInfo>,
@@ -35,20 +37,4 @@ pub(super) struct TableView {
     double_click: DoubleClick,
     mapper: LineItemMap,
     scrollbar_view: ScrollbarView,
-}
-
-impl TableView {
-    pub fn new(double_click_interval_milliseconds: u16) -> Self {
-        Self {
-            content: DirectoryContent::default(),
-            marks: Marks::default(),
-            pending_delete: Vec::new(),
-            table_area: Rect::default(),
-            table_state: TableState::default(),
-            columns: Columns::default(),
-            double_click: DoubleClick::new(double_click_interval_milliseconds),
-            mapper: LineItemMap::default(),
-            scrollbar_view: ScrollbarView::default(),
-        }
-    }
 }

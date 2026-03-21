@@ -1,53 +1,42 @@
 mod handler;
 mod view;
 
-use ratatui_textarea::{CursorMove, TextArea};
 use ratatui::layout::Rect;
+use ratatui_textarea::{CursorMove, TextArea};
 use unicode_width::UnicodeWidthChar;
 
 use super::{View, unicode::pluralize_items};
-use crate::{
-    app::clipboard::Clipboard,
-    command::{Command, PromptKind, mode::InputMode, result::CommandResult},
-};
+use crate::command::{Command, PromptAction, result::CommandResult};
 
+#[derive(Default)]
 pub(super) struct PromptView {
-    clipboard: Clipboard,
-    initial_text: String,
-    kind: PromptKind,
+    actions: PromptAction,
     text_area: TextArea<'static>,
+    initial_text: String,
     render_area: Rect,
     /// Horizontal scroll offset (in display columns), mirroring tui-textarea's internal viewport.
     scroll_col: u16,
 }
 
 impl PromptView {
-    pub(super) fn new(clipboard: Clipboard) -> Self {
-        Self {
-            clipboard,
-            initial_text: String::new(),
-            kind: PromptKind::default(),
-            text_area: TextArea::default(),
-            render_area: Rect::default(),
-            scroll_col: 0,
-        }
-    }
-
     fn label(&self) -> String {
-        match &self.kind {
-            PromptKind::Delete => {
-                let count: usize = self.initial_text.parse().unwrap_or(0);
-                format!(" Delete {}? (y/n) ", pluralize_items(count))
+        match &self.actions {
+            PromptAction::Delete(count) => {
+                format!(" Delete {}? (y/n) ", pluralize_items(*count))
             }
-            PromptKind::Filter => " Filter ".to_string(),
-            PromptKind::Rename(_) => " Rename ".to_string(),
+            PromptAction::Filter(_) => " Filter ".to_string(),
+            PromptAction::Rename(_, _) => " Rename ".to_string(),
         }
     }
 
-    fn open(&mut self, kind: &PromptKind, initial_text: &str) -> CommandResult {
-        self.kind = kind.clone();
-        self.initial_text = initial_text.to_string();
-        self.reset_text(&self.initial_text.clone());
+    fn open(&mut self, kind: &PromptAction) -> CommandResult {
+        let text = match kind {
+            PromptAction::Delete(_) => String::new(),
+            PromptAction::Filter(text) | PromptAction::Rename(_, text) => text.clone(),
+        };
+        self.actions = kind.clone();
+        self.initial_text = text.clone();
+        self.reset_text(&text);
         CommandResult::Handled
     }
 
@@ -91,16 +80,12 @@ impl PromptView {
         idx
     }
 
-    fn should_show(&self, mode: &InputMode) -> bool {
-        *mode == InputMode::Prompt
-    }
-
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
-        match &self.kind {
-            PromptKind::Delete => Command::ConfirmDelete.into(),
-            PromptKind::Filter => Command::SetFilter(value).into(),
-            PromptKind::Rename(path) => Command::RenamePath(path.clone(), value).into(),
+        match &self.actions {
+            PromptAction::Delete(_) => Command::ConfirmDelete.into(),
+            PromptAction::Filter(_) => Command::SetFilter(value).into(),
+            PromptAction::Rename(path, _) => Command::RenamePath(path.clone(), value).into(),
         }
     }
 }
@@ -123,9 +108,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::clipboard::Clipboard,
         app::config::Config,
-        command::{Command, PromptKind, handler::CommandHandler},
+        command::{Command, PromptAction, handler::CommandHandler},
         file_system::path_info::PathInfo,
     };
 
@@ -138,10 +122,10 @@ mod tests {
         Config::init(config);
     }
 
-    fn prompt_with_text(kind: PromptKind, text: &str) -> PromptView {
+    fn prompt_with_action(kind: PromptAction) -> PromptView {
         ensure_config_initialized();
-        let mut view = PromptView::new(Clipboard::default());
-        view.handle_command(&Command::OpenPrompt(kind, text.to_string()));
+        let mut view = PromptView::default();
+        view.handle_command(&Command::OpenPrompt(kind));
         view
     }
 
@@ -171,7 +155,7 @@ mod tests {
     #[test_case("ab日",   3 => 2; "mixed: col within wide char clamps")]
     #[test_case("ab日",   4 => 3; "mixed: col past wide char maps to char 3")]
     fn display_col_to_char_idx_cases(text: &str, col: u16) -> u16 {
-        let view = prompt_with_text(PromptKind::Filter, text);
+        let view = prompt_with_action(PromptAction::Filter(text.to_string()));
         view.display_col_to_char_idx(col)
     }
 
@@ -180,14 +164,14 @@ mod tests {
     #[test]
     fn esc_returns_close_prompt() {
         ensure_config_initialized();
-        let mut view = PromptView::new(Clipboard::default());
+        let mut view = PromptView::default();
         let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
-        assert_eq!(result, Command::ClosePrompt.into());
+        assert_eq!(result, Command::CancelPrompt.into());
     }
 
     #[test]
     fn enter_with_filter_returns_set_filter() {
-        let mut view = prompt_with_text(PromptKind::Filter, "foo");
+        let mut view = prompt_with_action(PromptAction::Filter("foo".into()));
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
         assert_eq!(result, Command::SetFilter("foo".to_string()).into());
     }
@@ -195,25 +179,28 @@ mod tests {
     #[test]
     fn enter_with_rename_returns_rename_path() {
         let path = test_path();
-        let mut view = prompt_with_text(PromptKind::Rename(path.clone()), "bar.txt");
+        let mut view = prompt_with_action(PromptAction::Rename(path.clone(), "bar.txt".into()));
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        assert_eq!(result, Command::RenamePath(path, "bar.txt".to_string()).into());
+        assert_eq!(
+            result,
+            Command::RenamePath(path, "bar.txt".to_string()).into()
+        );
     }
 
     // ── open (via handle_command) ─────────────────────────────────────────────
 
     #[test]
     fn open_loads_initial_text_and_positions_cursor_at_end() {
-        let view = prompt_with_text(PromptKind::Filter, "hello");
+        let view = prompt_with_action(PromptAction::Filter("hello".into()));
         assert_eq!(view.text_area.lines()[0], "hello");
         assert_eq!(view.text_area.cursor(), (0, 5));
     }
 
     #[test]
     fn open_resets_scroll_col() {
-        let mut view = prompt_with_text(PromptKind::Filter, "hello");
+        let mut view = prompt_with_action(PromptAction::Filter("hello".into()));
         view.scroll_col = 99;
-        view.handle_command(&Command::OpenPrompt(PromptKind::Filter, "new".to_string()));
+        view.handle_command(&Command::OpenPrompt(PromptAction::Filter("new".into())));
         assert_eq!(view.scroll_col, 0);
     }
 
@@ -221,7 +208,7 @@ mod tests {
 
     #[test]
     fn ctrl_z_resets_to_initial_text() {
-        let mut view = prompt_with_text(PromptKind::Rename(test_path()), "original.txt");
+        let mut view = prompt_with_action(PromptAction::Rename(test_path(), "original.txt".into()));
         // Type a character to modify the text
         view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");
@@ -238,14 +225,14 @@ mod tests {
     fn update_scroll_col_tracks_cursor_past_viewport() {
         // 11 ASCII chars, cursor at end (col 11); viewport width = 5
         // next_scroll_top(0, 11, 5) = 11 + 1 - 5 = 7
-        let mut view = prompt_with_text(PromptKind::Filter, "hello world");
+        let mut view = prompt_with_action(PromptAction::Filter("hello world".into()));
         view.update_scroll_col(5);
         assert_eq!(view.scroll_col, 7);
     }
 
     #[test]
     fn update_scroll_col_stays_zero_when_text_fits() {
-        let mut view = prompt_with_text(PromptKind::Filter, "hi");
+        let mut view = prompt_with_action(PromptAction::Filter("hi".into()));
         view.update_scroll_col(20);
         assert_eq!(view.scroll_col, 0);
     }

@@ -3,10 +3,10 @@ use ratatui::{
     prelude::Position,
 };
 
-use super::{columns::SortColumn, TableView};
+use super::{TableView, columns::SortColumn};
 use crate::{
-    command::{handler::CommandHandler, result::CommandResult, Command},
     app::config::{Config, keybindings::Action},
+    command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
 impl CommandHandler for TableView {
@@ -16,6 +16,10 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 Command::ClearClipboard.into()
             }
+            Command::CancelPrompt => {
+                self.pending_delete.clear();
+                CommandResult::Handled
+            }
             Command::ConfirmDelete => {
                 let paths = std::mem::take(&mut self.pending_delete);
                 if paths.is_empty() {
@@ -24,17 +28,22 @@ impl CommandHandler for TableView {
                     Command::Delete(paths).into()
                 }
             }
-            Command::ClosePrompt => {
-                self.pending_delete.clear();
-                CommandResult::Handled
-            }
             Command::Delete(_) => {
                 self.clear_marks();
                 CommandResult::Handled
             }
+            Command::ClearClipboard => {
+                self.clipboard_entry = None;
+                CommandResult::Handled
+            }
             Command::Reset => {
+                self.clipboard_entry = None;
                 self.clear_marks();
                 self.set_filter(String::new());
+                CommandResult::Handled
+            }
+            Command::SetClipboard(entry) => {
+                self.clipboard_entry = Some(entry.clone());
                 CommandResult::Handled
             }
             Command::NavigateDirectory(directory, children) => {
@@ -76,9 +85,8 @@ impl CommandHandler for TableView {
             Some(Action::Refresh) => Command::Refresh.into(),
             Some(Action::Back) => Command::Back.into(),
             Some(Action::Open) => self.open_selected(),
-            Some(Action::OpenCustom) => self.open_selected_in_custom_program(),
+            Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
-            Some(Action::OpenTerminal) => Command::OpenTerminal.into(),
             Some(Action::GoHome) => self.navigate_to_home_directory(),
             // Selection
             Some(Action::SelectNext) => self.select_next(),
@@ -132,9 +140,15 @@ impl CommandHandler for TableView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        let is_scroll = matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+        let is_scroll = matches!(
+            event.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        );
         is_scroll
-            || self.table_area.contains(Position { x: event.column, y: event.row })
+            || self.table_area.contains(Position {
+                x: event.column,
+                y: event.row,
+            })
             || self.scrollbar_view.is_clicked(event.column, event.row)
     }
 }

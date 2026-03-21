@@ -17,9 +17,8 @@ pub enum Action {
     // Navigation (filesystem)
     Back,
     Open,
-    OpenCustom,
+    OpenCurrentDirectory,
     OpenNewWindow,
-    OpenTerminal,
     GoHome,
     Refresh,
 
@@ -93,9 +92,8 @@ pub struct TomlKeybindings {
     clear_progress: KeySpec,
     back: KeySpec,
     open: KeySpec,
-    open_custom: KeySpec,
+    open_current_directory: KeySpec,
     open_new_window: KeySpec,
-    open_terminal: KeySpec,
     go_home: KeySpec,
     refresh: KeySpec,
     select_next: KeySpec,
@@ -146,9 +144,8 @@ impl TomlKeybindings {
         bind!(normal, self.clear_progress, Action::ClearProgress);
         bind!(normal, self.back, Action::Back);
         bind!(normal, self.open, Action::Open);
-        bind!(normal, self.open_custom, Action::OpenCustom);
+        bind!(normal, self.open_current_directory, Action::OpenCurrentDirectory);
         bind!(normal, self.open_new_window, Action::OpenNewWindow);
-        bind!(normal, self.open_terminal, Action::OpenTerminal);
         bind!(normal, self.go_home, Action::GoHome);
         bind!(normal, self.refresh, Action::Refresh);
         bind!(normal, self.select_next, Action::SelectNext);
