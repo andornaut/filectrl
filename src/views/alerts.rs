@@ -11,7 +11,7 @@ use ratatui::{
 
 use super::{bordered, View};
 use crate::{
-    app::{config::{Config, theme::Theme}, AppState},
+    app::config::{Config, theme::Theme},
     command::{handler::CommandHandler, result::CommandResult, Command},
     app::config::keybindings::Action,
     views::unicode::split_with_ellipsis,
@@ -137,11 +137,11 @@ impl CommandHandler for AlertsView {
 }
 
 impl View for AlertsView {
-    fn constraint(&self, area: Rect, _: &AppState) -> Constraint {
+    fn constraint(&self, area: Rect) -> Constraint {
         Constraint::Length(self.height(&area))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
         if !self.should_show(&area) {
             return;

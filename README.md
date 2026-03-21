@@ -89,9 +89,8 @@ Actions | Keys
 Quit | <kbd>q</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>f</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd>
-Open custom | <kbd>o</kbd>
+Open current directory | <kbd>o</kbd>
 Open new window | <kbd>w</kbd>
-Open terminal | <kbd>t</kbd>
 Go to home dir | <kbd>~</kbd>
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
@@ -153,9 +152,8 @@ Run `filectrl --write-default-config` to write the [default configuration](./src
 
 Keyboard key | Description
 --- | ---
-<kbd>f</kbd> | Open the selected file using the default application configured in your environment
-<kbd>o</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
-<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
+<kbd>f</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
+<kbd>o</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
 <kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
 
 ```toml

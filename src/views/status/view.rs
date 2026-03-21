@@ -5,14 +5,14 @@ use ratatui::{
 };
 
 use super::{widgets::default_widget, StatusView};
-use crate::{app::{config::Config, AppState}, views::View};
+use crate::{app::config::Config, views::View};
 
 impl View for StatusView {
-    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
+    fn constraint(&self, _: Rect) -> Constraint {
         Constraint::Length(1)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _: &AppState) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let Some(directory) = &self.directory else {
             return;
         };

@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{ScrollbarView, View, bordered};
 use crate::{
-    app::{AppState, config::Config},
+    app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
     app::config::keybindings::Action,
 };
@@ -222,9 +222,8 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Quit: ".into(), d(Action::Quit)),
         ("Go to parent dir: ".into(), d(Action::Back)),
         ("Open: ".into(), d(Action::Open)),
-        ("Open custom: ".into(), d(Action::OpenCustom)),
+        ("Open directory: ".into(), d(Action::OpenCurrentDirectory)),
         ("Open new window: ".into(), d(Action::OpenNewWindow)),
-        ("Open terminal: ".into(), d(Action::OpenTerminal)),
         ("Go to home dir: ".into(), d(Action::GoHome)),
         ("Select next, previous row: ".into(), format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious))),
         ("Select first, last row: ".into(), format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast))),
@@ -267,11 +266,11 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
 }
 
 impl View for HelpView {
-    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
+    fn constraint(&self, _: Rect) -> Constraint {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, _state: &AppState) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
         if area.height < MIN_HEIGHT {
             return;

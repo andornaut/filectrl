@@ -1,5 +1,4 @@
 pub mod handler;
-pub mod mode;
 pub mod progress;
 pub mod result;
 
@@ -12,12 +11,24 @@ use self::{progress::Task, result::CommandResult};
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub enum PromptKind {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum InputMode {
+    Prompt,
     #[default]
-    Delete,
-    Filter,
-    Rename(PathInfo),
+    Normal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum PromptAction {
+    Delete(usize),
+    Filter(String),
+    Rename(PathInfo, String),
+}
+
+impl Default for PromptAction {
+    fn default() -> Self {
+        Self::Delete(0)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -30,9 +41,8 @@ pub enum Command {
     // Navigation intents — resolved by FileSystem
     Back,
     Open(PathInfo),
-    OpenCustom(PathInfo),
+    OpenCurrentDirectory,
     OpenNewWindow,
-    OpenTerminal,
     Refresh,
 
     // Navigation results — emitted by FileSystem
@@ -45,17 +55,20 @@ pub enum Command {
     Delete(Vec<PathInfo>),
     RenamePath(PathInfo, String),
 
-    // File operation intents — resolved by App
-    ConfirmDelete,   // Resolved into Delete using TableView::pending_delete
-    Paste(PathInfo), // Resolved into Copy or Move using clipboard_entry
+    // File operation intents
+    ConfirmDelete,   // Intent: resolved by TableView into Delete
+    Paste(PathInfo), // Intent: resolved by App into Copy or Move
+
+    // Prompt
+    OpenPrompt(PromptAction),
+    CancelPrompt,
 
     // Clipboard
     ClearClipboard,
     SetClipboard(ClipboardEntry),
-
-    // Prompt
-    OpenPrompt(PromptKind, String),
-    ClosePrompt,
+    ReadFromClipboard,         // Intent: resolved by App into TextFromClipboard
+    TextFromClipboard(String), // Result of ReadFromClipboard; handled by PromptView
+    WriteToClipboard(String),  // Handled by App; writes text to system clipboard
 
     // View state
     SetFilter(String),

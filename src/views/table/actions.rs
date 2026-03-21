@@ -1,6 +1,6 @@
 use super::TableView;
 use crate::{
-    command::{Command, PromptKind, result::CommandResult},
+    command::{Command, PromptAction, result::CommandResult},
     file_system::path_info::PathInfo,
 };
 
@@ -16,7 +16,7 @@ impl TableView {
         };
         let count = paths.len();
         self.pending_delete = paths;
-        Command::OpenPrompt(PromptKind::Delete, count.to_string()).into()
+        Command::OpenPrompt(PromptAction::Delete(count)).into()
     }
 
     pub(super) fn navigate_to_home_directory(&mut self) -> CommandResult {
@@ -30,26 +30,22 @@ impl TableView {
     }
 
     pub(super) fn open_filter_prompt(&self) -> CommandResult {
-        Command::OpenPrompt(PromptKind::Filter, self.content.filter().to_string()).into()
+        Command::OpenPrompt(PromptAction::Filter(self.content.filter().to_string())).into()
     }
 
     pub(super) fn open_rename_prompt(&self) -> CommandResult {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => Command::OpenPrompt(PromptKind::Rename(path.clone()), path.basename.clone()).into(),
+            Some(path) => {
+                let basename = path.basename.clone();
+                Command::OpenPrompt(PromptAction::Rename(path.clone(), basename)).into()
+            }
         }
     }
 
     pub(super) fn open_selected(&mut self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::Open(path.clone()).into(),
-            None => CommandResult::Handled,
-        }
-    }
-
-    pub(super) fn open_selected_in_custom_program(&mut self) -> CommandResult {
-        match self.selected_path() {
-            Some(path) => Command::OpenCustom(path.clone()).into(),
             None => CommandResult::Handled,
         }
     }

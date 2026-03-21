@@ -11,9 +11,8 @@ use super::{
     prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
-    app::config::keybindings::Action,
-    app::{AppState, clipboard::Clipboard, config::Config},
-    command::{Command, handler::CommandHandler, result::CommandResult},
+    app::config::{Config, keybindings::Action},
+    command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
 };
 
 const MIN_WIDTH: u16 = 14;
@@ -25,6 +24,7 @@ pub struct RootView {
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
     is_help_visible: bool,
+    mode: InputMode,
     notices: NoticesView,
     prompt: PromptView,
     status: StatusView,
@@ -32,18 +32,22 @@ pub struct RootView {
 }
 
 impl RootView {
-    pub fn new(clipboard: Clipboard) -> Self {
-        let config = Config::global();
+    pub fn new() -> Self {
         Self {
             alerts: AlertsView::new(),
             breadcrumbs: BreadcrumbsView::default(),
             help: HelpView::new(),
             is_help_visible: false,
+            mode: InputMode::default(),
             notices: NoticesView::new(),
-            prompt: PromptView::new(clipboard),
+            prompt: PromptView::default(),
             status: StatusView::default(),
-            table: TableView::new(config.ui.double_click_interval_milliseconds),
+            table: TableView::default(),
         }
+    }
+
+    pub fn mode(&self) -> InputMode {
+        self.mode
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
@@ -51,27 +55,42 @@ impl RootView {
         if self.is_help_visible {
             vec![&mut self.help]
         } else {
-            vec![
+            let mut views: Vec<&mut dyn View> = vec![
                 &mut self.alerts,
                 &mut self.breadcrumbs,
                 &mut self.table,
                 &mut self.notices,
-                &mut self.prompt,
-                &mut self.status,
-            ]
+            ];
+            if matches!(self.mode, InputMode::Prompt) {
+                views.push(&mut self.prompt);
+            }
+            views.push(&mut self.status);
+            views
         }
     }
 }
 
 impl CommandHandler for RootView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
-        if let Command::Reset = command {
-            if self.is_help_visible {
-                self.is_help_visible = false;
-                return CommandResult::Handled;
+        match command {
+            Command::CancelPrompt
+            | Command::ConfirmDelete
+            | Command::RenamePath(_, _)
+            | Command::SetFilter(_) => {
+                self.mode = InputMode::Normal;
+                CommandResult::Handled
             }
+            Command::OpenPrompt(_) => {
+                self.mode = InputMode::Prompt;
+                CommandResult::Handled
+            }
+            Command::Reset => {
+                self.mode = InputMode::Normal;
+                self.is_help_visible = false;
+                CommandResult::Handled
+            }
+            _ => CommandResult::NotHandled,
         }
-        CommandResult::NotHandled
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
@@ -97,13 +116,13 @@ impl CommandHandler for RootView {
 }
 
 impl View for RootView {
-    fn constraint(&self, _: Rect, _: &AppState) -> Constraint {
+    fn constraint(&self, _: Rect) -> Constraint {
         unreachable!(
             "RootView is the top-level view, which always receives the full terminal area directly from App, so constraint() should never be called"
         )
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &AppState) {
+    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let theme = Config::global().theme();
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             render_resize_message(frame.buffer_mut(), area);
@@ -123,13 +142,13 @@ impl View for RootView {
             .constraints(
                 views
                     .iter()
-                    .map(|view| view.constraint(area, state))
+                    .map(|view| view.constraint(area))
                     .collect::<Vec<_>>(),
             )
             .split(area)
             .iter()
             .zip(views)
-            .for_each(|(area, handler)| handler.render(*area, frame, state));
+            .for_each(|(area, handler)| handler.render(*area, frame));
     }
 }
 

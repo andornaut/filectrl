@@ -15,32 +15,16 @@ use anyhow::{Result, anyhow};
 use ratatui::Frame;
 
 use self::{
-    clipboard::{Clipboard, ClipboardEntry},
+    clipboard::Clipboard,
     config::Config,
     events::{receive_commands, spawn_command_sender},
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
-    command::{Command, handler::CommandHandler, mode::InputMode, result::CommandResult},
+    command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
     file_system::FileSystem,
     views::{View, root::RootView},
 };
-
-#[derive(Default)]
-pub struct AppState {
-    pub clipboard_entry: Option<ClipboardEntry>,
-    pub mode: InputMode,
-}
-
-impl AppState {
-    fn new(clipboard: &Clipboard) -> Self {
-        let clipboard_entry = clipboard.get_clipboard_entry();
-        Self {
-            clipboard_entry,
-            ..Self::default()
-        }
-    }
-}
 
 const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigateDirectory/RefreshDirectory → SetSelected
 
@@ -50,7 +34,6 @@ pub struct App {
     debug: debug::DebugHandler,
     file_system: FileSystem,
     root: RootView,
-    state: AppState,
     terminal: CleanupOnDropTerminal,
     rx: Receiver<Command>,
     tx: Sender<Command>, // Held to keep the channel open for the lifetime of App
@@ -62,14 +45,12 @@ impl App {
         let config = Config::global();
         let clipboard = Clipboard::default();
         let file_system = FileSystem::new(config, tx.clone());
-        let root = RootView::new(clipboard.clone());
-        let state = AppState::new(&clipboard);
+        let root = RootView::new();
         Self {
             clipboard,
             #[cfg(debug_assertions)]
             debug: debug::DebugHandler,
             file_system,
-            state,
             root,
             terminal,
             rx,
@@ -115,7 +96,7 @@ impl App {
             }
             // Re-read mode each iteration so a derived command that changes mode
             // (e.g. OpenPrompt) is reflected in subsequent cycles.
-            let mode = self.state.mode;
+            let mode = self.root.mode();
             let mut next_pending = Vec::new();
             let mut derived = Vec::new();
             for cmd in pending {
@@ -146,7 +127,7 @@ impl App {
     fn render(&mut self) -> Result<()> {
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            self.root.render(area, frame, &self.state);
+            self.root.render(area, frame);
         })?;
         Ok(())
     }
