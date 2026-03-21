@@ -46,8 +46,8 @@ pub enum Command {
     RenamePath(PathInfo, String),
 
     // File operation intents — resolved by App
-    ConfirmDelete,          // Resolved into Delete using TableView::pending_delete
-    Paste(PathInfo),        // Resolved into Copy or Move using clipboard_entry
+    ConfirmDelete,   // Resolved into Delete using TableView::pending_delete
+    Paste(PathInfo), // Resolved into Copy or Move using clipboard_entry
 
     // Clipboard
     ClearClipboard,
@@ -61,7 +61,7 @@ pub enum Command {
     SetFilter(String),
     SetMarkCount(usize),
     SetSelected(Option<PathInfo>),
-    Reset, // Clears clipboard, filter, and marks
+    Reset, // If HelpView is open, then closes it, otherwise clears clipboard, filter, and marks
     ResetHelpScroll,
 
     // Alerts
