@@ -38,12 +38,14 @@ pub enum Command {
     Mouse(MouseEvent),
     Resize { width: u16, height: u16 },
 
-    // Navigation intents — resolved by FileSystem
+    // Navigation — handled by FileSystem
     Back,
     Open(PathInfo),
+    Refresh,
+
+    // External commands — handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
     OpenNewWindow,
-    Refresh,
 
     // Navigation results — emitted by FileSystem
     NavigateDirectory(PathInfo, Vec<PathInfo>),
@@ -53,7 +55,7 @@ pub enum Command {
     Copy { srcs: Vec<PathInfo>, dest: PathInfo },
     Move { srcs: Vec<PathInfo>, dest: PathInfo },
     Delete(Vec<PathInfo>),
-    RenamePath(PathInfo, String),
+    Rename(PathInfo, String),
 
     // File operation intents
     ConfirmDelete,   // Intent: resolved by TableView into Delete

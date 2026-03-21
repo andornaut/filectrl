@@ -101,12 +101,12 @@ Range mark | <kbd>V</kbd>
 Copy | <kbd>c</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
 Cut | <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>
 Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
-Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
+Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
-Clear clipboard/filter/marks | <kbd>Esc</kbd>
+Clear (close help, or clear clipboard/filter/marks) | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>a</kbd>, <kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
 

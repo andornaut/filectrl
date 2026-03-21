@@ -75,7 +75,7 @@ impl CommandHandler for RootView {
         match command {
             Command::CancelPrompt
             | Command::ConfirmDelete
-            | Command::RenamePath(_, _)
+            | Command::Rename(_, _)
             | Command::SetFilter(_) => {
                 self.mode = InputMode::Normal;
                 CommandResult::Handled
