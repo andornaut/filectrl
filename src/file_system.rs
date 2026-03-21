@@ -8,7 +8,7 @@ mod watch;
 use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Result};
-use log::{info, warn};
+use log::warn;
 
 use self::{
     path_info::PathInfo, operations::open_in, tasks::TaskCommand, watch::DirectoryWatcher,
@@ -125,11 +125,7 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path, true)
                 } else {
-                    info!("Opening path: {path:?}");
-                    match open::that_detached(&path.path) {
-                        Err(error) => anyhow!("Failed to open {path:?}: {error}").into(),
-                        Ok(_) => CommandResult::Handled,
-                    }
+                    open_in(&path, &self.open_selected_file_template).into()
                 }
             }
             Err(err) => err.into(),
