@@ -4,9 +4,16 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -16,17 +23,21 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install XCB dependencies
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
-      - run: cargo build --release
+      - name: Build
+        run: cargo build --release
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
         with:
           name: filectrl-${{ matrix.os }}
           path: target/release/filectrl
@@ -37,7 +48,8 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v6
 
       - name: Delete previous latest release
         if: github.ref == 'refs/heads/main'
@@ -47,7 +59,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
@@ -57,7 +70,8 @@ jobs:
           cp artifacts/filectrl-ubuntu-latest/filectrl release-assets/filectrl-linux
           cp artifacts/filectrl-macos-latest/filectrl release-assets/filectrl-macos
 
-      - uses: softprops/action-gh-release@v1
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
