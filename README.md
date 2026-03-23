@@ -283,6 +283,19 @@ The flag is repeatable and files are merged in order (later files take precedenc
 filectrl -i base-theme.toml -i overrides.toml
 ```
 
+#### Bundled themes
+
+FileCTRL includes the following themes in the [`themes/`](themes/) directory:
+
+Theme | Inspired by
+----- | -----------
+[ibm1970](themes/ibm1970.toml) (default) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme)
+[42km](themes/42km.toml) | [vscode-42km-theme](https://github.com/andornaut/vscode-42km-theme)
+
+```bash
+filectrl --include themes/42km.toml
+```
+
 ### Customizing keybindings
 
 Keybindings are configured in the `[keybindings]` section of `config.toml`. Edit the values to change any binding. Values can be a single key string or an array of key strings.
@@ -347,10 +360,10 @@ cargo test
 cargo run
 cargo build --release
 ./target/debug/filectrl
-sudo cp ./target/debug/filectrl /usr/local/bin/
+sudo cp ./target/release/filectrl /usr/local/bin/
 
 # Log to ./err
-RUST_LOG=debug cargo run 2>err
+RUST_LOG=debug cargo run -- fixtures/ 2>err
 ```
 
 ### Git hooks

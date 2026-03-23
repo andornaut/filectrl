@@ -46,8 +46,8 @@ fn apply_log_level(config: &Config) {
     } else {
         // No env override; apply the level from the config file
         let level = config.log_level;
-        info!("Log level set from config: {level:?}");
         log::set_max_level(level);
+        info!("Log level set from config: {level:?}");
     }
 }
 
