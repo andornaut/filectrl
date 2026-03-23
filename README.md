@@ -2,15 +2,15 @@
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
-![image](./screenshot.png)
+![IBM1970 theme](./screenshots/IBM1970.png)
 
 ## Features
 
-- **Simple interface with good defaults** - works out of the box with [sensible settings](#configuration)
-- **[Vim-like navigation](#default-keybindings) and [multi-select](#multi-select)** - hjkl movement, marks, range mode
-- **[Rebindable keys](#customizing-keybindings)** - customize all keybindings via TOML config
-- **[Customizable colors](#theming)** - full truecolor and 256-color theme support with LS_COLORS integration
-- **Responsive layout** - adapts columns and content to small and large terminal windows
+- Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
+- [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
+- [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
+- [Customizable colors](#theming) - full truecolor and 256-color theme support with LS_COLORS integration
+- Responsive layout - adapts columns and content to small and large terminal windows
 
 ## Installation
 
@@ -287,10 +287,10 @@ filectrl -i base-theme.toml -i overrides.toml
 
 FileCTRL includes the following themes in the [`themes/`](themes/) directory:
 
-Theme | Inspired by
------ | -----------
-[ibm1970](themes/ibm1970.toml) (default) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme)
-[42km](themes/42km.toml) | [vscode-42km-theme](https://github.com/andornaut/vscode-42km-theme)
+Theme | Inspired by | Screenshot
+----- | ----------- | ----------
+[IBM1970](themes/ibm1970.toml) (default) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme) | ![IBM1970](./screenshots/IBM1970.png)
+[42KM](themes/42km.toml) | [vscode-42km-theme](https://github.com/andornaut/vscode-42km-theme) | ![42KM](./screenshots/42KM.png)
 
 ```bash
 filectrl --include themes/42km.toml
