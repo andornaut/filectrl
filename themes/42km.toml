@@ -1,0 +1,236 @@
+# 42km Theme for FileCtrl
+# Inspired by the vscode-42km-theme (Marathon-inspired dark theme)
+# UI colors from 42km, file type syntax colors from Solarized Dark
+
+[theme]
+bg = "#353b3d"
+fg = "#f1f1f1"
+
+[theme.alert]
+fg = "#919797"
+
+[theme.alert.error]
+fg = "#c4071c"
+
+[theme.alert.info]
+fg = "#01e17d"
+
+[theme.alert.warn]
+fg = "#ff5c00"
+
+[theme.breadcrumbs]
+fg = "#c1c7c7"
+
+[theme.breadcrumbs.ancestor]
+fg = "#c1c7c7"
+
+[theme.breadcrumbs.basename]
+bg = "#7c48e2"
+fg = "#f1f1f1"
+
+[theme.breadcrumbs.separator]
+fg = "#728083"
+
+[theme.file_modified_date.greater_than_year]
+fg = "#c4071c" # Red
+
+[theme.file_modified_date.less_than_day]
+fg = "#01e17d" # Green
+
+[theme.file_modified_date.less_than_hour]
+fg = "#c0fe04" # Lime
+
+[theme.file_modified_date.less_than_minute]
+fg = "#41a0eb" # Blue
+
+[theme.file_modified_date.less_than_month]
+fg = "#ffff00" # Yellow
+
+[theme.file_modified_date.less_than_year]
+fg = "#ff69b4" # Hot Pink
+
+[theme.file_size.bytes]
+fg = "#41a0eb" # Blue
+
+[theme.file_size.gib]
+fg = "#ffff00" # Yellow
+
+[theme.file_size.kib]
+fg = "#c0fe04" # Lime
+
+[theme.file_size.mib]
+fg = "#01e17d" # Green
+
+[theme.file_size.pib]
+fg = "#c4071c" # Red
+
+[theme.file_size.tib]
+fg = "#ff69b4" # Hot Pink
+
+[theme.file_type]
+# Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
+ls_colors_take_precedence = false
+
+[theme.file_type.block_device]
+bg = "#414247"
+fg = "#93ada0"
+modifiers = ["bold"]
+
+[theme.file_type.character_device]
+bg = "#414247"
+fg = "#93ada0"
+modifiers = ["bold"]
+
+[theme.file_type.directory]
+fg = "#41a0eb" # Blue
+
+[theme.file_type.directory_other_writable]
+bg = "#26292e"
+fg = "#41a0eb"
+
+[theme.file_type.directory_sticky]
+bg = "#41a0eb"
+fg = "#f1f1f1"
+
+[theme.file_type.directory_sticky_other_writable]
+bg = "#01e17d"
+fg = "#1b1a1d"
+
+[theme.file_type.door]
+bg = "#414247"
+fg = "#ff5c00"
+modifiers = ["bold"]
+
+[theme.file_type.executable]
+fg = "#01e17d"
+modifiers = ["bold"]
+
+[theme.file_type.missing]
+
+[theme.file_type.normal_file]
+fg = "#c1c7c7"
+
+[theme.file_type.pipe]
+bg = "#414247"
+fg = "#ff5c00"
+modifiers = ["bold"]
+
+[theme.file_type.regular_file]
+fg = "#c1c7c7"
+
+[theme.file_type.setgid]
+bg = "#ff5c00"
+fg = "#1b1a1d"
+
+[theme.file_type.setuid]
+bg = "#c4071c"
+fg = "#f1f1f1"
+
+[theme.file_type.socket]
+bg = "#414247"
+fg = "#ff5c00"
+modifiers = ["bold"]
+
+[theme.file_type.symlink]
+fg = "#c0fe04"
+modifiers = ["bold"]
+
+[theme.file_type.symlink_broken]
+bg = "#26292e"
+fg = "#c4071c"
+
+[theme.help]
+fg = "#728083"
+
+[theme.help.header]
+bg = "#728083"
+fg = "#1b1a1d"
+
+[theme.help.actions]
+fg = "#c0fe04"
+modifiers = ["bold"]
+
+[theme.help.shortcuts]
+fg = "#f1f1f1"
+
+[theme.clipboard.copy]
+bg = "#01e17d" # Green
+fg = "#1b1a1d"
+
+[theme.clipboard.cut]
+bg = "#ff5c00" # Orange
+fg = "#1b1a1d"
+
+[theme.clipboard.delete]
+bg = "#c4071c" # Red
+fg = "#f1f1f1"
+
+[theme.notice.filter]
+bg = "#7c48e2"
+fg = "#f1f1f1"
+
+[theme.notice.progress]
+bg = "#585a60"
+fg = "#c0fe04"
+
+[theme.prompt.cursor]
+bg = "#c0fe04"
+fg = "#1b1a1d"
+
+[theme.prompt.input]
+bg = "#26292e"
+fg = "#f1f1f1"
+
+[theme.prompt.label]
+bg = "#7c48e2"
+fg = "#f1f1f1"
+
+[theme.prompt.selected]
+bg = "#305090"
+fg = "#f1f1f1"
+
+[theme.scrollbar]
+show_ends = false
+
+[theme.scrollbar.ends]
+bg = "#728083"
+fg = "#26292e"
+
+[theme.scrollbar.thumb]
+bg = "#26292e"
+fg = "#728083"
+
+[theme.scrollbar.track]
+fg = "#585a60"
+
+[theme.status.detail]
+bg = "#7289da"
+fg = "#1b1a1d"
+
+[theme.status.label]
+bg = "#585a60"
+fg = "#f1f1f1"
+
+[theme.table.body]
+bg = "#353b3d"
+fg = "#f1f1f1"
+
+[theme.table.delete]
+bg = "#c4071c"
+fg = "#f1f1f1"
+
+[theme.table.header]
+bg = "#585a60"
+fg = "#1b1a1d"
+
+[theme.table.header_sorted]
+bg = "#728083"
+fg = "#1b1a1d"
+
+[theme.table.marked]
+bg = "#7c48e2"
+fg = "#f1f1f1"
+
+[theme.table.selected]
+bg = "#305090"
+fg = "#f1f1f1"
