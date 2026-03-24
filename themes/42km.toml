@@ -19,14 +19,15 @@ fg = "#01e17d"
 fg = "#ff5c00"
 
 [theme.breadcrumbs]
-fg = "#c1c7c7"
+bg = "#c1c7c7"
 
 [theme.breadcrumbs.ancestor]
-fg = "#c1c7c7"
+fg = "#414247"
 
 [theme.breadcrumbs.basename]
-bg = "#7c48e2"
-fg = "#f1f1f1"
+bg = "#c1c7c7"
+fg = "#353b3d"
+modifiers = ["bold"]
 
 [theme.breadcrumbs.separator]
 fg = "#728083"
@@ -155,15 +156,15 @@ fg = "#f1f1f1"
 
 [theme.clipboard.copy]
 bg = "#01e17d" # Green
-fg = "#1b1a1d"
+fg = "#1b1a1d" 
 
 [theme.clipboard.cut]
 bg = "#ff5c00" # Orange
-fg = "#1b1a1d"
+fg = "#1b1a1d" 
 
 [theme.clipboard.delete]
 bg = "#c4071c" # Red
-fg = "#f1f1f1"
+fg = "#f1f1f1" 
 
 [theme.notice.filter]
 bg = "#7c48e2"
@@ -193,12 +194,12 @@ fg = "#f1f1f1"
 show_ends = false
 
 [theme.scrollbar.ends]
-bg = "#728083"
+bg = "#93ada0"
 fg = "#26292e"
 
 [theme.scrollbar.thumb]
 bg = "#26292e"
-fg = "#728083"
+fg = "#93ada0"
 
 [theme.scrollbar.track]
 fg = "#585a60"
@@ -221,11 +222,12 @@ fg = "#f1f1f1"
 
 [theme.table.header]
 bg = "#585a60"
-fg = "#1b1a1d"
+fg = "#c1c7c7"
 
 [theme.table.header_sorted]
-bg = "#728083"
-fg = "#1b1a1d"
+bg = "#7c48e2"
+fg = "#ffff00"
+modifiers = ["bold"]
 
 [theme.table.marked]
 bg = "#7c48e2"
