@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::MouseEvent;
 
-use super::{marks::ClickMarkResult, TableView};
-use crate::command::{Command, result::CommandResult};
+use super::TableView;
+use crate::command::result::CommandResult;
 
 impl TableView {
     pub(super) fn click_header(&mut self, x: u16) -> CommandResult {
@@ -24,24 +24,7 @@ impl TableView {
             return self.open_selected();
         }
 
-        match self.marks.click(item) {
-            ClickMarkResult::Unmarked => {
-                self.table_state.select(Some(item));
-                if self.marks.is_empty() {
-                    match self.selected_path() {
-                        Some(path) => Command::SetSelected(Some(path.clone())).into(),
-                        None => Command::SetSelected(None).into(),
-                    }
-                } else {
-                    Command::SetMarkCount(self.marks.len()).into()
-                }
-            }
-            ClickMarkResult::MarksChanged => {
-                self.table_state.select(Some(item));
-                Command::SetMarkCount(self.marks.len()).into()
-            }
-            ClickMarkResult::Ignored => self.select(item),
-        }
+        self.select(item)
     }
 
     pub(super) fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {

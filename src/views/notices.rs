@@ -17,10 +17,10 @@ use crate::{
 pub(super) struct NoticesView {
     area: Rect,
     clipboard_entry: Option<ClipboardEntry>,
+    hide_marked: bool,
     hint: String,
     filter: String,
     mark_count: usize,
-    pending_delete_count: usize,
     tasks: HashSet<Task>,
     /// Cached at render time so the mouse handler can map y-position -> action
     notices: Vec<Notice>,
@@ -35,10 +35,10 @@ impl NoticesView {
         Self {
             area: Rect::default(),
             clipboard_entry: None,
+            hide_marked: false,
             hint,
             filter: String::new(),
             mark_count: 0,
-            pending_delete_count: 0,
             tasks: HashSet::new(),
             notices: Vec::new(),
         }
@@ -48,19 +48,13 @@ impl NoticesView {
 impl NoticesView {
     fn build_notices(&self) -> Vec<Notice> {
         let clipboard = self.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
-        let pending_delete = if self.pending_delete_count > 0 {
-            Some(Notice::PendingDelete(self.pending_delete_count))
-        } else {
-            None
-        };
-        let marked = if clipboard.is_none() && pending_delete.is_none() && self.mark_count > 0 {
+        let marked = if !self.hide_marked && clipboard.is_none() && self.mark_count > 0 {
             Some(Notice::Marked(self.mark_count))
         } else {
             None
         };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
-            pending_delete,
             marked,
             clipboard,
             (!self.filter.is_empty()).then_some(Notice::Filter(self.filter.clone())),

@@ -20,7 +20,7 @@ impl View for PromptView {
         let label_width = label.width() as u16;
 
         if matches!(self.actions, PromptAction::Delete(_)) {
-            let label_widget = Paragraph::new(label).style(theme.prompt.label());
+            let label_widget = Paragraph::new(label).style(theme.prompt.delete());
             label_widget.render(area, frame.buffer_mut());
             return;
         }
