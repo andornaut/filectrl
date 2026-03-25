@@ -3,17 +3,17 @@
 # UI colors from 42km, file type syntax colors from Solarized Dark
 
 [theme]
-bg = "#353b3d"
+bg = "#353a3c"
 fg = "#f1f1f1"
 
 [theme.alert]
-fg = "#919797"
+fg = "#93ada0"
 
 [theme.alert.error]
 fg = "#c4071c"
 
 [theme.alert.info]
-fg = "#01e17d"
+fg = "#03f688"
 
 [theme.alert.warn]
 fg = "#ff5c00"
@@ -22,75 +22,75 @@ fg = "#ff5c00"
 bg = "#c1c7c7"
 
 [theme.breadcrumbs.ancestor]
-fg = "#414247"
+fg = "#404346"
 
 [theme.breadcrumbs.basename]
 bg = "#c1c7c7"
-fg = "#353b3d"
+fg = "#353a3c"
 modifiers = ["bold"]
 
 [theme.breadcrumbs.separator]
 fg = "#728083"
 
 [theme.clipboard.copy]
-bg = "#01e17d" # Green
-fg = "#1b1a1d" 
+bg = "#03f688" # Green
+fg = "#1b1b1b" 
 
 [theme.clipboard.cut]
 bg = "#ff5c00" # Orange
-fg = "#1b1a1d" 
+fg = "#1b1b1b" 
 
 [theme.clipboard.delete]
 bg = "#c4071c" # Red
 fg = "#f1f1f1" 
 
-[theme.file_modified_date.greater_than_year]
-fg = "#c4071c" # Red
-
-[theme.file_modified_date.less_than_day]
-fg = "#01e17d" # Green
+[theme.file_modified_date.less_than_minute]
+fg = "#7289da" # Periwinkle
 
 [theme.file_modified_date.less_than_hour]
-fg = "#c0fe04" # Lime
-
-[theme.file_modified_date.less_than_minute]
 fg = "#41a0eb" # Blue
 
+[theme.file_modified_date.less_than_day]
+fg = "#03f688" # Green
+
 [theme.file_modified_date.less_than_month]
-fg = "#ffff00" # Yellow
+fg = "#c0fe04" # Lime
 
 [theme.file_modified_date.less_than_year]
 fg = "#ff69b4" # Hot Pink
 
-[theme.file_size.bytes]
-fg = "#41a0eb" # Blue
+[theme.file_modified_date.greater_than_year]
+fg = "#c4071c" # Red
 
-[theme.file_size.gib]
-fg = "#ffff00" # Yellow
+[theme.file_size.bytes]
+fg = "#7289da" # Periwinkle
 
 [theme.file_size.kib]
-fg = "#c0fe04" # Lime
+fg = "#41a0eb" # Blue
 
 [theme.file_size.mib]
-fg = "#01e17d" # Green
+fg = "#03f688" # Green
 
-[theme.file_size.pib]
-fg = "#c4071c" # Red
+[theme.file_size.gib]
+fg = "#c0fe04" # Lime
 
 [theme.file_size.tib]
 fg = "#ff69b4" # Hot Pink
+
+[theme.file_size.pib]
+fg = "#c4071c" # Red
 
 [theme.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
 ls_colors_take_precedence = false
 
 [theme.file_type.block_device]
-bg = "#414247"
+bg = "#404346"
 fg = "#93ada0"
 modifiers = ["bold"]
 
 [theme.file_type.character_device]
-bg = "#414247"
+bg = "#404346"
 fg = "#93ada0"
 modifiers = ["bold"]
 
@@ -98,7 +98,7 @@ modifiers = ["bold"]
 fg = "#41a0eb" # Blue
 
 [theme.file_type.directory_other_writable]
-bg = "#26292e"
+bg = "#282a2c"
 fg = "#41a0eb"
 
 [theme.file_type.directory_sticky]
@@ -106,16 +106,16 @@ bg = "#41a0eb"
 fg = "#f1f1f1"
 
 [theme.file_type.directory_sticky_other_writable]
-bg = "#01e17d"
-fg = "#1b1a1d"
+bg = "#03f688"
+fg = "#1b1b1b"
 
 [theme.file_type.door]
-bg = "#414247"
+bg = "#404346"
 fg = "#ff5c00"
 modifiers = ["bold"]
 
 [theme.file_type.executable]
-fg = "#01e17d"
+fg = "#03f688"
 modifiers = ["bold"]
 
 [theme.file_type.missing]
@@ -124,7 +124,7 @@ modifiers = ["bold"]
 fg = "#c1c7c7"
 
 [theme.file_type.pipe]
-bg = "#414247"
+bg = "#404346"
 fg = "#ff5c00"
 modifiers = ["bold"]
 
@@ -133,14 +133,14 @@ fg = "#c1c7c7"
 
 [theme.file_type.setgid]
 bg = "#ff5c00"
-fg = "#1b1a1d"
+fg = "#1b1b1b"
 
 [theme.file_type.setuid]
 bg = "#c4071c"
 fg = "#f1f1f1"
 
 [theme.file_type.socket]
-bg = "#414247"
+bg = "#404346"
 fg = "#ff5c00"
 modifiers = ["bold"]
 
@@ -149,7 +149,7 @@ fg = "#c0fe04"
 modifiers = ["bold"]
 
 [theme.file_type.symlink_broken]
-bg = "#26292e"
+bg = "#282a2c"
 fg = "#c4071c"
 
 [theme.help]
@@ -157,7 +157,7 @@ fg = "#728083"
 
 [theme.help.header]
 bg = "#728083"
-fg = "#1b1a1d"
+fg = "#1b1b1b"
 
 [theme.help.actions]
 fg = "#c0fe04"
@@ -171,23 +171,23 @@ bg = "#7c48e2"
 fg = "#f1f1f1"
 
 [theme.notice.progress]
-bg = "#585a60"
+bg = "#545860"
 fg = "#c0fe04"
 
 [theme.prompt.cursor]
 bg = "#c0fe04"
-fg = "#1b1a1d"
+fg = "#1b1b1b"
 
 [theme.prompt.input]
-bg = "#26292e"
+bg = "#282a2c"
 fg = "#f1f1f1"
 
 [theme.prompt.label]
-bg = "#7c48e2"
+bg = "#41a0eb"
 fg = "#f1f1f1"
 
 [theme.prompt.selected]
-bg = "#305090"
+bg = "#4030d0"
 fg = "#f1f1f1"
 
 [theme.scrollbar]
@@ -195,25 +195,25 @@ show_ends = false
 
 [theme.scrollbar.ends]
 bg = "#93ada0"
-fg = "#26292e"
+fg = "#282a2c"
 
 [theme.scrollbar.thumb]
-bg = "#26292e"
+bg = "#282a2c"
 fg = "#93ada0"
 
 [theme.scrollbar.track]
-fg = "#585a60"
+fg = "#545860"
 
 [theme.status.detail]
 bg = "#7289da"
-fg = "#1b1a1d"
+fg = "#1b1b1b"
 
 [theme.status.label]
-bg = "#585a60"
+bg = "#545860"
 fg = "#f1f1f1"
 
 [theme.table.body]
-bg = "#353b3d"
+bg = "#353a3c"
 fg = "#f1f1f1"
 
 [theme.table.delete]
@@ -221,12 +221,12 @@ bg = "#c4071c"
 fg = "#f1f1f1"
 
 [theme.table.header]
-bg = "#585a60"
+bg = "#545860"
 fg = "#c1c7c7"
 
 [theme.table.header_sorted]
 bg = "#7c48e2"
-fg = "#ffff00"
+fg = "#c0fe04"
 modifiers = ["bold"]
 
 [theme.table.marked]
@@ -234,5 +234,5 @@ bg = "#7c48e2"
 fg = "#f1f1f1"
 
 [theme.table.selected]
-bg = "#305090"
+bg = "#4030d0"
 fg = "#f1f1f1"
