@@ -32,6 +32,18 @@ modifiers = ["bold"]
 [theme.breadcrumbs.separator]
 fg = "#728083"
 
+[theme.clipboard.copy]
+bg = "#01e17d" # Green
+fg = "#1b1a1d" 
+
+[theme.clipboard.cut]
+bg = "#ff5c00" # Orange
+fg = "#1b1a1d" 
+
+[theme.clipboard.delete]
+bg = "#c4071c" # Red
+fg = "#f1f1f1" 
+
 [theme.file_modified_date.greater_than_year]
 fg = "#c4071c" # Red
 
@@ -153,18 +165,6 @@ modifiers = ["bold"]
 
 [theme.help.shortcuts]
 fg = "#f1f1f1"
-
-[theme.clipboard.copy]
-bg = "#01e17d" # Green
-fg = "#1b1a1d" 
-
-[theme.clipboard.cut]
-bg = "#ff5c00" # Orange
-fg = "#1b1a1d" 
-
-[theme.clipboard.delete]
-bg = "#c4071c" # Red
-fg = "#f1f1f1" 
 
 [theme.notice.filter]
 bg = "#7c48e2"
