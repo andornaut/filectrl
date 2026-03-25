@@ -9,10 +9,10 @@ fg = "#9C9977"
 fg = "#D30102"
 
 [theme.alert.info]
-fg = "#73c991"
+fg = "#859900"
 
 [theme.alert.warn]
-fg = "#d4731a"
+fg = "#b05533"
 
 [theme.breadcrumbs]
 bg = "#373424"
@@ -27,6 +27,18 @@ modifiers = ["bold"]
 
 [theme.breadcrumbs.separator]
 fg = "#9C9977"
+
+[theme.clipboard.copy]
+bg = "#859900" # Olive Green
+fg = "#24201A"
+
+[theme.clipboard.cut]
+bg = "#B58900" # Orange Red
+fg = "#24201A"
+
+[theme.clipboard.delete]
+bg = "#b05533" # Rust
+fg = "#24201A"
 
 [theme.file_modified_date.greater_than_year]
 fg = "#FF0000" # Red
@@ -71,12 +83,12 @@ ls_colors_take_precedence = false
 [theme.file_type.block_device]
 bg = "#FFFFD7" # 230
 fg = "#808080" # 244
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.character_device]
 bg = "#FFFFD7" # 230
 fg = "#808080" # 244
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.directory]
 fg = "#0087FF" # 33
@@ -96,11 +108,11 @@ fg = "#FFFFD7" # 230
 [theme.file_type.door]
 bg = "#FFFFD7" # 230
 fg = "#AF8700" # 136
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.executable]
 fg = "#5F8700" # 64
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.missing]
 
@@ -110,7 +122,7 @@ fg = "#E4E4E4" # 254
 [theme.file_type.pipe]
 bg = "#FFFFD7" # 230
 fg = "#AF8700" # 136
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.regular_file]
 fg = "#E4E4E4" # 254
@@ -126,11 +138,11 @@ fg = "#FFFFD7" # 230
 [theme.file_type.socket]
 bg = "#FFFFD7" # 230
 fg = "#AF8700" # 136
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.symlink]
 fg = "#00AFAF" # 37
-modifiers = ["bold"] 
+modifiers = ["bold"]
 
 [theme.file_type.symlink_broken]
 bg = "#262626" # 235
@@ -141,7 +153,7 @@ fg = "#9C9977"
 
 [theme.help.header]
 bg = "#9C9977"
-fg = "#1D1F21"
+fg = "#24201A"
 
 [theme.help.actions]
 fg = "#DDDCCC"
@@ -150,25 +162,13 @@ modifiers = ["bold"]
 [theme.help.shortcuts]
 fg = "#DDDCCC"
 
-[theme.clipboard.copy]
-bg = "#859900" # Olive Green
-fg = "#1D1F21" 
-
-[theme.clipboard.cut]
-bg = "#CB4B16" # Orange Red
-fg = "#1D1F21" 
-
-[theme.clipboard.delete]
-bg = "#B58900" # Amber
-fg = "#1D1F21" 
-
 [theme.notice.filter]
-bg = "#70C0B1"
-fg = "#1D1F21"
+bg = "#33A999"
+fg = "#24201A"
 
 [theme.notice.progress]
 bg = "#006B6B"
-fg = "#70C0B1"
+fg = "#33A999"
 
 [theme.prompt.cursor]
 bg = "#006B6B"
@@ -179,8 +179,8 @@ bg = "#373424"
 fg = "#DDDCCC"
 
 [theme.prompt.label]
-bg = "#006B6B"
-fg = "#DDDCCC"
+bg = "#33A999"
+fg = "#24201A"
 
 [theme.prompt.selected]
 bg = "#2AA198"
@@ -202,7 +202,7 @@ fg = "#7c7755"
 
 [theme.status.detail]
 bg = "#2AA198"
-fg = "#1D1F21"
+fg = "#24201A"
 
 [theme.status.label]
 bg = "#006B6B"
@@ -214,15 +214,15 @@ fg = "#DDDCCC"
 
 [theme.table.delete]
 bg = "#B58900" # Amber
-fg = "#1D1F21" 
+fg = "#24201A"
 
 [theme.table.header]
 bg = "#7c7755"
-fg = "#1D1F21"
+fg = "#24201A"
 
 [theme.table.header_sorted]
 bg = "#9C9977"
-fg = "#1D1F21"
+fg = "#24201A"
 modifiers = ["bold"]
 
 [theme.table.marked]
