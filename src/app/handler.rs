@@ -25,6 +25,7 @@ impl CommandHandler for App {
             Command::OpenPrompt(kind) => {
                 if matches!(kind, PromptAction::Delete(_)) {
                     let _ = self.clipboard.clear();
+                    return Command::ClearClipboard.into();
                 }
                 CommandResult::Handled
             }

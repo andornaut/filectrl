@@ -16,7 +16,6 @@ use crate::{
 };
 
 const COPY_PREFIX: &str = "[Copy] ";
-const DELETE_PREFIX: &str = "[Delete] ";
 const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filter] ";
@@ -54,15 +53,6 @@ pub(super) fn clipboard_widget<'a>(
         Span::styled(detail, style),
     ]);
 
-    create_notice_block(left, style, width, hint)
-}
-
-pub(super) fn delete_widget<'a>(theme: &Clipboard, width: u16, count: usize, hint: &'a str) -> Block<'a> {
-    let style = theme.delete();
-    let left = Line::from(vec![
-        Span::styled(DELETE_PREFIX, style.add_modifier(Modifier::BOLD)),
-        Span::styled(pluralize_items(count), style),
-    ]);
     create_notice_block(left, style, width, hint)
 }
 

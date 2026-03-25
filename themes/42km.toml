@@ -34,15 +34,15 @@ fg = "#728083"
 
 [theme.clipboard.copy]
 bg = "#03f688" # Green
-fg = "#1b1b1b" 
+fg = "#1b1b1b"
 
 [theme.clipboard.cut]
 bg = "#ff5c00" # Orange
-fg = "#1b1b1b" 
+fg = "#1b1b1b"
 
 [theme.clipboard.delete]
 bg = "#c4071c" # Red
-fg = "#f1f1f1" 
+fg = "#f1f1f1"
 
 [theme.file_modified_date.less_than_minute]
 fg = "#7289da" # Periwinkle
@@ -156,7 +156,7 @@ fg = "#c4071c"
 fg = "#728083"
 
 [theme.help.header]
-bg = "#728083"
+bg = "#7289da"
 fg = "#1b1b1b"
 
 [theme.help.actions]
@@ -164,6 +164,10 @@ fg = "#c0fe04"
 modifiers = ["bold"]
 
 [theme.help.shortcuts]
+fg = "#f1f1f1"
+
+[theme.prompt.delete]
+bg = "#c4071c" # Rust
 fg = "#f1f1f1"
 
 [theme.notice.filter]
