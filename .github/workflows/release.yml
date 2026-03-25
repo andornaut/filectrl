@@ -37,7 +37,7 @@ jobs:
         run: cargo build --release
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: filectrl-${{ matrix.os }}
           path: target/release/filectrl
@@ -51,16 +51,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Delete previous latest release
+      - name: Delete previous dev release
         if: github.ref == 'refs/heads/main'
         run: |
-          gh release delete latest --yes || true
-          git push --delete origin refs/tags/latest || true
+          gh release delete dev --yes || true
+          git push --delete origin refs/tags/dev || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -75,9 +75,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
-          name: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
+          tag_name: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref_name }}
+          name: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref_name }}
           body: ${{ github.ref == 'refs/heads/main' && 'Latest build from main branch' || '' }}
+          make_latest: ${{ github.ref == 'refs/heads/main' && 'false' || 'true' }}
           files: |
             release-assets/filectrl-linux
             release-assets/filectrl-macos
