@@ -40,17 +40,14 @@ fg = "#24201A"
 bg = "#b05533" # Rust
 fg = "#24201A"
 
-[theme.file_modified_date.greater_than_year]
-fg = "#FF0000" # Red
-
-[theme.file_modified_date.less_than_day]
-fg = "#00FF00" # Bright Green
+[theme.file_modified_date.less_than_minute]
+fg = "#87CEEB" # Sky Blue
 
 [theme.file_modified_date.less_than_hour]
 fg = "#00FFFF" # Cyan
 
-[theme.file_modified_date.less_than_minute]
-fg = "#87CEEB" # Sky Blue
+[theme.file_modified_date.less_than_day]
+fg = "#00FF00" # Bright Green
 
 [theme.file_modified_date.less_than_month]
 fg = "#FFFF00" # Yellow
@@ -58,11 +55,11 @@ fg = "#FFFF00" # Yellow
 [theme.file_modified_date.less_than_year]
 fg = "#FF00FF" # Magenta
 
+[theme.file_modified_date.greater_than_year]
+fg = "#FF0000" # Red
+
 [theme.file_size.bytes]
 fg = "#87CEEB" # Sky Blue
-
-[theme.file_size.gib]
-fg = "#FFFF00" # Yellow
 
 [theme.file_size.kib]
 fg = "#00FFFF" # Cyan
@@ -70,11 +67,14 @@ fg = "#00FFFF" # Cyan
 [theme.file_size.mib]
 fg = "#00FF00" # Bright Green
 
-[theme.file_size.pib]
-fg = "#FF0000" # Red
+[theme.file_size.gib]
+fg = "#FFFF00" # Yellow
 
 [theme.file_size.tib]
 fg = "#FF00FF" # Magenta
+
+[theme.file_size.pib]
+fg = "#FF0000" # Red
 
 [theme.file_type]
 # Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
