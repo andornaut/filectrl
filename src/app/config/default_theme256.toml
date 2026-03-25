@@ -183,6 +183,10 @@ fg = "44" # #00d7d7 - cyan
 bg = "30" # #008787 - teal
 fg = "234" # #1c1c1c
 
+[theme256.prompt.delete]
+bg = "136" # #af8700 - amber
+fg = "234" # #1c1c1c
+
 [theme256.prompt.input]
 bg = "234" # #1c1c1c
 fg = "252" # #d0d0d0

@@ -20,15 +20,6 @@ impl CommandHandler for NoticesView {
                 self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
-                self.pending_delete_count = 0;
-                CommandResult::Handled
-            }
-            Command::CancelPrompt | Command::ConfirmDelete => {
-                self.pending_delete_count = 0;
-                CommandResult::Handled
-            }
-            Command::OpenPrompt(PromptAction::Delete(count)) => {
-                self.pending_delete_count = *count;
                 CommandResult::Handled
             }
             Command::SetFilter(filter) => {
@@ -47,6 +38,14 @@ impl CommandHandler for NoticesView {
                 } else {
                     CommandResult::Handled
                 }
+            }
+            Command::OpenPrompt(PromptAction::Delete(_)) => {
+                self.hide_marked = true;
+                CommandResult::Handled
+            }
+            Command::CancelPrompt | Command::ConfirmDelete => {
+                self.hide_marked = false;
+                CommandResult::Handled
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
             _ => CommandResult::NotHandled,
@@ -68,7 +67,7 @@ impl CommandHandler for NoticesView {
                     Some(Notice::Clipboard(_))
                     | Some(Notice::Filter(_))
                     | Some(Notice::Marked(_))
-                    | Some(Notice::PendingDelete(_)) => Command::Reset.into(),
+                    => Command::Reset.into(),
                     Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }

@@ -1,5 +1,5 @@
 use super::StatusView;
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
 impl CommandHandler for StatusView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
