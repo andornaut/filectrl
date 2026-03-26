@@ -363,7 +363,7 @@ cargo build --release
 sudo cp ./target/release/filectrl /usr/local/bin/
 
 # Log to ./err
-RUST_LOG=debug cargo run -- fixtures/ 2>err
+RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
 ```
 
 ### Git hooks
