@@ -45,6 +45,7 @@ struct PlatformOpeners {
 
 #[derive(Debug, Deserialize)]
 pub struct UiConfig {
+    pub sort_directories_first: bool,
     pub double_click_interval_milliseconds: u16,
 }
 

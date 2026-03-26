@@ -29,6 +29,7 @@ open_selected_file = "open %s"
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
 double_click_interval_milliseconds = 300
+sort_directories_first = true
 
 # Keybindings for normal mode and prompt mode.
 # Arrow keys, Home/End, PageUp/PageDown, and Esc are always hardcoded.
