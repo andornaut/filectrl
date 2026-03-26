@@ -13,7 +13,7 @@ fg = "#93ada0"
 fg = "#c4071c"
 
 [theme.alert.info]
-fg = "#03f688"
+fg = "#93ada0"
 
 [theme.alert.warn]
 fg = "#ff5c00"
