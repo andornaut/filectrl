@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::columns::{SortColumn, SortDirection};
+use crate::app::config::Config;
 use crate::file_system::path_info::PathInfo;
 
 #[derive(Default)]
@@ -56,6 +57,10 @@ impl DirectoryContent {
         };
         if *sort_direction == SortDirection::Descending {
             items.reverse();
+        }
+
+        if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
+            items.sort_by_key(|path| !path.is_directory());
         }
 
         if !self.filter.is_empty() {
