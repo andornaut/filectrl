@@ -12,22 +12,36 @@ use crate::{
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
+            Command::CancelPrompt | Command::ConfirmDelete => {
+                self.hide_marked = false;
+                CommandResult::Handled
+            }
+            Command::OpenPrompt(PromptAction::Delete(_)) => {
+                self.hide_marked = true;
+                CommandResult::Handled
+            }
             Command::ClearClipboard => {
                 self.clipboard_entry = None;
                 CommandResult::Handled
             }
-            Command::NavigateDirectory(_, _) | Command::Reset => {
+            Command::NavigateDirectory(_, _) => {
+                self.filter.clear();
+                self.mark_count = 0;
+                CommandResult::Handled
+            }
+            Command::Progress(task) => self.update_tasks(task.clone()),
+            Command::Reset => {
                 self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
                 CommandResult::Handled
             }
-            Command::SetFilter(filter) => {
-                self.filter.clone_from(filter);
-                CommandResult::Handled
-            }
             Command::SetClipboard(entry) => {
                 self.clipboard_entry = Some(entry.clone());
+                CommandResult::Handled
+            }
+            Command::SetFilter(filter) => {
+                self.filter.clone_from(filter);
                 CommandResult::Handled
             }
             Command::SetMarkCount(count) => {
@@ -39,15 +53,6 @@ impl CommandHandler for NoticesView {
                     CommandResult::Handled
                 }
             }
-            Command::OpenPrompt(PromptAction::Delete(_)) => {
-                self.hide_marked = true;
-                CommandResult::Handled
-            }
-            Command::CancelPrompt | Command::ConfirmDelete => {
-                self.hide_marked = false;
-                CommandResult::Handled
-            }
-            Command::Progress(task) => self.update_tasks(task.clone()),
             _ => CommandResult::NotHandled,
         }
     }
@@ -66,8 +71,7 @@ impl CommandHandler for NoticesView {
                 match self.notices.get(y) {
                     Some(Notice::Clipboard(_))
                     | Some(Notice::Filter(_))
-                    | Some(Notice::Marked(_))
-                    => Command::Reset.into(),
+                    | Some(Notice::Marked(_)) => Command::Reset.into(),
                     Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }
