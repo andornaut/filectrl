@@ -152,5 +152,4 @@ mod tests {
             assert!(marks.contains(&i));
         }
     }
-
 }
