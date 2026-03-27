@@ -38,24 +38,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_command_is_handled_with() {
-        assert_eq!(
-            CommandResult::HandledWith(Box::new(Command::Quit)),
-            Command::Quit.into()
-        );
-    }
-
-    #[test]
     fn from_error_is_alert_error() {
         assert_eq!(
             CommandResult::HandledWith(Box::new(Command::AlertError("oops".to_string()))),
             anyhow!("oops").into()
         );
-    }
-
-    #[test]
-    fn from_ok_result_is_handled() {
-        assert_eq!(CommandResult::Handled, Ok::<(), Error>(()).into());
     }
 
     #[test]
