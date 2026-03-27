@@ -26,11 +26,11 @@ fg = "#404346"
 
 [theme.breadcrumbs.basename]
 bg = "#c0c8cf"
-fg = "#353a3c"
+fg = "#282a2c"
 modifiers = ["bold"]
 
 [theme.breadcrumbs.separator]
-fg = "#728083"
+fg = "#687880"
 
 [theme.clipboard.copy]
 bg = "#00f080" # Green
@@ -48,7 +48,7 @@ fg = "#f1f1f1"
 fg = "#4893c2" # Steel Blue
 
 [theme.file_modified_date.less_than_hour]
-fg = "#41a0eb" # Blue
+fg = "#4893c2" # Steel Blue
 
 [theme.file_modified_date.less_than_day]
 fg = "#00f080" # Green
@@ -66,7 +66,7 @@ fg = "#c4071c" # Red
 fg = "#4893c2" # Steel Blue
 
 [theme.file_size.kib]
-fg = "#41a0eb" # Blue
+fg = "#4893c2" # Steel Blue
 
 [theme.file_size.mib]
 fg = "#00f080" # Green
@@ -95,14 +95,14 @@ fg = "#93ada0"
 modifiers = ["bold"]
 
 [theme.file_type.directory]
-fg = "#41a0eb" # Blue
+fg = "#4893c2" # Steel Blue
 
 [theme.file_type.directory_other_writable]
 bg = "#282a2c"
-fg = "#41a0eb"
+fg = "#4893c2"
 
 [theme.file_type.directory_sticky]
-bg = "#41a0eb"
+bg = "#4893c2"
 fg = "#f1f1f1"
 
 [theme.file_type.directory_sticky_other_writable]
@@ -153,7 +153,7 @@ bg = "#282a2c"
 fg = "#c4071c"
 
 [theme.help]
-fg = "#728083"
+fg = "#687880"
 
 [theme.help.header]
 bg = "#4893c2"
@@ -187,7 +187,7 @@ bg = "#282a2c"
 fg = "#f1f1f1"
 
 [theme.prompt.label]
-bg = "#41a0eb"
+bg = "#4893c2"
 fg = "#f1f1f1"
 
 [theme.prompt.selected]
@@ -213,7 +213,7 @@ bg = "#4893c2"
 fg = "#282a2c"
 
 [theme.status.label]
-bg = "#545860"
+bg = "#687880"
 fg = "#f1f1f1"
 
 [theme.table.body]
