@@ -2,7 +2,7 @@
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
-[![IBM1970 theme](./screenshots/IBM1970.png)](./screenshots/IBM1970.png)
+[![42KM theme](./screenshots/42KM.png)](./screenshots/42KM.png)
 
 ## Features
 
