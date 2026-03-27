@@ -19,13 +19,13 @@ fg = "#93ada0"
 fg = "#ff5c00"
 
 [theme.breadcrumbs]
-bg = "#c1c7c7"
+bg = "#c0c8cf"
 
 [theme.breadcrumbs.ancestor]
 fg = "#404346"
 
 [theme.breadcrumbs.basename]
-bg = "#c1c7c7"
+bg = "#c0c8cf"
 fg = "#353a3c"
 modifiers = ["bold"]
 
@@ -33,28 +33,28 @@ modifiers = ["bold"]
 fg = "#728083"
 
 [theme.clipboard.copy]
-bg = "#03f688" # Green
-fg = "#1b1b1b"
+bg = "#00f080" # Green
+fg = "#282a2c"
 
 [theme.clipboard.cut]
 bg = "#ff5c00" # Orange
-fg = "#1b1b1b"
+fg = "#282a2c"
 
 [theme.clipboard.delete]
 bg = "#c4071c" # Red
 fg = "#f1f1f1"
 
 [theme.file_modified_date.less_than_minute]
-fg = "#7289da" # Periwinkle
+fg = "#4893c2" # Steel Blue
 
 [theme.file_modified_date.less_than_hour]
 fg = "#41a0eb" # Blue
 
 [theme.file_modified_date.less_than_day]
-fg = "#03f688" # Green
+fg = "#00f080" # Green
 
 [theme.file_modified_date.less_than_month]
-fg = "#c0fe04" # Lime
+fg = "#c2fe0b" # Lime
 
 [theme.file_modified_date.less_than_year]
 fg = "#ff69b4" # Hot Pink
@@ -63,16 +63,16 @@ fg = "#ff69b4" # Hot Pink
 fg = "#c4071c" # Red
 
 [theme.file_size.bytes]
-fg = "#7289da" # Periwinkle
+fg = "#4893c2" # Steel Blue
 
 [theme.file_size.kib]
 fg = "#41a0eb" # Blue
 
 [theme.file_size.mib]
-fg = "#03f688" # Green
+fg = "#00f080" # Green
 
 [theme.file_size.gib]
-fg = "#c0fe04" # Lime
+fg = "#c2fe0b" # Lime
 
 [theme.file_size.tib]
 fg = "#ff69b4" # Hot Pink
@@ -106,8 +106,8 @@ bg = "#41a0eb"
 fg = "#f1f1f1"
 
 [theme.file_type.directory_sticky_other_writable]
-bg = "#03f688"
-fg = "#1b1b1b"
+bg = "#00f080"
+fg = "#282a2c"
 
 [theme.file_type.door]
 bg = "#404346"
@@ -115,13 +115,13 @@ fg = "#ff5c00"
 modifiers = ["bold"]
 
 [theme.file_type.executable]
-fg = "#03f688"
+fg = "#00f080"
 modifiers = ["bold"]
 
 [theme.file_type.missing]
 
 [theme.file_type.normal_file]
-fg = "#c1c7c7"
+fg = "#c0c8cf"
 
 [theme.file_type.pipe]
 bg = "#404346"
@@ -129,11 +129,11 @@ fg = "#ff5c00"
 modifiers = ["bold"]
 
 [theme.file_type.regular_file]
-fg = "#c1c7c7"
+fg = "#c0c8cf"
 
 [theme.file_type.setgid]
 bg = "#ff5c00"
-fg = "#1b1b1b"
+fg = "#282a2c"
 
 [theme.file_type.setuid]
 bg = "#c4071c"
@@ -145,7 +145,7 @@ fg = "#ff5c00"
 modifiers = ["bold"]
 
 [theme.file_type.symlink]
-fg = "#c0fe04"
+fg = "#c2fe0b"
 modifiers = ["bold"]
 
 [theme.file_type.symlink_broken]
@@ -156,11 +156,11 @@ fg = "#c4071c"
 fg = "#728083"
 
 [theme.help.header]
-bg = "#7289da"
-fg = "#1b1b1b"
+bg = "#4893c2"
+fg = "#282a2c"
 
 [theme.help.actions]
-fg = "#c0fe04"
+fg = "#c2fe0b"
 modifiers = ["bold"]
 
 [theme.help.shortcuts]
@@ -176,11 +176,11 @@ fg = "#f1f1f1"
 
 [theme.notice.progress]
 bg = "#545860"
-fg = "#c0fe04"
+fg = "#c2fe0b"
 
 [theme.prompt.cursor]
-bg = "#c0fe04"
-fg = "#1b1b1b"
+bg = "#c2fe0b"
+fg = "#282a2c"
 
 [theme.prompt.input]
 bg = "#282a2c"
@@ -209,8 +209,8 @@ fg = "#93ada0"
 fg = "#545860"
 
 [theme.status.detail]
-bg = "#7289da"
-fg = "#1b1b1b"
+bg = "#4893c2"
+fg = "#282a2c"
 
 [theme.status.label]
 bg = "#545860"
@@ -226,11 +226,11 @@ fg = "#f1f1f1"
 
 [theme.table.header]
 bg = "#545860"
-fg = "#c1c7c7"
+fg = "#c0c8cf"
 
 [theme.table.header_sorted]
 bg = "#7c48e2"
-fg = "#c0fe04"
+fg = "#c2fe0b"
 modifiers = ["bold"]
 
 [theme.table.marked]
