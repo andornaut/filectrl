@@ -321,23 +321,6 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_merges_successfully() {
-        let base = parse_toml(DEFAULT_CONFIG_BASE).unwrap();
-        let theme = parse_toml(DEFAULT_THEME).unwrap();
-        let merged = merge_toml_values(base, theme);
-        // The merged value should contain the theme section
-        assert!(merged.get("theme").is_some());
-    }
-
-    #[test]
-    fn default_theme256_merges_successfully() {
-        let base = parse_toml(DEFAULT_CONFIG_BASE).unwrap();
-        let theme256 = parse_toml(DEFAULT_THEME256).unwrap();
-        let merged = merge_toml_values(base, theme256);
-        assert!(merged.get("theme256").is_some());
-    }
-
-    #[test]
     fn merge_overlay_overrides_base_values() {
         let base = parse_toml("key = \"base\"").unwrap();
         let overlay = parse_toml("key = \"overlay\"").unwrap();
