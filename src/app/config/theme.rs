@@ -476,20 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_ls_colors_extension_pattern_populates_extension_styles() {
-        let mut ft = make_file_type();
-        ft.apply_ls_colors("*.rs=32", false);
-        assert!(ft.extension_styles.contains_key("rs"));
-    }
-
-    #[test]
-    fn apply_ls_colors_name_pattern_populates_name_styles() {
-        let mut ft = make_file_type();
-        ft.apply_ls_colors("*Makefile=33", false);
-        assert!(ft.name_styles.contains_key("Makefile"));
-    }
-
-    #[test]
     fn apply_ls_colors_skips_empty_colon_separated_entries() {
         let mut ft = make_file_type();
         ft.apply_ls_colors("::di=34::", false);

@@ -1,17 +1,17 @@
 use std::{
     path::PathBuf,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
 use log::{debug, error, warn};
-use notify::{recommended_watcher, Event, RecommendedWatcher, Watcher};
+use notify::{Event, RecommendedWatcher, Watcher, recommended_watcher};
 
 use crate::{command::Command, file_system::debounce};
 
-const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(500);
+const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(250);
 
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,

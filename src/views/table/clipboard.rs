@@ -22,7 +22,7 @@ impl TableView {
             Command::SetClipboard(make_entry(self.marked_paths())).into()
         } else {
             match self.selected_path() {
-                None => return Command::AlertWarn("No file selected".into()).into(),
+                None => Command::AlertWarn("No file selected".into()).into(),
                 Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
             }
         }

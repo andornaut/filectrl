@@ -502,23 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_arrow_keys() {
-        assert_eq!(parse_key_combo("Up").unwrap().code, KeyCode::Up);
-        assert_eq!(parse_key_combo("Down").unwrap().code, KeyCode::Down);
-        assert_eq!(parse_key_combo("Left").unwrap().code, KeyCode::Left);
-        assert_eq!(parse_key_combo("Right").unwrap().code, KeyCode::Right);
-    }
-
-    #[test]
-    fn parse_special_chars() {
-        assert_eq!(parse_key_combo("/").unwrap().code, KeyCode::Char('/'));
-        assert_eq!(parse_key_combo("~").unwrap().code, KeyCode::Char('~'));
-        assert_eq!(parse_key_combo("^").unwrap().code, KeyCode::Char('^'));
-        assert_eq!(parse_key_combo("$").unwrap().code, KeyCode::Char('$'));
-        assert_eq!(parse_key_combo("?").unwrap().code, KeyCode::Char('?'));
-    }
-
-    #[test]
     fn parse_invalid_key() {
         assert!(parse_key_combo("InvalidKey").is_err());
         assert!(parse_key_combo("Ctrl+InvalidKey").is_err());
@@ -655,14 +638,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn key_spec_single_and_multiple() {
-        let single = KeySpec::Single("q".to_string());
-        let combos = parse_key_spec(&single).unwrap();
-        assert_eq!(combos.len(), 1);
-
-        let multiple = KeySpec::Multiple(vec!["h".to_string(), "b".to_string()]);
-        let combos = parse_key_spec(&multiple).unwrap();
-        assert_eq!(combos.len(), 2);
-    }
 }

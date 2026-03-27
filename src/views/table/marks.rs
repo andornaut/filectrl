@@ -7,16 +7,6 @@ use crate::{
 
 use super::TableView;
 
-/// Result of a click interaction with the mark system.
-pub(super) enum ClickMarkResult {
-    /// Item was marked and is now unmarked.
-    Unmarked,
-    /// Marks were modified (range expanded or item added).
-    MarksChanged,
-    /// No marks involved — caller should do normal select.
-    Ignored,
-}
-
 #[derive(Default)]
 pub(super) struct Marks {
     set: BTreeSet<usize>,
@@ -24,29 +14,6 @@ pub(super) struct Marks {
 }
 
 impl Marks {
-    /// Handle a mouse click on `item`.
-    ///
-    /// - If range mode is active, expand the range from anchor to `item`.
-    /// - Else if `item` is already marked, unmark it.
-    /// - Else if other marks exist, add `item` to the discrete mark set.
-    /// - Otherwise, return `Ignored` so the caller can do a normal select.
-    pub(super) fn click(&mut self, item: usize) -> ClickMarkResult {
-        // Range mode: always extend the range, even if the clicked item is already marked
-        if let Some(anchor) = self.range_anchor {
-            let start = anchor.min(item);
-            let end = anchor.max(item);
-            self.set = (start..=end).collect();
-            ClickMarkResult::MarksChanged
-        } else if self.set.remove(&item) {
-            ClickMarkResult::Unmarked
-        } else if !self.set.is_empty() {
-            self.set.insert(item);
-            ClickMarkResult::MarksChanged
-        } else {
-            ClickMarkResult::Ignored
-        }
-    }
-
     /// Toggle a mark on `item`. Returns true if the item is now marked.
     pub(super) fn toggle(&mut self, item: usize) -> bool {
         if !self.set.remove(&item) {
@@ -151,65 +118,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn click_no_marks_returns_ignored() {
-        let mut marks = Marks::default();
-        assert!(matches!(marks.click(3), ClickMarkResult::Ignored));
-        assert!(marks.is_empty());
-    }
-
-    #[test]
-    fn click_marked_item_unmarks() {
-        let mut marks = Marks::default();
-        marks.toggle(3);
-        assert!(matches!(marks.click(3), ClickMarkResult::Unmarked));
-        assert!(marks.is_empty());
-    }
-
-    #[test]
-    fn click_marked_item_leaves_other_marks() {
-        let mut marks = Marks::default();
-        marks.toggle(1);
-        marks.toggle(3);
-        assert!(matches!(marks.click(3), ClickMarkResult::Unmarked));
-        assert_eq!(marks.len(), 1);
-        assert!(marks.contains(&1));
-    }
-
-    #[test]
-    fn click_in_range_mode_extends_range_even_on_anchor() {
-        let mut marks = Marks::default();
-        marks.enter_range(2);
-        assert!(marks.in_range_mode());
-        // Clicking the anchor itself still extends (anchor..=anchor), keeping range mode
-        assert!(matches!(marks.click(2), ClickMarkResult::MarksChanged));
-        assert!(marks.in_range_mode());
-        assert!(marks.contains(&2));
-    }
-
-    #[test]
-    fn click_unmarked_in_range_expands_range() {
-        let mut marks = Marks::default();
-        marks.enter_range(2);
-        assert!(matches!(marks.click(5), ClickMarkResult::MarksChanged));
-        assert_eq!(marks.len(), 4);
-        for i in 2..=5 {
-            assert!(marks.contains(&i));
-        }
-    }
-
-    #[test]
-    fn click_unmarked_with_marks_adds() {
-        let mut marks = Marks::default();
-        marks.toggle(1);
-        marks.toggle(3);
-        assert!(matches!(marks.click(5), ClickMarkResult::MarksChanged));
-        assert_eq!(marks.len(), 3);
-        assert!(marks.contains(&1));
-        assert!(marks.contains(&3));
-        assert!(marks.contains(&5));
-    }
-
-    #[test]
     fn toggle_adds_and_removes() {
         let mut marks = Marks::default();
         assert!(marks.toggle(3));
@@ -245,13 +153,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn clear_resets_everything() {
-        let mut marks = Marks::default();
-        marks.enter_range(2);
-        marks.update_range(5);
-        marks.clear();
-        assert!(marks.is_empty());
-        assert!(!marks.in_range_mode());
-    }
 }

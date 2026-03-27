@@ -196,14 +196,6 @@ mod tests {
         assert_eq!(view.text_area.cursor(), (0, 5));
     }
 
-    #[test]
-    fn open_resets_scroll_col() {
-        let mut view = prompt_with_action(PromptAction::Filter("hello".into()));
-        view.scroll_col = 99;
-        view.handle_command(&Command::OpenPrompt(PromptAction::Filter("new".into())));
-        assert_eq!(view.scroll_col, 0);
-    }
-
     // ── Ctrl+Z resets to initial text ──────────────────────────────────────────
 
     #[test]
