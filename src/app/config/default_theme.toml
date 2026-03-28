@@ -236,3 +236,242 @@ fg = "#DDDCCC"
 [theme.table.selected]
 bg = "#006B6B"
 fg = "#DDDCCC"
+
+[theme256]
+# 256-color variant of the IBM1970 theme
+bg = "237" # #3a3a3a - dark gray (approx #423F2E)
+fg = "253" # #dadada - light gray (approx #DDDCCC)
+
+[theme256.alert]
+fg = "144" # #afaf87 - olive sage (approx #9C9977)
+
+[theme256.alert.error]
+fg = "160" # #d70000 - red
+
+[theme256.alert.info]
+fg = "106" # #87af00 - green (approx #859900)
+
+[theme256.alert.warn]
+fg = "130" # #af5f00 - rust (approx #b05533)
+
+[theme256.breadcrumbs]
+bg = "236" # #303030 - dark (approx #373424)
+
+[theme256.breadcrumbs.ancestor]
+fg = "253" # #dadada
+
+[theme256.breadcrumbs.basename]
+bg = "30" # #008787 - dark teal (approx #006B6B)
+fg = "253" # #dadada
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.separator]
+fg = "144" # #afaf87 - olive sage (approx #9C9977)
+
+[theme256.clipboard.copy]
+bg = "106" # #87af00 - green (approx #859900)
+fg = "235" # #262626
+
+[theme256.clipboard.cut]
+bg = "136" # #af8700 - amber (approx #B58900)
+fg = "235" # #262626
+
+[theme256.clipboard.delete]
+bg = "130" # #af5f00 - rust (approx #b05533)
+fg = "235" # #262626
+
+[theme256.file_modified_date.less_than_minute]
+fg = "117" # #87d7ff - sky blue (approx #87CEEB)
+
+[theme256.file_modified_date.less_than_hour]
+fg = "51" # #00ffff - cyan
+
+[theme256.file_modified_date.less_than_day]
+fg = "46" # #00ff00 - bright green
+
+[theme256.file_modified_date.less_than_month]
+fg = "226" # #ffff00 - yellow
+
+[theme256.file_modified_date.less_than_year]
+fg = "201" # #ff00ff - magenta
+
+[theme256.file_modified_date.greater_than_year]
+fg = "196" # #ff0000 - red
+
+[theme256.file_size.bytes]
+fg = "117" # #87d7ff - sky blue
+
+[theme256.file_size.kib]
+fg = "51" # #00ffff - cyan
+
+[theme256.file_size.mib]
+fg = "46" # #00ff00 - bright green
+
+[theme256.file_size.gib]
+fg = "226" # #ffff00 - yellow
+
+[theme256.file_size.tib]
+fg = "201" # #ff00ff - magenta
+
+[theme256.file_size.pib]
+fg = "196" # #ff0000 - red
+
+[theme256.file_type]
+ls_colors_take_precedence = false
+
+[theme256.file_type.block_device]
+bg = "230" # #ffffd7
+fg = "244" # #808080
+modifiers = ["bold"]
+
+[theme256.file_type.character_device]
+bg = "230" # #ffffd7
+fg = "244" # #808080
+modifiers = ["bold"]
+
+[theme256.file_type.directory]
+fg = "33" # #0087ff - blue
+
+[theme256.file_type.directory_other_writable]
+bg = "235" # #262626
+fg = "33" # #0087ff
+
+[theme256.file_type.directory_sticky]
+bg = "33" # #0087ff
+fg = "230" # #ffffd7
+
+[theme256.file_type.directory_sticky_other_writable]
+bg = "64" # #5f8700
+fg = "230" # #ffffd7
+
+[theme256.file_type.door]
+bg = "230" # #ffffd7
+fg = "136" # #af8700
+modifiers = ["bold"]
+
+[theme256.file_type.executable]
+fg = "64" # #5f8700
+modifiers = ["bold"]
+
+[theme256.file_type.missing]
+
+[theme256.file_type.normal_file]
+fg = "254" # #e4e4e4
+
+[theme256.file_type.pipe]
+bg = "230" # #ffffd7
+fg = "136" # #af8700
+modifiers = ["bold"]
+
+[theme256.file_type.regular_file]
+fg = "254" # #e4e4e4
+
+[theme256.file_type.setgid]
+bg = "136" # #af8700
+fg = "230" # #ffffd7
+
+[theme256.file_type.setuid]
+bg = "160" # #d70000
+fg = "230" # #ffffd7
+
+[theme256.file_type.socket]
+bg = "230" # #ffffd7
+fg = "136" # #af8700
+modifiers = ["bold"]
+
+[theme256.file_type.symlink]
+fg = "37" # #00afaf - cyan
+modifiers = ["bold"]
+
+[theme256.file_type.symlink_broken]
+bg = "235" # #262626
+fg = "160" # #d70000
+
+[theme256.help]
+fg = "144" # #afaf87 - olive sage
+
+[theme256.help.header]
+bg = "144" # #afaf87
+fg = "235" # #262626
+
+[theme256.help.actions]
+fg = "253" # #dadada
+modifiers = ["bold"]
+
+[theme256.help.shortcuts]
+fg = "253" # #dadada
+
+[theme256.notice.filter]
+bg = "73" # #5fafaf - teal (approx #33A999)
+fg = "235" # #262626
+
+[theme256.notice.progress]
+bg = "30" # #008787 - dark teal
+fg = "73" # #5fafaf - teal
+
+[theme256.prompt.cursor]
+bg = "30" # #008787
+fg = "253" # #dadada
+
+[theme256.prompt.delete]
+bg = "130" # #af5f00 - rust
+fg = "235" # #262626
+
+[theme256.prompt.input]
+bg = "236" # #303030
+fg = "253" # #dadada
+
+[theme256.prompt.label]
+bg = "73" # #5fafaf - teal
+fg = "235" # #262626
+
+[theme256.prompt.selected]
+bg = "37" # #00afaf - cyan (approx #2AA198)
+fg = "253" # #dadada
+
+[theme256.scrollbar]
+show_ends = false
+
+[theme256.scrollbar.ends]
+bg = "100" # #878700 - darker olive (approx #7c7755)
+fg = "236" # #303030
+
+[theme256.scrollbar.thumb]
+bg = "236" # #303030
+fg = "144" # #afaf87
+
+[theme256.scrollbar.track]
+fg = "100" # #878700
+
+[theme256.status.detail]
+bg = "37" # #00afaf - cyan (approx #2AA198)
+fg = "235" # #262626
+
+[theme256.status.label]
+bg = "30" # #008787 - dark teal
+fg = "253" # #dadada
+
+[theme256.table.body]
+bg = "237" # #3a3a3a
+fg = "253" # #dadada
+
+[theme256.table.delete]
+bg = "136" # #af8700 - amber
+fg = "235" # #262626
+
+[theme256.table.header]
+bg = "100" # #878700 - darker olive (approx #7c7755)
+fg = "235" # #262626
+
+[theme256.table.header_sorted]
+bg = "144" # #afaf87 - olive sage
+fg = "235" # #262626
+modifiers = ["bold"]
+
+[theme256.table.marked]
+bg = "37" # #00afaf - cyan (approx #2AA198)
+fg = "253" # #dadada
+
+[theme256.table.selected]
+bg = "30" # #008787 - dark teal
+fg = "253" # #dadada
