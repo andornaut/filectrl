@@ -240,3 +240,242 @@ fg = "#f1f1f1"
 [theme.table.selected]
 bg = "#4034c0"
 fg = "#f1f1f1"
+
+[theme256]
+# 256-color variant of the 42km theme
+bg = "237" # #3a3a3a - dark gray (approx #353a3c)
+fg = "255" # #eeeeee - near white (approx #f1f1f1)
+
+[theme256.alert]
+fg = "108" # #87af87 - sage (approx #93ada0)
+
+[theme256.alert.error]
+fg = "160" # #d70000 - red
+
+[theme256.alert.info]
+fg = "108" # #87af87 - sage
+
+[theme256.alert.warn]
+fg = "202" # #ff5f00 - orange
+
+[theme256.breadcrumbs]
+bg = "251" # #c6c6c6 (approx #c0c8cf)
+
+[theme256.breadcrumbs.ancestor]
+fg = "238" # #444444 (approx #404346)
+
+[theme256.breadcrumbs.basename]
+bg = "251" # #c6c6c6
+fg = "235" # #262626 (approx #282a2c)
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.separator]
+fg = "66" # #5f8787 - steel gray (approx #687880)
+
+[theme256.clipboard.copy]
+bg = "48" # #00ff87 - green (approx #00f080)
+fg = "235" # #262626
+
+[theme256.clipboard.cut]
+bg = "202" # #ff5f00 - orange (approx #ff5c00)
+fg = "235" # #262626
+
+[theme256.clipboard.delete]
+bg = "160" # #d70000 - red (approx #c4071c)
+fg = "255" # #eeeeee
+
+[theme256.file_modified_date.less_than_minute]
+fg = "74" # #5fafd7 - steel blue (approx #4893c2)
+
+[theme256.file_modified_date.less_than_hour]
+fg = "74" # #5fafd7 - steel blue
+
+[theme256.file_modified_date.less_than_day]
+fg = "48" # #00ff87 - green
+
+[theme256.file_modified_date.less_than_month]
+fg = "190" # #d7ff00 - lime (approx #c2fe0b)
+
+[theme256.file_modified_date.less_than_year]
+fg = "205" # #ff5faf - hot pink (approx #ff69b4)
+
+[theme256.file_modified_date.greater_than_year]
+fg = "160" # #d70000 - red
+
+[theme256.file_size.bytes]
+fg = "74" # #5fafd7 - steel blue
+
+[theme256.file_size.kib]
+fg = "74" # #5fafd7 - steel blue
+
+[theme256.file_size.mib]
+fg = "48" # #00ff87 - green
+
+[theme256.file_size.gib]
+fg = "190" # #d7ff00 - lime
+
+[theme256.file_size.tib]
+fg = "205" # #ff5faf - hot pink
+
+[theme256.file_size.pib]
+fg = "160" # #d70000 - red
+
+[theme256.file_type]
+ls_colors_take_precedence = false
+
+[theme256.file_type.block_device]
+bg = "238" # #444444 (approx #404346)
+fg = "108" # #87af87 - sage
+modifiers = ["bold"]
+
+[theme256.file_type.character_device]
+bg = "238" # #444444
+fg = "108" # #87af87 - sage
+modifiers = ["bold"]
+
+[theme256.file_type.directory]
+fg = "74" # #5fafd7 - steel blue
+
+[theme256.file_type.directory_other_writable]
+bg = "235" # #262626
+fg = "74" # #5fafd7
+
+[theme256.file_type.directory_sticky]
+bg = "74" # #5fafd7
+fg = "255" # #eeeeee
+
+[theme256.file_type.directory_sticky_other_writable]
+bg = "48" # #00ff87
+fg = "235" # #262626
+
+[theme256.file_type.door]
+bg = "238" # #444444
+fg = "202" # #ff5f00 - orange
+modifiers = ["bold"]
+
+[theme256.file_type.executable]
+fg = "48" # #00ff87 - green
+modifiers = ["bold"]
+
+[theme256.file_type.missing]
+
+[theme256.file_type.normal_file]
+fg = "251" # #c6c6c6 (approx #c0c8cf)
+
+[theme256.file_type.pipe]
+bg = "238" # #444444
+fg = "202" # #ff5f00 - orange
+modifiers = ["bold"]
+
+[theme256.file_type.regular_file]
+fg = "251" # #c6c6c6
+
+[theme256.file_type.setgid]
+bg = "202" # #ff5f00 - orange
+fg = "235" # #262626
+
+[theme256.file_type.setuid]
+bg = "160" # #d70000 - red
+fg = "255" # #eeeeee
+
+[theme256.file_type.socket]
+bg = "238" # #444444
+fg = "202" # #ff5f00 - orange
+modifiers = ["bold"]
+
+[theme256.file_type.symlink]
+fg = "190" # #d7ff00 - lime (approx #c2fe0b)
+modifiers = ["bold"]
+
+[theme256.file_type.symlink_broken]
+bg = "235" # #262626
+fg = "160" # #d70000
+
+[theme256.help]
+fg = "66" # #5f8787 - steel gray
+
+[theme256.help.header]
+bg = "74" # #5fafd7 - steel blue
+fg = "235" # #262626
+
+[theme256.help.actions]
+fg = "190" # #d7ff00 - lime
+modifiers = ["bold"]
+
+[theme256.help.shortcuts]
+fg = "255" # #eeeeee
+
+[theme256.prompt.delete]
+bg = "160" # #d70000 - red
+fg = "255" # #eeeeee
+
+[theme256.notice.filter]
+bg = "98" # #875fd7 - purple (approx #7c48e2)
+fg = "255" # #eeeeee
+
+[theme256.notice.progress]
+bg = "240" # #585858 (approx #545860)
+fg = "190" # #d7ff00 - lime
+
+[theme256.prompt.cursor]
+bg = "190" # #d7ff00 - lime (approx #c2fe0b)
+fg = "235" # #262626
+
+[theme256.prompt.input]
+bg = "235" # #262626
+fg = "255" # #eeeeee
+
+[theme256.prompt.label]
+bg = "74" # #5fafd7 - steel blue
+fg = "255" # #eeeeee
+
+[theme256.prompt.selected]
+bg = "62" # #5f5fd7 - dark purple (approx #4034c0)
+fg = "255" # #eeeeee
+
+[theme256.scrollbar]
+show_ends = false
+
+[theme256.scrollbar.ends]
+bg = "108" # #87af87 - sage
+fg = "235" # #262626
+
+[theme256.scrollbar.thumb]
+bg = "235" # #262626
+fg = "108" # #87af87 - sage
+
+[theme256.scrollbar.track]
+fg = "240" # #585858
+
+[theme256.status.detail]
+bg = "74" # #5fafd7 - steel blue
+fg = "235" # #262626
+
+[theme256.status.label]
+bg = "66" # #5f8787 - steel gray (approx #687880)
+fg = "255" # #eeeeee
+
+[theme256.table.body]
+bg = "237" # #3a3a3a
+fg = "255" # #eeeeee
+
+[theme256.table.delete]
+bg = "160" # #d70000 - red
+fg = "255" # #eeeeee
+
+[theme256.table.header]
+bg = "240" # #585858 (approx #545860)
+fg = "251" # #c6c6c6
+
+[theme256.table.header_sorted]
+bg = "98" # #875fd7 - purple
+fg = "190" # #d7ff00 - lime
+modifiers = ["bold"]
+
+[theme256.table.marked]
+bg = "98" # #875fd7 - purple
+fg = "255" # #eeeeee
+
+[theme256.table.selected]
+bg = "62" # #5f5fd7 - dark purple
+fg = "255" # #eeeeee
