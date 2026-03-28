@@ -19,9 +19,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
 const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
-const DEFAULT_THEME256: &str = include_str!("config/default_theme256.toml");
 const DEFAULT_THEME_FILENAME: &str = "theme.toml";
-const DEFAULT_THEME256_FILENAME: &str = "theme256.toml";
 
 #[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
@@ -155,12 +153,6 @@ impl Config {
         fs::write(&theme_path, DEFAULT_THEME)
             .map_err(|error| anyhow!("Cannot write theme file to {theme_path:?}: {error}"))?;
         info!("Wrote the default theme to {theme_path:?}");
-
-        let theme256_path = dir.join(DEFAULT_THEME256_FILENAME);
-        fs::write(&theme256_path, DEFAULT_THEME256).map_err(|error| {
-            anyhow!("Cannot write 256-color theme file to {theme256_path:?}: {error}")
-        })?;
-        info!("Wrote the default 256-color theme to {theme256_path:?}");
         Ok(())
     }
 
@@ -284,13 +276,12 @@ fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Va
     Ok(value)
 }
 
-/// Merges the embedded default config from its three source files:
-/// base config + truecolor theme + 256-color theme.
+/// Merges the embedded default config from its two source files:
+/// base config + theme (which includes both truecolor and 256-color variants).
 fn merge_default_config() -> Result<Value> {
     let base = parse_toml(DEFAULT_CONFIG_BASE)?;
     let theme = parse_toml(DEFAULT_THEME)?;
-    let theme256 = parse_toml(DEFAULT_THEME256)?;
-    Ok(merge_toml_values(merge_toml_values(base, theme), theme256))
+    Ok(merge_toml_values(base, theme))
 }
 
 /// Deep-merges two TOML values. Tables are merged recursively;
