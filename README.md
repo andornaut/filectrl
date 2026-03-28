@@ -358,7 +358,7 @@ cargo fix --allow-dirty --allow-staged
 cargo test
 cargo run
 cargo build --release
-./target/debug/filectrl
+./target/release/filectrl
 sudo cp ./target/release/filectrl /usr/local/bin/
 
 # Log to ./err
