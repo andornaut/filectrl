@@ -125,7 +125,8 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path, true)
                 } else {
-                    open_in(&path, &self.open_selected_file_template).into()
+                    open_in(&path, &self.open_selected_file_template, self.command_tx.clone())
+                        .into()
                 }
             }
             Err(err) => err.into(),
@@ -133,11 +134,21 @@ impl FileSystem {
     }
 
     fn open_current_directory(&self) -> CommandResult {
-        open_in(self.current_directory(), &self.open_current_directory_template).into()
+        open_in(
+            self.current_directory(),
+            &self.open_current_directory_template,
+            self.command_tx.clone(),
+        )
+        .into()
     }
 
     fn open_new_window(&self) -> CommandResult {
-        open_in(self.current_directory(), &self.open_new_window_template).into()
+        open_in(
+            self.current_directory(),
+            &self.open_new_window_template,
+            self.command_tx.clone(),
+        )
+        .into()
     }
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
