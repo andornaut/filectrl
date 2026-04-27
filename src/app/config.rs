@@ -161,9 +161,9 @@ impl Config {
         config_dir: Option<PathBuf>,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
-        let mut value = parse_toml(content)?;
+        let user_value = parse_toml(content)?;
+        let mut value = merge_toml_values(merge_default_config()?, user_value);
 
-        // Process include_files: merge each include on top of the base config
         let include_files = value
             .get("include_files")
             .and_then(|v| v.as_array())
@@ -326,5 +326,14 @@ mod tests {
         let merged = merge_toml_values(base, overlay);
         assert_eq!(merged.get("a").unwrap().as_integer().unwrap(), 1);
         assert_eq!(merged.get("b").unwrap().as_integer().unwrap(), 3);
+    }
+
+    #[test]
+    fn partial_user_config_merges_with_defaults() {
+        let partial = r#"
+[openers.linux]
+open_current_directory = "alacritty --working-directory %s"
+"#;
+        Config::parse(partial, None, &[]).unwrap();
     }
 }
