@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 use anyhow::Result;
 use argh::FromArgs;
@@ -35,6 +35,11 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    if env::args().any(|a| a == "--version" || a == "-V") {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let args: Args = argh::from_env();
 
     if args.write_default_config {
