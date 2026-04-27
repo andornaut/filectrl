@@ -2,13 +2,17 @@ use std::{
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Child, Stdio},
+    sync::mpsc::Sender,
+    thread,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
+use crate::command::Command;
 
 pub(super) fn cd(directory: &PathInfo) -> Result<(Vec<PathInfo>, usize)> {
     info!("Changing directory to {directory:?}");
@@ -33,19 +37,33 @@ pub(super) fn cd(directory: &PathInfo) -> Result<(Vec<PathInfo>, usize)> {
     Ok((children.into_iter().flatten().collect(), error_count))
 }
 
-/// Run a user-configured command template (e.g. `"xdg-open %s"`) with the
-/// file path substituted in. We delegate to `sh -c` rather than splitting the
-/// template ourselves, because templates can contain shell features (pipes,
-/// env vars, subcommands) that would be difficult to parse correctly.
-/// The path is single-quote escaped via `shell_words::quote` to prevent injection.
-pub(super) fn open_in(path: &PathInfo, template: &str) -> Result<()> {
+pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Command>) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
     if template.is_empty() {
         return Ok(());
     }
     let command = template.replace("%s", &shell_words::quote(&path.path));
-    run_detached("sh", ["-c", &command])
-        .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))
+    let mut child = spawn_detached("sh", ["-c", &command])
+        .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))?;
+
+    // Catch commands that fail immediately (e.g. binary not found) without
+    // blocking the TUI. Long-lived processes (e.g. a terminal window) will
+    // still be running after 250ms and are silently ignored.
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(250));
+        if let Ok(Some(status)) = child.try_wait() {
+            if !status.success() {
+                let code = status
+                    .code()
+                    .map_or("unknown".to_string(), |c| c.to_string());
+                let _ = command_tx.send(Command::AlertError(format!(
+                    "Command \"{command}\" failed (exit code {code})"
+                )));
+            }
+        }
+    });
+
+    Ok(())
 }
 
 pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
@@ -58,7 +76,7 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_detached<I, S>(program: &str, args: I) -> Result<()>
+fn spawn_detached<I, S>(program: &str, args: I) -> Result<Child>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -68,9 +86,8 @@ where
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()?;
-
-    Ok(())
+        .spawn()
+        .map_err(Into::into)
 }
 
 fn join_parent(left: &Path, right: &str) -> PathBuf {
