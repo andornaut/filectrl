@@ -222,7 +222,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Quit: ".into(), d(Action::Quit)),
         ("Go to parent dir: ".into(), d(Action::Back)),
         ("Open: ".into(), d(Action::Open)),
-        ("Open directory: ".into(), d(Action::OpenCurrentDirectory)),
+        ("Open current directory: ".into(), d(Action::OpenCurrentDirectory)),
         ("Open new window: ".into(), d(Action::OpenNewWindow)),
         ("Go to home dir: ".into(), d(Action::GoHome)),
         ("Select next, previous row: ".into(), format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious))),
