@@ -38,7 +38,7 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [-c <config>] [-i <include>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
+Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -55,6 +55,7 @@ Options:
   --write-default-themes
                     write default theme files to ~/.config/filectrl/, then exit
   --colors-256      force 256-color theme (disables truecolor detection)
+  -V, --version     print version information and exit
   --help, help      display usage information
 ```
 
