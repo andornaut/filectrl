@@ -16,7 +16,7 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearClipboard | Command::Reset => {
+            Command::ClearClipboard | Command::ResetView => {
                 if let Err(e) = self.clipboard.clear() {
                     return Command::AlertError(format!("Failed to clear clipboard: {e}")).into();
                 }
@@ -27,7 +27,7 @@ impl CommandHandler for App {
                     let _ = self.clipboard.clear();
                     return Command::ClearClipboard.into();
                 }
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
             Command::Paste(dest) => match self.clipboard.get_clipboard_entry() {
                 Some(ClipboardEntry::Copy(srcs)) => Command::Copy {
@@ -64,12 +64,12 @@ impl CommandHandler for App {
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         // Hardcoded keys
         if let (KeyCode::Esc, KeyModifiers::NONE) = (*code, *modifiers) {
-            return Command::Reset.into();
+            return Command::ResetView.into();
         }
         // Rebindable keys
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::Quit) => Command::Quit.into(),
-            Some(Action::Reset) => Command::Reset.into(),
+            Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
     }

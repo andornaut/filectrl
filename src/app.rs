@@ -26,7 +26,7 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigateDirectory/RefreshDirectory → SetSelected
+const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigatedDirectory/RefreshedDirectory → SelectionChanged
 
 pub struct App {
     clipboard: Clipboard,
@@ -165,7 +165,7 @@ fn recursively_handle_command(
 
     // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
     // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
-    // Non-key commands (NavigateDirectory, Reset, …) are always broadcast to all handlers.
+    // Non-key commands (NavigatedDirectory, ResetView, …) are always broadcast to all handlers.
     let is_key = matches!(command, Command::Key(_, _));
     let mut key_consumed = is_key && handled;
     handler.visit_command_handlers(&mut |child| {

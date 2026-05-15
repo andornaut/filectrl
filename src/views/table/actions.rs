@@ -29,6 +29,29 @@ impl TableView {
         }
     }
 
+    pub(super) fn open_chmod_prompt(&self) -> CommandResult {
+        let (paths, initial_mode) = if self.has_marks() {
+            (self.marked_paths(), String::new())
+        } else {
+            match self.selected_path() {
+                Some(path) => {
+                    let mode = format!("{:o}", path.mode() & 0o7777);
+                    (vec![path.clone()], mode)
+                }
+                None => return Command::AlertWarn("No file(s) selected".into()).into(),
+            }
+        };
+        Command::OpenPrompt(PromptAction::Chmod {
+            paths,
+            mode: initial_mode,
+        })
+        .into()
+    }
+
+    pub(super) fn open_create_directory_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptAction::CreateDirectory).into()
+    }
+
     pub(super) fn open_filter_prompt(&self) -> CommandResult {
         Command::OpenPrompt(PromptAction::Filter(self.content.filter().to_string())).into()
     }
@@ -38,7 +61,11 @@ impl TableView {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => {
                 let basename = path.basename.clone();
-                Command::OpenPrompt(PromptAction::Rename(path.clone(), basename)).into()
+                Command::OpenPrompt(PromptAction::Rename {
+                    path: path.clone(),
+                    name: basename,
+                })
+                .into()
             }
         }
     }

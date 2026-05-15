@@ -21,18 +21,23 @@ pub(super) struct PromptView {
 impl PromptView {
     fn label(&self) -> String {
         match &self.actions {
+            PromptAction::Chmod { paths, .. } => {
+                format!(" Chmod {} (octal) ", pluralize_items(paths.len()))
+            }
+            PromptAction::CreateDirectory => " New directory ".to_string(),
             PromptAction::Delete(count) => {
                 format!(" Delete {}? (y/n) ", pluralize_items(*count))
             }
             PromptAction::Filter(_) => " Filter ".to_string(),
-            PromptAction::Rename(_, _) => " Rename ".to_string(),
+            PromptAction::Rename { .. } => " Rename ".to_string(),
         }
     }
 
     fn open(&mut self, kind: &PromptAction) -> CommandResult {
         let text = match kind {
-            PromptAction::Delete(_) => String::new(),
-            PromptAction::Filter(text) | PromptAction::Rename(_, text) => text.clone(),
+            PromptAction::Chmod { mode, .. } => mode.clone(),
+            PromptAction::CreateDirectory | PromptAction::Delete(_) => String::new(),
+            PromptAction::Filter(text) | PromptAction::Rename { name: text, .. } => text.clone(),
         };
         self.actions = kind.clone();
         self.initial_text = text.clone();
@@ -83,10 +88,13 @@ impl PromptView {
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
         match &self.actions {
-            PromptAction::Delete(_) => Command::ConfirmDelete.into(),
-            PromptAction::Filter(_) => Command::SetFilter(value).into(),
-            PromptAction::Rename(path, _) => Command::Rename(path.clone(), value).into(),
+            PromptAction::Chmod { paths, .. } => Command::Chmod { paths: paths.clone(), mode: value },
+            PromptAction::CreateDirectory => Command::CreateDirectory(value),
+            PromptAction::Delete(_) => Command::ConfirmDelete,
+            PromptAction::Filter(_) => Command::FilterChanged(value),
+            PromptAction::Rename { path, .. } => Command::Rename { path: path.clone(), name: value },
         }
+        .into()
     }
 }
 
@@ -173,18 +181,15 @@ mod tests {
     fn enter_with_filter_returns_set_filter() {
         let mut view = prompt_with_action(PromptAction::Filter("foo".into()));
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        assert_eq!(result, Command::SetFilter("foo".to_string()).into());
+        assert_eq!(result, Command::FilterChanged("foo".to_string()).into());
     }
 
     #[test]
     fn enter_with_rename_returns_rename_path() {
         let path = test_path();
-        let mut view = prompt_with_action(PromptAction::Rename(path.clone(), "bar.txt".into()));
+        let mut view = prompt_with_action(PromptAction::Rename { path: path.clone(), name: "bar.txt".into() });
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        assert_eq!(
-            result,
-            Command::Rename(path, "bar.txt".to_string()).into()
-        );
+        assert_eq!(result, Command::Rename { path, name: "bar.txt".to_string() }.into());
     }
 
     // ── open (via handle_command) ─────────────────────────────────────────────
@@ -200,7 +205,7 @@ mod tests {
 
     #[test]
     fn ctrl_z_resets_to_initial_text() {
-        let mut view = prompt_with_action(PromptAction::Rename(test_path(), "original.txt".into()));
+        let mut view = prompt_with_action(PromptAction::Rename { path: test_path(), name: "original.txt".into() });
         // Type a character to modify the text
         view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");

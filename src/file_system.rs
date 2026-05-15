@@ -99,9 +99,9 @@ impl FileSystem {
                     self.send_directory_error(&path_buf, e);
                 }
                 if navigate {
-                    Command::NavigateDirectory(directory, children)
+                    Command::NavigatedDirectory { directory, children }
                 } else {
-                    Command::RefreshDirectory(directory, children)
+                    Command::RefreshedDirectory { directory, children }
                 }
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
@@ -149,6 +149,28 @@ impl FileSystem {
             self.command_tx.clone(),
         )
         .into()
+    }
+
+    fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {
+        let mode = match u32::from_str_radix(mode_str, 8) {
+            Ok(m) if m <= 0o7777 => m,
+            _ => return anyhow!("Invalid octal mode: {mode_str:?}").into(),
+        };
+        for path in paths {
+            if let Err(error) = operations::chmod(path, mode) {
+                let _ = self.command_tx.send(
+                    anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into(),
+                );
+            }
+        }
+        self.refresh()
+    }
+
+    fn create_directory(&mut self, name: &str) -> CommandResult {
+        match operations::create_directory(self.current_directory(), name) {
+            Err(error) => anyhow!("Failed to create directory {name:?}: {error}").into(),
+            Ok(_) => self.refresh(),
+        }
     }
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {

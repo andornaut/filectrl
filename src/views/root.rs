@@ -73,10 +73,15 @@ impl RootView {
 impl CommandHandler for RootView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::CancelPrompt
+            Command::Chmod { .. }
             | Command::ConfirmDelete
-            | Command::Rename(_, _)
-            | Command::SetFilter(_) => {
+            | Command::CreateDirectory(_)
+            | Command::Rename { .. }
+            | Command::FilterChanged(_) => {
+                self.mode = InputMode::Normal;
+                CommandResult::NotHandled
+            }
+            Command::CancelPrompt => {
                 self.mode = InputMode::Normal;
                 CommandResult::Handled
             }
@@ -84,7 +89,7 @@ impl CommandHandler for RootView {
                 self.mode = InputMode::Prompt;
                 CommandResult::Handled
             }
-            Command::Reset => {
+            Command::ResetView => {
                 self.mode = InputMode::Normal;
                 self.is_help_visible = false;
                 CommandResult::Handled

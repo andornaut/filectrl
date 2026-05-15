@@ -18,17 +18,14 @@ pub enum InputMode {
     Normal,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptAction {
+    Chmod { paths: Vec<PathInfo>, mode: String },
+    #[default]
+    CreateDirectory,
     Delete(usize),
     Filter(String),
-    Rename(PathInfo, String),
-}
-
-impl Default for PromptAction {
-    fn default() -> Self {
-        Self::Delete(0)
-    }
+    Rename { path: PathInfo, name: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -48,14 +45,16 @@ pub enum Command {
     OpenNewWindow,
 
     // Navigation results — emitted by FileSystem
-    NavigateDirectory(PathInfo, Vec<PathInfo>),
-    RefreshDirectory(PathInfo, Vec<PathInfo>),
+    NavigatedDirectory { directory: PathInfo, children: Vec<PathInfo> },
+    RefreshedDirectory { directory: PathInfo, children: Vec<PathInfo> },
 
     // File operations
+    Chmod { paths: Vec<PathInfo>, mode: String },
     Copy { srcs: Vec<PathInfo>, dest: PathInfo },
-    Move { srcs: Vec<PathInfo>, dest: PathInfo },
+    CreateDirectory(String),
     Delete(Vec<PathInfo>),
-    Rename(PathInfo, String),
+    Move { srcs: Vec<PathInfo>, dest: PathInfo },
+    Rename { path: PathInfo, name: String },
 
     // File operation intents
     ConfirmDelete,   // Intent: resolved by TableView into Delete
@@ -72,11 +71,11 @@ pub enum Command {
     TextFromClipboard(String), // Result of ReadFromClipboard; handled by PromptView
     WriteToClipboard(String),  // Handled by App; writes text to system clipboard
 
-    // View state
-    SetFilter(String),
-    SetMarkCount(usize),
-    SetSelected(Option<PathInfo>),
-    Reset, // If HelpView is open, then closes it, otherwise clears clipboard, filter, and marks
+    // View state notifications — emitted by TableView
+    FilterChanged(String),
+    MarkCountChanged(usize),
+    SelectionChanged(Option<PathInfo>),
+    ResetView, // Returns to Normal mode; clears clipboard, filter, marks, and help
     ResetHelpScroll,
 
     // Alerts

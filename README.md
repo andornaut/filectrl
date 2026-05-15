@@ -69,7 +69,7 @@ Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements si
 
 ### Multi-select
 
-Mark files to apply bulk operations (copy, cut, delete) to multiple items at once.
+Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items at once.
 
 - <kbd>v</kbd> toggles a mark on the current item
 - <kbd>V</kbd> enters **range mode**: the current row becomes the anchor, and moving the cursor (arrow keys or clicking) extends the marked range from the anchor to the cursor
@@ -99,9 +99,11 @@ Jump to middle row | <kbd>z</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>b</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>
 Range mark | <kbd>V</kbd>
-Copy | <kbd>c</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
-Cut | <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>
+Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
+Cut | <kbd>Ctrl</kbd>+<kbd>x</kbd>
 Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Chmod (octal) | <kbd>x</kbd>
+Create directory | <kbd>c</kbd>
 Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>

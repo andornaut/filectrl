@@ -4,11 +4,11 @@ use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 impl CommandHandler for StatusView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::NavigateDirectory(directory, children)
-            | Command::RefreshDirectory(directory, children) => {
+            Command::NavigatedDirectory { directory, children }
+            | Command::RefreshedDirectory { directory, children } => {
                 self.set_directory(directory.clone(), children)
             }
-            Command::SetSelected(selected) => self.set_selected(selected.clone()),
+            Command::SelectionChanged(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }
     }

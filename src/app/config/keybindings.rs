@@ -8,18 +8,18 @@ use serde::Deserialize;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
     // Global
-    Quit,
-    Reset,
-    ToggleHelp,
     ClearAlerts,
     ClearProgress,
+    Quit,
+    ResetView,
+    ToggleHelp,
 
     // Navigation (filesystem)
     Back,
+    GoHome,
     Open,
     OpenCurrentDirectory,
     OpenNewWindow,
-    GoHome,
     Refresh,
 
     // Selection
@@ -41,23 +41,25 @@ pub enum Action {
     Paste,
 
     // File operations
+    Chmod,
+    CreateDirectory,
     Delete,
-    Rename,
     Filter,
+    Rename,
 
     // Sort
-    SortByName,
     SortByModified,
+    SortByName,
     SortBySize,
 
     // Prompt
-    PromptSubmit,
     PromptCancel,
-    PromptReset,
-    PromptSelectAll,
     PromptCopy,
     PromptCut,
     PromptPaste,
+    PromptReset,
+    PromptSelectAll,
+    PromptSubmit,
 }
 
 /// A key combination (key code + modifiers).
@@ -86,41 +88,44 @@ pub enum KeySpec {
 #[derive(Debug, Deserialize)]
 pub struct TomlKeybindings {
     // Normal mode
-    quit: KeySpec,
-    toggle_help: KeySpec,
+    back: KeySpec,
+    chmod: KeySpec,
     clear_alerts: KeySpec,
     clear_progress: KeySpec,
-    back: KeySpec,
+    copy: KeySpec,
+    create_directory: KeySpec,
+    cut: KeySpec,
+    delete: KeySpec,
+    filter: KeySpec,
+    go_home: KeySpec,
     open: KeySpec,
     open_current_directory: KeySpec,
     open_new_window: KeySpec,
-    go_home: KeySpec,
+    page_down: KeySpec,
+    page_up: KeySpec,
+    paste: KeySpec,
+    quit: KeySpec,
+    range_mark: KeySpec,
     refresh: KeySpec,
-    select_next: KeySpec,
-    select_previous: KeySpec,
+    rename: KeySpec,
     select_first: KeySpec,
     select_last: KeySpec,
     select_middle: KeySpec,
-    page_up: KeySpec,
-    page_down: KeySpec,
-    toggle_mark: KeySpec,
-    range_mark: KeySpec,
-    copy: KeySpec,
-    cut: KeySpec,
-    paste: KeySpec,
-    delete: KeySpec,
-    rename: KeySpec,
-    filter: KeySpec,
-    sort_by_name: KeySpec,
+    select_next: KeySpec,
+    select_previous: KeySpec,
     sort_by_modified: KeySpec,
+    sort_by_name: KeySpec,
     sort_by_size: KeySpec,
+    toggle_help: KeySpec,
+    toggle_mark: KeySpec,
+
     // Prompt mode
-    prompt_submit: KeySpec,
-    prompt_reset: KeySpec,
-    prompt_select_all: KeySpec,
     prompt_copy: KeySpec,
     prompt_cut: KeySpec,
     prompt_paste: KeySpec,
+    prompt_reset: KeySpec,
+    prompt_select_all: KeySpec,
+    prompt_submit: KeySpec,
 }
 
 type BindingList = Vec<(Action, Vec<KeyCombo>)>;
@@ -138,42 +143,48 @@ impl TomlKeybindings {
         }
 
         // Normal mode
-        bind!(normal, self.quit, Action::Quit);
-        bind!(normal, self.toggle_help, Action::ToggleHelp);
+        bind!(normal, self.back, Action::Back);
+        bind!(normal, self.chmod, Action::Chmod);
         bind!(normal, self.clear_alerts, Action::ClearAlerts);
         bind!(normal, self.clear_progress, Action::ClearProgress);
-        bind!(normal, self.back, Action::Back);
-        bind!(normal, self.open, Action::Open);
-        bind!(normal, self.open_current_directory, Action::OpenCurrentDirectory);
-        bind!(normal, self.open_new_window, Action::OpenNewWindow);
+        bind!(normal, self.copy, Action::Copy);
+        bind!(normal, self.create_directory, Action::CreateDirectory);
+        bind!(normal, self.cut, Action::Cut);
+        bind!(normal, self.delete, Action::Delete);
+        bind!(normal, self.filter, Action::Filter);
         bind!(normal, self.go_home, Action::GoHome);
+        bind!(normal, self.open, Action::Open);
+        bind!(
+            normal,
+            self.open_current_directory,
+            Action::OpenCurrentDirectory
+        );
+        bind!(normal, self.open_new_window, Action::OpenNewWindow);
+        bind!(normal, self.page_down, Action::PageDown);
+        bind!(normal, self.page_up, Action::PageUp);
+        bind!(normal, self.paste, Action::Paste);
+        bind!(normal, self.quit, Action::Quit);
+        bind!(normal, self.range_mark, Action::RangeMark);
         bind!(normal, self.refresh, Action::Refresh);
-        bind!(normal, self.select_next, Action::SelectNext);
-        bind!(normal, self.select_previous, Action::SelectPrevious);
+        bind!(normal, self.rename, Action::Rename);
         bind!(normal, self.select_first, Action::SelectFirst);
         bind!(normal, self.select_last, Action::SelectLast);
         bind!(normal, self.select_middle, Action::SelectMiddle);
-        bind!(normal, self.page_up, Action::PageUp);
-        bind!(normal, self.page_down, Action::PageDown);
-        bind!(normal, self.toggle_mark, Action::ToggleMark);
-        bind!(normal, self.range_mark, Action::RangeMark);
-        bind!(normal, self.copy, Action::Copy);
-        bind!(normal, self.cut, Action::Cut);
-        bind!(normal, self.paste, Action::Paste);
-        bind!(normal, self.delete, Action::Delete);
-        bind!(normal, self.rename, Action::Rename);
-        bind!(normal, self.filter, Action::Filter);
-        bind!(normal, self.sort_by_name, Action::SortByName);
+        bind!(normal, self.select_next, Action::SelectNext);
+        bind!(normal, self.select_previous, Action::SelectPrevious);
         bind!(normal, self.sort_by_modified, Action::SortByModified);
+        bind!(normal, self.sort_by_name, Action::SortByName);
         bind!(normal, self.sort_by_size, Action::SortBySize);
+        bind!(normal, self.toggle_help, Action::ToggleHelp);
+        bind!(normal, self.toggle_mark, Action::ToggleMark);
 
         // Prompt mode
-        bind!(prompt, self.prompt_submit, Action::PromptSubmit);
-        bind!(prompt, self.prompt_reset, Action::PromptReset);
-        bind!(prompt, self.prompt_select_all, Action::PromptSelectAll);
         bind!(prompt, self.prompt_copy, Action::PromptCopy);
         bind!(prompt, self.prompt_cut, Action::PromptCut);
         bind!(prompt, self.prompt_paste, Action::PromptPaste);
+        bind!(prompt, self.prompt_reset, Action::PromptReset);
+        bind!(prompt, self.prompt_select_all, Action::PromptSelectAll);
+        bind!(prompt, self.prompt_submit, Action::PromptSubmit);
 
         Ok((normal, prompt))
     }
@@ -234,9 +245,7 @@ impl KeyBindings {
     /// Get the display string for an action (includes hardcoded + rebindable keys).
     /// Keys are separated by "/", e.g. "↓/j". Suitable for help table columns.
     pub fn display_for(&self, action: Action) -> &str {
-        self.action_display
-            .get(&action)
-            .map_or("", |s| s.as_str())
+        self.action_display.get(&action).map_or("", |s| s.as_str())
     }
 
     /// Get a display string for use in hints, e.g. `"D" or "x"`.
@@ -266,7 +275,7 @@ fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
         Action::SelectLast => vec![kc(KeyCode::End, KeyModifiers::NONE)],
         Action::PageUp => vec![kc(KeyCode::PageUp, KeyModifiers::NONE)],
         Action::PageDown => vec![kc(KeyCode::PageDown, KeyModifiers::NONE)],
-        Action::Reset => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
+        Action::ResetView => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         Action::PromptCancel => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         _ => vec![],
     }
@@ -310,11 +319,15 @@ fn build_display_map(
     }
 
     // Actions that only have hardcoded keys and no rebindable defaults
-    // (e.g., Reset only has Esc hardcoded)
-    for action in [Action::Reset, Action::PromptCancel] {
+    // (e.g., ResetView only has Esc hardcoded)
+    for action in [Action::ResetView, Action::PromptCancel] {
         map.entry(action).or_insert_with(|| {
             let hardcoded = hardcoded_keys(action);
-            hardcoded.iter().map(format_key_combo).collect::<Vec<_>>().join("/")
+            hardcoded
+                .iter()
+                .map(format_key_combo)
+                .collect::<Vec<_>>()
+                .join("/")
         });
     }
 
@@ -470,10 +483,7 @@ mod tests {
     fn parse_ctrl_shift() {
         let combo = parse_key_combo("Ctrl+Shift+a").unwrap();
         assert_eq!(combo.code, KeyCode::Char('a'));
-        assert_eq!(
-            combo.modifiers,
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT
-        );
+        assert_eq!(combo.modifiers, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
     }
 
     #[test]
@@ -547,6 +557,7 @@ mod tests {
             r#"
             [keybindings]
             quit = "x"
+            chmod = "Ctrl+Shift+x"
             cut = "Ctrl+x"
             "#,
         )
@@ -580,7 +591,7 @@ mod tests {
     #[test]
     fn display_for_reset_shows_esc() {
         let kb = default_keybindings();
-        let display = kb.display_for(Action::Reset);
+        let display = kb.display_for(Action::ResetView);
         assert_eq!(display, "Esc");
     }
 
@@ -637,5 +648,4 @@ mod tests {
             Some(Action::PromptReset)
         );
     }
-
 }

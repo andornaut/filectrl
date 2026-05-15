@@ -16,9 +16,13 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 Command::ClearClipboard.into()
             }
+            Command::Chmod { .. } => {
+                self.clear_marks();
+                CommandResult::NotHandled
+            }
             Command::CancelPrompt => {
                 self.pending_delete.clear();
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
             Command::ConfirmDelete => {
                 let paths = std::mem::take(&mut self.pending_delete);
@@ -30,13 +34,13 @@ impl CommandHandler for TableView {
             }
             Command::Delete(_) => {
                 self.clear_marks();
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
             Command::ClearClipboard => {
                 self.clipboard_entry = None;
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
-            Command::Reset => {
+            Command::ResetView => {
                 self.clipboard_entry = None;
                 self.clear_marks();
                 self.set_filter(String::new());
@@ -44,16 +48,16 @@ impl CommandHandler for TableView {
             }
             Command::SetClipboard(entry) => {
                 self.clipboard_entry = Some(entry.clone());
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
-            Command::NavigateDirectory(directory, children) => {
+            Command::NavigatedDirectory { directory, children } => {
                 self.set_directory(directory.clone(), children.to_vec(), false)
             }
-            Command::RefreshDirectory(directory, children) => {
+            Command::RefreshedDirectory { directory, children } => {
                 self.set_directory(directory.clone(), children.to_vec(), true)
             }
-            // self.handle_key() and PromptView may emit SetFilter()
-            Command::SetFilter(filter) => self.set_filter(filter.clone()),
+            // self.handle_key() and PromptView may emit FilterChanged()
+            Command::FilterChanged(filter) => self.set_filter(filter.clone()),
 
             _ => CommandResult::NotHandled,
         }
@@ -98,6 +102,8 @@ impl CommandHandler for TableView {
             Some(Action::ToggleMark) => self.toggle_mark(),
             Some(Action::RangeMark) => self.enter_range_mode(),
             // File operations
+            Some(Action::Chmod) => self.open_chmod_prompt(),
+            Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),
             Some(Action::Rename) => self.open_rename_prompt(),
             Some(Action::Filter) => self.open_filter_prompt(),
