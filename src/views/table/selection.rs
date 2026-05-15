@@ -9,11 +9,11 @@ impl TableView {
         self.table_state.select(Some(item));
         self.update_range_marks();
         if self.marks.in_range_mode() {
-            return Command::SetMarkCount(self.marks.len()).into();
+            return Command::MarkCountChanged(self.marks.len()).into();
         }
         match self.selected_path() {
-            Some(path) => Command::SetSelected(Some(path.clone())).into(),
-            None => Command::SetSelected(None).into(),
+            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
+            None => Command::SelectionChanged(None).into(),
         }
     }
 
@@ -21,10 +21,10 @@ impl TableView {
         self.table_state.scroll_down_by(1);
         self.update_range_marks();
         if self.marks.in_range_mode() {
-            return Command::SetMarkCount(self.marks.len()).into();
+            return Command::MarkCountChanged(self.marks.len()).into();
         }
         match self.selected_path() {
-            Some(path) => Command::SetSelected(Some(path.clone())).into(),
+            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
             None => CommandResult::Handled,
         }
     }
@@ -33,10 +33,10 @@ impl TableView {
         self.table_state.scroll_up_by(1);
         self.update_range_marks();
         if self.marks.in_range_mode() {
-            return Command::SetMarkCount(self.marks.len()).into();
+            return Command::MarkCountChanged(self.marks.len()).into();
         }
         match self.selected_path() {
-            Some(path) => Command::SetSelected(Some(path.clone())).into(),
+            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
             None => CommandResult::Handled,
         }
     }

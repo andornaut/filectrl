@@ -54,7 +54,7 @@ impl BreadcrumbsView {
 impl CommandHandler for BreadcrumbsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::NavigateDirectory(directory, _) | Command::RefreshDirectory(directory, _) => {
+            Command::NavigatedDirectory { directory, .. } | Command::RefreshedDirectory { directory, .. } => {
                 self.set_directory(directory.clone())
             }
             _ => CommandResult::NotHandled,

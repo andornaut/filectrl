@@ -30,7 +30,7 @@ impl NoticesView {
     pub fn new() -> Self {
         let hint = format!(
             "(Press {} to clear)",
-            Config::global().keybindings.hint_for(&[Action::Reset])
+            Config::global().keybindings.hint_for(&[Action::ResetView])
         );
         Self {
             area: Rect::default(),

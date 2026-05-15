@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
@@ -63,6 +63,22 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
         }
     });
 
+    Ok(())
+}
+
+pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let p = path.as_path();
+    info!("Changing mode of {p:?} to {mode:o}");
+    let permissions = fs::Permissions::from_mode(mode);
+    fs::set_permissions(p, permissions)?;
+    Ok(())
+}
+
+pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
+    let path = parent.as_path().join(name);
+    info!("Creating directory {path:?}");
+    fs::create_dir(&path)?;
     Ok(())
 }
 
