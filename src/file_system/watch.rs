@@ -44,9 +44,9 @@ impl DirectoryWatcher {
         let command_tx_for_delayed = command_tx.clone();
         let command_tx_for_notify = command_tx.clone();
         let debounce_threshold = self.debounce_threshold;
-        self.handles.push(
-            thread::spawn(move || watch_for_delayed_commands(command_tx_for_delayed, delayed_rx)),
-        );
+        self.handles.push(thread::spawn(move || {
+            watch_for_delayed_commands(command_tx_for_delayed, delayed_rx)
+        }));
         self.handles.push(thread::spawn(move || {
             watch_for_notify_events(
                 command_tx_for_notify,

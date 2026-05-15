@@ -4,11 +4,11 @@ use std::{
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
-    path::{Path, PathBuf, MAIN_SEPARATOR},
+    path::{MAIN_SEPARATOR, Path, PathBuf},
     time::SystemTime,
 };
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result, anyhow};
 use chrono::{DateTime, Datelike, Local};
 use nix::unistd::{Gid, Group, Uid, User};
 

@@ -28,12 +28,14 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
 }
 
 pub(super) fn spawn_command_sender(tx: Sender<Command>) {
-    thread::spawn(move || loop {
-        // Blocking read
-        // Ref. https://docs.rs/crossterm/latest/crossterm/event/fn.read.html
-        let event = read().expect("terminal events should be readable");
-        if let Some(command) = Command::maybe_from(event) {
-            tx.send(command).expect("event channel should be open");
+    thread::spawn(move || {
+        loop {
+            // Blocking read
+            // Ref. https://docs.rs/crossterm/latest/crossterm/event/fn.read.html
+            let event = read().expect("terminal events should be readable");
+            if let Some(command) = Command::maybe_from(event) {
+                tx.send(command).expect("event channel should be open");
+            }
         }
     });
 }

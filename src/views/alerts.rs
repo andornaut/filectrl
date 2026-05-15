@@ -1,19 +1,19 @@
 use std::collections::VecDeque;
 
 use ratatui::{
+    Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Constraint, Position, Rect},
     style::Style,
     text::{Line, Text},
     widgets::{Paragraph, Widget},
-    Frame,
 };
 
-use super::{bordered, View};
+use super::{View, bordered};
 use crate::{
-    app::config::{Config, theme::Theme},
-    command::{handler::CommandHandler, result::CommandResult, Command},
     app::config::keybindings::Action,
+    app::config::{Config, theme::Theme},
+    command::{Command, handler::CommandHandler, result::CommandResult},
     views::unicode::split_with_ellipsis,
 };
 
@@ -48,7 +48,9 @@ impl AlertsView {
     pub fn new() -> Self {
         let hint = format!(
             "(Press {} to clear)",
-            Config::global().keybindings.hint_for(&[Action::ClearAlerts])
+            Config::global()
+                .keybindings
+                .hint_for(&[Action::ClearAlerts])
         );
         Self {
             alerts: VecDeque::new(),
@@ -137,7 +139,10 @@ impl CommandHandler for AlertsView {
     }
 
     fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
-        self.area.contains(Position { x: event.column, y: event.row })
+        self.area.contains(Position {
+            x: event.column,
+            y: event.row,
+        })
     }
 }
 

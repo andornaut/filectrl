@@ -130,7 +130,12 @@ impl FileType {
                 continue;
             }
 
-            if warn_on_rgb && matches!((fg, bg), (Some(Color::Rgb(..)), _) | (_, Some(Color::Rgb(..)))) {
+            if warn_on_rgb
+                && matches!(
+                    (fg, bg),
+                    (Some(Color::Rgb(..)), _) | (_, Some(Color::Rgb(..)))
+                )
+            {
                 found_rgb = true;
             }
 

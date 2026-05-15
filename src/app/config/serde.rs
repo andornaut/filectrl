@@ -1,5 +1,5 @@
 use ratatui::style::{Color, Modifier};
-use serde::{de::value::StringDeserializer, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::value::StringDeserializer};
 
 /// Custom deserializer for Color that deserializes empty strings as None (inherit from parent)
 pub fn deserialize_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
@@ -12,8 +12,7 @@ where
     }
 
     // For non-empty strings, use the built-in Color deserialization
-    Color::deserialize(StringDeserializer::<D::Error>::new(color_str))
-        .map(Some)
+    Color::deserialize(StringDeserializer::<D::Error>::new(color_str)).map(Some)
 }
 
 // Private newtype wrapper around Modifier just for deserialization
@@ -96,7 +95,10 @@ mod tests {
 
     #[test]
     fn hex_color_deserializes() {
-        assert_eq!(Some(Color::Rgb(0xFF, 0x00, 0x00)), color(r##"color = "#FF0000""##));
+        assert_eq!(
+            Some(Color::Rgb(0xFF, 0x00, 0x00)),
+            color(r##"color = "#FF0000""##)
+        );
     }
 
     #[test]

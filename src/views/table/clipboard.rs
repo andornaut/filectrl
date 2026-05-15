@@ -14,10 +14,7 @@ impl TableView {
         self.set_clipboard(ClipboardEntry::Move)
     }
 
-    fn set_clipboard(
-        &mut self,
-        make_entry: fn(Vec<PathInfo>) -> ClipboardEntry,
-    ) -> CommandResult {
+    fn set_clipboard(&mut self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
         if self.has_marks() {
             Command::SetClipboard(make_entry(self.marked_paths())).into()
         } else {

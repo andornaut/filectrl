@@ -61,7 +61,12 @@ mod tests {
 
     fn scrollbar_at(y: u16, height: u16) -> ScrollbarView {
         ScrollbarView {
-            area: Rect { x: 0, y, width: 1, height },
+            area: Rect {
+                x: 0,
+                y,
+                width: 1,
+                height,
+            },
             ..Default::default()
         }
     }

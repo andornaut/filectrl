@@ -50,12 +50,14 @@ impl CommandHandler for TableView {
                 self.clipboard_entry = Some(entry.clone());
                 CommandResult::NotHandled
             }
-            Command::NavigatedDirectory { directory, children } => {
-                self.set_directory(directory.clone(), children.to_vec(), false)
-            }
-            Command::RefreshedDirectory { directory, children } => {
-                self.set_directory(directory.clone(), children.to_vec(), true)
-            }
+            Command::NavigatedDirectory {
+                directory,
+                children,
+            } => self.set_directory(directory.clone(), children.to_vec(), false),
+            Command::RefreshedDirectory {
+                directory,
+                children,
+            } => self.set_directory(directory.clone(), children.to_vec(), true),
             // self.handle_key() and PromptView may emit FilterChanged()
             Command::FilterChanged(filter) => self.set_filter(filter.clone()),
 
