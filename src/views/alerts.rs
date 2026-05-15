@@ -60,6 +60,11 @@ impl AlertsView {
 
 impl AlertsView {
     fn add_alert(&mut self, kind: AlertKind, message: String) -> CommandResult {
+        match kind {
+            AlertKind::Info => log::info!("{message}"),
+            AlertKind::Warn => log::warn!("{message}"),
+            AlertKind::Error => log::error!("{message}"),
+        }
         if self.alerts.len() == MAX_NUMBER_ALERTS {
             self.alerts.pop_back();
         }
