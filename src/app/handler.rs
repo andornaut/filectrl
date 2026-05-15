@@ -62,11 +62,6 @@ impl CommandHandler for App {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        // Hardcoded keys
-        if let (KeyCode::Esc, KeyModifiers::NONE) = (*code, *modifiers) {
-            return Command::ResetView.into();
-        }
-        // Rebindable keys
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::Quit) => Command::Quit.into(),
             Some(Action::ResetView) => Command::ResetView.into(),
