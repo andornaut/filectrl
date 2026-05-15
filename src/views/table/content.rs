@@ -48,27 +48,37 @@ impl DirectoryContent {
 
     /// Sort and filter items into `items_sorted`.
     pub(super) fn sort(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
-        let mut items = self.items.clone();
+        let mut indices: Vec<usize> = (0..self.items.len()).collect();
 
         match sort_column {
-            SortColumn::Name => items.sort_by_cached_key(|path| path.name_comparator()),
-            SortColumn::Modified => items.sort_by_cached_key(|path| path.modified_comparator()),
-            SortColumn::Size => items.sort_by_cached_key(|path| path.size),
+            SortColumn::Name => {
+                let keys: Vec<_> = self.items.iter().map(|p| p.name_comparator()).collect();
+                indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
+            }
+            SortColumn::Modified => {
+                let keys: Vec<_> =
+                    self.items.iter().map(|p| p.modified_comparator()).collect();
+                indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
+            }
+            SortColumn::Size => {
+                indices.sort_by_key(|i| self.items[*i].size);
+            }
         };
         if *sort_direction == SortDirection::Descending {
-            items.reverse();
+            indices.reverse();
         }
 
         if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
-            items.sort_by_key(|path| !path.is_directory());
+            indices.sort_by_key(|i| !self.items[*i].is_directory());
         }
+
+        self.items_sorted = indices.into_iter().map(|i| self.items[i].clone()).collect();
 
         if !self.filter.is_empty() {
-            let filter_lowercase = self.filter.to_ascii_lowercase();
-            items.retain(|path| path.name().to_ascii_lowercase().contains(&filter_lowercase));
+            let filter_lowercase = self.filter.to_lowercase();
+            self.items_sorted
+                .retain(|path| path.name().to_lowercase().contains(&filter_lowercase));
         }
-
-        self.items_sorted = items;
     }
 
     pub(super) fn find_by_inode(&self, path: &PathInfo) -> Option<usize> {

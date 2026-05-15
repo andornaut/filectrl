@@ -31,26 +31,54 @@ impl Clipboard {
     pub fn clear(&self) -> Result<(), Error> {
         match &self.backend {
             Some(backend) => backend.clear(),
-            None => Ok(()),
+            None => {
+                warn!("No clipboard backend available");
+                Ok(())
+            }
         }
     }
 
     pub fn get_clipboard_entry(&self) -> Option<ClipboardEntry> {
-        self.backend.as_ref().and_then(|backend| {
-            backend
-                .get_string()
-                .ok()
-                .and_then(|text| text.as_str().try_into().ok())
-        })
+        let backend = match &self.backend {
+            Some(b) => b,
+            None => {
+                warn!("No clipboard backend available");
+                return None;
+            }
+        };
+        let text = match backend.get_string() {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("Failed to read clipboard: {e}");
+                String::new()
+            }
+        };
+        text.as_str().try_into().ok()
     }
 
     pub fn get_text(&self) -> Option<String> {
-        self.backend.as_ref().and_then(|b| b.get_string().ok())
+        let backend = match &self.backend {
+            Some(b) => b,
+            None => {
+                warn!("No clipboard backend available");
+                return None;
+            }
+        };
+        match backend.get_string() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                warn!("Failed to read clipboard: {e}");
+                None
+            }
+        }
     }
 
     pub fn set_text(&self, text: &str) {
-        if let Some(backend) = &self.backend {
-            let _ = backend.set_string(text);
+        match &self.backend {
+            Some(backend) => {
+                let _ = backend.set_string(text);
+            }
+            None => warn!("No clipboard backend available"),
         }
     }
 
@@ -60,7 +88,10 @@ impl Clipboard {
                 let text = entry.to_string();
                 backend.set_string(&text)
             }
-            None => Ok(()),
+            None => {
+                warn!("No clipboard backend available");
+                Ok(())
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(250);
 
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,
+    handles: Vec<thread::JoinHandle<()>>,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched_directory: Option<PathBuf>,
     watcher: RecommendedWatcher,
@@ -26,6 +27,7 @@ impl DirectoryWatcher {
         let watcher = recommended_watcher(notify_tx)?;
         Ok(Self {
             debounce_threshold: Duration::from_millis(debounce_ms),
+            handles: Vec::new(),
             notify_rx: Some(notify_rx),
             watcher,
             watched_directory: None,
@@ -42,15 +44,17 @@ impl DirectoryWatcher {
         let command_tx_for_delayed = command_tx.clone();
         let command_tx_for_notify = command_tx.clone();
         let debounce_threshold = self.debounce_threshold;
-        thread::spawn(move || watch_for_delayed_commands(command_tx_for_delayed, delayed_rx));
-        thread::spawn(move || {
+        self.handles.push(
+            thread::spawn(move || watch_for_delayed_commands(command_tx_for_delayed, delayed_rx)),
+        );
+        self.handles.push(thread::spawn(move || {
             watch_for_notify_events(
                 command_tx_for_notify,
                 delayed_tx,
                 notify_rx,
                 debounce_threshold,
             )
-        });
+        }));
     }
 
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
@@ -64,6 +68,14 @@ impl DirectoryWatcher {
             .watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
         self.watched_directory = Some(path);
         Ok(())
+    }
+}
+
+impl Drop for DirectoryWatcher {
+    fn drop(&mut self) {
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
     }
 }
 

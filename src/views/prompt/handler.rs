@@ -32,14 +32,10 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Hardcoded: Esc always cancels
-        if *code == KeyCode::Esc {
-            return Command::CancelPrompt.into();
-        }
-
         // Rebindable prompt keys (lookup once, reuse after textarea input)
         let action = Config::global().keybindings.prompt_action(code, modifiers);
         match action {
+            Some(Action::PromptCancel) => return Command::CancelPrompt.into(),
             Some(Action::PromptSubmit) => return self.submit(),
             Some(Action::PromptSelectAll) => {
                 self.text_area.select_all();

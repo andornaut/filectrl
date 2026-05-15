@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -142,6 +142,11 @@ impl TomlKeybindings {
             };
         }
 
+        // Hardcoded-only actions (no TOML fields, but must be in the binding list
+        // so that hardcoded keys are inserted into the action map)
+        normal.push((Action::ResetView, vec![]));
+        prompt.push((Action::PromptCancel, vec![]));
+
         // Normal mode
         bind!(normal, self.back, Action::Back);
         bind!(normal, self.chmod, Action::Chmod);
@@ -281,13 +286,43 @@ fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
     }
 }
 
+/// Actions that have hardcoded key bindings (arrow keys, Home/End, Esc, etc.).
+const HARDCODED_ACTIONS: &[Action] = &[
+    Action::Back,
+    Action::Open,
+    Action::PageDown,
+    Action::PageUp,
+    Action::PromptCancel,
+    Action::ResetView,
+    Action::SelectFirst,
+    Action::SelectLast,
+    Action::SelectNext,
+    Action::SelectPrevious,
+];
+
 /// Build the key→action HashMap, detecting duplicate key mappings.
+/// Hardcoded keys are inserted first for actions present in this mode's
+/// binding list, then user bindings override them.
 fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyCombo, Action>> {
     let mut map = HashMap::new();
+
+    let binding_actions: HashSet<Action> = bindings.iter().map(|(a, _)| *a).collect();
+    for action in HARDCODED_ACTIONS {
+        if binding_actions.contains(action) {
+            for combo in hardcoded_keys(*action) {
+                map.insert(combo, *action);
+            }
+        }
+    }
+
     for (action, combos) in bindings {
         for combo in combos {
             if let Some(existing) = map.insert(*combo, *action) {
-                if existing != *action {
+                if existing != *action
+                    && !HARDCODED_ACTIONS
+                        .iter()
+                        .any(|a| *a == existing && hardcoded_keys(existing).contains(combo))
+                {
                     return Err(anyhow!(
                         "Key '{}' is bound to both {:?} and {:?}",
                         format_key_combo(combo),
@@ -355,7 +390,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         }
     }
 
-    let key_str = parts.last().unwrap();
+    let key_str = parts.last().ok_or_else(|| anyhow!("Empty key string"))?;
     let code = match *key_str {
         "Enter" | "Return" => KeyCode::Enter,
         "Esc" | "Escape" => KeyCode::Esc,
@@ -378,7 +413,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             KeyCode::F(num)
         }
         s if s.len() == 1 => {
-            let ch = s.chars().next().unwrap();
+            let ch = s.chars().next().ok_or_else(|| anyhow!("Empty key string"))?;
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_ascii_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
                 modifiers |= KeyModifiers::SHIFT;
