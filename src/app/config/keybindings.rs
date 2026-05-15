@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use serde::Deserialize;
 
@@ -138,7 +138,11 @@ impl TomlKeybindings {
 
         macro_rules! bind {
             ($list:expr, $field:expr, $action:expr) => {
-                $list.push(($action, parse_key_spec(&$field)?));
+                $list.push((
+                    $action,
+                    parse_key_spec(&$field)
+                        .with_context(|| format!("Invalid keybinding for {:?}", $action))?,
+                ));
             };
         }
 
@@ -390,7 +394,9 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         }
     }
 
-    let key_str = parts.last().ok_or_else(|| anyhow!("Empty key string"))?;
+    let key_str = parts
+        .last()
+        .expect("split always yields at least one element");
     let code = match *key_str {
         "Enter" | "Return" => KeyCode::Enter,
         "Esc" | "Escape" => KeyCode::Esc,
@@ -413,10 +419,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             KeyCode::F(num)
         }
         s if s.len() == 1 => {
-            let ch = s
-                .chars()
-                .next()
-                .ok_or_else(|| anyhow!("Empty key string"))?;
+            let ch = s.chars().next().expect("s.len() == 1 guarantees a char");
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_ascii_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
                 modifiers |= KeyModifiers::SHIFT;
