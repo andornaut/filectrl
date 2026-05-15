@@ -1,15 +1,15 @@
 use chrono::Local;
 use ratatui::{
+    Frame,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, StatefulWidget, Widget},
-    Frame,
 };
 
 use super::{
+    TableView,
     row_map::LineItemMap,
     widgets::{row_widget_and_height, table_widget},
-    TableView,
 };
 use crate::{app::config::Config, views::View};
 

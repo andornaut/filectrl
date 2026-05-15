@@ -56,8 +56,7 @@ impl DirectoryContent {
                 indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
             }
             SortColumn::Modified => {
-                let keys: Vec<_> =
-                    self.items.iter().map(|p| p.modified_comparator()).collect();
+                let keys: Vec<_> = self.items.iter().map(|p| p.modified_comparator()).collect();
                 indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
             }
             SortColumn::Size => {

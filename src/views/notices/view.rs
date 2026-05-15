@@ -5,10 +5,7 @@ use ratatui::{
 };
 
 use super::NoticesView;
-use crate::{
-    app::config::Config,
-    views::View,
-};
+use crate::{app::config::Config, views::View};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect) -> Constraint {

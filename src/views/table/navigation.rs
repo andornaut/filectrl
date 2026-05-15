@@ -1,8 +1,5 @@
-use super::{columns::SortColumn, TableView};
-use crate::{
-    command::result::CommandResult,
-    file_system::path_info::PathInfo,
-};
+use super::{TableView, columns::SortColumn};
+use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 impl TableView {
     pub(super) fn set_directory(

@@ -10,8 +10,8 @@ use unicode_width::UnicodeWidthStr;
 use super::{ScrollbarView, View, bordered};
 use crate::{
     app::config::Config,
-    command::{Command, handler::CommandHandler, result::CommandResult},
     app::config::keybindings::Action,
+    command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
 const MIN_HEIGHT: u16 = 5;
@@ -177,10 +177,7 @@ impl CommandHandler for HelpView {
 
 use crate::app::config::{keybindings::KeyBindings, theme::Help};
 
-fn max_label_width(
-    normal: &[(String, String)],
-    prompt: &[(String, String)],
-) -> usize {
+fn max_label_width(normal: &[(String, String)], prompt: &[(String, String)]) -> usize {
     normal
         .iter()
         .chain(prompt.iter())
@@ -222,13 +219,25 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Quit: ".into(), d(Action::Quit)),
         ("Go to parent dir: ".into(), d(Action::Back)),
         ("Open: ".into(), d(Action::Open)),
-        ("Open current directory: ".into(), d(Action::OpenCurrentDirectory)),
+        (
+            "Open current directory: ".into(),
+            d(Action::OpenCurrentDirectory),
+        ),
         ("Open new window: ".into(), d(Action::OpenNewWindow)),
         ("Go to home dir: ".into(), d(Action::GoHome)),
-        ("Select next, previous row: ".into(), format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious))),
-        ("Select first, last row: ".into(), format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast))),
+        (
+            "Select next, previous row: ".into(),
+            format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
+        ),
+        (
+            "Select first, last row: ".into(),
+            format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
+        ),
         ("Jump to middle row: ".into(), d(Action::SelectMiddle)),
-        ("Page down, up: ".into(), format!("{}, {}", d(Action::PageDown), d(Action::PageUp))),
+        (
+            "Page down, up: ".into(),
+            format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
+        ),
         ("Mark/unmark item: ".into(), d(Action::ToggleMark)),
         ("Range mark: ".into(), d(Action::RangeMark)),
         ("Copy: ".into(), d(Action::Copy)),
@@ -239,10 +248,24 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Delete: ".into(), d(Action::Delete)),
         ("Rename: ".into(), d(Action::Rename)),
         ("Filter: ".into(), d(Action::Filter)),
-        ("Sort by name, modified, size: ".into(), format!("{}, {}, {}", d(Action::SortByName), d(Action::SortByModified), d(Action::SortBySize))),
+        (
+            "Sort by name, modified, size: ".into(),
+            format!(
+                "{}, {}, {}",
+                d(Action::SortByName),
+                d(Action::SortByModified),
+                d(Action::SortBySize)
+            ),
+        ),
         ("Refresh: ".into(), d(Action::Refresh)),
-        ("Clear clipboard/filter/marks: ".into(), d(Action::ResetView)),
-        ("Clear alerts, progress: ".into(), format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress))),
+        (
+            "Clear clipboard/filter/marks: ".into(),
+            d(Action::ResetView),
+        ),
+        (
+            "Clear alerts, progress: ".into(),
+            format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
+        ),
         ("Toggle help: ".into(), d(Action::ToggleHelp)),
     ]
 }
@@ -256,14 +279,31 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Cancel: ".into(), d(Action::PromptCancel)),
         ("Reset to initial value: ".into(), d(Action::PromptReset)),
         ("Select all: ".into(), d(Action::PromptSelectAll)),
-        ("Copy, Cut, Paste text: ".into(), format!("{}, {}, {}", d(Action::PromptCopy), d(Action::PromptCut), d(Action::PromptPaste))),
+        (
+            "Copy, Cut, Paste text: ".into(),
+            format!(
+                "{}, {}, {}",
+                d(Action::PromptCopy),
+                d(Action::PromptCut),
+                d(Action::PromptPaste)
+            ),
+        ),
         ("Move cursor: ".into(), "←/→".into()),
         ("Move cursor by word: ".into(), "Ctrl+←/→".into()),
-        ("Jump to line start, end: ".into(), "Ctrl+a/Home, Ctrl+e/End".into()),
+        (
+            "Jump to line start, end: ".into(),
+            "Ctrl+a/Home, Ctrl+e/End".into(),
+        ),
         ("Select text: ".into(), "Shift+←/→".into()),
-        ("Select to line start, end: ".into(), "Shift+Home, Shift+End".into()),
+        (
+            "Select to line start, end: ".into(),
+            "Shift+Home, Shift+End".into(),
+        ),
         ("Select by word: ".into(), "Ctrl+Shift+←/→".into()),
-        ("Delete before, after cursor: ".into(), "Backspace, Delete".into()),
+        (
+            "Delete before, after cursor: ".into(),
+            "Backspace, Delete".into(),
+        ),
     ]
 }
 

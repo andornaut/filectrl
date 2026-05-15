@@ -27,7 +27,13 @@ pub(super) struct BreadcrumbsView {
 impl BreadcrumbsView {
     fn height(&self, width: u16) -> u16 {
         // Calculate height based on content length and width, without theme styling
-        let (container, _) = spans(&self.breadcrumbs, width, Style::default(), Style::default(), Style::default());
+        let (container, _) = spans(
+            &self.breadcrumbs,
+            width,
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        );
         container.len() as u16
     }
 
@@ -54,7 +60,8 @@ impl BreadcrumbsView {
 impl CommandHandler for BreadcrumbsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::NavigatedDirectory { directory, .. } | Command::RefreshedDirectory { directory, .. } => {
+            Command::NavigatedDirectory { directory, .. }
+            | Command::RefreshedDirectory { directory, .. } => {
                 self.set_directory(directory.clone())
             }
             _ => CommandResult::NotHandled,
@@ -164,7 +171,11 @@ fn spans<'a>(
     let mut it = breadcrumbs.iter().enumerate().peekable();
     while let Some((i, name)) = it.next() {
         let is_last = it.peek().is_none();
-        let name_style = if is_last { basename_style } else { ancestor_style };
+        let name_style = if is_last {
+            basename_style
+        } else {
+            ancestor_style
+        };
 
         let name_len = name.width().min(u16::MAX as usize) as u16;
         // Each non-last entry occupies name_len + 1 columns (name + separator).
@@ -188,7 +199,11 @@ fn spans<'a>(
         }
 
         let positions_row = positions.last_mut().unwrap();
-        positions_row.push(Position { x_start, x_end, index: i });
+        positions_row.push(Position {
+            x_start,
+            x_end,
+            index: i,
+        });
     }
     (container, positions)
 }
@@ -198,7 +213,7 @@ mod tests {
     use ratatui::style::Style;
     use test_case::test_case;
 
-    use super::{spans, MAIN_SEPARATOR};
+    use super::{MAIN_SEPARATOR, spans};
 
     fn bc(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -267,8 +282,12 @@ mod tests {
     #[test_case(&["", "home", "user"], 80, 0, 10 => None    ; "click past end")]
     fn click_index(parts: &[&str], width: u16, row: usize, x: u16) -> Option<usize> {
         let positions = run_spans(parts, width).1;
-        positions[row]
-            .iter()
-            .find_map(|p| if p.intersects(x) { Some(p.index()) } else { None })
+        positions[row].iter().find_map(|p| {
+            if p.intersects(x) {
+                Some(p.index())
+            } else {
+                None
+            }
+        })
     }
 }

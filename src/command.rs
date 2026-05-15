@@ -20,12 +20,18 @@ pub enum InputMode {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptAction {
-    Chmod { paths: Vec<PathInfo>, mode: String },
+    Chmod {
+        paths: Vec<PathInfo>,
+        mode: String,
+    },
     #[default]
     CreateDirectory,
     Delete(usize),
     Filter(String),
-    Rename { path: PathInfo, name: String },
+    Rename {
+        path: PathInfo,
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -33,7 +39,10 @@ pub enum Command {
     // Terminal input events
     Key(KeyCode, KeyModifiers),
     Mouse(MouseEvent),
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
 
     // Navigation — handled by FileSystem
     Back,
@@ -45,16 +54,34 @@ pub enum Command {
     OpenNewWindow,
 
     // Navigation results — emitted by FileSystem
-    NavigatedDirectory { directory: PathInfo, children: Vec<PathInfo> },
-    RefreshedDirectory { directory: PathInfo, children: Vec<PathInfo> },
+    NavigatedDirectory {
+        directory: PathInfo,
+        children: Vec<PathInfo>,
+    },
+    RefreshedDirectory {
+        directory: PathInfo,
+        children: Vec<PathInfo>,
+    },
 
     // File operations
-    Chmod { paths: Vec<PathInfo>, mode: String },
-    Copy { srcs: Vec<PathInfo>, dest: PathInfo },
+    Chmod {
+        paths: Vec<PathInfo>,
+        mode: String,
+    },
+    Copy {
+        srcs: Vec<PathInfo>,
+        dest: PathInfo,
+    },
     CreateDirectory(String),
     Delete(Vec<PathInfo>),
-    Move { srcs: Vec<PathInfo>, dest: PathInfo },
-    Rename { path: PathInfo, name: String },
+    Move {
+        srcs: Vec<PathInfo>,
+        dest: PathInfo,
+    },
+    Rename {
+        path: PathInfo,
+        name: String,
+    },
 
     // File operation intents
     ConfirmDelete,   // Intent: resolved by TableView into Delete

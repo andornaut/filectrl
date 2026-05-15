@@ -9,9 +9,9 @@ use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    app::{clipboard::ClipboardEntry, config::Config},
-    command::{result::CommandResult, progress::Task},
     app::config::keybindings::Action,
+    app::{clipboard::ClipboardEntry, config::Config},
+    command::{progress::Task, result::CommandResult},
 };
 
 pub(super) struct NoticesView {
@@ -47,7 +47,10 @@ impl NoticesView {
 
 impl NoticesView {
     fn build_notices(&self) -> Vec<Notice> {
-        let clipboard = self.clipboard_entry.as_ref().map(|e| Notice::Clipboard(e.clone()));
+        let clipboard = self
+            .clipboard_entry
+            .as_ref()
+            .map(|e| Notice::Clipboard(e.clone()));
         let marked = if !self.hide_marked && clipboard.is_none() && self.mark_count > 0 {
             Some(Notice::Marked(self.mark_count))
         } else {

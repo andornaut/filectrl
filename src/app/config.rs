@@ -11,8 +11,8 @@ use directories::ProjectDirs;
 use log::{LevelFilter, debug, info};
 use toml::Value;
 
-use self::theme::Theme;
 use self::keybindings::{KeyBindings, TomlKeybindings};
+use self::theme::Theme;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 

@@ -29,15 +29,13 @@ impl CommandHandler for DebugHandler {
             (KeyCode::Char('3'), KeyModifiers::NONE) => {
                 Command::AlertError("Debug: error alert".into()).into()
             }
-            (KeyCode::Char('4'), KeyModifiers::NONE) => {
-                Command::AlertError(
-                    "Debug: long error alert — \
+            (KeyCode::Char('4'), KeyModifiers::NONE) => Command::AlertError(
+                "Debug: long error alert — \
                      Lorem ipsum dolor sit amet, consectetur adipiscing elit, \
                      sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
-                        .into(),
-                )
-                .into()
-            }
+                    .into(),
+            )
+            .into(),
             (KeyCode::Char('5'), KeyModifiers::NONE) => {
                 Command::AlertInfo("Debug: unicode alert — こんにちは 🦀 café naïve 北京".into())
                     .into()
@@ -48,12 +46,10 @@ impl CommandHandler for DebugHandler {
             (KeyCode::Char('7'), KeyModifiers::NONE) => {
                 Command::AlertError("Permission denied: /etc/hosts".into()).into()
             }
-            (KeyCode::Char('8'), KeyModifiers::NONE) => {
-                Command::AlertError(
-                    "Failed to rename \"foo.txt\" to \"bar.txt\": file already exists".into(),
-                )
-                .into()
-            }
+            (KeyCode::Char('8'), KeyModifiers::NONE) => Command::AlertError(
+                "Failed to rename \"foo.txt\" to \"bar.txt\": file already exists".into(),
+            )
+            .into(),
             (KeyCode::Char('9'), KeyModifiers::NONE) => Command::Refresh.into(),
             _ => CommandResult::NotHandled,
         }

@@ -413,7 +413,10 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             KeyCode::F(num)
         }
         s if s.len() == 1 => {
-            let ch = s.chars().next().ok_or_else(|| anyhow!("Empty key string"))?;
+            let ch = s
+                .chars()
+                .next()
+                .ok_or_else(|| anyhow!("Empty key string"))?;
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_ascii_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
                 modifiers |= KeyModifiers::SHIFT;

@@ -16,10 +16,10 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "02" | "2" => attrs |= Modifier::DIM,    // Dim
             "03" | "3" => attrs |= Modifier::ITALIC, // Italic
             "04" | "4" => attrs |= Modifier::UNDERLINED, // Underline
-            "05" | "5" => attrs |= Modifier::SLOW_BLINK,  // Blink
+            "05" | "5" => attrs |= Modifier::SLOW_BLINK, // Blink
             "06" | "6" => attrs |= Modifier::RAPID_BLINK, // Rapid blink
-            "07" | "7" => attrs |= Modifier::REVERSED,    // Reverse
-            "08" | "8" => {}                               // Hidden - not supported
+            "07" | "7" => attrs |= Modifier::REVERSED, // Reverse
+            "08" | "8" => {}                         // Hidden - not supported
             "09" | "9" => attrs |= Modifier::CROSSED_OUT, // Crossed out / strikethrough
 
             // Foreground colors (30-37, 90-97)

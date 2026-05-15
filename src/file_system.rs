@@ -1,21 +1,19 @@
 mod debounce;
 mod handler;
-pub mod path_info;
 mod operations;
+pub mod path_info;
 mod tasks;
 mod watch;
 
 use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::warn;
 
-use self::{
-    path_info::PathInfo, operations::open_in, tasks::TaskCommand, watch::DirectoryWatcher,
-};
+use self::{operations::open_in, path_info::PathInfo, tasks::TaskCommand, watch::DirectoryWatcher};
 use crate::{
     app::config::Config,
-    command::{result::CommandResult, progress::Task, Command},
+    command::{Command, progress::Task, result::CommandResult},
 };
 
 pub struct FileSystem {
@@ -73,7 +71,9 @@ impl FileSystem {
     }
 
     fn current_directory(&self) -> &PathInfo {
-        self.directory.as_ref().expect("directory is set before any navigation command")
+        self.directory
+            .as_ref()
+            .expect("directory is set before any navigation command")
     }
 
     fn back(&mut self) -> CommandResult {
@@ -99,9 +99,15 @@ impl FileSystem {
                     self.send_directory_error(&path_buf, e);
                 }
                 if navigate {
-                    Command::NavigatedDirectory { directory, children }
+                    Command::NavigatedDirectory {
+                        directory,
+                        children,
+                    }
                 } else {
-                    Command::RefreshedDirectory { directory, children }
+                    Command::RefreshedDirectory {
+                        directory,
+                        children,
+                    }
                 }
             }
             Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
@@ -125,8 +131,12 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path, true)
                 } else {
-                    open_in(&path, &self.open_selected_file_template, self.command_tx.clone())
-                        .into()
+                    open_in(
+                        &path,
+                        &self.open_selected_file_template,
+                        self.command_tx.clone(),
+                    )
+                    .into()
                 }
             }
             Err(err) => err.into(),
@@ -158,9 +168,9 @@ impl FileSystem {
         };
         for path in paths {
             if let Err(error) = operations::chmod(path, mode) {
-                let _ = self.command_tx.send(
-                    anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into(),
-                );
+                let _ = self
+                    .command_tx
+                    .send(anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into());
             }
         }
         self.refresh()

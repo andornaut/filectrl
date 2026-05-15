@@ -1,7 +1,11 @@
 use super::LineItemMap;
 
 /// Calculates the target item for the next page movement
-pub(super) fn next_page(mapper: &LineItemMap, selected_item: usize, items_count: usize) -> Option<usize> {
+pub(super) fn next_page(
+    mapper: &LineItemMap,
+    selected_item: usize,
+    items_count: usize,
+) -> Option<usize> {
     // If already at the last item, then no-op
     if selected_item == items_count.saturating_sub(1) {
         return None;
@@ -62,7 +66,7 @@ pub(super) fn previous_page(
 
 #[cfg(test)]
 mod tests {
-    use super::{next_page, previous_page, LineItemMap};
+    use super::{LineItemMap, next_page, previous_page};
 
     fn map(heights: Vec<usize>, visible: usize, first: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, first)

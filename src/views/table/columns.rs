@@ -99,9 +99,15 @@ fn calculate_constraints(width: u16) -> (Vec<Constraint>, u16) {
 
 fn calculate_name_width(width: u16) -> u16 {
     let mut reserved = 0;
-    if width > MODIFIED_THRESHOLD { reserved += MODIFIED_LEN + 1; }
-    if width > SIZE_THRESHOLD     { reserved += SIZE_LEN + 1; }
-    if width > MODE_THRESHOLD     { reserved += MODE_LEN + 1; }
+    if width > MODIFIED_THRESHOLD {
+        reserved += MODIFIED_LEN + 1;
+    }
+    if width > SIZE_THRESHOLD {
+        reserved += SIZE_LEN + 1;
+    }
+    if width > MODE_THRESHOLD {
+        reserved += MODE_LEN + 1;
+    }
     width.saturating_sub(reserved)
 }
 

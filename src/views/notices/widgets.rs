@@ -10,7 +10,10 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{clipboard::ClipboardEntry, config::theme::{Clipboard, Notice as NoticeTheme, Table}},
+    app::{
+        clipboard::ClipboardEntry,
+        config::theme::{Clipboard, Notice as NoticeTheme, Table},
+    },
     command::progress::{Progress, Task},
     views::unicode::{pluralize_items, truncate_left},
 };
@@ -56,7 +59,12 @@ pub(super) fn clipboard_widget<'a>(
     create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn marked_widget<'a>(theme: &Table, width: u16, count: usize, hint: &'a str) -> Block<'a> {
+pub(super) fn marked_widget<'a>(
+    theme: &Table,
+    width: u16,
+    count: usize,
+    hint: &'a str,
+) -> Block<'a> {
     let style = theme.marked();
     let left = Line::from(vec![
         Span::styled(MARKED_PREFIX, style.add_modifier(Modifier::BOLD)),
@@ -65,7 +73,12 @@ pub(super) fn marked_widget<'a>(theme: &Table, width: u16, count: usize, hint: &
     create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn filter_widget<'a>(theme: &NoticeTheme, width: u16, filter: &'a str, hint: &'a str) -> Block<'a> {
+pub(super) fn filter_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    filter: &'a str,
+    hint: &'a str,
+) -> Block<'a> {
     let left = Line::from(vec![
         FILTER_PREFIX.into(),
         Span::styled(filter, theme.filter().add_modifier(Modifier::BOLD)),

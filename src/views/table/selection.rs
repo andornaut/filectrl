@@ -1,4 +1,4 @@
-use super::{scroll, TableView};
+use super::{TableView, scroll};
 use crate::{
     command::{Command, result::CommandResult},
     file_system::path_info::PathInfo,
