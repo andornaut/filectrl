@@ -58,18 +58,41 @@ fn run_copy_task(
     };
 
     info!("Copying {old_path:?} to {new_path:?}");
-    let (active, initial) = ActiveTask::new(path.size, tx);
-    let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
-    let source_mode = path.mode();
 
-    thread::spawn(move || {
-        if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
-            apply_permissions(source_mode, &new_path);
-            active.done();
-        }
-    });
+    if path.is_directory() {
+        let total_size = match dir_total_size(&old_path) {
+            Ok(size) => size,
+            Err(error) => {
+                return Command::AlertError(format!(
+                    "Failed to read directory {old_path:?}: {error}"
+                ))
+                .into()
+            }
+        };
+        let (active, initial) = ActiveTask::new(total_size, tx);
+        let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
 
-    Command::Progress(initial).into()
+        thread::spawn(move || {
+            if let Some(active) = copy_directory(&old_path, &new_path, active, buffer_size) {
+                active.done();
+            }
+        });
+
+        Command::Progress(initial).into()
+    } else {
+        let (active, initial) = ActiveTask::new(path.size, tx);
+        let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
+        let source_mode = path.mode();
+
+        thread::spawn(move || {
+            if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
+                apply_permissions(source_mode, &new_path);
+                active.done();
+            }
+        });
+
+        Command::Progress(initial).into()
+    }
 }
 
 fn run_move_task(
@@ -96,15 +119,28 @@ fn run_move_task(
         Err(error) => match error.kind() {
             // If the file is on a different device/mount-point, we must copy-then-delete it instead
             ErrorKind::CrossesDevices => {
+                let is_directory = path.is_directory();
                 let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
-                if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
-                    match fs::remove_file(&old_path) {
+                let copy_result = if is_directory {
+                    copy_directory(&old_path, &new_path, active, buffer_size)
+                } else {
+                    copy_file(&old_path, &new_path, active, buffer_size)
+                };
+                if let Some(active) = copy_result {
+                    let remove_result = if is_directory {
+                        fs::remove_dir_all(&old_path)
+                    } else {
+                        fs::remove_file(&old_path)
+                    };
+                    match remove_result {
                         Ok(_) => {
-                            apply_permissions(source_mode, &new_path);
+                            if !is_directory {
+                                apply_permissions(source_mode, &new_path);
+                            }
                             active.done()
                         }
                         Err(error) => active.error(format!(
-                            "Copy succeeded, but failed to delete original file {old_path:?}: {error}"
+                            "Copy succeeded, but failed to delete original {old_path:?}: {error}"
                         )),
                     }
                 }
@@ -158,6 +194,87 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
     } else {
         std::cmp::max(buffer_min_bytes, len / BUFFER_SIZE_DIVISOR) as usize
     }
+}
+
+fn dir_total_size(path: &Path) -> Result<u64> {
+    let mut total = 0;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.is_dir() {
+            total += dir_total_size(&entry.path())?;
+        } else if !metadata.is_symlink() {
+            total += metadata.len();
+        }
+    }
+    Ok(total)
+}
+
+fn copy_directory(
+    old_path: &Path,
+    new_path: &Path,
+    mut active: ActiveTask,
+    buffer_size: usize,
+) -> Option<ActiveTask> {
+    if let Err(error) = fs::create_dir(new_path) {
+        active.error(format!("Failed to create directory {new_path:?}: {error}"));
+        return None;
+    }
+
+    if let Ok(metadata) = fs::symlink_metadata(old_path) {
+        apply_permissions(metadata.permissions().mode(), new_path);
+    }
+
+    let entries = match fs::read_dir(old_path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            active.error(format!("Failed to read directory {old_path:?}: {error}"));
+            return None;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(error) => {
+                active.error(format!("Failed to read entry in {old_path:?}: {error}"));
+                return None;
+            }
+        };
+
+        let src = entry.path();
+        let dst = new_path.join(entry.file_name());
+        let metadata = match fs::symlink_metadata(&src) {
+            Ok(m) => m,
+            Err(error) => {
+                active.error(format!("Failed to read metadata for {src:?}: {error}"));
+                return None;
+            }
+        };
+
+        if metadata.is_symlink() {
+            match fs::read_link(&src) {
+                Ok(target) => {
+                    if let Err(error) = std::os::unix::fs::symlink(&target, &dst) {
+                        active.error(format!("Failed to create symlink {dst:?}: {error}"));
+                        return None;
+                    }
+                }
+                Err(error) => {
+                    active.error(format!("Failed to read symlink {src:?}: {error}"));
+                    return None;
+                }
+            }
+        } else if metadata.is_dir() {
+            active = copy_directory(&src, &dst, active, buffer_size)?;
+        } else {
+            let mode = metadata.permissions().mode();
+            active = copy_file(&src, &dst, active, buffer_size)?;
+            apply_permissions(mode, &dst);
+        }
+    }
+
+    Some(active)
 }
 
 /// Copies a file chunk-by-chunk, sending debounced progress updates via `active`.
