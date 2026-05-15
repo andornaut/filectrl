@@ -1,4 +1,4 @@
-use textwrap::{wrap, Options, WordSplitter};
+use textwrap::{Options, WordSplitter, wrap};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 

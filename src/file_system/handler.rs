@@ -1,5 +1,5 @@
-use super::{tasks::TaskCommand, FileSystem};
-use crate::command::{handler::CommandHandler, result::CommandResult, Command};
+use super::{FileSystem, tasks::TaskCommand};
+use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -8,11 +8,17 @@ impl CommandHandler for FileSystem {
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
-                self.run_batch(srcs.iter().map(|src| TaskCommand::Copy(src.clone(), dest.clone())));
+                self.run_batch(
+                    srcs.iter()
+                        .map(|src| TaskCommand::Copy(src.clone(), dest.clone())),
+                );
                 CommandResult::Handled
             }
             Command::Move { srcs, dest } => {
-                self.run_batch(srcs.iter().map(|src| TaskCommand::Move(src.clone(), dest.clone())));
+                self.run_batch(
+                    srcs.iter()
+                        .map(|src| TaskCommand::Move(src.clone(), dest.clone())),
+                );
                 CommandResult::Handled
             }
             Command::Delete(paths) => {

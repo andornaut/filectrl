@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, Error};
+use crate::file_system::path_info::PathInfo;
+use anyhow::{Error, anyhow};
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use log::warn;
-use crate::file_system::path_info::PathInfo;
 
 #[derive(Clone, Debug)]
 pub struct Clipboard {
@@ -39,21 +39,7 @@ impl Clipboard {
     }
 
     pub fn get_clipboard_entry(&self) -> Option<ClipboardEntry> {
-        let backend = match &self.backend {
-            Some(b) => b,
-            None => {
-                warn!("No clipboard backend available");
-                return None;
-            }
-        };
-        let text = match backend.get_string() {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("Failed to read clipboard: {e}");
-                String::new()
-            }
-        };
-        text.as_str().try_into().ok()
+        self.get_text()?.as_str().try_into().ok()
     }
 
     pub fn get_text(&self) -> Option<String> {
@@ -156,7 +142,6 @@ impl TryFrom<&str> for ClipboardEntry {
     }
 }
 
-
 #[derive(Clone)]
 struct ClipboardBackend {
     clipboard: Arc<Mutex<ClipboardContext>>,
@@ -201,4 +186,3 @@ impl ClipboardBackend {
         self.set_string("")
     }
 }
-

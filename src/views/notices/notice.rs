@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use ratatui::widgets::Block;
 
 use super::widgets::{clipboard_widget, filter_widget, marked_widget, progress_widget};
-use crate::{app::{clipboard::ClipboardEntry, config::theme::Theme}, command::progress::Task};
+use crate::{
+    app::{clipboard::ClipboardEntry, config::theme::Theme},
+    command::progress::Task,
+};
 
 /// Represents the different types of notices that can be displayed.
 /// The order of the enum variants defines the order in which notices are displayed.

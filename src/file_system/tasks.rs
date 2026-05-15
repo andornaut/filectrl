@@ -7,12 +7,12 @@ use std::{
     thread,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
 use crate::{
-    command::{result::CommandResult, progress::ActiveTask, Command},
+    command::{Command, progress::ActiveTask, result::CommandResult},
     file_system::debounce,
 };
 
@@ -66,7 +66,7 @@ fn run_copy_task(
                 return Command::AlertError(format!(
                     "Failed to read directory {old_path:?}: {error}"
                 ))
-                .into()
+                .into();
             }
         };
         let (active, initial) = ActiveTask::new(total_size, tx);

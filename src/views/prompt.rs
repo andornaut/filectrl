@@ -88,11 +88,17 @@ impl PromptView {
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
         match &self.actions {
-            PromptAction::Chmod { paths, .. } => Command::Chmod { paths: paths.clone(), mode: value },
+            PromptAction::Chmod { paths, .. } => Command::Chmod {
+                paths: paths.clone(),
+                mode: value,
+            },
             PromptAction::CreateDirectory => Command::CreateDirectory(value),
             PromptAction::Delete(_) => Command::ConfirmDelete,
             PromptAction::Filter(_) => Command::FilterChanged(value),
-            PromptAction::Rename { path, .. } => Command::Rename { path: path.clone(), name: value },
+            PromptAction::Rename { path, .. } => Command::Rename {
+                path: path.clone(),
+                name: value,
+            },
         }
         .into()
     }
@@ -187,9 +193,19 @@ mod tests {
     #[test]
     fn enter_with_rename_returns_rename_path() {
         let path = test_path();
-        let mut view = prompt_with_action(PromptAction::Rename { path: path.clone(), name: "bar.txt".into() });
+        let mut view = prompt_with_action(PromptAction::Rename {
+            path: path.clone(),
+            name: "bar.txt".into(),
+        });
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        assert_eq!(result, Command::Rename { path, name: "bar.txt".to_string() }.into());
+        assert_eq!(
+            result,
+            Command::Rename {
+                path,
+                name: "bar.txt".to_string()
+            }
+            .into()
+        );
     }
 
     // ── open (via handle_command) ─────────────────────────────────────────────
@@ -205,7 +221,10 @@ mod tests {
 
     #[test]
     fn ctrl_z_resets_to_initial_text() {
-        let mut view = prompt_with_action(PromptAction::Rename { path: test_path(), name: "original.txt".into() });
+        let mut view = prompt_with_action(PromptAction::Rename {
+            path: test_path(),
+            name: "original.txt".into(),
+        });
         // Type a character to modify the text
         view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");

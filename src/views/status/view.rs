@@ -1,10 +1,10 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     widgets::Widget,
-    Frame,
 };
 
-use super::{widgets::default_widget, StatusView};
+use super::{StatusView, widgets::default_widget};
 use crate::{app::config::Config, views::View};
 
 impl View for StatusView {
