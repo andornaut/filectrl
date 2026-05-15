@@ -19,19 +19,15 @@ impl ScrollbarView {
         let y = event.row;
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if self.is_clicked(x, y) {
-                    self.is_dragging = true;
-                    return self.handle_drag(y, max_position);
-                }
+            MouseEventKind::Down(MouseButton::Left) if self.is_clicked(x, y) => {
+                self.is_dragging = true;
+                return self.handle_drag(y, max_position);
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.is_dragging = false;
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if self.is_dragging {
-                    return self.handle_drag(y, max_position);
-                }
+            MouseEventKind::Drag(MouseButton::Left) if self.is_dragging => {
+                return self.handle_drag(y, max_position);
             }
             _ => {}
         }
