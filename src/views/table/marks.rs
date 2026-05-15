@@ -81,14 +81,14 @@ impl TableView {
                 self.marks.toggle(i);
             }
         }
-        Command::SetMarkCount(self.marks.len()).into()
+        Command::MarkCountChanged(self.marks.len()).into()
     }
 
     pub(super) fn enter_range_mode(&mut self) -> CommandResult {
         if let Some(i) = self.table_state.selected() {
             self.marks.enter_range(i);
         }
-        Command::SetMarkCount(self.marks.len()).into()
+        Command::MarkCountChanged(self.marks.len()).into()
     }
 
     pub(super) fn clear_marks(&mut self) {

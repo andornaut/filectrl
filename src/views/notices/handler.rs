@@ -14,23 +14,23 @@ impl CommandHandler for NoticesView {
         match command {
             Command::CancelPrompt | Command::ConfirmDelete => {
                 self.hide_marked = false;
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
             Command::OpenPrompt(PromptAction::Delete(_)) => {
                 self.hide_marked = true;
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
             Command::ClearClipboard => {
                 self.clipboard_entry = None;
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
-            Command::NavigateDirectory(_, _) => {
+            Command::NavigatedDirectory { .. } => {
                 self.filter.clear();
                 self.mark_count = 0;
                 CommandResult::Handled
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
-            Command::Reset => {
+            Command::ResetView => {
                 self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
@@ -38,13 +38,13 @@ impl CommandHandler for NoticesView {
             }
             Command::SetClipboard(entry) => {
                 self.clipboard_entry = Some(entry.clone());
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
-            Command::SetFilter(filter) => {
+            Command::FilterChanged(filter) => {
                 self.filter.clone_from(filter);
-                CommandResult::Handled
+                CommandResult::NotHandled
             }
-            Command::SetMarkCount(count) => {
+            Command::MarkCountChanged(count) => {
                 self.mark_count = *count;
                 // Marks and clipboard are mutually exclusive
                 if *count > 0 && self.clipboard_entry.is_some() {
@@ -71,7 +71,7 @@ impl CommandHandler for NoticesView {
                 match self.notices.get(y) {
                     Some(Notice::Clipboard(_))
                     | Some(Notice::Filter(_))
-                    | Some(Notice::Marked(_)) => Command::Reset.into(),
+                    | Some(Notice::Marked(_)) => Command::ResetView.into(),
                     Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }

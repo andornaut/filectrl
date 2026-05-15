@@ -34,7 +34,7 @@ impl HelpView {
         let kb = &Config::global().keybindings;
         let hint = format!(
             "(Press {} to close)",
-            kb.hint_for(&[Action::ToggleHelp, Action::Reset])
+            kb.hint_for(&[Action::ToggleHelp, Action::ResetView])
         );
         let normal_keybindings = build_normal_keybindings(kb);
         let prompt_keybindings = build_prompt_keybindings(kb);
@@ -234,12 +234,14 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Copy: ".into(), d(Action::Copy)),
         ("Cut: ".into(), d(Action::Cut)),
         ("Paste: ".into(), d(Action::Paste)),
+        ("Chmod: ".into(), d(Action::Chmod)),
+        ("Create directory: ".into(), d(Action::CreateDirectory)),
         ("Delete: ".into(), d(Action::Delete)),
         ("Rename: ".into(), d(Action::Rename)),
         ("Filter: ".into(), d(Action::Filter)),
         ("Sort by name, modified, size: ".into(), format!("{}, {}, {}", d(Action::SortByName), d(Action::SortByModified), d(Action::SortBySize))),
         ("Refresh: ".into(), d(Action::Refresh)),
-        ("Clear clipboard/filter/marks: ".into(), d(Action::Reset)),
+        ("Clear clipboard/filter/marks: ".into(), d(Action::ResetView)),
         ("Clear alerts, progress: ".into(), format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress))),
         ("Toggle help: ".into(), d(Action::ToggleHelp)),
     ]
