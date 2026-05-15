@@ -18,7 +18,10 @@ pub struct DirectoryWatcher {
     handles: Vec<thread::JoinHandle<()>>,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched_directory: Option<PathBuf>,
-    watcher: RecommendedWatcher,
+    /// Option so `Drop` can `.take()` it before joining the watcher threads.
+    /// Dropping the watcher closes the notify channel sender, which unblocks
+    /// the threads waiting on the receiver so they can exit.
+    watcher: Option<RecommendedWatcher>,
 }
 
 impl DirectoryWatcher {
@@ -29,7 +32,7 @@ impl DirectoryWatcher {
             debounce_threshold: Duration::from_millis(debounce_ms),
             handles: Vec::new(),
             notify_rx: Some(notify_rx),
-            watcher,
+            watcher: Some(watcher),
             watched_directory: None,
         })
     }
@@ -58,14 +61,16 @@ impl DirectoryWatcher {
     }
 
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
+        let Some(watcher) = &mut self.watcher else {
+            return Ok(());
+        };
         if let Some(old_path) = &self.watched_directory
-            && let Err(e) = self.watcher.unwatch(old_path.as_path())
+            && let Err(e) = watcher.unwatch(old_path.as_path())
         {
             warn!("Failed to unwatch directory: {}", e);
         }
 
-        self.watcher
-            .watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
+        watcher.watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
         self.watched_directory = Some(path);
         Ok(())
     }
@@ -73,6 +78,11 @@ impl DirectoryWatcher {
 
 impl Drop for DirectoryWatcher {
     fn drop(&mut self) {
+        // Drop the watcher first: it owns the notify channel sender. Dropping it
+        // causes notify_rx.recv() to return Err, which exits watch_for_notify_events,
+        // which in turn drops delayed_tx, exiting watch_for_delayed_commands.
+        // Without this, handle.join() below would block forever.
+        self.watcher.take();
         for handle in self.handles.drain(..) {
             let _ = handle.join();
         }
