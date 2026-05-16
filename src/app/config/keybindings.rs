@@ -150,8 +150,9 @@ impl TomlKeybindings {
             };
         }
 
-        // Hardcoded-only action (no TOML field, but must be in the binding list
-        // so that hardcoded Esc is inserted into the prompt action map)
+        // Hardcoded-only actions (no TOML fields, but must be in the binding list
+        // so that hardcoded keys are inserted into the action map)
+        normal.push((Action::ResetView, vec![]));
         prompt.push((Action::PromptCancel, vec![]));
 
         // Normal mode
@@ -289,6 +290,7 @@ fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
         Action::SelectLast => vec![kc(KeyCode::End, KeyModifiers::NONE)],
         Action::PageUp => vec![kc(KeyCode::PageUp, KeyModifiers::NONE)],
         Action::PageDown => vec![kc(KeyCode::PageDown, KeyModifiers::NONE)],
+        Action::ResetView => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         Action::PromptCancel => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         _ => vec![],
     }
@@ -301,6 +303,7 @@ const HARDCODED_ACTIONS: &[Action] = &[
     Action::PageDown,
     Action::PageUp,
     Action::PromptCancel,
+    Action::ResetView,
     Action::SelectFirst,
     Action::SelectLast,
     Action::SelectNext,
