@@ -178,6 +178,14 @@ fg = "#f1f1f1"
 bg = "#545860"
 fg = "#c2fe0b"
 
+[theme.notice.search]
+bg = "#7c48e2"
+fg = "#f1f1f1"
+
+[theme.notice.search_loading]
+bg = "#545860"
+fg = "#c2fe0b"
+
 [theme.prompt.cursor]
 bg = "#c2fe0b"
 fg = "#282a2c"
@@ -414,6 +422,14 @@ bg = "98" # #875fd7 - purple (approx #7c48e2)
 fg = "255" # #eeeeee
 
 [theme256.notice.progress]
+bg = "240" # #585858 (approx #545860)
+fg = "190" # #d7ff00 - lime
+
+[theme256.notice.search]
+bg = "98" # #875fd7 - purple (approx #7c48e2)
+fg = "255" # #eeeeee
+
+[theme256.notice.search_loading]
 bg = "240" # #585858 (approx #545860)
 fg = "190" # #d7ff00 - lime
 

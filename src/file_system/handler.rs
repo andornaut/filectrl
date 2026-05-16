@@ -6,6 +6,10 @@ impl CommandHandler for FileSystem {
         match command {
             Command::Back => self.back(),
             Command::CancelTask => self.cancel_most_recent(),
+            Command::ResetView => {
+                self.cancel_search();
+                CommandResult::NotHandled
+            }
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
