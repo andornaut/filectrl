@@ -95,7 +95,7 @@ Go to home dir | <kbd>~</kbd>
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Jump to middle row | <kbd>z</kbd>
-Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>b</kbd>/<kbd>PgUp</kbd>
+Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>b</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>
 Range mark | <kbd>V</kbd>
 Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
@@ -107,7 +107,7 @@ Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
-Search | <kbd>Ctrl</kbd>+<kbd>s</kbd>
+Search | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>Ctrl</kbd>+<kbd>s</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Cancel task | <kbd>Ctrl</kbd>+<kbd>k</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>

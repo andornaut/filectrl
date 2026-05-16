@@ -63,13 +63,8 @@ impl CommandHandler for App {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
-            Some(Action::Quit) => {
-                if self.root.needs_reset() {
-                    Command::ResetView.into()
-                } else {
-                    Command::Quit.into()
-                }
-            }
+            Some(Action::Quit) => Command::Quit.into(),
+            Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
     }
