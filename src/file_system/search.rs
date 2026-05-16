@@ -1,10 +1,4 @@
-use std::{
-    collections::VecDeque,
-    fs,
-    path::PathBuf,
-    sync::mpsc::Sender,
-    thread,
-};
+use std::{collections::VecDeque, fs, path::PathBuf, sync::mpsc::Sender, thread};
 
 use log::warn;
 

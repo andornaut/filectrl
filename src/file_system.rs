@@ -14,7 +14,11 @@ use log::warn;
 use self::{operations::open_in, path_info::PathInfo, tasks::TaskCommand, watch::DirectoryWatcher};
 use crate::{
     app::config::Config,
-    command::{Command, progress::{CancellationToken, Task}, result::CommandResult},
+    command::{
+        Command,
+        progress::{CancellationToken, Task},
+        result::CommandResult,
+    },
 };
 
 pub struct FileSystem {

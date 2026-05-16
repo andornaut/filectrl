@@ -12,7 +12,11 @@ use log::{info, warn};
 
 use super::path_info::PathInfo;
 use crate::{
-    command::{Command, progress::{ActiveTask, CancellationToken}, result::CommandResult},
+    command::{
+        Command,
+        progress::{ActiveTask, CancellationToken},
+        result::CommandResult,
+    },
     file_system::debounce,
 };
 
