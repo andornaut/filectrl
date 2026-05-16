@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use ratatui::widgets::Block;
 
 use super::widgets::{
-    clipboard_widget, filter_widget, marked_widget, progress_widget,
-    search_indicator_widget, search_widget,
+    clipboard_widget, filter_widget, marked_widget, progress_widget, search_indicator_widget,
+    search_widget,
 };
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
@@ -41,9 +41,7 @@ impl Notice {
             Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
             Notice::Search(query) => search_widget(&theme.notice, width, query, search_hint),
-            Notice::SearchLoading => {
-                search_indicator_widget(&theme.notice, width, search_tick)
-            }
+            Notice::SearchLoading => search_indicator_widget(&theme.notice, width, search_tick),
         }
     }
 }
