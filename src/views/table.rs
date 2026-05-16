@@ -38,4 +38,3 @@ pub(super) struct TableView {
     mapper: LineItemMap,
     scrollbar_view: ScrollbarView,
 }
-
