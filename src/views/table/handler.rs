@@ -46,6 +46,7 @@ impl CommandHandler for TableView {
                 self.set_filter(String::new());
                 if self.content.is_searching() {
                     self.content.clear_search();
+                    self.table_state.select(None); // search-result index is meaningless in the directory
                     return Command::Refresh.into();
                 }
                 CommandResult::Handled
