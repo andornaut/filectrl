@@ -1,12 +1,30 @@
 use std::{
     hash::{Hash, Hasher},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::Sender,
     },
 };
 
 use super::Command;
+
+#[derive(Clone, Debug)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Progress {
@@ -54,6 +72,7 @@ impl Progress {
 /// `Drop` impl sends a final progress update marking the task as done, clearing any
 /// phantom progress bar from the UI.
 pub struct ActiveTask {
+    cancel_token: CancellationToken,
     task: Option<Task>,
     tx: Sender<Command>,
 }
@@ -71,16 +90,24 @@ impl Drop for ActiveTask {
 
 impl ActiveTask {
     /// Creates a new active task and an initial snapshot suitable for `Command::Progress`.
-    pub fn new(total: u64, tx: Sender<Command>) -> (Self, Task) {
+    /// Returns the active task handle, an initial task snapshot, and a cancellation token.
+    pub fn new(tx: Sender<Command>, total: u64) -> (Self, Task, CancellationToken) {
+        let cancel_token = CancellationToken::new();
         let task = Task::new(total);
         let initial = task.clone();
         (
             Self {
+                cancel_token: cancel_token.clone(),
                 task: Some(task),
                 tx,
             },
             initial,
+            cancel_token,
         )
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
     }
 
     pub fn total_size(&self) -> u64 {
@@ -152,6 +179,10 @@ impl Task {
             },
             status: TaskStatus::default(),
         }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id.0
     }
 
     pub fn combine_progress(&self, progress: &Progress) -> Progress {

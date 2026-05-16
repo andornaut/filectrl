@@ -9,16 +9,13 @@ use std::{
 use log::warn;
 
 use super::path_info::PathInfo;
-use crate::command::Command;
+use crate::command::{Command, progress::CancellationToken};
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Each matching entry is sent as a
 /// `Command::SearchResult` through the channel. A `Command::SearchComplete`
-/// is sent when the traversal finishes.
-///
-/// Cancellation is not yet implemented but will be added as a fast-follow
-/// via a shared `AtomicBool` flag checked each iteration.
-pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>) {
+/// is sent when the traversal finishes (or is cancelled).
+pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: CancellationToken) {
     thread::spawn(move || {
         let query_lower = query.to_lowercase();
         let root_path = PathBuf::from(&root.path);
@@ -26,6 +23,11 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>) {
         queue.push_back(root_path.clone());
 
         while let Some(dir) = queue.pop_front() {
+            if cancel.is_cancelled() {
+                let _ = tx.send(Command::SearchComplete);
+                return;
+            }
+
             let entries = match fs::read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(e) => {
@@ -35,6 +37,11 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>) {
             };
 
             for entry in entries {
+                if cancel.is_cancelled() {
+                    let _ = tx.send(Command::SearchComplete);
+                    return;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {

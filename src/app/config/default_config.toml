@@ -40,6 +40,7 @@ sort_directories_first = true
 [keybindings]
 # Normal mode
 back = ["h", "b", "Backspace"]
+cancel_task = "Ctrl+k"
 chmod = "x"
 clear_alerts = "a"
 clear_progress = "p"
@@ -59,7 +60,7 @@ quit = "q"
 range_mark = "V"
 refresh = ["Ctrl+r", "F5"]
 rename = ["r", "F2"]
-search = "Ctrl+k"
+search = "Ctrl+s"
 select_first = ["g", "^"]
 select_last = ["G", "$"]
 select_middle = "z"

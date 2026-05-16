@@ -12,12 +12,17 @@ use log::{info, warn};
 
 use super::path_info::PathInfo;
 use crate::{
-    command::{Command, progress::ActiveTask, result::CommandResult},
+    command::{Command, progress::{ActiveTask, CancellationToken}, result::CommandResult},
     file_system::debounce,
 };
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
+
+pub struct TaskRunResult {
+    pub command_result: CommandResult,
+    pub cancel_info: Option<(usize, CancellationToken, String)>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskCommand {
@@ -32,7 +37,7 @@ impl TaskCommand {
         tx: Sender<Command>,
         buffer_min_bytes: u64,
         buffer_max_bytes: u64,
-    ) -> CommandResult {
+    ) -> TaskRunResult {
         match self {
             TaskCommand::Copy(path, dir) => {
                 run_copy_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
@@ -51,25 +56,35 @@ fn run_copy_task(
     dir: PathInfo,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
-) -> CommandResult {
+) -> TaskRunResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
         Ok(paths) => paths,
-        Err(result) => return result,
+        Err(result) => {
+            return TaskRunResult {
+                command_result: result,
+                cancel_info: None,
+            };
+        }
     };
 
     info!("Copying {old_path:?} to {new_path:?}");
+    let description = format!("copy of {}", path.basename);
 
     if path.is_directory() {
         let total_size = match dir_total_size(&old_path) {
             Ok(size) => size,
             Err(error) => {
-                return Command::AlertError(format!(
-                    "Failed to read directory {old_path:?}: {error}"
-                ))
-                .into();
+                return TaskRunResult {
+                    command_result: Command::AlertError(format!(
+                        "Failed to read directory {old_path:?}: {error}"
+                    ))
+                    .into(),
+                    cancel_info: None,
+                };
             }
         };
-        let (active, initial) = ActiveTask::new(total_size, tx);
+        let (active, initial, token) = ActiveTask::new(tx, total_size);
+        let cancel_info = Some((initial.id(), token, description));
         let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
 
         thread::spawn(move || {
@@ -78,9 +93,13 @@ fn run_copy_task(
             }
         });
 
-        Command::Progress(initial).into()
+        TaskRunResult {
+            command_result: Command::Progress(initial).into(),
+            cancel_info,
+        }
     } else {
-        let (active, initial) = ActiveTask::new(path.size, tx);
+        let (active, initial, token) = ActiveTask::new(tx, path.size);
+        let cancel_info = Some((initial.id(), token, description));
         let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
         let source_mode = path.mode();
 
@@ -91,7 +110,10 @@ fn run_copy_task(
             }
         });
 
-        Command::Progress(initial).into()
+        TaskRunResult {
+            command_result: Command::Progress(initial).into(),
+            cancel_info,
+        }
     }
 }
 
@@ -101,14 +123,21 @@ fn run_move_task(
     dir: PathInfo,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
-) -> CommandResult {
+) -> TaskRunResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
         Ok(paths) => paths,
-        Err(result) => return result,
+        Err(result) => {
+            return TaskRunResult {
+                command_result: result,
+                cancel_info: None,
+            };
+        }
     };
 
     info!("Moving {old_path:?} to {new_path:?}");
-    let (mut active, initial) = ActiveTask::new(path.size, tx);
+    let description = format!("move of {}", path.basename);
+    let (mut active, initial, token) = ActiveTask::new(tx, path.size);
+    let cancel_info = Some((initial.id(), token, description));
     let source_mode = path.mode();
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
@@ -151,11 +180,16 @@ fn run_move_task(
         },
     });
 
-    Command::Progress(initial).into()
+    TaskRunResult {
+        command_result: Command::Progress(initial).into(),
+        cancel_info,
+    }
 }
 
-fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
-    let (active, initial) = ActiveTask::new(path.size, tx);
+fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
+    let description = format!("delete of {}", path.basename);
+    let (active, initial, token) = ActiveTask::new(tx, path.size);
+    let cancel_info = Some((initial.id(), token, description));
     // Use PathInfo::is_directory() (lstat-based, does not follow symlinks) so that a
     // symlink to a directory is removed with remove_file(), not remove_dir_all().
     // PathBuf::is_dir() follows symlinks and would incorrectly recurse into the target.
@@ -176,7 +210,10 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> CommandResult {
         }
     });
 
-    Command::Progress(initial).into()
+    TaskRunResult {
+        command_result: Command::Progress(initial).into(),
+        cancel_info,
+    }
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
@@ -234,6 +271,12 @@ fn copy_directory(
     };
 
     for entry in entries {
+        if active.is_cancelled() {
+            let _ = fs::remove_dir_all(new_path);
+            active.error("Cancelled".to_string());
+            return None;
+        }
+
         let entry = match entry {
             Ok(e) => e,
             Err(error) => {
@@ -302,6 +345,14 @@ fn copy_file(
                 debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
 
             loop {
+                if active.is_cancelled() {
+                    drop(old_file);
+                    drop(new_file);
+                    let _ = fs::remove_file(new_path);
+                    active.error("Cancelled".to_string());
+                    break None;
+                }
+
                 match old_file.read(&mut buffer) {
                     Ok(0) => break Some(active),
                     Ok(bytes) => match new_file.write_all(&buffer[..bytes]) {

@@ -69,6 +69,7 @@ impl CommandHandler for NoticesView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
+            Some(Action::CancelTask) => Command::CancelTask.into(),
             Some(Action::ClearProgress) => self.clear_progress(),
             _ => CommandResult::NotHandled,
         }
