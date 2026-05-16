@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use ratatui::widgets::Block;
 
-use super::widgets::{clipboard_widget, filter_widget, marked_widget, progress_widget, search_widget};
+use super::widgets::{
+    clipboard_widget, filter_widget, marked_widget, progress_widget, search_widget,
+};
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
     command::progress::Task,

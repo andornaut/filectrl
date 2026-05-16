@@ -126,9 +126,7 @@ fn display_name(path: &PathInfo, search_root: Option<&Path>) -> String {
     match search_root {
         Some(root) => {
             let item_path = Path::new(&path.path);
-            let relative = item_path
-                .strip_prefix(root)
-                .unwrap_or(item_path);
+            let relative = item_path.strip_prefix(root).unwrap_or(item_path);
             let name = relative.to_string_lossy().to_string();
             if path.is_directory() && !name.ends_with('/') {
                 format!("{name}/")
