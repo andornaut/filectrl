@@ -288,11 +288,15 @@ impl Clipboard {
 pub struct Notice {
     filter: StyleConfig,
     progress: StyleConfig,
+    search: StyleConfig,
+    search_loading: StyleConfig,
 }
 
 impl Notice {
     style_getter!(filter);
     style_getter!(progress);
+    style_getter!(search);
+    style_getter!(search_loading);
 }
 
 #[derive(Deserialize)]

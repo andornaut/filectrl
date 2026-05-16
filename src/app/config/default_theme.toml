@@ -170,6 +170,14 @@ fg = "#24201A"
 bg = "#006B6B"
 fg = "#33A999"
 
+[theme.notice.search]
+bg = "#33A999"
+fg = "#24201A"
+
+[theme.notice.search_loading]
+bg = "#006B6B"
+fg = "#33A999"
+
 [theme.prompt.cursor]
 bg = "#006B6B"
 fg = "#DDDCCC"
@@ -406,6 +414,14 @@ bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "235" # #262626
 
 [theme256.notice.progress]
+bg = "30" # #008787 - dark teal
+fg = "73" # #5fafaf - teal
+
+[theme256.notice.search]
+bg = "73" # #5fafaf - teal (approx #33A999)
+fg = "235" # #262626
+
+[theme256.notice.search_loading]
 bg = "30" # #008787 - dark teal
 fg = "73" # #5fafaf - teal
 
