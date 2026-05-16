@@ -50,10 +50,6 @@ impl RootView {
         self.mode
     }
 
-    pub fn needs_reset(&self) -> bool {
-        self.is_help_visible || self.table.needs_reset()
-    }
-
     fn views(&mut self) -> Vec<&mut dyn View> {
         // The order is significant for layout
         if self.is_help_visible {
