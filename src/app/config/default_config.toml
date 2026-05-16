@@ -59,6 +59,7 @@ quit = "q"
 range_mark = "V"
 refresh = ["Ctrl+r", "F5"]
 rename = ["r", "F2"]
+search = "Ctrl+k"
 select_first = ["g", "^"]
 select_last = ["G", "$"]
 select_middle = "z"

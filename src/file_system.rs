@@ -2,6 +2,7 @@ mod debounce;
 mod handler;
 mod operations;
 pub mod path_info;
+mod search;
 mod tasks;
 mod watch;
 
@@ -206,6 +207,14 @@ impl FileSystem {
                 let _ = self.command_tx.send(*cmd);
             }
         }
+    }
+
+    fn search(&self, query: &str) {
+        search::run_search(
+            self.current_directory().clone(),
+            query.to_string(),
+            self.command_tx.clone(),
+        );
     }
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {

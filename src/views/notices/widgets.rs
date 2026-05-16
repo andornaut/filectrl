@@ -22,6 +22,7 @@ const COPY_PREFIX: &str = "[Copy] ";
 const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filter] ";
+const SEARCH_PREFIX: &str = "[Searching] ";
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Clipboard,
@@ -113,6 +114,19 @@ pub(super) fn progress_widget<'a>(
         .title(left)
         .title(right)
         .style(theme.progress())
+}
+
+pub(super) fn search_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    query: &'a str,
+    hint: &'a str,
+) -> Block<'a> {
+    let left = Line::from(vec![
+        SEARCH_PREFIX.into(),
+        Span::styled(query, theme.filter().add_modifier(Modifier::BOLD)),
+    ]);
+    create_notice_block(left, theme.filter(), width, hint)
 }
 
 fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a str) -> Block<'a> {

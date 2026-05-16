@@ -21,6 +21,7 @@ pub(super) struct NoticesView {
     hint: String,
     filter: String,
     mark_count: usize,
+    search_query: Option<String>,
     tasks: HashSet<Task>,
     /// Cached at render time so the mouse handler can map y-position -> action
     notices: Vec<Notice>,
@@ -39,6 +40,7 @@ impl NoticesView {
             hint,
             filter: String::new(),
             mark_count: 0,
+            search_query: None,
             tasks: HashSet::new(),
             notices: Vec::new(),
         }
@@ -58,6 +60,9 @@ impl NoticesView {
         };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
+            self.search_query
+                .as_ref()
+                .map(|q| Notice::Search(q.clone())),
             marked,
             clipboard,
             (!self.filter.is_empty()).then_some(Notice::Filter(self.filter.clone())),
