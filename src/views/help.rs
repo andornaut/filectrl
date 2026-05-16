@@ -258,6 +258,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             ),
         ),
         ("Refresh: ".into(), d(Action::Refresh)),
+        ("Cancel task: ".into(), d(Action::CancelTask)),
         (
             "Clear clipboard/filter/marks: ".into(),
             d(Action::ResetView),
