@@ -177,7 +177,12 @@ fn spans<'a>(
             ancestor_style
         };
 
-        let name_len = name.width().min(u16::MAX as usize) as u16;
+        let display_name = if i == 0 && is_last && name.is_empty() {
+            MAIN_SEPARATOR_STR
+        } else {
+            name
+        };
+        let name_len = display_name.width().min(u16::MAX as usize) as u16;
         // Each non-last entry occupies name_len + 1 columns (name + separator).
         // The last entry occupies only name_len columns (no trailing separator).
         let entry_len = name_len + if is_last { 0 } else { 1 };
@@ -193,7 +198,7 @@ fn spans<'a>(
         row_len += entry_len;
 
         let container_row = container.last_mut().unwrap();
-        container_row.push(Span::styled(name.clone(), name_style));
+        container_row.push(Span::styled(display_name.to_owned(), name_style));
         if !is_last {
             container_row.push(Span::styled(MAIN_SEPARATOR_STR, separator_style));
         }
@@ -247,6 +252,11 @@ mod tests {
 
     // ── span content ──────────────────────────────────────────────────────────
 
+    #[test_case(
+        &[""], 80
+        => vec![vec![SEP.to_string()]]
+        ; "root only displays separator"
+    )]
     #[test_case(
         &["", "home", "user"], 80
         => vec![vec!["".to_string(), SEP.to_string(), "home".to_string(), SEP.to_string(), "user".to_string()]]

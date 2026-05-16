@@ -105,9 +105,9 @@ Chmod (octal) | <kbd>x</kbd>
 Create directory | <kbd>c</kbd>
 Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
-Filter | <kbd>/</kbd>
+Filter | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>/</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
-Search | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>Ctrl</kbd>+<kbd>s</kbd>
+Search | <kbd>Ctrl</kbd>+<kbd>s</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Cancel task | <kbd>Ctrl</kbd>+<kbd>k</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
