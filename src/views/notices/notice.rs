@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use ratatui::widgets::Block;
 
 use super::widgets::{
-    clipboard_widget, filter_widget, marked_widget, progress_widget, search_widget,
+    clipboard_widget, filter_widget, marked_widget, progress_widget,
+    search_indicator_widget, search_widget,
 };
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
@@ -16,6 +17,7 @@ use crate::{
 pub(super) enum Notice {
     Progress,
     Search(String),
+    SearchLoading,
     Marked(usize),
     Clipboard(ClipboardEntry),
     Filter(String),
@@ -28,6 +30,8 @@ impl Notice {
         width: u16,
         tasks: &'a HashSet<Task>,
         hint: &'a str,
+        search_hint: &'a str,
+        search_tick: u16,
     ) -> Block<'a> {
         match self {
             Notice::Clipboard(clipboard_entry) => {
@@ -36,7 +40,10 @@ impl Notice {
             Notice::Filter(filter) => filter_widget(&theme.notice, width, filter, hint),
             Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
-            Notice::Search(query) => search_widget(&theme.notice, width, query, hint),
+            Notice::Search(query) => search_widget(&theme.notice, width, query, search_hint),
+            Notice::SearchLoading => {
+                search_indicator_widget(&theme.notice, width, search_tick)
+            }
         }
     }
 }

@@ -105,6 +105,8 @@ pub enum Command {
     SearchResult(PathInfo),
     SearchComplete,
 
+    SearchTick,
+
     // View state notifications — emitted by TableView
     FilterChanged(String),
     MarkCountChanged(usize),

@@ -31,7 +31,14 @@ impl View for NoticesView {
             .iter()
             .zip(layout.iter())
             .for_each(|(notice, area)| {
-                let widget = notice.create_widget(theme, area.width, &self.tasks, &self.hint);
+                let widget = notice.create_widget(
+                    theme,
+                    area.width,
+                    &self.tasks,
+                    &self.hint,
+                    &self.search_hint,
+                    self.search_tick,
+                );
                 widget.render(*area, frame.buffer_mut());
             });
     }

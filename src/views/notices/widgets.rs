@@ -21,8 +21,8 @@ use crate::{
 const COPY_PREFIX: &str = "[Copy] ";
 const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
-const FILTER_PREFIX: &str = "[Filter] ";
-const SEARCH_PREFIX: &str = "[Searching] ";
+const FILTER_PREFIX: &str = "[Filtered] ";
+const SEARCH_PREFIX: &str = "[Searching...] ";
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Clipboard,
@@ -122,11 +122,41 @@ pub(super) fn search_widget<'a>(
     query: &'a str,
     hint: &'a str,
 ) -> Block<'a> {
+    let style = theme.search();
     let left = Line::from(vec![
         SEARCH_PREFIX.into(),
-        Span::styled(query, theme.filter().add_modifier(Modifier::BOLD)),
+        Span::styled(query, style.add_modifier(Modifier::BOLD)),
     ]);
-    create_notice_block(left, theme.filter(), width, hint)
+    create_notice_block(left, style, width, hint)
+}
+
+pub(super) fn search_indicator_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    search_tick: u16,
+) -> Block<'a> {
+    let style = theme.search_loading();
+    let block_width: u16 = 3;
+    if width <= block_width {
+        return Block::default().borders(Borders::NONE).style(style);
+    }
+
+    // Triangle wave: position bounces 0 → travel → 0
+    let travel = width - block_width;
+    let cycle = travel * 2;
+    let t = search_tick % cycle;
+    let pos = if t < travel { t } else { cycle - t };
+
+    let before = " ".repeat(pos as usize);
+    let indicator = block::FULL.repeat(block_width as usize);
+    let after = " ".repeat(width.saturating_sub(pos + block_width) as usize);
+
+    let left = Line::from(format!("{before}{indicator}{after}"));
+
+    Block::default()
+        .borders(Borders::NONE)
+        .title(left)
+        .style(style)
 }
 
 fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a str) -> Block<'a> {
