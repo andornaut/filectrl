@@ -8,6 +8,7 @@ use serde::Deserialize;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
     // Global
+    CancelTask,
     ClearAlerts,
     ClearProgress,
     Quit,
@@ -90,6 +91,7 @@ pub enum KeySpec {
 pub struct TomlKeybindings {
     // Normal mode
     back: KeySpec,
+    cancel_task: KeySpec,
     chmod: KeySpec,
     clear_alerts: KeySpec,
     clear_progress: KeySpec,
@@ -154,6 +156,7 @@ impl TomlKeybindings {
 
         // Normal mode
         bind!(normal, self.back, Action::Back);
+        bind!(normal, self.cancel_task, Action::CancelTask);
         bind!(normal, self.chmod, Action::Chmod);
         bind!(normal, self.clear_alerts, Action::ClearAlerts);
         bind!(normal, self.clear_progress, Action::ClearProgress);

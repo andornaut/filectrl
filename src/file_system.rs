@@ -14,17 +14,19 @@ use log::warn;
 use self::{operations::open_in, path_info::PathInfo, tasks::TaskCommand, watch::DirectoryWatcher};
 use crate::{
     app::config::Config,
-    command::{Command, progress::Task, result::CommandResult},
+    command::{Command, progress::{CancellationToken, Task}, result::CommandResult},
 };
 
 pub struct FileSystem {
     buffer_max_bytes: u64,
     buffer_min_bytes: u64,
+    cancel_tokens: Vec<(usize, CancellationToken, String)>,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     open_current_directory_template: String,
     open_new_window_template: String,
     open_selected_file_template: String,
+    search_cancel: Option<CancellationToken>,
     watcher: Option<DirectoryWatcher>,
 }
 
@@ -41,11 +43,13 @@ impl FileSystem {
         Self {
             buffer_max_bytes: config.file_system.buffer_max_bytes,
             buffer_min_bytes: config.file_system.buffer_min_bytes,
+            cancel_tokens: Vec::new(),
             command_tx,
             directory: None,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
             open_selected_file_template: config.openers.open_selected_file.clone(),
+            search_cancel: None,
             watcher,
         }
     }
@@ -116,10 +120,40 @@ impl FileSystem {
         .into()
     }
 
+    fn cancel_most_recent(&mut self) -> CommandResult {
+        // Cancel search first (higher priority)
+        if let Some(token) = &self.search_cancel {
+            if !token.is_cancelled() {
+                token.cancel();
+                self.search_cancel = None;
+                return Command::AlertInfo("Cancelled search".into()).into();
+            }
+            self.search_cancel = None;
+        }
+
+        // Then cancel file operations (LIFO)
+        while let Some((_, token, _)) = self.cancel_tokens.last() {
+            if !token.is_cancelled() {
+                token.cancel();
+                let (_, _, description) = self.cancel_tokens.pop().unwrap();
+                return Command::AlertInfo(format!("Cancelled {description}")).into();
+            }
+            self.cancel_tokens.pop();
+        }
+        Command::AlertWarn("No active task to cancel".into()).into()
+    }
+
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
+        if task.is_done_or_error() {
+            self.cancel_tokens.retain(|(id, _, _)| *id != task.id());
+        }
         task.error_message()
             .map_or(CommandResult::NotHandled, |msg| {
-                Command::AlertError(msg).into()
+                if msg == "Cancelled" {
+                    CommandResult::Handled
+                } else {
+                    Command::AlertError(msg).into()
+                }
             })
     }
 
@@ -202,18 +236,24 @@ impl FileSystem {
                 self.buffer_min_bytes,
                 self.buffer_max_bytes,
             );
+            if let Some((id, token, desc)) = result.cancel_info {
+                self.cancel_tokens.push((id, token, desc));
+            }
             // Send initial progress commands through the channel so NoticesView picks them up
-            if let CommandResult::HandledWith(cmd) = result {
+            if let CommandResult::HandledWith(cmd) = result.command_result {
                 let _ = self.command_tx.send(*cmd);
             }
         }
     }
 
-    fn search(&self, query: &str) {
+    fn search(&mut self, query: &str) {
+        let token = CancellationToken::new();
+        self.search_cancel = Some(token.clone());
         search::run_search(
             self.current_directory().clone(),
             query.to_string(),
             self.command_tx.clone(),
+            token,
         );
     }
 

@@ -5,6 +5,7 @@ impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Back => self.back(),
+            Command::CancelTask => self.cancel_most_recent(),
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
@@ -31,6 +32,10 @@ impl CommandHandler for FileSystem {
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::Refresh => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
+            Command::SearchComplete => {
+                self.search_cancel = None;
+                CommandResult::NotHandled
+            }
             Command::StartSearch(query) => {
                 self.search(query);
                 CommandResult::Handled

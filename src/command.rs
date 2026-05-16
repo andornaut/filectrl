@@ -85,6 +85,7 @@ pub enum Command {
     },
 
     // File operation intents
+    CancelTask,
     ConfirmDelete,   // Intent: resolved by TableView into Delete
     Paste(PathInfo), // Intent: resolved by App into Copy or Move
 

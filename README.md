@@ -55,7 +55,6 @@ Options:
   --write-default-themes
                     write default theme files to ~/.config/filectrl/, then exit
   --colors-256      force 256-color theme (disables truecolor detection)
-  -V, --version     print version information and exit
   --help, help      display usage information
 ```
 
@@ -108,7 +107,9 @@ Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>/</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Search | <kbd>Ctrl</kbd>+<kbd>s</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
+Cancel task | <kbd>Ctrl</kbd>+<kbd>k</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>a</kbd>, <kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
