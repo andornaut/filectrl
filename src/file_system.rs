@@ -6,7 +6,7 @@ mod search;
 mod tasks;
 mod watch;
 
-use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender};
+use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender, thread, time::Duration};
 
 use anyhow::{Result, anyhow};
 use log::warn;
@@ -124,18 +124,14 @@ impl FileSystem {
         .into()
     }
 
-    fn cancel_most_recent(&mut self) -> CommandResult {
-        // Cancel search first (higher priority)
-        if let Some(token) = &self.search_cancel {
-            if !token.is_cancelled() {
-                token.cancel();
-                self.search_cancel = None;
-                return Command::AlertInfo("Cancelled search".into()).into();
-            }
-            self.search_cancel = None;
+    fn cancel_search(&mut self) {
+        if let Some(token) = self.search_cancel.take() {
+            token.cancel();
         }
+    }
 
-        // Then cancel file operations (LIFO)
+    fn cancel_most_recent(&mut self) -> CommandResult {
+        // Cancel file operations (LIFO); search is only cancelled by Esc (ResetView)
         while let Some((_, token, _)) = self.cancel_tokens.last() {
             if !token.is_cancelled() {
                 token.cancel();
@@ -253,6 +249,21 @@ impl FileSystem {
     fn search(&mut self, query: &str) {
         let token = CancellationToken::new();
         self.search_cancel = Some(token.clone());
+
+        let tick_token = token.clone();
+        let tick_tx = self.command_tx.clone();
+        thread::spawn(move || {
+            while !tick_token.is_cancelled() {
+                thread::sleep(Duration::from_millis(80));
+                if tick_token.is_cancelled() {
+                    break;
+                }
+                if tick_tx.send(Command::SearchTick).is_err() {
+                    break;
+                }
+            }
+        });
+
         search::run_search(
             self.current_directory().clone(),
             query.to_string(),

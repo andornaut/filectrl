@@ -16,9 +16,11 @@ use crate::{
 
 pub(super) struct NoticesView {
     area: Rect,
+    search_tick: u16,
     clipboard_entry: Option<ClipboardEntry>,
     hide_marked: bool,
     hint: String,
+    search_hint: String,
     filter: String,
     mark_count: usize,
     search_query: Option<String>,
@@ -29,15 +31,22 @@ pub(super) struct NoticesView {
 
 impl NoticesView {
     pub fn new() -> Self {
+        let keybindings = &Config::global().keybindings;
         let hint = format!(
             "(Press {} to clear)",
-            Config::global().keybindings.hint_for(&[Action::ResetView])
+            keybindings.hint_for(&[Action::ResetView])
+        );
+        let search_hint = format!(
+            "(Press {} to cancel)",
+            keybindings.hint_for(&[Action::ResetView])
         );
         Self {
             area: Rect::default(),
+            search_tick: 0,
             clipboard_entry: None,
             hide_marked: false,
             hint,
+            search_hint,
             filter: String::new(),
             mark_count: 0,
             search_query: None,
@@ -60,6 +69,7 @@ impl NoticesView {
         };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
+            self.search_query.as_ref().map(|_| Notice::SearchLoading),
             self.search_query
                 .as_ref()
                 .map(|q| Notice::Search(q.clone())),
