@@ -70,6 +70,10 @@ impl TableView {
         }
     }
 
+    pub(super) fn open_search_prompt(&self) -> CommandResult {
+        Command::OpenPrompt(PromptAction::Search(String::new())).into()
+    }
+
     pub(super) fn open_selected(&mut self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::Open(path.clone()).into(),

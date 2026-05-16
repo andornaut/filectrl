@@ -50,6 +50,10 @@ impl RootView {
         self.mode
     }
 
+    pub fn needs_reset(&self) -> bool {
+        self.is_help_visible || self.table.needs_reset()
+    }
+
     fn views(&mut self) -> Vec<&mut dyn View> {
         // The order is significant for layout
         if self.is_help_visible {
@@ -77,7 +81,8 @@ impl CommandHandler for RootView {
             | Command::ConfirmDelete
             | Command::CreateDirectory(_)
             | Command::Rename { .. }
-            | Command::FilterChanged(_) => {
+            | Command::FilterChanged(_)
+            | Command::StartSearch(_) => {
                 self.mode = InputMode::Normal;
                 CommandResult::NotHandled
             }

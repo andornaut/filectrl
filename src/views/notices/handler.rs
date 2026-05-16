@@ -27,6 +27,15 @@ impl CommandHandler for NoticesView {
             Command::NavigatedDirectory { .. } => {
                 self.filter.clear();
                 self.mark_count = 0;
+                self.search_query = None;
+                CommandResult::Handled
+            }
+            Command::StartSearch(query) => {
+                self.search_query = Some(query.clone());
+                CommandResult::NotHandled
+            }
+            Command::SearchComplete => {
+                self.search_query = None;
                 CommandResult::Handled
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
@@ -34,6 +43,7 @@ impl CommandHandler for NoticesView {
                 self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
+                self.search_query = None;
                 CommandResult::Handled
             }
             Command::SetClipboard(entry) => {
@@ -71,7 +81,8 @@ impl CommandHandler for NoticesView {
                 match self.notices.get(y) {
                     Some(Notice::Clipboard(_))
                     | Some(Notice::Filter(_))
-                    | Some(Notice::Marked(_)) => Command::ResetView.into(),
+                    | Some(Notice::Marked(_))
+                    | Some(Notice::Search(_)) => Command::ResetView.into(),
                     Some(Notice::Progress) => self.clear_progress(),
                     None => CommandResult::Handled,
                 }

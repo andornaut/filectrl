@@ -30,6 +30,7 @@ impl PromptView {
             }
             PromptAction::Filter(_) => " Filter ".to_string(),
             PromptAction::Rename { .. } => " Rename ".to_string(),
+            PromptAction::Search(_) => " Search ".to_string(),
         }
     }
 
@@ -37,7 +38,9 @@ impl PromptView {
         let text = match kind {
             PromptAction::Chmod { mode, .. } => mode.clone(),
             PromptAction::CreateDirectory | PromptAction::Delete(_) => String::new(),
-            PromptAction::Filter(text) | PromptAction::Rename { name: text, .. } => text.clone(),
+            PromptAction::Filter(text)
+            | PromptAction::Rename { name: text, .. }
+            | PromptAction::Search(text) => text.clone(),
         };
         self.actions = kind.clone();
         self.initial_text = text.clone();
@@ -99,6 +102,7 @@ impl PromptView {
                 path: path.clone(),
                 name: value,
             },
+            PromptAction::Search(_) => Command::StartSearch(value),
         }
         .into()
     }

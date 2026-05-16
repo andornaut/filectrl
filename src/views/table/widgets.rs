@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use chrono::{DateTime, Local};
 use ratatui::{
     prelude::{Constraint, Stylize},
@@ -75,6 +77,7 @@ fn header_cell_widget<'a>(
     Cell::from(label.style(header_style(&theme.table, sort_column, &column)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn row_widget_and_height<'a>(
     theme: &'a Theme,
     clipboard_entry: &'a Option<ClipboardEntry>,
@@ -83,6 +86,7 @@ pub(super) fn row_widget_and_height<'a>(
     item: &'a PathInfo,
     is_marked: bool,
     is_pending_delete: bool,
+    search_root: Option<&Path>,
 ) -> (Row<'a>, u16) {
     let (name_style, date_style, size_style, row_style) = if is_pending_delete {
         let delete = theme.table.delete();
@@ -101,7 +105,11 @@ pub(super) fn row_widget_and_height<'a>(
         )
     };
 
-    let name = split_name(item, name_column_width as usize);
+    let display_name = display_name(item, search_root);
+    let name = split_with_ellipsis(&display_name, name_column_width as usize)
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
     let height = name.len() as u16;
     let row = Row::new([
         Cell::from(name).style(name_style),
@@ -114,9 +122,20 @@ pub(super) fn row_widget_and_height<'a>(
     (row, height)
 }
 
-fn split_name<'a>(path: &'a PathInfo, width: usize) -> Vec<Line<'a>> {
-    split_with_ellipsis(&path.name(), width)
-        .into_iter()
-        .map(Line::from)
-        .collect()
+fn display_name(path: &PathInfo, search_root: Option<&Path>) -> String {
+    match search_root {
+        Some(root) => {
+            let item_path = Path::new(&path.path);
+            let relative = item_path
+                .strip_prefix(root)
+                .unwrap_or(item_path);
+            let name = relative.to_string_lossy().to_string();
+            if path.is_directory() && !name.ends_with('/') {
+                format!("{name}/")
+            } else {
+                name
+            }
+        }
+        None => path.name(),
+    }
 }

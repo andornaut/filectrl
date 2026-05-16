@@ -31,6 +31,10 @@ impl CommandHandler for FileSystem {
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::Refresh => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
+            Command::StartSearch(query) => {
+                self.search(query);
+                CommandResult::Handled
+            }
             _ => CommandResult::NotHandled,
         }
     }

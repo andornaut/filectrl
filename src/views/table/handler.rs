@@ -44,6 +44,10 @@ impl CommandHandler for TableView {
                 self.clipboard_entry = None;
                 self.clear_marks();
                 self.set_filter(String::new());
+                if self.content.is_searching() {
+                    self.content.clear_search();
+                    return Command::Refresh.into();
+                }
                 CommandResult::Handled
             }
             Command::SetClipboard(entry) => {
@@ -53,11 +57,47 @@ impl CommandHandler for TableView {
             Command::NavigatedDirectory {
                 directory,
                 children,
-            } => self.set_directory(directory.clone(), children.to_vec(), false),
+            } => {
+                self.content.clear_search();
+                self.set_directory(directory.clone(), children.to_vec(), false)
+            }
             Command::RefreshedDirectory {
                 directory,
                 children,
-            } => self.set_directory(directory.clone(), children.to_vec(), true),
+            } => {
+                if self.content.is_searching() {
+                    return CommandResult::Handled;
+                }
+                self.set_directory(directory.clone(), children.to_vec(), true)
+            }
+            Command::StartSearch(query) => {
+                if query.is_empty() {
+                    return CommandResult::Handled;
+                }
+                let root = self
+                    .content
+                    .directory()
+                    .map(|d| std::path::PathBuf::from(&d.path))
+                    .unwrap_or_default();
+                self.clear_marks();
+                self.content.start_search(root);
+                self.table_state.select(None);
+                CommandResult::Handled
+            }
+            Command::SearchResult(path_info) => {
+                if !self.content.is_searching() {
+                    return CommandResult::Handled;
+                }
+                let is_first = self.content.len() == 0;
+                self.content.append_search_result(path_info.clone());
+                if is_first {
+                    self.table_state.select(Some(0));
+                    Command::SelectionChanged(Some(path_info.clone())).into()
+                } else {
+                    CommandResult::Handled
+                }
+            }
+            Command::SearchComplete => CommandResult::Handled,
             // self.handle_key() and PromptView may emit FilterChanged()
             Command::FilterChanged(filter) => self.set_filter(filter.clone()),
 
@@ -109,6 +149,7 @@ impl CommandHandler for TableView {
             Some(Action::Delete) => self.delete(),
             Some(Action::Rename) => self.open_rename_prompt(),
             Some(Action::Filter) => self.open_filter_prompt(),
+            Some(Action::Search) => self.open_search_prompt(),
             // Sort
             Some(Action::SortByName) => self.sort_by(SortColumn::Name),
             Some(Action::SortByModified) => self.sort_by(SortColumn::Modified),

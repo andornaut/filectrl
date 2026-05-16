@@ -46,6 +46,7 @@ pub enum Action {
     Delete,
     Filter,
     Rename,
+    Search,
 
     // Sort
     SortByModified,
@@ -108,6 +109,7 @@ pub struct TomlKeybindings {
     range_mark: KeySpec,
     refresh: KeySpec,
     rename: KeySpec,
+    search: KeySpec,
     select_first: KeySpec,
     select_last: KeySpec,
     select_middle: KeySpec,
@@ -146,9 +148,8 @@ impl TomlKeybindings {
             };
         }
 
-        // Hardcoded-only actions (no TOML fields, but must be in the binding list
-        // so that hardcoded keys are inserted into the action map)
-        normal.push((Action::ResetView, vec![]));
+        // Hardcoded-only action (no TOML field, but must be in the binding list
+        // so that hardcoded Esc is inserted into the prompt action map)
         prompt.push((Action::PromptCancel, vec![]));
 
         // Normal mode
@@ -176,6 +177,7 @@ impl TomlKeybindings {
         bind!(normal, self.range_mark, Action::RangeMark);
         bind!(normal, self.refresh, Action::Refresh);
         bind!(normal, self.rename, Action::Rename);
+        bind!(normal, self.search, Action::Search);
         bind!(normal, self.select_first, Action::SelectFirst);
         bind!(normal, self.select_last, Action::SelectLast);
         bind!(normal, self.select_middle, Action::SelectMiddle);
@@ -284,7 +286,6 @@ fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
         Action::SelectLast => vec![kc(KeyCode::End, KeyModifiers::NONE)],
         Action::PageUp => vec![kc(KeyCode::PageUp, KeyModifiers::NONE)],
         Action::PageDown => vec![kc(KeyCode::PageDown, KeyModifiers::NONE)],
-        Action::ResetView => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         Action::PromptCancel => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
         _ => vec![],
     }
@@ -297,7 +298,6 @@ const HARDCODED_ACTIONS: &[Action] = &[
     Action::PageDown,
     Action::PageUp,
     Action::PromptCancel,
-    Action::ResetView,
     Action::SelectFirst,
     Action::SelectLast,
     Action::SelectNext,
@@ -630,10 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn display_for_reset_shows_esc() {
+    fn display_for_quit_shows_q() {
         let kb = default_keybindings();
-        let display = kb.display_for(Action::ResetView);
-        assert_eq!(display, "Esc");
+        let display = kb.display_for(Action::Quit);
+        assert_eq!(display, "q");
     }
 
     #[test]

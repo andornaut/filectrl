@@ -32,6 +32,7 @@ pub enum PromptAction {
         path: PathInfo,
         name: String,
     },
+    Search(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -97,6 +98,11 @@ pub enum Command {
     ReadFromClipboard,         // Intent: resolved by App into TextFromClipboard
     TextFromClipboard(String), // Result of ReadFromClipboard; handled by PromptView
     WriteToClipboard(String),  // Handled by App; writes text to system clipboard
+
+    // Search
+    StartSearch(String),
+    SearchResult(PathInfo),
+    SearchComplete,
 
     // View state notifications — emitted by TableView
     FilterChanged(String),
