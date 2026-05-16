@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
 use crate::app::config::Config;
@@ -10,6 +10,7 @@ pub(super) struct DirectoryContent {
     filter: String,
     items: Vec<PathInfo>,
     items_sorted: Vec<PathInfo>,
+    search_root: Option<PathBuf>,
 }
 
 impl DirectoryContent {
@@ -78,6 +79,30 @@ impl DirectoryContent {
             self.items_sorted
                 .retain(|path| path.name().to_lowercase().contains(&filter_lowercase));
         }
+    }
+
+    pub(super) fn start_search(&mut self, root: PathBuf) {
+        self.search_root = Some(root);
+        self.items.clear();
+        self.items_sorted.clear();
+        self.filter.clear();
+    }
+
+    pub(super) fn append_search_result(&mut self, item: PathInfo) {
+        self.items.push(item.clone());
+        self.items_sorted.push(item);
+    }
+
+    pub(super) fn clear_search(&mut self) {
+        self.search_root = None;
+    }
+
+    pub(super) fn is_searching(&self) -> bool {
+        self.search_root.is_some()
+    }
+
+    pub(super) fn search_root(&self) -> Option<&Path> {
+        self.search_root.as_deref()
     }
 
     pub(super) fn find_by_inode(&self, path: &PathInfo) -> Option<usize> {

@@ -38,3 +38,12 @@ pub(super) struct TableView {
     mapper: LineItemMap,
     scrollbar_view: ScrollbarView,
 }
+
+impl TableView {
+    pub(super) fn needs_reset(&self) -> bool {
+        self.clipboard_entry.is_some()
+            || self.has_marks()
+            || !self.content.filter().is_empty()
+            || self.content.is_searching()
+    }
+}

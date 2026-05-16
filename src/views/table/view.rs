@@ -63,6 +63,7 @@ impl TableView {
 
         let column_constraints = self.columns.constraints(self.table_area.width);
         let relative_to_datetime = Local::now();
+        let search_root = self.content.search_root();
 
         let has_pending_delete = !self.pending_delete.is_empty();
         let (rows, item_heights): (Vec<_>, Vec<usize>) = self
@@ -81,6 +82,7 @@ impl TableView {
                     item,
                     self.marks.contains(&i),
                     is_pending_delete,
+                    search_root,
                 );
                 (row, height as usize)
             })
