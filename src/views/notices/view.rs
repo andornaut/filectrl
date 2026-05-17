@@ -37,6 +37,7 @@ impl View for NoticesView {
                     &self.tasks,
                     &self.hint,
                     &self.search_hint,
+                    &self.cancel_hint,
                     self.search_tick,
                 );
                 widget.render(*area, frame.buffer_mut());
