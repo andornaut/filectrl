@@ -42,7 +42,7 @@ sort_directories_first = true
 # and modifier prefixes ("Ctrl+c", "Ctrl+Shift+a").
 [keybindings]
 # Normal mode
-back = ["h", "Backspace"]
+back = ["h", "b", "Backspace"]
 cancel_task = ["Ctrl+k", "F8"]
 chmod = "P"
 clear_alerts = "Ctrl+a"
@@ -53,6 +53,7 @@ cut = ["x", "Ctrl+x"]
 delete = ["d", "Delete"]
 filter = ["f", "\\"]
 go_home = "~"
+go_to_previous_directory = "-"
 goto = [":", "Ctrl+g", "Tab"]
 open = ["l", "Enter"]
 open_current_directory = ["o", "t"]

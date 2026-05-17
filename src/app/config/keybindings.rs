@@ -17,6 +17,7 @@ pub enum Action {
 
     // Navigation (filesystem)
     Back,
+    GoToPreviousDirectory,
     GoHome,
     Open,
     OpenCurrentDirectory,
@@ -149,6 +150,7 @@ macro_rules! keybindings {
 keybindings! {
     normal {
         back => Back,
+        go_to_previous_directory => GoToPreviousDirectory,
         cancel_task => CancelTask,
         chmod => Chmod,
         clear_alerts => ClearAlerts,
