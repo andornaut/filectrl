@@ -187,7 +187,8 @@ fn max_label_width(normal: &[(String, String)], prompt: &[(String, String)]) -> 
 }
 
 fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, max_label_width: usize, help: &Help) {
-    let header_padding = " ".repeat(max_label_width.saturating_sub(title.width()));
+    // Body rows insert ": " (2 cols) between label and keys; match that here.
+    let header_padding = " ".repeat((max_label_width + 2).saturating_sub(title.width()));
     lines.push(Line::from(vec![
         Span::styled(title.to_string(), help.header()),
         Span::raw(header_padding),
