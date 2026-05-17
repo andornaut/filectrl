@@ -153,6 +153,15 @@ The configuration is drawn from the first of the following:
 
 Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`.
 
+You can also override only the settings you're interested in:
+
+```bash
+$ cat ~/.config/filectrl/config.toml
+[openers.linux]
+open_current_directory = "alacritty --working-directory %s"
+open_new_window = "alacritty --command filectrl %s"
+```
+
 ### Opening in other applications
 
 - [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
