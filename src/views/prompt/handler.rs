@@ -38,20 +38,20 @@ impl CommandHandler for PromptView {
         // Goto type-ahead: Tab accepts, Enter accepts then submits,
         // Down/Up cycle through matches
         if matches!(self.actions, PromptAction::Goto { .. }) {
-            match code {
-                KeyCode::Tab => {
+            match action {
+                Some(Action::PromptAcceptSuggestion) => {
                     self.accept_suggestion();
                     return CommandResult::Handled;
                 }
-                KeyCode::Down => {
+                Some(Action::PromptNextSuggestion) => {
                     self.cycle_suggestion(1);
                     return CommandResult::Handled;
                 }
-                KeyCode::Up => {
+                Some(Action::PromptPreviousSuggestion) => {
                     self.cycle_suggestion(-1);
                     return CommandResult::Handled;
                 }
-                _ if matches!(action, Some(Action::PromptSubmit)) => {
+                Some(Action::PromptSubmit) => {
                     self.accept_suggestion();
                     return self.submit();
                 }

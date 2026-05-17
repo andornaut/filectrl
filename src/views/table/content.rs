@@ -11,6 +11,9 @@ pub(super) struct DirectoryContent {
     items: Vec<PathInfo>,
     items_sorted: Vec<PathInfo>,
     search_root: Option<PathBuf>,
+    /// Runtime override for showing hidden (dotfile) entries. `None` defers to
+    /// the `ui.show_hidden_files` config value.
+    show_hidden: Option<bool>,
 }
 
 impl DirectoryContent {
@@ -47,6 +50,15 @@ impl DirectoryContent {
         self.filter.clear();
     }
 
+    fn show_hidden(&self) -> bool {
+        self.show_hidden
+            .unwrap_or(Config::global().ui.show_hidden_files)
+    }
+
+    pub(super) fn toggle_show_hidden(&mut self) {
+        self.show_hidden = Some(!self.show_hidden());
+    }
+
     /// Sort and filter items into `items_sorted`.
     pub(super) fn sort(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
         let mut indices: Vec<usize> = (0..self.items.len()).collect();
@@ -73,6 +85,10 @@ impl DirectoryContent {
         }
 
         self.items_sorted = indices.into_iter().map(|i| self.items[i].clone()).collect();
+
+        if !self.show_hidden() {
+            self.items_sorted.retain(|path| !path.is_hidden());
+        }
 
         if !self.filter.is_empty() {
             let filter_lowercase = self.filter.to_lowercase();
