@@ -11,7 +11,12 @@ use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender, thread, time::Dur
 use anyhow::{Result, anyhow};
 use log::warn;
 
-use self::{operations::open_in, path_info::PathInfo, tasks::TaskCommand, watch::DirectoryWatcher};
+use self::{
+    operations::open_in,
+    path_info::PathInfo,
+    tasks::{CancelInfo, TaskCommand},
+    watch::DirectoryWatcher,
+};
 use crate::{
     app::config::Config,
     command::{
@@ -24,7 +29,7 @@ use crate::{
 pub struct FileSystem {
     buffer_max_bytes: u64,
     buffer_min_bytes: u64,
-    cancel_tokens: Vec<(usize, CancellationToken, String)>,
+    cancel_tokens: Vec<CancelInfo>,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     open_current_directory_template: String,
@@ -135,8 +140,8 @@ impl FileSystem {
         while let Some((_, token, _)) = self.cancel_tokens.last() {
             if !token.is_cancelled() {
                 token.cancel();
-                let (_, _, description) = self.cancel_tokens.pop().unwrap();
-                return Command::AlertInfo(format!("Cancelled {description}")).into();
+                let (_, _, kind) = self.cancel_tokens.pop().unwrap();
+                return Command::AlertInfo(format!("Cancelled: {}", kind.message())).into();
             }
             self.cancel_tokens.pop();
         }
@@ -144,16 +149,15 @@ impl FileSystem {
     }
 
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
-        if task.is_done_or_error() {
+        if task.is_terminal() {
             self.cancel_tokens.retain(|(id, _, _)| *id != task.id());
+        }
+        if task.is_cancelled() {
+            return CommandResult::Handled;
         }
         task.error_message()
             .map_or(CommandResult::NotHandled, |msg| {
-                if msg == "Cancelled" {
-                    CommandResult::Handled
-                } else {
-                    Command::AlertError(msg).into()
-                }
+                Command::AlertError(msg).into()
             })
     }
 
@@ -273,10 +277,8 @@ impl FileSystem {
     }
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {
-        self.command_tx
-            .send(Command::AlertWarn(format!(
-                "Failed to read directory {dir:?}: {error}"
-            )))
-            .expect("command channel should be open");
+        let _ = self.command_tx.send(Command::AlertWarn(format!(
+            "Failed to read directory {dir:?}: {error}"
+        )));
     }
 }

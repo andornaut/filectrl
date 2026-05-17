@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use ratatui::widgets::Block;
 
 use super::widgets::{
-    clipboard_widget, filter_widget, marked_widget, progress_widget, search_loading_widget,
-    search_widget,
+    clipboard_widget, filter_widget, marked_widget, operations_widget, progress_widget,
+    search_loading_widget, search_widget,
 };
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
@@ -16,6 +16,7 @@ use crate::{
 #[derive(Debug)]
 pub(super) enum Notice {
     Progress,
+    Operations,
     Search(String),
     SearchLoading,
     Marked(usize),
@@ -24,6 +25,7 @@ pub(super) enum Notice {
 }
 
 impl Notice {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn create_widget<'a>(
         &'a self,
         theme: &'a Theme,
@@ -31,6 +33,7 @@ impl Notice {
         tasks: &'a HashSet<Task>,
         hint: &'a str,
         search_hint: &'a str,
+        cancel_hint: &'a str,
         search_tick: u16,
     ) -> Block<'a> {
         match self {
@@ -39,6 +42,7 @@ impl Notice {
             }
             Notice::Filter(filter) => filter_widget(&theme.notice, width, filter, hint),
             Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
+            Notice::Operations => operations_widget(&theme.notice, width, tasks, cancel_hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
             Notice::Search(query) => search_widget(&theme.notice, width, query, search_hint),
             Notice::SearchLoading => search_loading_widget(&theme.notice, width, search_tick),
