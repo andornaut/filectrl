@@ -149,7 +149,10 @@ impl CommandHandler for TableView {
             Some(Action::SelectPrevious) => self.select_previous(),
             Some(Action::SelectFirst) => self.select_first(),
             Some(Action::SelectLast) => self.select_last(),
-            Some(Action::SelectMiddle) => self.select_middle_visible_item(),
+            Some(Action::SelectMiddle) => self.select_middle_item(),
+            Some(Action::SelectFirstVisible) => self.select_first_visible_item(),
+            Some(Action::SelectMiddleVisible) => self.select_middle_visible_item(),
+            Some(Action::SelectLastVisible) => self.select_last_visible_item(),
             // Marks
             Some(Action::ToggleMark) => self.toggle_mark(),
             Some(Action::RangeMark) => self.enter_range_mode(),

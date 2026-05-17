@@ -49,11 +49,20 @@ impl TableView {
         self.select(self.content.len().saturating_sub(1))
     }
 
+    pub(super) fn select_middle_item(&mut self) -> CommandResult {
+        self.select(self.content.len().saturating_sub(1) / 2)
+    }
+
+    pub(super) fn select_first_visible_item(&mut self) -> CommandResult {
+        self.select(self.mapper.item(self.mapper.first_visible_line()))
+    }
+
     pub(super) fn select_middle_visible_item(&mut self) -> CommandResult {
-        let first_line = self.mapper.first_visible_line();
-        let last_line = self.mapper.last_visible_line();
-        let middle_line = first_line + (last_line - first_line) / 2;
-        self.select(self.mapper.item(middle_line))
+        self.select(self.mapper.item(self.mapper.middle_visible_line()))
+    }
+
+    pub(super) fn select_last_visible_item(&mut self) -> CommandResult {
+        self.select(self.mapper.item(self.mapper.last_visible_line()))
     }
 
     pub(super) fn next_page(&mut self) -> CommandResult {
