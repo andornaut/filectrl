@@ -107,11 +107,11 @@ Chmod (octal) | <kbd>b</kbd>
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Filter | <kbd>f</kbd>
-Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
+Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
-Clear clipboard/filter/marks | <kbd>Esc</kbd>
+Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
 Quit | <kbd>q</kbd>
@@ -123,8 +123,6 @@ Actions | Keys
 Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
 Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
-Accept path suggestion | <kbd>Tab</kbd>
-Cycle path suggestions | <kbd>↓</kbd>/<kbd>↑</kbd>
 Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
 Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
@@ -134,6 +132,8 @@ Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
+Accept path suggestion | <kbd>Tab</kbd>
+Cycle path suggestions | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
