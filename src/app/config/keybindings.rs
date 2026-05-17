@@ -46,6 +46,7 @@ pub enum Action {
     CreateDirectory,
     Delete,
     Filter,
+    Goto,
     Rename,
     Search,
 
@@ -101,6 +102,7 @@ pub struct TomlKeybindings {
     delete: KeySpec,
     filter: KeySpec,
     go_home: KeySpec,
+    goto: KeySpec,
     open: KeySpec,
     open_current_directory: KeySpec,
     open_new_window: KeySpec,
@@ -167,6 +169,7 @@ impl TomlKeybindings {
         bind!(normal, self.delete, Action::Delete);
         bind!(normal, self.filter, Action::Filter);
         bind!(normal, self.go_home, Action::GoHome);
+        bind!(normal, self.goto, Action::Goto);
         bind!(normal, self.open, Action::Open);
         bind!(
             normal,

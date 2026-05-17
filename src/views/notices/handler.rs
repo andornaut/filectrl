@@ -31,13 +31,11 @@ impl CommandHandler for NoticesView {
                 CommandResult::Handled
             }
             Command::StartSearch(query) => {
-                log::debug!("NoticesView: StartSearch({query:?})");
                 self.search_query = Some(query.clone());
                 self.search_tick = 0;
                 CommandResult::NotHandled
             }
             Command::SearchComplete => {
-                log::debug!("NoticesView: SearchComplete");
                 self.search_query = None;
                 self.search_tick = 0;
                 CommandResult::Handled
@@ -45,7 +43,6 @@ impl CommandHandler for NoticesView {
             Command::SearchTick => {
                 if self.search_query.is_some() {
                     self.search_tick = self.search_tick.wrapping_add(1);
-                    log::debug!("NoticesView: SearchTick {}", self.search_tick);
                 }
                 CommandResult::Handled
             }

@@ -3,7 +3,7 @@ use ratatui::{
     prelude::Position,
 };
 
-use super::{TableView, columns::SortColumn};
+use super::{TableView, columns::SortColumn, navigation::Reselect};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, handler::CommandHandler, result::CommandResult},
@@ -40,17 +40,7 @@ impl CommandHandler for TableView {
                 self.clipboard_entry = None;
                 CommandResult::NotHandled
             }
-            Command::ResetView => {
-                self.clipboard_entry = None;
-                self.clear_marks();
-                self.set_filter(String::new());
-                if self.content.is_searching() {
-                    self.content.clear_search();
-                    self.table_state.select(None); // search-result index is meaningless in the directory
-                    return Command::Refresh.into();
-                }
-                CommandResult::Handled
-            }
+
             Command::SetClipboard(entry) => {
                 self.clipboard_entry = Some(entry.clone());
                 CommandResult::NotHandled
@@ -59,29 +49,47 @@ impl CommandHandler for TableView {
                 directory,
                 children,
             } => {
+                // Different directory: nothing from the old listing carries over.
                 self.content.clear_search();
-                self.set_directory(directory.clone(), children.to_vec(), false)
+                self.content.clear_filter();
+                self.clear_marks();
+                self.table_state.select(None);
+                self.set_directory(directory.clone(), children.to_vec(), Reselect::Top)
             }
             Command::RefreshedDirectory {
                 directory,
                 children,
             } => {
+                // While searching, the listing holds results from a different
+                // root, not this directory. Ignore watcher/refresh events so a
+                // background file change doesn't clobber the search results.
                 if self.content.is_searching() {
                     return CommandResult::Handled;
                 }
-                self.set_directory(directory.clone(), children.to_vec(), true)
+                // Same directory reloaded: keep filter and selection.
+                self.set_directory(directory.clone(), children.to_vec(), Reselect::Keep)
+            }
+            Command::ResetView => {
+                self.clipboard_entry = None;
+                self.clear_marks();
+                let had_filter = !self.content.filter().is_empty();
+                self.content.clear_filter();
+                if self.content.is_searching() {
+                    self.content.clear_search();
+                    self.table_state.select(None); // search-result index is meaningless in the directory
+                    return Command::Refresh.into();
+                }
+                if had_filter {
+                    return self.sort(Reselect::Top);
+                }
+                CommandResult::Handled
             }
             Command::StartSearch(query) => {
                 if query.is_empty() {
                     return CommandResult::Handled;
                 }
-                let root = self
-                    .content
-                    .directory()
-                    .map(|d| std::path::PathBuf::from(&d.path))
-                    .unwrap_or_default();
                 self.clear_marks();
-                self.content.start_search(root);
+                self.content.start_search();
                 self.table_state.select(None);
                 CommandResult::Handled
             }
@@ -135,6 +143,7 @@ impl CommandHandler for TableView {
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
             Some(Action::GoHome) => self.navigate_to_home_directory(),
+            Some(Action::Goto) => self.open_goto_prompt(),
             // Selection
             Some(Action::SelectNext) => self.select_next(),
             Some(Action::SelectPrevious) => self.select_previous(),

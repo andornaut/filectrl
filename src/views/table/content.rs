@@ -81,8 +81,9 @@ impl DirectoryContent {
         }
     }
 
-    pub(super) fn start_search(&mut self, root: PathBuf) {
-        self.search_root = Some(root);
+    pub(super) fn start_search(&mut self) {
+        // The search root is always the current directory.
+        self.search_root = self.directory.as_ref().map(|d| PathBuf::from(&d.path));
         self.items.clear();
         self.items_sorted.clear();
         self.filter.clear();

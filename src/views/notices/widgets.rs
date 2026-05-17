@@ -24,6 +24,11 @@ const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filtered] ";
 const SEARCH_PREFIX: &str = "[Searching...] ";
 
+// Number of terminal columns per unit of search-loading indicator speed.
+// The indicator advances `width / SEARCH_LOADING_SPEED_DIVISOR` cells per
+// tick, so wider screens sweep faster instead of taking longer to cross.
+const SEARCH_LOADING_SPEED_DIVISOR: u16 = 32;
+
 pub(super) fn clipboard_widget<'a>(
     theme: &Clipboard,
     width: u16,
@@ -130,7 +135,7 @@ pub(super) fn search_widget<'a>(
     create_notice_block(left, style, width, hint)
 }
 
-pub(super) fn search_indicator_widget<'a>(
+pub(super) fn search_loading_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
     search_tick: u16,
@@ -141,10 +146,13 @@ pub(super) fn search_indicator_widget<'a>(
         return Block::default().borders(Borders::NONE).style(style);
     }
 
-    // Triangle wave: position bounces 0 → travel → 0
+    // Triangle wave: position bounces 0 → travel → 0.
+    // Scale the tick by a width-derived speed so the indicator crosses
+    // wider screens faster (more cells per tick) instead of taking longer.
     let travel = width - block_width;
+    let speed = (width / SEARCH_LOADING_SPEED_DIVISOR).max(1);
     let cycle = travel * 2;
-    let t = search_tick % cycle;
+    let t = (search_tick.wrapping_mul(speed)) % cycle;
     let pos = if t < travel { t } else { cycle - t };
 
     let before = " ".repeat(pos as usize);

@@ -29,6 +29,15 @@ impl TableView {
         }
     }
 
+    pub(super) fn open_goto_prompt(&self) -> CommandResult {
+        let directory = self
+            .content
+            .directory()
+            .map(|d| d.path.clone())
+            .unwrap_or_default();
+        Command::OpenPrompt(PromptAction::Goto { directory }).into()
+    }
+
     pub(super) fn open_chmod_prompt(&self) -> CommandResult {
         let (paths, initial_mode) = if self.has_marks() {
             (self.marked_paths(), String::new())

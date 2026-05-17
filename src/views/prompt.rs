@@ -1,12 +1,17 @@
 mod handler;
 mod view;
 
+use std::path::{Path, PathBuf};
+
 use ratatui::layout::Rect;
 use ratatui_textarea::{CursorMove, TextArea};
 use unicode_width::UnicodeWidthChar;
 
 use super::{View, unicode::pluralize_items};
-use crate::command::{Command, PromptAction, result::CommandResult};
+use crate::{
+    command::{Command, PromptAction, result::CommandResult},
+    file_system::path_info::PathInfo,
+};
 
 #[derive(Default)]
 pub(super) struct PromptView {
@@ -16,6 +21,12 @@ pub(super) struct PromptView {
     render_area: Rect,
     /// Horizontal scroll offset (in display columns), mirroring tui-textarea's internal viewport.
     scroll_col: u16,
+    /// Goto: the directory that relative input is resolved against.
+    basedir: String,
+    /// Goto: prefix-matching entries `(name, is_dir)`, sorted ascending.
+    suggestions: Vec<(String, bool)>,
+    /// Goto: index of the currently shown suggestion.
+    suggestion_index: usize,
 }
 
 impl PromptView {
@@ -29,6 +40,7 @@ impl PromptView {
                 format!(" Delete {}? (y/n) ", pluralize_items(*count))
             }
             PromptAction::Filter(_) => " Filter ".to_string(),
+            PromptAction::Goto { .. } => " Go to ".to_string(),
             PromptAction::Rename { .. } => " Rename ".to_string(),
             PromptAction::Search(_) => " Search ".to_string(),
         }
@@ -37,7 +49,9 @@ impl PromptView {
     fn open(&mut self, kind: &PromptAction) -> CommandResult {
         let text = match kind {
             PromptAction::Chmod { mode, .. } => mode.clone(),
-            PromptAction::CreateDirectory | PromptAction::Delete(_) => String::new(),
+            PromptAction::CreateDirectory | PromptAction::Delete(_) | PromptAction::Goto { .. } => {
+                String::new()
+            }
             PromptAction::Filter(text)
             | PromptAction::Rename { name: text, .. }
             | PromptAction::Search(text) => text.clone(),
@@ -45,6 +59,11 @@ impl PromptView {
         self.actions = kind.clone();
         self.initial_text = text.clone();
         self.reset_text(&text);
+        if let PromptAction::Goto { directory } = kind {
+            self.basedir = directory.clone();
+            self.suggestion_index = 0;
+            self.refresh_suggestions();
+        }
         CommandResult::Handled
     }
 
@@ -98,6 +117,19 @@ impl PromptView {
             PromptAction::CreateDirectory => Command::CreateDirectory(value),
             PromptAction::Delete(_) => Command::ConfirmDelete,
             PromptAction::Filter(_) => Command::FilterChanged(value),
+            PromptAction::Goto { .. } => {
+                let path = self.resolve_path(&value);
+                if !path.exists() {
+                    Command::AlertWarn(format!("Path does not exist: {}", path.display()))
+                } else {
+                    match PathInfo::try_from(&path) {
+                        Ok(info) => Command::Open(info),
+                        Err(error) => {
+                            Command::AlertWarn(format!("Cannot access {}: {error}", path.display()))
+                        }
+                    }
+                }
+            }
             PromptAction::Rename { path, .. } => Command::Rename {
                 path: path.clone(),
                 name: value,
@@ -105,6 +137,123 @@ impl PromptView {
             PromptAction::Search(_) => Command::StartSearch(value),
         }
         .into()
+    }
+
+    /// Resolve user input to a path: leading `~` expands to home, absolute
+    /// paths are used as-is, and relative input is joined onto `basedir`.
+    fn resolve_path(&self, input: &str) -> PathBuf {
+        if let Some(rest) = input.strip_prefix('~') {
+            if let Some(base) = directories::BaseDirs::new() {
+                let home = base.home_dir();
+                let rest = rest.strip_prefix('/').unwrap_or(rest);
+                return if rest.is_empty() {
+                    home.to_path_buf()
+                } else {
+                    home.join(rest)
+                };
+            }
+        }
+        let path = Path::new(input);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            Path::new(&self.basedir).join(input)
+        }
+    }
+
+    /// Splits the current input into `(dir_prefix, partial)` at the last `/`.
+    /// `dir_prefix` includes the trailing `/`; `partial` is the basename being typed.
+    fn split_input(input: &str) -> (&str, &str) {
+        match input.rfind('/') {
+            Some(i) => (&input[..=i], &input[i + 1..]),
+            None => ("", input),
+        }
+    }
+
+    /// Re-reads the resolved directory and rebuilds the prefix-matching
+    /// (case-sensitive), alphabetically sorted suggestion list.
+    fn refresh_suggestions(&mut self) {
+        self.suggestions.clear();
+        if !matches!(self.actions, PromptAction::Goto { .. }) {
+            return;
+        }
+        let input = self.text_area.lines().join("");
+        let (dir_prefix, partial) = Self::split_input(&input);
+        let dir = self.resolve_path(dir_prefix);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut matches: Vec<(String, bool)> = entries
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with(partial) {
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        Some((name, is_dir))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            matches.sort_by(|a, b| a.0.cmp(&b.0));
+            self.suggestions = matches;
+        }
+        if self.suggestion_index >= self.suggestions.len() {
+            self.suggestion_index = 0;
+        }
+    }
+
+    /// The current suggestion as `(suffix, index, total)`, where `suffix` is
+    /// the not-yet-typed remainder (plus a trailing `/` for directories).
+    fn current_suggestion(&self) -> Option<(String, usize, usize)> {
+        if self.suggestions.is_empty() {
+            return None;
+        }
+        let input = self.text_area.lines().join("");
+        let (_, partial) = Self::split_input(&input);
+        let (name, is_dir) = &self.suggestions[self.suggestion_index];
+        let mut suffix = name[partial.len()..].to_string();
+        if *is_dir {
+            suffix.push('/');
+        }
+        Some((suffix, self.suggestion_index, self.suggestions.len()))
+    }
+
+    /// Replace the typed basename with the selected suggestion and move the
+    /// cursor to the end, so typing can continue into an accepted directory.
+    fn accept_suggestion(&mut self) {
+        let Some((name, is_dir)) = self.suggestions.get(self.suggestion_index).cloned() else {
+            return;
+        };
+        let input = self.text_area.lines().join("");
+        let (dir_prefix, _) = Self::split_input(&input);
+        let mut new_text = format!("{dir_prefix}{name}");
+        if is_dir {
+            new_text.push('/');
+        }
+        self.reset_text(&new_text);
+        self.suggestion_index = 0;
+        self.refresh_suggestions();
+    }
+
+    /// Cycle the active suggestion by `delta` (wrapping).
+    fn cycle_suggestion(&mut self, delta: isize) {
+        let n = self.suggestions.len() as isize;
+        if n == 0 {
+            return;
+        }
+        let i = self.suggestion_index as isize;
+        self.suggestion_index = (((i + delta) % n + n) % n) as usize;
+    }
+
+    /// Whether the text cursor is at the end of the input line.
+    fn cursor_at_end(&self) -> bool {
+        let (row, col) = self.text_area.cursor();
+        let len = self
+            .text_area
+            .lines()
+            .get(row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0);
+        col >= len
     }
 }
 
@@ -255,5 +404,112 @@ mod tests {
         let mut view = prompt_with_action(PromptAction::Filter("hi".into()));
         view.update_scroll_col(20);
         assert_eq!(view.scroll_col, 0);
+    }
+
+    // ── Goto type-ahead ──────────────────────────────────────────────────────
+
+    /// Self-cleaning unique temp directory populated with known entries.
+    struct GotoFixture {
+        dir: PathBuf,
+    }
+
+    impl GotoFixture {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir =
+                std::env::temp_dir().join(format!("filectrl_goto_{}_{nanos}", std::process::id()));
+            std::fs::create_dir_all(dir.join("Apple")).unwrap();
+            std::fs::create_dir_all(dir.join("Apricot")).unwrap();
+            std::fs::write(dir.join("apple"), b"").unwrap();
+            std::fs::write(dir.join("Banana"), b"").unwrap();
+            Self { dir }
+        }
+    }
+
+    impl Drop for GotoFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn goto_prompt(directory: &Path) -> PromptView {
+        prompt_with_action(PromptAction::Goto {
+            directory: directory.to_string_lossy().into_owned(),
+        })
+    }
+
+    fn type_str(view: &mut PromptView, text: &str) {
+        for c in text.chars() {
+            view.handle_key(&KeyCode::Char(c), &KeyModifiers::NONE);
+        }
+    }
+
+    #[test]
+    fn goto_suggestions_are_prefix_matched_sorted_and_case_sensitive() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        let names: Vec<&str> = view.suggestions.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["Apple", "Apricot"]); // "apple" excluded (case-sensitive)
+    }
+
+    #[test]
+    fn tab_accepts_directory_and_appends_slash() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
+        assert_eq!(view.text_area.lines()[0], "Apple/");
+        assert!(view.cursor_at_end());
+    }
+
+    #[test]
+    fn down_and_up_cycle_suggestion_index_with_wrap() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
+        assert_eq!(view.suggestion_index, 0);
+        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        assert_eq!(view.suggestion_index, 1);
+        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        assert_eq!(view.suggestion_index, 0); // wrapped
+        view.handle_key(&KeyCode::Up, &KeyModifiers::NONE);
+        assert_eq!(view.suggestion_index, 1); // wrapped backwards
+    }
+
+    #[test]
+    fn goto_submit_existing_directory_returns_open() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Apple");
+        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let expected = PathInfo::try_from(&fixture.dir.join("Apple")).unwrap();
+        assert_eq!(result, Command::Open(expected).into());
+    }
+
+    #[test]
+    fn goto_submit_missing_path_returns_alert_warn() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Nope");
+        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        assert!(matches!(
+            Command::try_from(result).unwrap(),
+            Command::AlertWarn(_)
+        ));
+    }
+
+    #[test]
+    fn suggestion_is_hidden_when_cursor_not_at_end() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        assert!(view.cursor_at_end());
+        assert!(view.current_suggestion().is_some());
+        view.handle_key(&KeyCode::Left, &KeyModifiers::NONE);
+        assert!(!view.cursor_at_end()); // overlay is skipped in render() when false
     }
 }

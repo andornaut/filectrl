@@ -1,24 +1,35 @@
 use super::{TableView, columns::SortColumn};
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
+/// What to select after the visible items change.
+#[derive(Clone, Copy)]
+pub(super) enum Reselect {
+    /// The selection does not carry over (navigating to another directory,
+    /// filtering, or re-sorting). Restore the selected file if it still
+    /// exists, otherwise select the first item.
+    Top,
+    /// The same directory was reloaded: keep the selected file, or hold the
+    /// cursor at the same position if the file was deleted.
+    Keep,
+}
+
 impl TableView {
+    /// Replace the directory listing.
+    ///
+    /// This is a primitive: the command handlers are responsible for resetting
+    /// filter/marks/selection beforehand. `reselect` controls only how the
+    /// selection is restored once the new items are sorted.
     pub(super) fn set_directory(
         &mut self,
         new_directory: PathInfo,
         new_children: Vec<PathInfo>,
-        is_refresh: bool,
+        reselect: Reselect,
     ) -> CommandResult {
         let prev_directory = self.content.directory().cloned();
 
-        if !is_refresh {
-            self.content.clear_filter();
-            self.clear_marks();
-            self.table_state.select(None); // An optimization to avoid attempting to re-select an item if we're in a different directory
-        }
-
         // We must set items before sorting, because sort() depends on them
         self.content.set_items(new_directory.clone(), new_children);
-        let sort_result = self.sort(is_refresh);
+        let sort_result = self.sort(reselect);
 
         // If we navigated to an ancestor directory, then select the item that was previously in the path
         if let Some(prev_directory) = prev_directory {
@@ -44,52 +55,50 @@ impl TableView {
     }
 
     pub(super) fn set_filter(&mut self, filter: String) -> CommandResult {
-        // Avoid performing an extra FilterChanged(None)
-        // set_directory() -> sort() -> FilterChanged(None) -> set_filter() -> sort() -> FilterChanged(None)
+        // Avoid an extra sort/SelectionChanged when there is no filter change
         if self.content.filter().is_empty() && filter.is_empty() {
             return CommandResult::Handled;
         }
         self.content.set_filter(filter);
-        self.sort(false)
+        self.sort(Reselect::Top)
     }
 
-    pub(super) fn sort(&mut self, is_refresh: bool) -> CommandResult {
+    pub(super) fn sort(&mut self, reselect: Reselect) -> CommandResult {
+        // Marks are stored by index, so any change to the visible items invalidates them.
         self.clear_marks();
 
-        // sort() is called when navigating or refreshing or sorting.
-        // Sometimes, we won't be able to retain the currently selected item, b/c it
-        // may no longer be present in the `items` (such as when navigating, or if it's been deleted),
-        // but other times it is present (such as when refreshing),
-        // though possibly at a different position (if another process has modified the directory).
-        // We handle these cases by storing the currently selected item before assigning the new items,
-        // and then attempting to restore the selection afterward by comparing inodes.
+        // Store the currently selected item before reordering, then try to
+        // restore it afterward by comparing inodes. The file may have moved
+        // position (another process modified the directory) or disappeared
+        // (navigation, deletion, or filtering it out).
         let selected = self.selected_path().cloned();
         let selected_index = self.table_state.selected();
 
         self.content
             .sort(self.columns.sort_column(), self.columns.sort_direction());
 
-        // Try to restore selection based on inode after sorting/filtering
-        // This will only work if this was a refresh, not a navigation
         if let Some(selected_path) = selected {
             if let Some(new_index) = self.content.find_by_inode(&selected_path) {
-                // Select the previously selected item if it still exists after sort/filter
+                // The selected file still exists after sort/filter
                 return self.select(new_index);
             }
 
-            // If we're refreshing the directory and couldn't find the file - it was likely deleted
-            // Select next item (same index) or index 0
-            if is_refresh && let Some(idx) = selected_index {
+            // The selected file is gone. On a refresh (Reselect::Keep) it was
+            // likely deleted, so hold the cursor at the same position;
+            // otherwise fall through to the top.
+            if let Reselect::Keep = reselect
+                && let Some(idx) = selected_index
+            {
                 return self.select(idx.min(self.content.len().saturating_sub(1)));
             }
         }
 
-        // Fallback: Select the first item if previous selection not found or none existed
+        // Fallback: Select the first item
         self.select(0)
     }
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
         self.columns.sort_by(column);
-        self.sort(false)
+        self.sort(Reselect::Top)
     }
 }

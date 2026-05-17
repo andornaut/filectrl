@@ -167,16 +167,16 @@ bg = "#33A999"
 fg = "#24201A"
 
 [theme.notice.progress]
-bg = "#006B6B"
-fg = "#33A999"
+bg = "#423f2e"
+fg = "#b05533"
 
 [theme.notice.search]
 bg = "#33A999"
 fg = "#24201A"
 
 [theme.notice.search_loading]
-bg = "#006B6B"
-fg = "#33A999"
+bg = "#423f2e"
+fg = "#b05533"
 
 [theme.prompt.cursor]
 bg = "#006B6B"
@@ -185,6 +185,10 @@ fg = "#DDDCCC"
 [theme.prompt.delete]
 bg = "#b05533" # Rust
 fg = "#24201A"
+
+[theme.prompt.goto_suggestion]
+bg = "#373424"
+fg = "#7c7755" # Muted olive
 
 [theme.prompt.input]
 bg = "#373424"
@@ -432,6 +436,10 @@ fg = "253" # #dadada
 [theme256.prompt.delete]
 bg = "130" # #af5f00 - rust
 fg = "235" # #262626
+
+[theme256.prompt.goto_suggestion]
+bg = "236" # #303030
+fg = "101" # #87875f - muted olive
 
 [theme256.prompt.input]
 bg = "236" # #303030
