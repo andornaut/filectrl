@@ -272,15 +272,19 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
                 d(Action::SortBySize)
             ),
         ),
+        (
+            "Toggle show hidden files".into(),
+            d(Action::ToggleShowHidden),
+        ),
         // Application
         ("Cancel file operation".into(), d(Action::CancelTask)),
         (
-            "Clear clipboard/filter/marks/search".into(),
-            d(Action::ResetView),
-        ),
-        (
             "Clear alerts, progress".into(),
             format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
+        ),
+        (
+            "Clear clipboard/filter/marks/search".into(),
+            d(Action::ResetView),
         ),
         ("Toggle help".into(), d(Action::ToggleHelp)),
         ("Quit".into(), d(Action::Quit)),
@@ -321,8 +325,18 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             "Delete before, after cursor".into(),
             "Backspace, Delete".into(),
         ),
-        ("Accept path suggestion".into(), "Tab".into()),
-        ("Cycle path suggestions".into(), "↓/↑".into()),
+        (
+            "Accept path suggestion".into(),
+            d(Action::PromptAcceptSuggestion),
+        ),
+        (
+            "Cycle path suggestions".into(),
+            format!(
+                "{}/{}",
+                d(Action::PromptNextSuggestion),
+                d(Action::PromptPreviousSuggestion)
+            ),
+        ),
     ]
 }
 

@@ -101,4 +101,9 @@ impl TableView {
         self.columns.sort_by(column);
         self.sort(Reselect::Top)
     }
+
+    pub(super) fn toggle_show_hidden(&mut self) -> CommandResult {
+        self.content.toggle_show_hidden();
+        self.sort(Reselect::Top)
+    }
 }
