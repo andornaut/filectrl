@@ -9,6 +9,7 @@ mod status;
 mod table;
 mod unicode;
 
+pub use help::keybindings_help_text;
 pub use scrollbar::ScrollbarView;
 
 use ratatui::{

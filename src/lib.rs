@@ -3,7 +3,11 @@ mod command;
 mod file_system;
 mod views;
 
-use std::{env, io::Write, path::PathBuf};
+use std::{
+    env,
+    io::{IsTerminal, Write},
+    path::PathBuf,
+};
 
 use anyhow::Result;
 use env_logger::{Builder, DEFAULT_FILTER_ENV, Env};
@@ -37,6 +41,17 @@ pub fn run(
 
     let terminal = CleanupOnDropTerminal::try_new()?;
     App::new(terminal).run(initial_directory)
+}
+
+pub fn print_keybindings(
+    config_path: Option<PathBuf>,
+    include_paths: Vec<PathBuf>,
+) -> Result<()> {
+    configure_logging();
+    let config = Config::load(config_path, include_paths)?;
+    let bold = std::io::stdout().is_terminal();
+    print!("{}", views::keybindings_help_text(&config.keybindings, bold));
+    Ok(())
 }
 
 fn apply_log_level(config: &Config) {

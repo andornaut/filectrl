@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 use anyhow::Result;
 use argh::FromArgs;
 
-use filectrl::{app::config::Config, run};
+use filectrl::{app::config::Config, print_keybindings, run};
 
 #[derive(FromArgs)]
 
@@ -29,6 +29,10 @@ struct Args {
     #[argh(switch)]
     colors_256: bool,
 
+    /// print the keybindings help, then exit
+    #[argh(switch)]
+    keybindings: bool,
+
     /// path to a directory to navigate to
     #[argh(positional)]
     directory: Option<String>,
@@ -52,6 +56,11 @@ fn main() -> Result<()> {
 
     let config = args.config.map(PathBuf::from);
     let include: Vec<PathBuf> = args.include.into_iter().map(PathBuf::from).collect();
+
+    if args.keybindings {
+        return print_keybindings(config, include);
+    }
+
     let directory = args.directory.map(PathBuf::from);
     run(config, include, directory, args.colors_256)
 }

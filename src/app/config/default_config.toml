@@ -43,7 +43,7 @@ sort_directories_first = true
 [keybindings]
 # Normal mode
 back = ["h", "b", "Backspace"]
-cancel_task = ["Ctrl+k", "F8"]
+cancel_task = "K"
 chmod = "P"
 clear_alerts = "Ctrl+a"
 clear_progress = "Ctrl+p"
@@ -54,7 +54,7 @@ delete = ["d", "Delete"]
 filter = ["f", "\\"]
 go_home = "~"
 go_to_previous_directory = "-"
-goto = [":", "Ctrl+g", "Tab"]
+goto = [":", "Tab"]
 open = ["l", "Enter"]
 open_current_directory = ["o", "t"]
 open_new_window = "w"

@@ -213,9 +213,66 @@ fn add_keybinding_lines<'a>(
     }));
 }
 
+/// Annotate single uppercase-letter keys with "(Uppercase)" in a "/"-joined
+/// display string, e.g. "G/End" -> "G (Uppercase)/End".
+fn annotate_uppercase(display: &str) -> String {
+    display
+        .split('/')
+        .map(|key| {
+            let mut chars = key.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if c.is_ascii_uppercase() => format!("{c} (Uppercase)"),
+                _ => key.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Build the plain-text keybindings help content for the `--keybindings` CLI flag.
+/// Section headers are emitted with ANSI bold when `bold` is true (i.e. stdout is a terminal).
+pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
+    const BOLD: &str = "\x1b[1m";
+    const RESET: &str = "\x1b[0m";
+
+    fn append_section(
+        out: &mut String,
+        title: &str,
+        bindings: &[(String, String)],
+        max_width: usize,
+        bold: bool,
+    ) {
+        let header_padding = " ".repeat((max_width + 2).saturating_sub(title.width()));
+        if bold {
+            out.push_str(BOLD);
+        }
+        out.push_str(title);
+        out.push_str(&header_padding);
+        out.push_str("Keybindings");
+        if bold {
+            out.push_str(RESET);
+        }
+        out.push('\n');
+        for (label, keys) in bindings {
+            let padding = " ".repeat(max_width.saturating_sub(label.width()));
+            out.push_str(&format!("{label}: {padding}{keys}\n"));
+        }
+    }
+
+    let normal = build_normal_keybindings(kb);
+    let prompt = build_prompt_keybindings(kb);
+    let max_width = max_label_width(&normal, &prompt);
+
+    let mut out = String::new();
+    append_section(&mut out, "Normal Mode", &normal, max_width, bold);
+    out.push('\n');
+    append_section(&mut out, "Prompt Mode", &prompt, max_width, bold);
+    out
+}
+
 /// Build normal mode keybinding display strings from KeyBindings.
 fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| kb.display_for(a).to_string();
+    let d = |a: Action| annotate_uppercase(kb.display_for(a));
 
     vec![
         // Navigation
@@ -294,7 +351,10 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             d(Action::ToggleShowHidden),
         ),
         // Application
-        ("Cancel file operation".into(), d(Action::CancelTask)),
+        (
+            "Cancel file or search operations".into(),
+            d(Action::CancelTask),
+        ),
         (
             "Clear alerts, progress".into(),
             format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
@@ -310,7 +370,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
 
 /// Build prompt mode keybinding display strings from KeyBindings.
 fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| kb.display_for(a).to_string();
+    let d = |a: Action| annotate_uppercase(kb.display_for(a));
 
     vec![
         ("Submit".into(), d(Action::PromptSubmit)),
