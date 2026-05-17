@@ -28,20 +28,34 @@ impl CommandHandler for NoticesView {
                 self.filter.clear();
                 self.mark_count = 0;
                 self.search_query = None;
+                self.search_cancelled = false;
                 CommandResult::Handled
             }
             Command::StartSearch(query) => {
                 self.search_query = Some(query.clone());
                 self.search_tick = 0;
+                self.search_cancelled = false;
                 CommandResult::NotHandled
             }
-            Command::SearchComplete => {
-                self.search_query = None;
+            Command::CancelSearch => {
+                // Keep the search notice visible; relabel it to "Cancelled: ...".
+                self.search_cancelled = true;
                 self.search_tick = 0;
                 CommandResult::Handled
             }
+            Command::SearchComplete => {
+                if self.search_cancelled {
+                    // Search was cancelled via cancel_task: keep the notice.
+                    self.search_tick = 0;
+                    CommandResult::Handled
+                } else {
+                    self.search_query = None;
+                    self.search_tick = 0;
+                    CommandResult::Handled
+                }
+            }
             Command::SearchTick => {
-                if self.search_query.is_some() {
+                if self.search_query.is_some() && !self.search_cancelled {
                     self.search_tick = self.search_tick.wrapping_add(1);
                 }
                 CommandResult::Handled
@@ -52,6 +66,7 @@ impl CommandHandler for NoticesView {
                 self.filter.clear();
                 self.mark_count = 0;
                 self.search_query = None;
+                self.search_cancelled = false;
                 CommandResult::Handled
             }
             Command::SetClipboard(entry) => {
@@ -91,6 +106,7 @@ impl CommandHandler for NoticesView {
                     | Some(Notice::Filter(_))
                     | Some(Notice::Marked(_))
                     | Some(Notice::Search(_))
+                    | Some(Notice::SearchCancelled(_))
                     | Some(Notice::SearchLoading) => Command::ResetView.into(),
                     _ => CommandResult::Handled,
                 }

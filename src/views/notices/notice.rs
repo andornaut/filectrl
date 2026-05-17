@@ -4,7 +4,7 @@ use ratatui::widgets::Block;
 
 use super::widgets::{
     clipboard_widget, filter_widget, marked_widget, operations_widget, progress_widget,
-    search_loading_widget, search_widget,
+    search_cancelled_widget, search_loading_widget, search_widget,
 };
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
@@ -18,6 +18,7 @@ pub(super) enum Notice {
     Progress,
     Operations,
     Search(String),
+    SearchCancelled(String),
     SearchLoading,
     Marked(usize),
     Clipboard(ClipboardEntry),
@@ -45,6 +46,9 @@ impl Notice {
             Notice::Operations => operations_widget(&theme.notice, width, tasks, cancel_hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
             Notice::Search(query) => search_widget(&theme.notice, width, query, search_hint),
+            Notice::SearchCancelled(query) => {
+                search_cancelled_widget(&theme.notice, width, query, hint)
+            }
             Notice::SearchLoading => search_loading_widget(&theme.notice, width, search_tick),
         }
     }
