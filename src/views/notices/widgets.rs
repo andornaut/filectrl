@@ -14,7 +14,7 @@ use crate::{
         clipboard::ClipboardEntry,
         config::theme::{Clipboard, Notice as NoticeTheme, Table},
     },
-    command::progress::{Progress, Task},
+    command::progress::{Progress, Task, TaskKind},
     views::unicode::{pluralize_items, truncate_left},
 };
 
@@ -121,6 +121,79 @@ pub(super) fn progress_widget<'a>(
         .style(theme.progress())
 }
 
+// truncate_left() panics unless the budget exceeds the ellipsis width (1).
+const MIN_TRUNCATE_WIDTH: usize = 2;
+
+/// The detail text shown after the verb prefix, left-truncated to fit the
+/// width left over after the (always shown in full) prefix. Left-truncation
+/// keeps the tail of the path visible (e.g. `…naut/Downloads/`), which is the
+/// most relevant part for the user. When there is no room for any detail
+/// (budget below the minimum), only an ellipsis is shown (e.g. `Copying …`).
+fn truncate_detail(prefix: &str, detail: &str, width: u16) -> String {
+    let budget = (width as usize).saturating_sub(prefix.width());
+    if budget < MIN_TRUNCATE_WIDTH {
+        "…".to_string()
+    } else if detail.width() <= budget {
+        detail.to_string()
+    } else {
+        truncate_left(detail, budget)
+    }
+}
+
+/// The detail string for a single in-progress operation, chosen to keep the
+/// most useful information visible as the width shrinks:
+/// - normally `"<source> to <destination dir>"`
+/// - if the source basename would be truncated at all, switch to
+///   `"to <full destination path including basename>"` so the file name is
+///   still shown in full
+/// - then left-truncated to fit (see [`truncate_detail`])
+fn operation_detail(kind: &TaskKind, width: u16) -> String {
+    let prefix = kind.prefix();
+    let detail = match (kind.source(), kind.source_basename(), kind.destination()) {
+        (Some(source), Some(base), Some(destination)) => {
+            let dir = kind.target();
+            let budget = (width as usize).saturating_sub(prefix.width());
+            let full = format!("{source} to {dir}");
+            // The source basename stays intact if the full form fits as-is, or
+            // if `<basename> to <dir>` survives a left-truncation (which costs
+            // one column for the ellipsis). Otherwise switch to the `to` form.
+            if full.width() <= budget
+                || format!("{base} to {dir}").width() <= budget.saturating_sub(1)
+            {
+                full
+            } else {
+                format!("to {destination}")
+            }
+        }
+        _ => kind.detail(),
+    };
+    truncate_detail(prefix, &detail, width)
+}
+
+pub(super) fn operations_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    tasks: &'a HashSet<Task>,
+    cancel_hint: &'a str,
+) -> Block<'a> {
+    let style = theme.progress();
+    let bold = style.add_modifier(Modifier::BOLD);
+    let left = if tasks.len() == 1 {
+        // Keep the verb prefix in full; left-truncate the rest so the tail of
+        // the path (the destination) stays visible as the width shrinks.
+        let kind = tasks.iter().next().unwrap().kind();
+        let detail = operation_detail(kind, width);
+        Line::from(vec![
+            Span::styled(kind.prefix(), bold),
+            Span::styled(detail, style),
+        ])
+    } else {
+        let message = format!("Multiple ({}) operations in progress", tasks.len());
+        Line::from(Span::styled(truncate_left(&message, width as usize), style))
+    };
+    create_notice_block(left, style, width, cancel_hint)
+}
+
 pub(super) fn search_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
@@ -179,5 +252,74 @@ fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a s
         block.title(right)
     } else {
         block
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::{operation_detail, truncate_detail};
+    use crate::command::progress::TaskKind;
+
+    // Left-truncation keeps the tail (destination) visible as the width
+    // shrinks, e.g. `…naut/Downloads/` then `…aut/Downloads/`.
+    #[test_case(60, "/tmp/a to /home/andornaut/Downloads/"; "unchanged when it fits")]
+    #[test_case(40, "…a to /home/andornaut/Downloads/"; "source truncated from the left first")]
+    #[test_case(30, "…/andornaut/Downloads/"; "more of the source dropped")]
+    #[test_case(24, "…naut/Downloads/"; "destination tail kept at width 24")]
+    #[test_case(23, "…aut/Downloads/"; "destination tail kept at width 23")]
+    #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
+    fn truncate_detail_copy(width: u16, expected: &str) {
+        assert_eq!(
+            expected,
+            truncate_detail("Copying ", "/tmp/a to /home/andornaut/Downloads/", width)
+        );
+    }
+
+    #[test_case(80, "/home/andornaut/projects/old/cache/data.bin"; "unchanged when it fits")]
+    #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
+    #[test_case(20, "…e/data.bin"; "left-truncated further")]
+    #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
+    fn truncate_detail_delete(width: u16, expected: &str) {
+        assert_eq!(
+            expected,
+            truncate_detail(
+                "Deleting ",
+                "/home/andornaut/projects/old/cache/data.bin",
+                width
+            )
+        );
+    }
+
+    fn copy_kind() -> TaskKind {
+        TaskKind::Copy {
+            source: "/tmp/a/file.txt".into(),
+            destination: "/home/andornaut/Downloads/file.txt".into(),
+        }
+    }
+
+    // As the width shrinks: full source + dest dir, then left-truncated source,
+    // then (once the source basename no longer fits) switch to
+    // `to <full destination incl. basename>`, then an ellipsis.
+    #[test_case(80, "/tmp/a/file.txt to /home/andornaut/Downloads/"; "full when it fits")]
+    #[test_case(50, "…/a/file.txt to /home/andornaut/Downloads/"; "source left-truncated, basename intact")]
+    #[test_case(47, "…file.txt to /home/andornaut/Downloads/"; "source basename still fully shown")]
+    #[test_case(46, "to /home/andornaut/Downloads/file.txt"; "switches to to-form before basename is truncated")]
+    #[test_case(40, "…me/andornaut/Downloads/file.txt"; "destination form left-truncated")]
+    #[test_case(24, "…nloads/file.txt"; "destination form truncated further, basename kept")]
+    #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
+    fn operation_detail_copy(width: u16, expected: &str) {
+        assert_eq!(expected, operation_detail(&copy_kind(), width));
+    }
+
+    #[test_case(80, "/home/andornaut/projects/old/cache/data.bin"; "full when it fits")]
+    #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
+    #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
+    fn operation_detail_delete(width: u16, expected: &str) {
+        let kind = TaskKind::Delete {
+            path: "/home/andornaut/projects/old/cache/data.bin".into(),
+        };
+        assert_eq!(expected, operation_detail(&kind, width));
     }
 }

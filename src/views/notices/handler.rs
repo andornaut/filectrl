@@ -92,8 +92,7 @@ impl CommandHandler for NoticesView {
                     | Some(Notice::Marked(_))
                     | Some(Notice::Search(_))
                     | Some(Notice::SearchLoading) => Command::ResetView.into(),
-                    Some(Notice::Progress) => self.clear_progress(),
-                    None => CommandResult::Handled,
+                    _ => CommandResult::Handled,
                 }
             }
             _ => CommandResult::Handled,

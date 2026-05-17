@@ -14,7 +14,7 @@ use super::path_info::PathInfo;
 use crate::{
     command::{
         Command,
-        progress::{ActiveTask, CancellationToken},
+        progress::{ActiveTask, CancellationToken, Task, TaskKind},
         result::CommandResult,
     },
     file_system::debounce,
@@ -23,9 +23,27 @@ use crate::{
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 
+pub type CancelInfo = (usize, CancellationToken, TaskKind);
+
 pub struct TaskRunResult {
     pub command_result: CommandResult,
-    pub cancel_info: Option<(usize, CancellationToken, String)>,
+    pub cancel_info: Option<CancelInfo>,
+}
+
+impl TaskRunResult {
+    fn failed(result: CommandResult) -> Self {
+        Self {
+            command_result: result,
+            cancel_info: None,
+        }
+    }
+
+    fn started(initial: Task, token: CancellationToken) -> Self {
+        Self {
+            cancel_info: Some((initial.id(), token, initial.kind().clone())),
+            command_result: Command::Progress(initial).into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -63,62 +81,48 @@ fn run_copy_task(
 ) -> TaskRunResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
         Ok(paths) => paths,
-        Err(result) => {
-            return TaskRunResult {
-                command_result: result,
-                cancel_info: None,
-            };
-        }
+        Err(result) => return TaskRunResult::failed(result),
     };
 
     info!("Copying {old_path:?} to {new_path:?}");
-    let description = format!("copy of {}", path.basename);
+    let kind = TaskKind::Copy {
+        source: display_path(&old_path),
+        destination: display_path(&new_path),
+    };
 
-    if path.is_directory() {
-        let total_size = match dir_total_size(&old_path) {
+    let is_directory = path.is_directory();
+    let total_size = if is_directory {
+        match dir_total_size(&old_path) {
             Ok(size) => size,
             Err(error) => {
-                return TaskRunResult {
-                    command_result: Command::AlertError(format!(
-                        "Failed to read directory {old_path:?}: {error}"
-                    ))
-                    .into(),
-                    cancel_info: None,
-                };
+                return TaskRunResult::failed(
+                    Command::AlertError(format!("Failed to read directory {old_path:?}: {error}"))
+                        .into(),
+                );
             }
-        };
-        let (active, initial, token) = ActiveTask::new(tx, total_size);
-        let cancel_info = Some((initial.id(), token, description));
-        let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-
-        thread::spawn(move || {
-            if let Some(active) = copy_directory(&old_path, &new_path, active, buffer_size) {
-                active.done();
-            }
-        });
-
-        TaskRunResult {
-            command_result: Command::Progress(initial).into(),
-            cancel_info,
         }
     } else {
-        let (active, initial, token) = ActiveTask::new(tx, path.size);
-        let cancel_info = Some((initial.id(), token, description));
-        let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
-        let source_mode = path.mode();
+        path.size
+    };
 
-        thread::spawn(move || {
-            if let Some(active) = copy_file(&old_path, &new_path, active, buffer_size) {
-                apply_permissions(source_mode, &new_path);
-                active.done();
-            }
-        });
+    let (active, initial, token) = ActiveTask::new(tx, kind, total_size);
+    let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+    let source_mode = path.mode();
 
-        TaskRunResult {
-            command_result: Command::Progress(initial).into(),
-            cancel_info,
+    thread::spawn(move || {
+        if let Some(active) = copy_path(
+            &old_path,
+            &new_path,
+            active,
+            buffer_size,
+            is_directory,
+            source_mode,
+        ) {
+            active.done();
         }
-    }
+    });
+
+    TaskRunResult::started(initial, token)
 }
 
 fn run_move_task(
@@ -130,48 +134,38 @@ fn run_move_task(
 ) -> TaskRunResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
         Ok(paths) => paths,
-        Err(result) => {
-            return TaskRunResult {
-                command_result: result,
-                cancel_info: None,
-            };
-        }
+        Err(result) => return TaskRunResult::failed(result),
     };
 
     info!("Moving {old_path:?} to {new_path:?}");
-    let description = format!("move of {}", path.basename);
-    let (mut active, initial, token) = ActiveTask::new(tx, path.size);
-    let cancel_info = Some((initial.id(), token, description));
+    let kind = TaskKind::Move {
+        source: display_path(&old_path),
+        destination: display_path(&new_path),
+    };
+    let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
+    let size = path.size;
     let source_mode = path.mode();
+    let is_directory = path.is_directory();
+    let buffer_size = buffer_bytes(size, buffer_min_bytes, buffer_max_bytes);
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
         Ok(_) => {
-            active.increment(path.size);
+            active.increment(size);
             active.done();
         }
         Err(error) => match error.kind() {
             // If the file is on a different device/mount-point, we must copy-then-delete it instead
             ErrorKind::CrossesDevices => {
-                let is_directory = path.is_directory();
-                let buffer_size = buffer_bytes(path.size, buffer_min_bytes, buffer_max_bytes);
-                let copy_result = if is_directory {
-                    copy_directory(&old_path, &new_path, active, buffer_size)
-                } else {
-                    copy_file(&old_path, &new_path, active, buffer_size)
-                };
-                if let Some(active) = copy_result {
-                    let remove_result = if is_directory {
-                        fs::remove_dir_all(&old_path)
-                    } else {
-                        fs::remove_file(&old_path)
-                    };
-                    match remove_result {
-                        Ok(_) => {
-                            if !is_directory {
-                                apply_permissions(source_mode, &new_path);
-                            }
-                            active.done()
-                        }
+                if let Some(active) = copy_path(
+                    &old_path,
+                    &new_path,
+                    active,
+                    buffer_size,
+                    is_directory,
+                    source_mode,
+                ) {
+                    match remove_path(&old_path, is_directory) {
+                        Ok(_) => active.done(),
                         Err(error) => active.error(format!(
                             "Copy succeeded, but failed to delete original {old_path:?}: {error}"
                         )),
@@ -184,16 +178,14 @@ fn run_move_task(
         },
     });
 
-    TaskRunResult {
-        command_result: Command::Progress(initial).into(),
-        cancel_info,
-    }
+    TaskRunResult::started(initial, token)
 }
 
 fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
-    let description = format!("delete of {}", path.basename);
-    let (active, initial, token) = ActiveTask::new(tx, path.size);
-    let cancel_info = Some((initial.id(), token, description));
+    let kind = TaskKind::Delete {
+        path: display_path(Path::new(&path.path)),
+    };
+    let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     // Use PathInfo::is_directory() (lstat-based, does not follow symlinks) so that a
     // symlink to a directory is removed with remove_file(), not remove_dir_all().
     // PathBuf::is_dir() follows symlinks and would incorrectly recurse into the target.
@@ -201,23 +193,12 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     let path = PathBuf::from(&path.path);
     info!("Deleting {path:?}");
 
-    thread::spawn(move || {
-        let result = if is_directory {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_file(&path)
-        };
-
-        match result {
-            Ok(_) => active.done(),
-            Err(error) => active.error(format!("Failed to delete {path:?}: {error}")),
-        }
+    thread::spawn(move || match remove_path(&path, is_directory) {
+        Ok(_) => active.done(),
+        Err(error) => active.error(format!("Failed to delete {path:?}: {error}")),
     });
 
-    TaskRunResult {
-        command_result: Command::Progress(initial).into(),
-        cancel_info,
-    }
+    TaskRunResult::started(initial, token)
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
@@ -251,73 +232,84 @@ fn dir_total_size(path: &Path) -> Result<u64> {
     Ok(total)
 }
 
+/// Unwraps a `Result`, or finalizes `$active` with `"{$ctx}: {error}"` and
+/// returns `None` from the enclosing function. `$ctx` must not reference an
+/// `error` binding of its own (macro hygiene binds the error here).
+macro_rules! try_or_abort {
+    ($active:expr, $result:expr, $ctx:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(error) => {
+                $active.error(format!("{}: {error}", $ctx));
+                return None;
+            }
+        }
+    };
+}
+
 fn copy_directory(
     old_path: &Path,
     new_path: &Path,
     mut active: ActiveTask,
     buffer_size: usize,
 ) -> Option<ActiveTask> {
-    if let Err(error) = fs::create_dir(new_path) {
-        active.error(format!("Failed to create directory {new_path:?}: {error}"));
-        return None;
-    }
+    try_or_abort!(
+        active,
+        fs::create_dir(new_path),
+        format!("Failed to create directory {new_path:?}")
+    );
 
     if let Ok(metadata) = fs::symlink_metadata(old_path) {
         apply_permissions(metadata.permissions().mode(), new_path);
     }
 
-    let entries = match fs::read_dir(old_path) {
-        Ok(entries) => entries,
-        Err(error) => {
-            active.error(format!("Failed to read directory {old_path:?}: {error}"));
-            return None;
-        }
-    };
+    let entries = try_or_abort!(
+        active,
+        fs::read_dir(old_path),
+        format!("Failed to read directory {old_path:?}")
+    );
 
     for entry in entries {
         if active.is_cancelled() {
             let _ = fs::remove_dir_all(new_path);
-            active.error("Cancelled".to_string());
+            active.cancelled();
             return None;
         }
 
-        let entry = match entry {
-            Ok(e) => e,
-            Err(error) => {
-                active.error(format!("Failed to read entry in {old_path:?}: {error}"));
-                return None;
-            }
-        };
+        let entry = try_or_abort!(
+            active,
+            entry,
+            format!("Failed to read entry in {old_path:?}")
+        );
 
         let src = entry.path();
         let dst = new_path.join(entry.file_name());
-        let metadata = match fs::symlink_metadata(&src) {
-            Ok(m) => m,
-            Err(error) => {
-                active.error(format!("Failed to read metadata for {src:?}: {error}"));
-                return None;
-            }
-        };
+        let metadata = try_or_abort!(
+            active,
+            fs::symlink_metadata(&src),
+            format!("Failed to read metadata for {src:?}")
+        );
 
         if metadata.is_symlink() {
-            match fs::read_link(&src) {
-                Ok(target) => {
-                    if let Err(error) = std::os::unix::fs::symlink(&target, &dst) {
-                        active.error(format!("Failed to create symlink {dst:?}: {error}"));
-                        return None;
-                    }
-                }
-                Err(error) => {
-                    active.error(format!("Failed to read symlink {src:?}: {error}"));
-                    return None;
-                }
-            }
-        } else if metadata.is_dir() {
-            active = copy_directory(&src, &dst, active, buffer_size)?;
+            let target = try_or_abort!(
+                active,
+                fs::read_link(&src),
+                format!("Failed to read symlink {src:?}")
+            );
+            try_or_abort!(
+                active,
+                std::os::unix::fs::symlink(&target, &dst),
+                format!("Failed to create symlink {dst:?}")
+            );
         } else {
-            let mode = metadata.permissions().mode();
-            active = copy_file(&src, &dst, active, buffer_size)?;
-            apply_permissions(mode, &dst);
+            active = copy_path(
+                &src,
+                &dst,
+                active,
+                buffer_size,
+                metadata.is_dir(),
+                metadata.permissions().mode(),
+            )?;
         }
     }
 
@@ -353,7 +345,7 @@ fn copy_file(
                     drop(old_file);
                     drop(new_file);
                     let _ = fs::remove_file(new_path);
-                    active.error("Cancelled".to_string());
+                    active.cancelled();
                     break None;
                 }
 
@@ -381,6 +373,33 @@ fn copy_file(
     }
 }
 
+/// Copies a directory or file, dispatching on `is_directory`. For files, the
+/// source mode is applied to the destination on success; directories apply
+/// their own permissions recursively in `copy_directory`.
+fn copy_path(
+    old_path: &Path,
+    new_path: &Path,
+    active: ActiveTask,
+    buffer_size: usize,
+    is_directory: bool,
+    source_mode: u32,
+) -> Option<ActiveTask> {
+    if is_directory {
+        copy_directory(old_path, new_path, active, buffer_size)
+    } else {
+        copy_file(old_path, new_path, active, buffer_size)
+            .inspect(|_| apply_permissions(source_mode, new_path))
+    }
+}
+
+fn remove_path(path: &Path, is_directory: bool) -> std::io::Result<()> {
+    if is_directory {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
 fn apply_permissions(mode: u32, path: &Path) {
     if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
         warn!("Failed to set permissions on {path:?}: {e}");
@@ -391,6 +410,17 @@ fn open_files(source: &Path, target: &Path) -> Result<(File, File)> {
     let source = File::open(source)?;
     let target = File::create(target)?;
     Ok((source, target))
+}
+
+/// An absolute, display-friendly rendering of `path` for the operations
+/// notice. Lexical only (no filesystem access), so it works for destination
+/// paths that do not exist yet; falls back to the original path if it cannot
+/// be absolutized.
+fn display_path(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
 fn validate_paths(

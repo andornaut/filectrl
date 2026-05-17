@@ -21,6 +21,7 @@ pub(super) struct NoticesView {
     hide_marked: bool,
     hint: String,
     search_hint: String,
+    cancel_hint: String,
     filter: String,
     mark_count: usize,
     search_query: Option<String>,
@@ -40,6 +41,10 @@ impl NoticesView {
             "(Press {} to cancel)",
             keybindings.hint_for(&[Action::ResetView])
         );
+        let cancel_hint = format!(
+            "(Press {} to cancel)",
+            keybindings.hint_for(&[Action::CancelTask])
+        );
         Self {
             area: Rect::default(),
             search_tick: 0,
@@ -47,6 +52,7 @@ impl NoticesView {
             hide_marked: false,
             hint,
             search_hint,
+            cancel_hint,
             filter: String::new(),
             mark_count: 0,
             search_query: None,
@@ -69,6 +75,7 @@ impl NoticesView {
         };
         [
             (!self.tasks.is_empty()).then_some(Notice::Progress),
+            (!self.tasks.is_empty()).then_some(Notice::Operations),
             self.search_query.as_ref().map(|_| Notice::SearchLoading),
             self.search_query
                 .as_ref()
@@ -94,7 +101,7 @@ impl NoticesView {
             return CommandResult::Handled;
         }
 
-        if task.is_done_or_error() {
+        if task.is_terminal() {
             self.tasks.remove(&task);
         } else {
             self.tasks.replace(task); // upsert

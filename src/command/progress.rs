@@ -1,5 +1,6 @@
 use std::{
     hash::{Hash, Hasher},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -8,6 +9,112 @@ use std::{
 };
 
 use super::Command;
+
+/// Describes what a task is doing, for display in the notices view and the
+/// cancel alert.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TaskKind {
+    Copy { source: String, destination: String },
+    Move { source: String, destination: String },
+    Delete { path: String },
+}
+
+impl TaskKind {
+    /// The verb prefix, always shown in full by the operations notice (it is
+    /// not truncated, only the `detail` is).
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            TaskKind::Copy { .. } => "Copying ",
+            TaskKind::Move { .. } => "Moving ",
+            TaskKind::Delete { .. } => "Deleting ",
+        }
+    }
+
+    /// The source path, for operations that have one (copy/move). The
+    /// operations notice truncates only this part to fit the width.
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            TaskKind::Copy { source, .. } | TaskKind::Move { source, .. } => Some(source),
+            TaskKind::Delete { .. } => None,
+        }
+    }
+
+    /// The source's basename (file/dir name), for copy/move.
+    pub fn source_basename(&self) -> Option<&str> {
+        self.source().map(basename)
+    }
+
+    /// The full destination path (including the basename) for copy/move.
+    /// Used by the operations notice as a fallback when the source cannot be
+    /// shown at all.
+    pub fn destination(&self) -> Option<&str> {
+        match self {
+            TaskKind::Copy { destination, .. } | TaskKind::Move { destination, .. } => {
+                Some(destination)
+            }
+            TaskKind::Delete { .. } => None,
+        }
+    }
+
+    /// The target path shown in full by the operations notice: the
+    /// destination directory for copy/move, or the path being deleted.
+    pub fn target(&self) -> String {
+        match self {
+            TaskKind::Copy {
+                source,
+                destination,
+            }
+            | TaskKind::Move {
+                source,
+                destination,
+            } => dest_display(source, destination),
+            TaskKind::Delete { path } => path.clone(),
+        }
+    }
+
+    /// The path portion (source + target).
+    pub fn detail(&self) -> String {
+        match self.source() {
+            Some(source) => format!("{source} to {}", self.target()),
+            None => self.target(),
+        }
+    }
+
+    /// The shared human phrasing used by both the operations notice and the
+    /// cancel alert. Callers add their own decoration (e.g. a trailing
+    /// ellipsis or a `Cancelled:` prefix).
+    pub fn message(&self) -> String {
+        format!("{}{}", self.prefix(), self.detail())
+    }
+}
+
+fn basename(path: &str) -> &str {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+}
+
+/// If the source and destination share a basename (the common "into a
+/// directory" case), show the destination's parent directory (with a
+/// trailing slash to denote a directory) instead of repeating the filename;
+/// otherwise show the full destination path.
+fn dest_display(source: &str, destination: &str) -> String {
+    if basename(source) == basename(destination) {
+        let parent = Path::new(destination)
+            .parent()
+            .and_then(|p| p.to_str())
+            .filter(|p| !p.is_empty())
+            .unwrap_or(destination);
+        if parent.ends_with('/') {
+            parent.to_string()
+        } else {
+            format!("{parent}/")
+        }
+    } else {
+        destination.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CancellationToken(Arc<AtomicBool>);
@@ -63,7 +170,7 @@ impl Progress {
 
 /// A handle to an in-progress task.
 ///
-/// Finalization methods (`done`, `error`) consume `self`, making it a compile-time
+/// Finalization methods (`done`, `cancelled`, `error`) consume `self`, making it a compile-time
 /// error to finalize a task more than once or to report an error after it has already
 /// been marked done. This prevents the class of bugs where an async operation attempts
 /// to update a task that has already been removed from the UI.
@@ -91,9 +198,9 @@ impl Drop for ActiveTask {
 impl ActiveTask {
     /// Creates a new active task and an initial snapshot suitable for `Command::Progress`.
     /// Returns the active task handle, an initial task snapshot, and a cancellation token.
-    pub fn new(tx: Sender<Command>, total: u64) -> (Self, Task, CancellationToken) {
+    pub fn new(tx: Sender<Command>, kind: TaskKind, total: u64) -> (Self, Task, CancellationToken) {
         let cancel_token = CancellationToken::new();
-        let task = Task::new(total);
+        let task = Task::new(kind, total);
         let initial = task.clone();
         (
             Self {
@@ -136,6 +243,15 @@ impl ActiveTask {
         }
     }
 
+    /// Marks the task as cancelled by the user. Consumes `self`.
+    pub fn cancelled(mut self) {
+        if let Some(mut task) = self.task.take() {
+            task.cancelled();
+            // Err means the receiver was dropped (app is shutting down); silently ignore.
+            let _ = self.tx.send(Command::Progress(task));
+        }
+    }
+
     /// Marks the task as failed with an error message. Consumes `self`.
     pub fn error(mut self, message: String) {
         if let Some(mut task) = self.task.take() {
@@ -149,6 +265,7 @@ impl ActiveTask {
 #[derive(Clone, Debug, Eq)]
 pub struct Task {
     id: Id,
+    kind: TaskKind,
     progress: Progress,
     status: TaskStatus,
 }
@@ -170,9 +287,10 @@ impl Hash for Task {
 }
 
 impl Task {
-    fn new(total: u64) -> Self {
+    fn new(kind: TaskKind, total: u64) -> Self {
         Self {
             id: next_id(),
+            kind,
             progress: Progress {
                 completed: 0,
                 total,
@@ -185,11 +303,19 @@ impl Task {
         self.id.0
     }
 
+    pub fn kind(&self) -> &TaskKind {
+        &self.kind
+    }
+
     pub fn combine_progress(&self, progress: &Progress) -> Progress {
         Progress {
             completed: self.progress.completed + progress.completed,
             total: self.progress.total + progress.total,
         }
+    }
+
+    fn cancelled(&mut self) {
+        self.status = TaskStatus::Cancelled;
     }
 
     fn done(&mut self) {
@@ -217,8 +343,17 @@ impl Task {
         };
     }
 
-    pub fn is_done_or_error(&self) -> bool {
-        matches!(self.status, TaskStatus::Done | TaskStatus::Error(_))
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self.status, TaskStatus::Cancelled)
+    }
+
+    /// True once the task has reached a terminal state (done, errored, or
+    /// cancelled) and should be removed from the notices view.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status,
+            TaskStatus::Cancelled | TaskStatus::Done | TaskStatus::Error(_)
+        )
     }
 
     pub fn is_new(&self) -> bool {
@@ -237,6 +372,7 @@ fn next_id() -> Id {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 enum TaskStatus {
+    Cancelled,
     Done,
     Error(String),
     InProgress,
