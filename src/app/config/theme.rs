@@ -303,6 +303,7 @@ impl Notice {
 pub struct Prompt {
     cursor: StyleConfig,
     delete: StyleConfig,
+    goto_suggestion: StyleConfig,
     input: StyleConfig,
     label: StyleConfig,
     selected: StyleConfig,
@@ -311,6 +312,7 @@ pub struct Prompt {
 impl Prompt {
     style_getter!(cursor);
     style_getter!(delete);
+    style_getter!(goto_suggestion);
     style_getter!(input);
     style_getter!(label);
     style_getter!(selected);

@@ -32,6 +32,25 @@ impl CommandHandler for PromptView {
             };
         }
 
+        // Goto type-ahead: Tab accepts, Down/Up cycle through matches
+        if matches!(self.actions, PromptAction::Goto { .. }) {
+            match code {
+                KeyCode::Tab => {
+                    self.accept_suggestion();
+                    return CommandResult::Handled;
+                }
+                KeyCode::Down => {
+                    self.cycle_suggestion(1);
+                    return CommandResult::Handled;
+                }
+                KeyCode::Up => {
+                    self.cycle_suggestion(-1);
+                    return CommandResult::Handled;
+                }
+                _ => {}
+            }
+        }
+
         // Rebindable prompt keys (lookup once, reuse after textarea input)
         let action = Config::global().keybindings.prompt_action(code, modifiers);
         match action {
@@ -46,6 +65,7 @@ impl CommandHandler for PromptView {
             }
             Some(Action::PromptReset) => {
                 self.reset_text(&self.initial_text.clone());
+                self.refresh_suggestions();
                 return CommandResult::Handled;
             }
             _ => {}
@@ -53,6 +73,10 @@ impl CommandHandler for PromptView {
 
         self.text_area
             .input(Input::from(KeyEvent::new(*code, *modifiers)));
+
+        if matches!(self.actions, PromptAction::Goto { .. }) {
+            self.refresh_suggestions();
+        }
 
         // Copy/Cut must be checked after textarea processes the key, because
         // ratatui-textarea populates yank_text from the current selection during input().

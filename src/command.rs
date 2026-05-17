@@ -28,6 +28,9 @@ pub enum PromptAction {
     CreateDirectory,
     Delete(usize),
     Filter(String),
+    Goto {
+        directory: String,
+    },
     Rename {
         path: PathInfo,
         name: String,

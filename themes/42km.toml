@@ -190,6 +190,10 @@ fg = "#c2fe0b"
 bg = "#c2fe0b"
 fg = "#282a2c"
 
+[theme.prompt.goto_suggestion]
+bg = "#282a2c"
+fg = "#687880" # Muted steel gray
+
 [theme.prompt.input]
 bg = "#282a2c"
 fg = "#f1f1f1"
@@ -436,6 +440,10 @@ fg = "190" # #d7ff00 - lime
 [theme256.prompt.cursor]
 bg = "190" # #d7ff00 - lime (approx #c2fe0b)
 fg = "235" # #262626
+
+[theme256.prompt.goto_suggestion]
+bg = "235" # #262626
+fg = "66" # #5f8787 - muted steel gray
 
 [theme256.prompt.input]
 bg = "235" # #262626

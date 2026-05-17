@@ -76,6 +76,7 @@ impl CommandHandler for RootView {
             Command::Chmod { .. }
             | Command::ConfirmDelete
             | Command::CreateDirectory(_)
+            | Command::Open(_)
             | Command::Rename { .. }
             | Command::FilterChanged(_)
             | Command::StartSearch(_) => {
