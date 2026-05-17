@@ -8,6 +8,9 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 - Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
+- Go to path with path completion suggestions
+- Deep search - recursively search directory trees
+- File operations - chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
 - [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
 - [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
 - Responsive layout - adapts columns and content to small and large terminal windows
@@ -86,26 +89,23 @@ _**Normal mode**_
 
 Actions | Keys
 --- | ---
-Quit | <kbd>q</kbd>
+Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
+Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
+Select middle row | <kbd>z</kbd>
+Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
+Go to home dir | <kbd>~</kbd>
+Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
 Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
 Open new window | <kbd>w</kbd>
-Go to home dir | <kbd>~</kbd>
-Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>
-Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
-Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
-Jump to middle row | <kbd>z</kbd>
-Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
 Range mark | <kbd>V</kbd>
-Copy | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
-Cut | <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>
-Paste | <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
+Copy, Cut, Paste | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
+Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Chmod (octal) | <kbd>b</kbd>
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
-Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Filter | <kbd>f</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
@@ -114,6 +114,7 @@ Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
+Quit | <kbd>q</kbd>
 
 _**Prompt mode**_
 
@@ -122,11 +123,13 @@ Actions | Keys
 Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
 Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
+Accept path suggestion | <kbd>Tab</kbd>
+Cycle path suggestions | <kbd>↓</kbd>/<kbd>↑</kbd>
 Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
 Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
 Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
-Jump to line start, end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
+Move cursor to start, end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
 Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
