@@ -26,16 +26,24 @@ use crate::{
     },
 };
 
+/// A cancellable in-flight action. Tracked in a single LIFO stack so that
+/// `cancel_task` cancels whichever action (file operation or search) was
+/// started most recently.
+enum Cancellable {
+    Task(CancelInfo),
+    Search(CancellationToken),
+}
+
 pub struct FileSystem {
     buffer_max_bytes: u64,
     buffer_min_bytes: u64,
-    cancel_tokens: Vec<CancelInfo>,
+    cancellables: Vec<Cancellable>,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
+    previous_directory: Option<PathInfo>,
     open_current_directory_template: String,
     open_new_window_template: String,
     open_selected_file_template: String,
-    search_cancel: Option<CancellationToken>,
     watcher: Option<DirectoryWatcher>,
 }
 
@@ -52,13 +60,13 @@ impl FileSystem {
         Self {
             buffer_max_bytes: config.file_system.buffer_max_bytes,
             buffer_min_bytes: config.file_system.buffer_min_bytes,
-            cancel_tokens: Vec::new(),
+            cancellables: Vec::new(),
             command_tx,
             directory: None,
+            previous_directory: None,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
             open_selected_file_template: config.openers.open_selected_file.clone(),
-            search_cancel: None,
             watcher,
         }
     }
@@ -97,6 +105,13 @@ impl FileSystem {
         }
     }
 
+    fn go_to_previous_directory(&mut self) -> CommandResult {
+        match self.previous_directory.clone() {
+            Some(directory) => self.cd(directory, true),
+            None => CommandResult::Handled,
+        }
+    }
+
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
         match operations::cd(&directory) {
             Ok((children, error_count)) => {
@@ -104,6 +119,13 @@ impl FileSystem {
                     let _ = self.command_tx.send(Command::AlertWarn(format!(
                         "{error_count} entries in {directory:?} could not be read"
                     )));
+                }
+                // Track the directory we're leaving so "-" can toggle back to it.
+                if navigate
+                    && let Some(current) = &self.directory
+                    && current.path != directory.path
+                {
+                    self.previous_directory = Some(current.clone());
                 }
                 self.directory = Some(directory.clone());
                 let path_buf = PathBuf::from(&directory.path);
@@ -129,28 +151,50 @@ impl FileSystem {
         .into()
     }
 
+    /// Full search teardown (Esc / `ResetView`): cancel and drop every search
+    /// entry. No-op if the search was already cancelled via `cancel_task`.
     fn cancel_search(&mut self) {
-        if let Some(token) = self.search_cancel.take() {
-            token.cancel();
-        }
+        self.cancellables.retain(|c| match c {
+            Cancellable::Search(token) => {
+                token.cancel();
+                false
+            }
+            Cancellable::Task(_) => true,
+        });
     }
 
     fn cancel_most_recent(&mut self) -> CommandResult {
-        // Cancel file operations (LIFO); search is only cancelled by Esc (ResetView)
-        while let Some((_, token, _)) = self.cancel_tokens.last() {
-            if !token.is_cancelled() {
-                token.cancel();
-                let (_, _, kind) = self.cancel_tokens.pop().unwrap();
-                return Command::AlertInfo(format!("Cancelled: {}", kind.message())).into();
+        // LIFO across file operations and search: cancel whichever was started most recently.
+        while let Some(cancellable) = self.cancellables.last() {
+            match cancellable {
+                Cancellable::Task((_, token, _)) => {
+                    if !token.is_cancelled() {
+                        token.cancel();
+                        let Some(Cancellable::Task((_, _, kind))) = self.cancellables.pop() else {
+                            unreachable!()
+                        };
+                        return Command::AlertInfo(format!("Cancelled: {}", kind.message())).into();
+                    }
+                    self.cancellables.pop();
+                }
+                Cancellable::Search(token) => {
+                    token.cancel();
+                    self.cancellables.pop();
+                    // Non-destructive: keep streamed results and the notice;
+                    // NoticesView relabels it to "Cancelled: [Searching] <query>".
+                    return Command::CancelSearch.into();
+                }
             }
-            self.cancel_tokens.pop();
         }
         Command::AlertWarn("No active task to cancel".into()).into()
     }
 
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
         if task.is_terminal() {
-            self.cancel_tokens.retain(|(id, _, _)| *id != task.id());
+            self.cancellables.retain(|c| match c {
+                Cancellable::Task((id, _, _)) => *id != task.id(),
+                Cancellable::Search(_) => true,
+            });
         }
         if task.is_cancelled() {
             return CommandResult::Handled;
@@ -240,8 +284,8 @@ impl FileSystem {
                 self.buffer_min_bytes,
                 self.buffer_max_bytes,
             );
-            if let Some((id, token, desc)) = result.cancel_info {
-                self.cancel_tokens.push((id, token, desc));
+            if let Some(cancel_info) = result.cancel_info {
+                self.cancellables.push(Cancellable::Task(cancel_info));
             }
             // Send initial progress commands through the channel so NoticesView picks them up
             if let CommandResult::HandledWith(cmd) = result.command_result {
@@ -252,7 +296,7 @@ impl FileSystem {
 
     fn search(&mut self, query: &str) {
         let token = CancellationToken::new();
-        self.search_cancel = Some(token.clone());
+        self.cancellables.push(Cancellable::Search(token.clone()));
 
         let tick_token = token.clone();
         let tick_tx = self.command_tx.clone();

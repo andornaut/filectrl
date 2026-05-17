@@ -23,6 +23,7 @@ const MARKED_PREFIX: &str = "[Selected] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filtered] ";
 const SEARCH_PREFIX: &str = "[Searching...] ";
+const SEARCH_CANCELLED_PREFIX: &str = "Cancelled: [Searching] ";
 
 // Number of terminal columns per unit of search-loading indicator speed.
 // The indicator advances `width / SEARCH_LOADING_SPEED_DIVISOR` cells per
@@ -203,6 +204,20 @@ pub(super) fn search_widget<'a>(
     let style = theme.search();
     let left = Line::from(vec![
         SEARCH_PREFIX.into(),
+        Span::styled(query, style.add_modifier(Modifier::BOLD)),
+    ]);
+    create_notice_block(left, style, width, hint)
+}
+
+pub(super) fn search_cancelled_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    query: &'a str,
+    hint: &'a str,
+) -> Block<'a> {
+    let style = theme.search();
+    let left = Line::from(vec![
+        SEARCH_CANCELLED_PREFIX.into(),
         Span::styled(query, style.add_modifier(Modifier::BOLD)),
     ]);
     create_notice_block(left, style, width, hint)
