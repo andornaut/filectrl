@@ -5,6 +5,7 @@ impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Back => self.back(),
+            Command::GoToPreviousDirectory => self.go_to_previous_directory(),
             Command::CancelTask => self.cancel_most_recent(),
             Command::ResetView => {
                 self.cancel_search();
@@ -37,7 +38,8 @@ impl CommandHandler for FileSystem {
             Command::Refresh => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
             Command::SearchComplete => {
-                self.search_cancel = None;
+                // The search thread has exited; drop any lingering search entry.
+                self.cancel_search();
                 CommandResult::NotHandled
             }
             Command::StartSearch(query) => {

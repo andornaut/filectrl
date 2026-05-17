@@ -50,6 +50,7 @@ pub enum Command {
 
     // Navigation — handled by FileSystem
     Back,
+    GoToPreviousDirectory,
     Open(PathInfo),
     Refresh,
 
@@ -107,6 +108,7 @@ pub enum Command {
     StartSearch(String),
     SearchResult(PathInfo),
     SearchComplete,
+    CancelSearch, // Non-destructive: stop the search thread but keep results and notice
 
     SearchTick,
 
