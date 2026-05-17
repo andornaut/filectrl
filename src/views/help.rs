@@ -260,6 +260,8 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Delete".into(), d(Action::Delete)),
         // View
         ("Filter".into(), d(Action::Filter)),
+        ("Search".into(), d(Action::Search)),
+        ("Refresh".into(), d(Action::Refresh)),
         (
             "Sort by name, modified, size".into(),
             format!(
@@ -269,11 +271,12 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
                 d(Action::SortBySize)
             ),
         ),
-        ("Search".into(), d(Action::Search)),
-        ("Refresh".into(), d(Action::Refresh)),
         // Application
         ("Cancel file operation".into(), d(Action::CancelTask)),
-        ("Clear clipboard/filter/marks".into(), d(Action::ResetView)),
+        (
+            "Clear clipboard/filter/marks/search".into(),
+            d(Action::ResetView),
+        ),
         (
             "Clear alerts, progress".into(),
             format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
@@ -291,8 +294,6 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Submit".into(), d(Action::PromptSubmit)),
         ("Cancel".into(), d(Action::PromptCancel)),
         ("Reset to initial value".into(), d(Action::PromptReset)),
-        ("Accept path suggestion".into(), "Tab".into()),
-        ("Cycle path suggestions".into(), "↓/↑".into()),
         ("Select all".into(), d(Action::PromptSelectAll)),
         (
             "Copy, Cut, Paste text".into(),
@@ -319,6 +320,8 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             "Delete before, after cursor".into(),
             "Backspace, Delete".into(),
         ),
+        ("Accept path suggestion".into(), "Tab".into()),
+        ("Cycle path suggestions".into(), "↓/↑".into()),
     ]
 }
 
