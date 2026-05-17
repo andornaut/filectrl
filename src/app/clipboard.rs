@@ -5,7 +5,7 @@ use std::{
 
 use crate::file_system::path_info::PathInfo;
 use anyhow::{Error, anyhow};
-use cli_clipboard::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard as ArboardClipboard;
 use log::warn;
 
 #[derive(Clone, Debug)]
@@ -144,13 +144,13 @@ impl TryFrom<&str> for ClipboardEntry {
 
 #[derive(Clone)]
 struct ClipboardBackend {
-    clipboard: Arc<Mutex<ClipboardContext>>,
+    clipboard: Arc<Mutex<ArboardClipboard>>,
 }
 
 impl Debug for ClipboardBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClipboardBackend")
-            .field("clipboard", &"<ClipboardContext>")
+            .field("clipboard", &"<arboard::Clipboard>")
             .finish()
     }
 }
@@ -158,7 +158,7 @@ impl Debug for ClipboardBackend {
 impl ClipboardBackend {
     fn try_new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
-            clipboard: Arc::new(Mutex::new(ClipboardProvider::new()?)),
+            clipboard: Arc::new(Mutex::new(ArboardClipboard::new()?)),
         })
     }
 
@@ -168,7 +168,7 @@ impl ClipboardBackend {
             .lock()
             .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
         clipboard
-            .get_contents()
+            .get_text()
             .map_err(|e| anyhow!("Failed to get clipboard contents: {}", e))
     }
 
@@ -178,7 +178,7 @@ impl ClipboardBackend {
             .lock()
             .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
         clipboard
-            .set_contents(text.to_string())
+            .set_text(text.to_string())
             .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))
     }
 
