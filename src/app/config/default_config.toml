@@ -39,28 +39,29 @@ sort_directories_first = true
 # and modifier prefixes ("Ctrl+c", "Ctrl+Shift+a").
 [keybindings]
 # Normal mode
-back = ["h", "b", "Backspace"]
+back = ["h", "Backspace"]
 cancel_task = "Ctrl+k"
 chmod = "x"
-clear_alerts = "a"
-clear_progress = "p"
-copy = "Ctrl+c"
+clear_alerts = "Ctrl+a"
+clear_progress = "Ctrl+p"
+copy = ["y", "Ctrl+c"]
 create_directory = "c"
 cut = "Ctrl+x"
 delete = ["d", "Delete"]
-filter = ["Ctrl+f", "/"]
+filter = ["f"]
 go_home = "~"
-open = ["l", "f", "Enter", "Space"]
+goto = "Ctrl+g"
+open = ["l", "Enter", "Space"]
 open_current_directory = ["o", "t"]
 open_new_window = "w"
 page_down = "Ctrl+d"
 page_up = ["Ctrl+u", "Ctrl+b"]
-paste = "Ctrl+v"
+paste = ["p", "Ctrl+v"]
 quit = "q"
 range_mark = "V"
 refresh = ["Ctrl+r", "F5"]
 rename = ["r", "F2"]
-search = "Ctrl+s"
+search = ["/", "Ctrl+f"]
 select_first = ["g", "^"]
 select_last = ["G", "$"]
 select_middle = "z"

@@ -92,26 +92,27 @@ Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>f</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd
 Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
 Open new window | <kbd>w</kbd>
 Go to home dir | <kbd>~</kbd>
+Go to path | <kbd>Ctrl</kbd>+<kbd>g</kbd>
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Jump to middle row | <kbd>z</kbd>
-Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>b</kbd>/<kbd>PgUp</kbd>
+Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Mark/unmark item | <kbd>v</kbd>
 Range mark | <kbd>V</kbd>
-Copy | <kbd>Ctrl</kbd>+<kbd>c</kbd>
+Copy | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
 Cut | <kbd>Ctrl</kbd>+<kbd>x</kbd>
-Paste | <kbd>Ctrl</kbd>+<kbd>v</kbd>
+Paste | <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
 Chmod (octal) | <kbd>x</kbd>
 Create directory | <kbd>c</kbd>
-Delete (with confirmation) | <kbd>d</kbd>/<kbd>Delete</kbd>
+Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
-Filter | <kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>/</kbd>
+Filter | <kbd>f</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
-Search | <kbd>Ctrl</kbd>+<kbd>s</kbd>
+Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
-Cancel task | <kbd>Ctrl</kbd>+<kbd>k</kbd>
+Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
-Clear alerts, progress | <kbd>a</kbd>, <kbd>p</kbd>
+Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
 
 _**Prompt mode**_
@@ -156,7 +157,7 @@ Run `filectrl --write-default-config` to write the [default configuration](./src
 
 Keyboard key | Description
 --- | ---
-<kbd>f</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
+<kbd>l</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
 <kbd>o</kbd>/<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
 <kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
 
