@@ -95,7 +95,7 @@ Select middle row | <kbd>z</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
 Go to home dir | <kbd>~</kbd>
-Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>
+Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>/<kbd>Tab</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
 Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
 Open new window | <kbd>w</kbd>
@@ -106,7 +106,7 @@ Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Chmod (octal) | <kbd>b</kbd>
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
-Filter | <kbd>f</kbd>
+Filter | <kbd>f</kbd>/<kbd>\</kbd>
 Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
