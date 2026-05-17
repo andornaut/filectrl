@@ -217,16 +217,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| kb.display_for(a).to_string();
 
     vec![
-        ("Quit".into(), d(Action::Quit)),
-        ("Go to parent dir".into(), d(Action::Back)),
-        ("Open".into(), d(Action::Open)),
-        (
-            "Open current directory".into(),
-            d(Action::OpenCurrentDirectory),
-        ),
-        ("Open new window".into(), d(Action::OpenNewWindow)),
-        ("Go to home dir".into(), d(Action::GoHome)),
-        ("Go to path".into(), d(Action::Goto)),
+        // Navigation
         (
             "Select next, previous row".into(),
             format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
@@ -235,20 +226,39 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             "Select first, last row".into(),
             format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
         ),
-        ("Jump to middle row".into(), d(Action::SelectMiddle)),
+        ("Select middle row".into(), d(Action::SelectMiddle)),
         (
             "Page down, up".into(),
             format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
         ),
+        ("Go to parent dir".into(), d(Action::Back)),
+        ("Go to home dir".into(), d(Action::GoHome)),
+        ("Go to path".into(), d(Action::Goto)),
+        // Opening
+        ("Open".into(), d(Action::Open)),
+        (
+            "Open current directory".into(),
+            d(Action::OpenCurrentDirectory),
+        ),
+        ("Open new window".into(), d(Action::OpenNewWindow)),
+        // Marking
         ("Mark/unmark item".into(), d(Action::ToggleMark)),
         ("Range mark".into(), d(Action::RangeMark)),
-        ("Copy".into(), d(Action::Copy)),
-        ("Cut".into(), d(Action::Cut)),
-        ("Paste".into(), d(Action::Paste)),
+        // File operations
+        (
+            "Copy, Cut, Paste".into(),
+            format!(
+                "{}, {}, {}",
+                d(Action::Copy),
+                d(Action::Cut),
+                d(Action::Paste)
+            ),
+        ),
+        ("Rename".into(), d(Action::Rename)),
         ("Chmod".into(), d(Action::Chmod)),
         ("Create directory".into(), d(Action::CreateDirectory)),
         ("Delete".into(), d(Action::Delete)),
-        ("Rename".into(), d(Action::Rename)),
+        // View
         ("Filter".into(), d(Action::Filter)),
         (
             "Sort by name, modified, size".into(),
@@ -260,6 +270,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             ),
         ),
         ("Refresh".into(), d(Action::Refresh)),
+        // Application
         ("Cancel file operation".into(), d(Action::CancelTask)),
         ("Clear clipboard/filter/marks".into(), d(Action::ResetView)),
         (
@@ -267,6 +278,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
         ),
         ("Toggle help".into(), d(Action::ToggleHelp)),
+        ("Quit".into(), d(Action::Quit)),
     ]
 }
 
@@ -291,7 +303,7 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Move cursor".into(), "←/→".into()),
         ("Move cursor by word".into(), "Ctrl+←/→".into()),
         (
-            "Jump to line start, end".into(),
+            "Move cursor to start, end".into(),
             "Ctrl+a/Home, Ctrl+e/End".into(),
         ),
         ("Select text".into(), "Shift+←/→".into()),
