@@ -52,6 +52,11 @@ impl LineItemMap {
         last_line.saturating_sub(self.visible_lines_count.saturating_sub(1))
     }
 
+    pub(super) fn middle_visible_line(&self) -> usize {
+        let first = self.first_visible_line();
+        first + self.last_visible_line().saturating_sub(first) / 2
+    }
+
     pub(super) fn last_visible_line(&self) -> usize {
         self.last_visible_line_starting_at(self.first_visible_line())
     }

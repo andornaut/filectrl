@@ -224,10 +224,23 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
         ),
         (
-            "Select first, last row".into(),
-            format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
+            "Select first, middle, last row".into(),
+            format!(
+                "{}, {}, {}",
+                d(Action::SelectFirst),
+                d(Action::SelectMiddle),
+                d(Action::SelectLast)
+            ),
         ),
-        ("Select middle row".into(), d(Action::SelectMiddle)),
+        (
+            "Select top, middle, bottom visible row".into(),
+            format!(
+                "{}, {}, {}",
+                d(Action::SelectFirstVisible),
+                d(Action::SelectMiddleVisible),
+                d(Action::SelectLastVisible)
+            ),
+        ),
         (
             "Page down, up".into(),
             format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
