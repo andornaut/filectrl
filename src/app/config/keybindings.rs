@@ -264,7 +264,15 @@ impl KeyBindings {
             .iter()
             .filter_map(|action| self.action_display.get(action))
             .flat_map(|s| s.split('/'))
-            .map(|k| format!("\"{}\"", k))
+            .map(|k| {
+                let mut chars = k.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) if c.is_ascii_uppercase() => {
+                        format!("\"{c}\" (Uppercase)")
+                    }
+                    _ => format!("\"{k}\""),
+                }
+            })
             .collect::<Vec<_>>()
             .join(" or ")
     }

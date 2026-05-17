@@ -41,7 +41,7 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--] [<directory>]
+Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--keybindings] [--] [<directory>]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -58,6 +58,7 @@ Options:
   --write-default-themes
                     write default theme files to ~/.config/filectrl/, then exit
   --colors-256      force 256-color theme (disables truecolor detection)
+  --keybindings     print the keybindings help, then exit
   --help, help      display usage information
 ```
 
@@ -90,21 +91,21 @@ _**Normal mode**_
 Actions | Keys
 --- | ---
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
-Select first, middle, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>z</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
-Select top, middle, bottom visible row | <kbd>H</kbd>, <kbd>M</kbd>, <kbd>L</kbd>
+Select first, middle, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>z</kbd>, <kbd>End</kbd>/<kbd>G</kbd> (Uppercase)/<kbd>$</kbd>
+Select top, middle, bottom visible row | <kbd>H</kbd> (Uppercase), <kbd>M</kbd> (Uppercase), <kbd>L</kbd> (Uppercase)
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
 Go to previous dir | <kbd>-</kbd>
 Go to home dir | <kbd>~</kbd>
-Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>/<kbd>Tab</kbd>
+Go to path | <kbd>:</kbd>/<kbd>Tab</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
 Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
 Open new window | <kbd>w</kbd>
 Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
-Range mark | <kbd>V</kbd>
+Range mark | <kbd>V</kbd> (Uppercase)
 Copy, Cut, Paste | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
-Chmod (octal) | <kbd>P</kbd>
+Chmod (octal) | <kbd>P</kbd> (Uppercase)
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Filter | <kbd>f</kbd>/<kbd>\</kbd>
@@ -112,7 +113,7 @@ Search | <kbd>/</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Toggle show hidden files | <kbd>.</kbd>
-Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
+Cancel file or search operations | <kbd>K</kbd> (Uppercase)
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
 Toggle help | <kbd>?</kbd>
