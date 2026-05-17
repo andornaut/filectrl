@@ -678,11 +678,11 @@ mod tests {
     #[test]
     fn uppercase_fallback_without_shift() {
         let kb = default_keybindings();
-        // SortByName default includes "N" which parses to Char('N') + SHIFT.
+        // RangeMark default is "V" which parses to Char('V') + SHIFT.
         // Direct match with SHIFT.
         assert_eq!(
-            kb.normal_action(&KeyCode::Char('N'), &KeyModifiers::SHIFT),
-            Some(Action::SortByName)
+            kb.normal_action(&KeyCode::Char('V'), &KeyModifiers::SHIFT),
+            Some(Action::RangeMark)
         );
     }
 

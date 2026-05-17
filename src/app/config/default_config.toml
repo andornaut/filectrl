@@ -40,18 +40,18 @@ sort_directories_first = true
 [keybindings]
 # Normal mode
 back = ["h", "Backspace"]
-cancel_task = "Ctrl+k"
-chmod = "x"
+cancel_task = ["Ctrl+k", "F8"]
+chmod = "b"
 clear_alerts = "Ctrl+a"
 clear_progress = "Ctrl+p"
 copy = ["y", "Ctrl+c"]
 create_directory = "c"
-cut = "Ctrl+x"
+cut = ["x", "Ctrl+x"]
 delete = ["d", "Delete"]
 filter = ["f"]
 go_home = "~"
-goto = "Ctrl+g"
-open = ["l", "Enter", "Space"]
+goto = [":", "Ctrl+g"]
+open = ["l", "Enter"]
 open_current_directory = ["o", "t"]
 open_new_window = "w"
 page_down = "Ctrl+d"
@@ -67,11 +67,11 @@ select_last = ["G", "$"]
 select_middle = "z"
 select_next = "j"
 select_previous = "k"
-sort_by_modified = ["m", "M"]
-sort_by_name = ["n", "N"]
-sort_by_size = ["s", "S"]
+sort_by_modified = "m"
+sort_by_name = "n"
+sort_by_size = "s"
 toggle_help = "?"
-toggle_mark = "v"
+toggle_mark = ["v", "Space"]
 
 # Prompt mode
 prompt_copy = "Ctrl+c"
