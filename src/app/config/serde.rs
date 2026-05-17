@@ -15,46 +15,33 @@ where
     Color::deserialize(StringDeserializer::<D::Error>::new(color_str)).map(Some)
 }
 
-// Private newtype wrapper around Modifier just for deserialization
-struct ModifierWrapper(pub Modifier);
-
-impl<'de> Deserialize<'de> for ModifierWrapper {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let modifiers: Vec<String> = Deserialize::deserialize(deserializer)?;
-
-        // Start with empty modifier and add each specified modifier
-        let modifier = modifiers.iter().fold(Modifier::empty(), |acc, m| {
-            match m.to_lowercase().as_str() {
-                "bold" => acc | Modifier::BOLD,
-                "dim" => acc | Modifier::DIM,
-                "italic" => acc | Modifier::ITALIC,
-                "underlined" => acc | Modifier::UNDERLINED,
-                "blink" => acc | Modifier::SLOW_BLINK,
-                "rapid_blink" => acc | Modifier::RAPID_BLINK,
-                "reversed" => acc | Modifier::REVERSED,
-                "crossed_out" => acc | Modifier::CROSSED_OUT,
-                _ => {
-                    log::warn!(
-                        "Unknown modifier in config: {m:?} (valid values: bold, dim, italic, underlined, blink, rapid_blink, reversed, crossed_out)"
-                    );
-                    acc
-                }
-            }
-        });
-
-        Ok(ModifierWrapper(modifier))
-    }
-}
-
-/// Helper function for deserializing Modifier
+/// Deserializes a list of modifier names (e.g. `["bold", "italic"]`) into a `Modifier`.
+/// Unknown names are ignored with a warning.
 pub fn deserialize_modifier<'de, D>(deserializer: D) -> Result<Modifier, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Ok(ModifierWrapper::deserialize(deserializer)?.0)
+    let modifiers: Vec<String> = Deserialize::deserialize(deserializer)?;
+
+    // Start with empty modifier and add each specified modifier
+    Ok(modifiers.iter().fold(Modifier::empty(), |acc, m| {
+        match m.to_lowercase().as_str() {
+            "bold" => acc | Modifier::BOLD,
+            "dim" => acc | Modifier::DIM,
+            "italic" => acc | Modifier::ITALIC,
+            "underlined" => acc | Modifier::UNDERLINED,
+            "blink" => acc | Modifier::SLOW_BLINK,
+            "rapid_blink" => acc | Modifier::RAPID_BLINK,
+            "reversed" => acc | Modifier::REVERSED,
+            "crossed_out" => acc | Modifier::CROSSED_OUT,
+            _ => {
+                log::warn!(
+                    "Unknown modifier in config: {m:?} (valid values: bold, dim, italic, underlined, blink, rapid_blink, reversed, crossed_out)"
+                );
+                acc
+            }
+        }
+    }))
 }
 
 #[cfg(test)]

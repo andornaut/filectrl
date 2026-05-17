@@ -306,13 +306,9 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     let divisor = FACTOR.pow(unit_index as u32) as f64;
     let value = (bytes as f64) / divisor;
 
-    // Format based on value:
-    // - For values >= 10, show no decimal places
-    // - For values with fractional part, show one decimal place
-    // - For whole numbers < 10, show no decimal places
-    let formatted_value = if value >= 10.0 {
-        format!("{:.0}", value)
-    } else if value.fract() != 0.0 {
+    // Show one decimal place only for fractional values below 10; otherwise
+    // round to a whole number.
+    let formatted_value = if value < 10.0 && value.fract() != 0.0 {
         format!("{:.1}", value)
     } else {
         format!("{:.0}", value)
@@ -358,8 +354,7 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
     let age = datetime_age(datetime, relative_to);
     let format = match age {
         DateTimeAge::LessThanMinute => "%I:%M:%S%P",
-        DateTimeAge::LessThanHour => "%I:%M%P",
-        DateTimeAge::LessThanDay => "%I:%M%P",
+        DateTimeAge::LessThanHour | DateTimeAge::LessThanDay => "%I:%M%P",
         DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
             // Show year if dates are from different calendar years
             if datetime.year() != relative_to.year() {

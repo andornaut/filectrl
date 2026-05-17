@@ -86,125 +86,97 @@ pub enum KeySpec {
     Multiple(Vec<String>),
 }
 
-/// Keybindings from the TOML `[keybindings]` section.
-/// All fields are required — defaults are provided by the embedded default_config.toml.
-#[derive(Debug, Deserialize)]
-pub struct TomlKeybindings {
-    // Normal mode
-    back: KeySpec,
-    cancel_task: KeySpec,
-    chmod: KeySpec,
-    clear_alerts: KeySpec,
-    clear_progress: KeySpec,
-    copy: KeySpec,
-    create_directory: KeySpec,
-    cut: KeySpec,
-    delete: KeySpec,
-    filter: KeySpec,
-    go_home: KeySpec,
-    goto: KeySpec,
-    open: KeySpec,
-    open_current_directory: KeySpec,
-    open_new_window: KeySpec,
-    page_down: KeySpec,
-    page_up: KeySpec,
-    paste: KeySpec,
-    quit: KeySpec,
-    range_mark: KeySpec,
-    refresh: KeySpec,
-    rename: KeySpec,
-    search: KeySpec,
-    select_first: KeySpec,
-    select_last: KeySpec,
-    select_middle: KeySpec,
-    select_next: KeySpec,
-    select_previous: KeySpec,
-    sort_by_modified: KeySpec,
-    sort_by_name: KeySpec,
-    sort_by_size: KeySpec,
-    toggle_help: KeySpec,
-    toggle_mark: KeySpec,
-
-    // Prompt mode
-    prompt_copy: KeySpec,
-    prompt_cut: KeySpec,
-    prompt_paste: KeySpec,
-    prompt_reset: KeySpec,
-    prompt_select_all: KeySpec,
-    prompt_submit: KeySpec,
-}
-
 type BindingList = Vec<(Action, Vec<KeyCombo>)>;
 
-impl TomlKeybindings {
-    /// Convert TOML fields into (normal, prompt) binding lists.
-    fn to_bindings(&self) -> Result<(BindingList, BindingList)> {
-        let mut normal = Vec::new();
-        let mut prompt = Vec::new();
-
-        macro_rules! bind {
-            ($list:expr, $field:expr, $action:expr) => {
-                $list.push((
-                    $action,
-                    parse_key_spec(&$field)
-                        .with_context(|| format!("Invalid keybinding for {:?}", $action))?,
-                ));
-            };
+/// Declares the `TomlKeybindings` struct (one `KeySpec` field per binding) and
+/// its `to_bindings` conversion from a single `field => Action` table per mode.
+macro_rules! keybindings {
+    (
+        normal { $($n_field:ident => $n_action:ident),+ $(,)? }
+        prompt { $($p_field:ident => $p_action:ident),+ $(,)? }
+    ) => {
+        /// Keybindings from the TOML `[keybindings]` section.
+        /// All fields are required — defaults are provided by the embedded default_config.toml.
+        #[derive(Debug, Deserialize)]
+        pub struct TomlKeybindings {
+            $($n_field: KeySpec,)+
+            $($p_field: KeySpec,)+
         }
 
-        // Hardcoded-only actions (no TOML fields, but must be in the binding list
-        // so that hardcoded keys are inserted into the action map)
-        normal.push((Action::ResetView, vec![]));
-        prompt.push((Action::PromptCancel, vec![]));
+        impl TomlKeybindings {
+            /// Convert TOML fields into (normal, prompt) binding lists.
+            fn to_bindings(&self) -> Result<(BindingList, BindingList)> {
+                // Hardcoded-only actions (no TOML fields, but must be in the binding
+                // list so that hardcoded keys are inserted into the action map)
+                let mut normal: BindingList = vec![(Action::ResetView, vec![])];
+                let mut prompt: BindingList = vec![(Action::PromptCancel, vec![])];
 
-        // Normal mode
-        bind!(normal, self.back, Action::Back);
-        bind!(normal, self.cancel_task, Action::CancelTask);
-        bind!(normal, self.chmod, Action::Chmod);
-        bind!(normal, self.clear_alerts, Action::ClearAlerts);
-        bind!(normal, self.clear_progress, Action::ClearProgress);
-        bind!(normal, self.copy, Action::Copy);
-        bind!(normal, self.create_directory, Action::CreateDirectory);
-        bind!(normal, self.cut, Action::Cut);
-        bind!(normal, self.delete, Action::Delete);
-        bind!(normal, self.filter, Action::Filter);
-        bind!(normal, self.go_home, Action::GoHome);
-        bind!(normal, self.goto, Action::Goto);
-        bind!(normal, self.open, Action::Open);
-        bind!(
-            normal,
-            self.open_current_directory,
-            Action::OpenCurrentDirectory
-        );
-        bind!(normal, self.open_new_window, Action::OpenNewWindow);
-        bind!(normal, self.page_down, Action::PageDown);
-        bind!(normal, self.page_up, Action::PageUp);
-        bind!(normal, self.paste, Action::Paste);
-        bind!(normal, self.quit, Action::Quit);
-        bind!(normal, self.range_mark, Action::RangeMark);
-        bind!(normal, self.refresh, Action::Refresh);
-        bind!(normal, self.rename, Action::Rename);
-        bind!(normal, self.search, Action::Search);
-        bind!(normal, self.select_first, Action::SelectFirst);
-        bind!(normal, self.select_last, Action::SelectLast);
-        bind!(normal, self.select_middle, Action::SelectMiddle);
-        bind!(normal, self.select_next, Action::SelectNext);
-        bind!(normal, self.select_previous, Action::SelectPrevious);
-        bind!(normal, self.sort_by_modified, Action::SortByModified);
-        bind!(normal, self.sort_by_name, Action::SortByName);
-        bind!(normal, self.sort_by_size, Action::SortBySize);
-        bind!(normal, self.toggle_help, Action::ToggleHelp);
-        bind!(normal, self.toggle_mark, Action::ToggleMark);
+                $(
+                    normal.push((
+                        Action::$n_action,
+                        parse_key_spec(&self.$n_field).with_context(|| {
+                            format!("Invalid keybinding for {:?}", Action::$n_action)
+                        })?,
+                    ));
+                )+
+                $(
+                    prompt.push((
+                        Action::$p_action,
+                        parse_key_spec(&self.$p_field).with_context(|| {
+                            format!("Invalid keybinding for {:?}", Action::$p_action)
+                        })?,
+                    ));
+                )+
 
-        // Prompt mode
-        bind!(prompt, self.prompt_copy, Action::PromptCopy);
-        bind!(prompt, self.prompt_cut, Action::PromptCut);
-        bind!(prompt, self.prompt_paste, Action::PromptPaste);
-        bind!(prompt, self.prompt_reset, Action::PromptReset);
-        bind!(prompt, self.prompt_select_all, Action::PromptSelectAll);
-        bind!(prompt, self.prompt_submit, Action::PromptSubmit);
+                Ok((normal, prompt))
+            }
+        }
+    };
+}
 
-        Ok((normal, prompt))
+keybindings! {
+    normal {
+        back => Back,
+        cancel_task => CancelTask,
+        chmod => Chmod,
+        clear_alerts => ClearAlerts,
+        clear_progress => ClearProgress,
+        copy => Copy,
+        create_directory => CreateDirectory,
+        cut => Cut,
+        delete => Delete,
+        filter => Filter,
+        go_home => GoHome,
+        goto => Goto,
+        open => Open,
+        open_current_directory => OpenCurrentDirectory,
+        open_new_window => OpenNewWindow,
+        page_down => PageDown,
+        page_up => PageUp,
+        paste => Paste,
+        quit => Quit,
+        range_mark => RangeMark,
+        refresh => Refresh,
+        rename => Rename,
+        search => Search,
+        select_first => SelectFirst,
+        select_last => SelectLast,
+        select_middle => SelectMiddle,
+        select_next => SelectNext,
+        select_previous => SelectPrevious,
+        sort_by_modified => SortByModified,
+        sort_by_name => SortByName,
+        sort_by_size => SortBySize,
+        toggle_help => ToggleHelp,
+        toggle_mark => ToggleMark,
+    }
+    prompt {
+        prompt_copy => PromptCopy,
+        prompt_cut => PromptCut,
+        prompt_paste => PromptPaste,
+        prompt_reset => PromptReset,
+        prompt_select_all => PromptSelectAll,
+        prompt_submit => PromptSubmit,
     }
 }
 
@@ -282,36 +254,56 @@ impl KeyBindings {
 
 /// Hardcoded keys per action (arrow keys, Home/End, PageUp/PageDown, Esc).
 /// These are always active regardless of config and are included in display strings.
-fn hardcoded_keys(action: Action) -> Vec<KeyCombo> {
-    let kc = KeyCombo::new;
-    match action {
-        Action::Back => vec![kc(KeyCode::Left, KeyModifiers::NONE)],
-        Action::Open => vec![kc(KeyCode::Right, KeyModifiers::NONE)],
-        Action::SelectNext => vec![kc(KeyCode::Down, KeyModifiers::NONE)],
-        Action::SelectPrevious => vec![kc(KeyCode::Up, KeyModifiers::NONE)],
-        Action::SelectFirst => vec![kc(KeyCode::Home, KeyModifiers::NONE)],
-        Action::SelectLast => vec![kc(KeyCode::End, KeyModifiers::NONE)],
-        Action::PageUp => vec![kc(KeyCode::PageUp, KeyModifiers::NONE)],
-        Action::PageDown => vec![kc(KeyCode::PageDown, KeyModifiers::NONE)],
-        Action::ResetView => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
-        Action::PromptCancel => vec![kc(KeyCode::Esc, KeyModifiers::NONE)],
-        _ => vec![],
-    }
-}
-
-/// Actions that have hardcoded key bindings (arrow keys, Home/End, Esc, etc.).
-const HARDCODED_ACTIONS: &[Action] = &[
-    Action::Back,
-    Action::Open,
-    Action::PageDown,
-    Action::PageUp,
-    Action::PromptCancel,
-    Action::ResetView,
-    Action::SelectFirst,
-    Action::SelectLast,
-    Action::SelectNext,
-    Action::SelectPrevious,
+const HARDCODED: &[(Action, &[KeyCombo])] = &[
+    (
+        Action::Back,
+        &[KeyCombo::new(KeyCode::Left, KeyModifiers::NONE)],
+    ),
+    (
+        Action::Open,
+        &[KeyCombo::new(KeyCode::Right, KeyModifiers::NONE)],
+    ),
+    (
+        Action::SelectNext,
+        &[KeyCombo::new(KeyCode::Down, KeyModifiers::NONE)],
+    ),
+    (
+        Action::SelectPrevious,
+        &[KeyCombo::new(KeyCode::Up, KeyModifiers::NONE)],
+    ),
+    (
+        Action::SelectFirst,
+        &[KeyCombo::new(KeyCode::Home, KeyModifiers::NONE)],
+    ),
+    (
+        Action::SelectLast,
+        &[KeyCombo::new(KeyCode::End, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PageUp,
+        &[KeyCombo::new(KeyCode::PageUp, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PageDown,
+        &[KeyCombo::new(KeyCode::PageDown, KeyModifiers::NONE)],
+    ),
+    (
+        Action::ResetView,
+        &[KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PromptCancel,
+        &[KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE)],
+    ),
 ];
+
+/// Hardcoded keys for an action, or an empty slice if it has none.
+fn hardcoded_keys(action: Action) -> &'static [KeyCombo] {
+    HARDCODED
+        .iter()
+        .find(|(a, _)| *a == action)
+        .map_or(&[], |(_, keys)| *keys)
+}
 
 /// Build the key→action HashMap, detecting duplicate key mappings.
 /// Hardcoded keys are inserted first for actions present in this mode's
@@ -320,10 +312,10 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
     let mut map = HashMap::new();
 
     let binding_actions: HashSet<Action> = bindings.iter().map(|(a, _)| *a).collect();
-    for action in HARDCODED_ACTIONS {
+    for (action, keys) in HARDCODED {
         if binding_actions.contains(action) {
-            for combo in hardcoded_keys(*action) {
-                map.insert(combo, *action);
+            for combo in *keys {
+                map.insert(*combo, *action);
             }
         }
     }
@@ -331,11 +323,7 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
     for (action, combos) in bindings {
         for combo in combos {
             if let Some(existing) = map.insert(*combo, *action) {
-                if existing != *action
-                    && !HARDCODED_ACTIONS
-                        .iter()
-                        .any(|a| *a == existing && hardcoded_keys(existing).contains(combo))
-                {
+                if existing != *action && !hardcoded_keys(existing).contains(combo) {
                     return Err(anyhow!(
                         "Key '{}' is bound to both {:?} and {:?}",
                         format_key_combo(combo),
@@ -364,19 +352,6 @@ fn build_display_map(
             .map(format_key_combo)
             .collect();
         map.insert(*action, display.join("/"));
-    }
-
-    // Actions that only have hardcoded keys and no rebindable defaults
-    // (e.g., ResetView only has Esc hardcoded)
-    for action in [Action::ResetView, Action::PromptCancel] {
-        map.entry(action).or_insert_with(|| {
-            let hardcoded = hardcoded_keys(action);
-            hardcoded
-                .iter()
-                .map(format_key_combo)
-                .collect::<Vec<_>>()
-                .join("/")
-        });
     }
 
     map
