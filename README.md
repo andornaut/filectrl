@@ -88,21 +88,21 @@ Actions | Keys
 --- | ---
 Quit | <kbd>q</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
-Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>f</kbd>/<kbd>Enter</kbd>/<kbd>Space</kbd>
+Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
 Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
 Open new window | <kbd>w</kbd>
 Go to home dir | <kbd>~</kbd>
-Go to path | <kbd>Ctrl</kbd>+<kbd>g</kbd>
+Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Jump to middle row | <kbd>z</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
-Mark/unmark item | <kbd>v</kbd>
+Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
 Range mark | <kbd>V</kbd>
 Copy | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>
-Cut | <kbd>Ctrl</kbd>+<kbd>x</kbd>
+Cut | <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>
 Paste | <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
-Chmod (octal) | <kbd>x</kbd>
+Chmod (octal) | <kbd>b</kbd>
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
@@ -110,7 +110,7 @@ Filter | <kbd>f</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
-Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>
+Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
 Clear clipboard/filter/marks | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Toggle help | <kbd>?</kbd>
