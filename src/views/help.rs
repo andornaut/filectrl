@@ -269,6 +269,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
                 d(Action::SortBySize)
             ),
         ),
+        ("Search".into(), d(Action::Search)),
         ("Refresh".into(), d(Action::Refresh)),
         // Application
         ("Cancel file operation".into(), d(Action::CancelTask)),
