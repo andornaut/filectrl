@@ -43,14 +43,14 @@ pub fn run(
     App::new(terminal).run(initial_directory)
 }
 
-pub fn print_keybindings(
-    config_path: Option<PathBuf>,
-    include_paths: Vec<PathBuf>,
-) -> Result<()> {
+pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<()> {
     configure_logging();
     let config = Config::load(config_path, include_paths)?;
     let bold = std::io::stdout().is_terminal();
-    print!("{}", views::keybindings_help_text(&config.keybindings, bold));
+    print!(
+        "{}",
+        views::keybindings_help_text(&config.keybindings, bold)
+    );
     Ok(())
 }
 
