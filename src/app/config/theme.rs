@@ -5,14 +5,10 @@ use serde::Deserialize;
 
 use super::serde::{deserialize_color, deserialize_modifier};
 
-fn empty_modifier() -> Modifier {
-    Modifier::empty()
-}
-
 /// A triplet of style properties: foreground color, background color, and modifiers.
 /// All fields are optional — omitted fields inherit defaults (no color, no modifiers).
 /// `fg` and `bg` accept `""` in config to explicitly inherit from the parent widget.
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Copy, Clone, Default, Deserialize)]
 pub struct StyleConfig {
     #[serde(default, deserialize_with = "deserialize_color")]
     fg: Option<Color>,
@@ -20,18 +16,8 @@ pub struct StyleConfig {
     #[serde(default, deserialize_with = "deserialize_color")]
     bg: Option<Color>,
 
-    #[serde(default = "empty_modifier", deserialize_with = "deserialize_modifier")]
+    #[serde(default, deserialize_with = "deserialize_modifier")]
     modifiers: Modifier,
-}
-
-impl Default for StyleConfig {
-    fn default() -> Self {
-        Self {
-            fg: None,
-            bg: None,
-            modifiers: Modifier::empty(),
-        }
-    }
 }
 
 impl StyleConfig {
@@ -41,15 +27,15 @@ impl StyleConfig {
 }
 
 impl From<StyleConfig> for Style {
-    fn from(style: StyleConfig) -> Self {
-        let mut s = Style::default().add_modifier(style.modifiers);
-        if let Some(bg) = style.bg {
-            s = s.bg(bg);
+    fn from(config: StyleConfig) -> Self {
+        let mut style = Style::default().add_modifier(config.modifiers);
+        if let Some(bg) = config.bg {
+            style = style.bg(bg);
         }
-        if let Some(fg) = style.fg {
-            s = s.fg(fg);
+        if let Some(fg) = config.fg {
+            style = style.fg(fg);
         }
-        s
+        style
     }
 }
 
@@ -61,55 +47,93 @@ macro_rules! style_getter {
     };
 }
 
-#[derive(Deserialize)]
-pub struct FileType {
-    // Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured below
-    ls_colors_take_precedence: bool,
+/// Declares a theme sub-struct whose fields are all `StyleConfig`, deriving
+/// `Deserialize` and a `Style` getter for each field. Prefix the field list
+/// with `base,` to add a `#[serde(flatten)]`-ed `base` style.
+macro_rules! style_struct {
+    ($name:ident { base, $($field:ident),+ $(,)? }) => {
+        #[derive(Deserialize)]
+        pub struct $name {
+            #[serde(flatten)]
+            base: StyleConfig,
+            $($field: StyleConfig,)+
+        }
 
-    block_device: StyleConfig,
-    character_device: StyleConfig,
-    directory: StyleConfig,
-    directory_other_writable: StyleConfig,
-    directory_sticky: StyleConfig,
-    directory_sticky_other_writable: StyleConfig,
-    door: StyleConfig,
-    executable: StyleConfig,
-    missing: StyleConfig,
-    normal_file: StyleConfig,
-    pipe: StyleConfig,
-    regular_file: StyleConfig,
-    setgid: StyleConfig,
-    setuid: StyleConfig,
-    socket: StyleConfig,
-    symlink: StyleConfig,
-    symlink_broken: StyleConfig,
+        impl $name {
+            style_getter!(base);
+            $(style_getter!($field);)+
+        }
+    };
+    ($name:ident { $($field:ident),+ $(,)? }) => {
+        #[derive(Deserialize)]
+        pub struct $name {
+            $($field: StyleConfig,)+
+        }
 
-    // Pattern-based styles
-    #[serde(skip)]
-    extension_styles: HashMap<String, StyleConfig>,
-    #[serde(skip)]
-    name_styles: HashMap<String, StyleConfig>,
+        impl $name {
+            $(style_getter!($field);)+
+        }
+    };
+}
+
+/// Declares the `FileType` struct from a single `field => "dircolors-key"`
+/// table, generating the `StyleConfig` fields, their `Style` getters, and
+/// `set_ls_color` (the `LS_COLORS` key → field dispatch). This keeps the field
+/// list, getters, and `LS_COLORS` mapping from drifting apart.
+macro_rules! file_type {
+    ($($field:ident => $ls_key:literal),+ $(,)?) => {
+        #[derive(Deserialize, Default)]
+        pub struct FileType {
+            /// Whether to apply colors from the $LS_COLORS environment variable
+            /// (if set) on top of the colors configured below.
+            ls_colors_take_precedence: bool,
+
+            $($field: StyleConfig,)+
+
+            // Pattern-based styles
+            #[serde(skip)]
+            extension_styles: HashMap<String, StyleConfig>,
+            #[serde(skip)]
+            name_styles: HashMap<String, StyleConfig>,
+        }
+
+        impl FileType {
+            $(style_getter!($field);)+
+
+            /// Apply a parsed `LS_COLORS` style for a dircolors file-type key.
+            /// Returns false if `key` is not a recognized file-type key.
+            fn set_ls_color(&mut self, key: &str, style: StyleConfig) -> bool {
+                match key {
+                    $($ls_key => self.$field = style,)+
+                    _ => return false,
+                }
+                true
+            }
+        }
+    };
+}
+
+file_type! {
+    block_device => "bd",
+    character_device => "cd",
+    directory => "di",
+    directory_other_writable => "ow",
+    directory_sticky => "st",
+    directory_sticky_other_writable => "tw",
+    door => "do",
+    executable => "ex",
+    missing => "mi",
+    normal_file => "no",
+    pipe => "pi",
+    regular_file => "fi",
+    setgid => "sg",
+    setuid => "su",
+    socket => "so",
+    symlink => "ln",
+    symlink_broken => "or",
 }
 
 impl FileType {
-    style_getter!(block_device);
-    style_getter!(character_device);
-    style_getter!(directory);
-    style_getter!(directory_other_writable);
-    style_getter!(directory_sticky);
-    style_getter!(directory_sticky_other_writable);
-    style_getter!(door);
-    style_getter!(executable);
-    style_getter!(missing);
-    style_getter!(normal_file);
-    style_getter!(pipe);
-    style_getter!(regular_file);
-    style_getter!(setgid);
-    style_getter!(setuid);
-    style_getter!(socket);
-    style_getter!(symlink);
-    style_getter!(symlink_broken);
-
     pub(super) fn maybe_apply_ls_colors(&mut self, warn_on_rgb: bool) {
         if self.ls_colors_take_precedence
             && let Ok(ls_colors) = std::env::var("LS_COLORS")
@@ -140,35 +164,14 @@ impl FileType {
             }
 
             let style = StyleConfig::new(fg, bg, attrs);
-            match key {
-                "bd" => self.block_device = style,
-                "ca" => {} // capabilities not supported
-                "cd" => self.character_device = style,
-                "di" => self.directory = style,
-                "do" => self.door = style,
-                "ex" => self.executable = style,
-                "fi" => self.regular_file = style,
-                "ln" => self.symlink = style,
-                "mi" => self.missing = style,
-                "no" => self.normal_file = style,
-                "or" => self.symlink_broken = style,
-                "ow" => self.directory_other_writable = style,
-                "pi" => self.pipe = style,
-                "sg" => self.setgid = style,
-                "so" => self.socket = style,
-                "st" => self.directory_sticky = style,
-                "tw" => self.directory_sticky_other_writable = style,
-                "su" => self.setuid = style,
-                key if key.starts_with("*.") => {
-                    self.extension_styles
-                        .insert(key.trim_start_matches("*.").to_string(), style);
-                }
-                key if key.starts_with('*') => {
-                    self.name_styles
-                        .insert(key.trim_start_matches('*').to_string(), style);
-                }
-                _ => {}
+            if self.set_ls_color(key, style) {
+                // Recognized file-type key — handled by set_ls_color.
+            } else if let Some(ext) = key.strip_prefix("*.") {
+                self.extension_styles.insert(ext.to_string(), style);
+            } else if let Some(name) = key.strip_prefix('*') {
+                self.name_styles.insert(name.to_string(), style);
             }
+            // Otherwise unrecognized (e.g. "ca" capabilities) — ignored.
         }
         if found_rgb {
             log::warn!(
@@ -199,135 +202,57 @@ impl FileType {
     }
 }
 
-#[derive(Deserialize)]
-pub struct FileSize {
-    bytes: StyleConfig,
-    kib: StyleConfig,
-    mib: StyleConfig,
-    gib: StyleConfig,
-    tib: StyleConfig,
-    pib: StyleConfig,
-}
+style_struct!(FileSize {
+    bytes,
+    kib,
+    mib,
+    gib,
+    tib,
+    pib
+});
 
-impl FileSize {
-    style_getter!(bytes);
-    style_getter!(kib);
-    style_getter!(mib);
-    style_getter!(gib);
-    style_getter!(tib);
-    style_getter!(pib);
-}
+style_struct!(FileModifiedDate {
+    less_than_minute,
+    less_than_hour,
+    less_than_day,
+    less_than_month,
+    less_than_year,
+    greater_than_year,
+});
 
-#[derive(Deserialize)]
-pub struct FileModifiedDate {
-    less_than_minute: StyleConfig,
-    less_than_hour: StyleConfig,
-    less_than_day: StyleConfig,
-    less_than_month: StyleConfig,
-    less_than_year: StyleConfig,
-    greater_than_year: StyleConfig,
-}
+style_struct!(Alert {
+    base,
+    error,
+    info,
+    warn
+});
 
-impl FileModifiedDate {
-    style_getter!(less_than_minute);
-    style_getter!(less_than_hour);
-    style_getter!(less_than_day);
-    style_getter!(less_than_month);
-    style_getter!(less_than_year);
-    style_getter!(greater_than_year);
-}
+style_struct!(Breadcrumbs {
+    base,
+    basename,
+    ancestor,
+    separator,
+});
 
-#[derive(Deserialize)]
-pub struct Alert {
-    #[serde(flatten)]
-    base: StyleConfig,
+style_struct!(Clipboard { copy, cut, delete });
 
-    error: StyleConfig,
-    info: StyleConfig,
-    warn: StyleConfig,
-}
+style_struct!(Notice {
+    filter,
+    progress,
+    search,
+    search_loading,
+});
 
-impl Alert {
-    style_getter!(base);
-    style_getter!(error);
-    style_getter!(info);
-    style_getter!(warn);
-}
+style_struct!(Prompt {
+    cursor,
+    delete,
+    goto_suggestion,
+    input,
+    label,
+    selected,
+});
 
-#[derive(Deserialize)]
-pub struct Breadcrumbs {
-    #[serde(flatten)]
-    base: StyleConfig,
-
-    basename: StyleConfig,
-    ancestor: StyleConfig,
-    separator: StyleConfig,
-}
-
-impl Breadcrumbs {
-    style_getter!(base);
-    style_getter!(basename);
-    style_getter!(ancestor);
-    style_getter!(separator);
-}
-
-#[derive(Deserialize)]
-pub struct Clipboard {
-    copy: StyleConfig,
-    cut: StyleConfig,
-    delete: StyleConfig,
-}
-
-impl Clipboard {
-    style_getter!(copy);
-    style_getter!(cut);
-    style_getter!(delete);
-}
-
-#[derive(Deserialize)]
-pub struct Notice {
-    filter: StyleConfig,
-    progress: StyleConfig,
-    search: StyleConfig,
-    search_loading: StyleConfig,
-}
-
-impl Notice {
-    style_getter!(filter);
-    style_getter!(progress);
-    style_getter!(search);
-    style_getter!(search_loading);
-}
-
-#[derive(Deserialize)]
-pub struct Prompt {
-    cursor: StyleConfig,
-    delete: StyleConfig,
-    goto_suggestion: StyleConfig,
-    input: StyleConfig,
-    label: StyleConfig,
-    selected: StyleConfig,
-}
-
-impl Prompt {
-    style_getter!(cursor);
-    style_getter!(delete);
-    style_getter!(goto_suggestion);
-    style_getter!(input);
-    style_getter!(label);
-    style_getter!(selected);
-}
-
-#[derive(Deserialize)]
-pub struct Status {
-    detail: StyleConfig,
-    label: StyleConfig,
-}
-
-impl Status {
-    style_getter!(detail);
-    style_getter!(label);
-}
+style_struct!(Status { detail, label });
 
 #[derive(Deserialize)]
 pub struct ScrollbarConfig {
@@ -368,22 +293,12 @@ impl Table {
     style_getter!(selected);
 }
 
-#[derive(Deserialize)]
-pub struct Help {
-    #[serde(flatten)]
-    base: StyleConfig,
-
-    actions: StyleConfig,
-    header: StyleConfig,
-    shortcuts: StyleConfig,
-}
-
-impl Help {
-    style_getter!(actions);
-    style_getter!(base);
-    style_getter!(header);
-    style_getter!(shortcuts);
-}
+style_struct!(Help {
+    base,
+    actions,
+    header,
+    shortcuts,
+});
 
 #[derive(Deserialize)]
 pub struct Theme {
@@ -416,29 +331,7 @@ mod tests {
     use super::*;
 
     fn make_file_type() -> FileType {
-        let empty = StyleConfig::new(None, None, Modifier::empty());
-        FileType {
-            ls_colors_take_precedence: false,
-            block_device: empty,
-            character_device: empty,
-            directory: empty,
-            directory_other_writable: empty,
-            directory_sticky: empty,
-            directory_sticky_other_writable: empty,
-            door: empty,
-            executable: empty,
-            missing: empty,
-            normal_file: empty,
-            pipe: empty,
-            regular_file: empty,
-            setgid: empty,
-            setuid: empty,
-            socket: empty,
-            symlink: empty,
-            symlink_broken: empty,
-            extension_styles: HashMap::new(),
-            name_styles: HashMap::new(),
-        }
+        FileType::default()
     }
 
     fn red() -> StyleConfig {

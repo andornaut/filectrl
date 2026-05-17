@@ -3,7 +3,12 @@ mod ls_colors;
 mod serde;
 pub mod theme;
 
-use std::{fs, io::ErrorKind, path::PathBuf, sync::OnceLock};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use ::serde::Deserialize;
 use anyhow::{Result, anyhow};
@@ -50,9 +55,6 @@ pub struct UiConfig {
 #[derive(Deserialize)]
 struct RawConfig {
     file_system: FileSystemConfig,
-    #[serde(default)]
-    #[allow(dead_code)] // Consumed from raw Value before deserialization
-    include_files: Vec<String>,
     keybindings: TomlKeybindings,
     log_level: LevelFilter,
     openers: PlatformOpeners,
@@ -88,9 +90,7 @@ impl Config {
             &self.theme256
         }
     }
-}
 
-impl Config {
     pub fn load(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<Self> {
         let Some(path) = config_path else {
             return Self::try_from_default_path(include_paths);
@@ -109,14 +109,6 @@ impl Config {
                 err
             )),
         }
-    }
-}
-
-impl Config {
-    fn from_default_file(include_paths: &[PathBuf]) -> Result<Self> {
-        let mut merged = merge_default_config()?;
-        merged = merge_include_paths(merged, include_paths)?;
-        Self::parse_value(merged)
     }
 
     fn default_config_dir() -> Result<PathBuf> {
@@ -164,46 +156,50 @@ impl Config {
         let user_value = parse_toml(content)?;
         let mut value = merge_toml_values(merge_default_config()?, user_value);
 
-        let include_files = value
-            .get("include_files")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if !include_files.is_empty() {
-            let resolve_dir = config_dir
-                .clone()
-                .or_else(|| Self::default_config_dir().ok())
-                .unwrap_or_default();
-
-            for include_file in &include_files {
-                let path = PathBuf::from(include_file);
-                let resolved = if path.is_absolute() {
-                    path
-                } else {
-                    resolve_dir.join(path)
-                };
-                debug!("Loading include file: {}", resolved.display());
-                let include_content = fs::read_to_string(&resolved).map_err(|error| {
-                    anyhow!(
-                        "Cannot read include file ({}): {}",
-                        resolved.display(),
-                        error
-                    )
-                })?;
-                let include_value = parse_toml(&include_content)?;
-                value = merge_toml_values(value, include_value);
-            }
-        }
+        // Files listed in the config's `include_files` are merged first.
+        let config_includes = Self::resolve_include_files(&value, config_dir.as_deref());
+        value = merge_include_paths(value, &config_includes)?;
 
         // CLI --include paths are merged last, so they take precedence over everything
         value = merge_include_paths(value, include_paths)?;
 
         Self::parse_value(value)
+    }
+
+    /// Resolves the config's `include_files` array into absolute-or-relative
+    /// paths. Relative entries are resolved against `config_dir` (falling back
+    /// to the default config directory).
+    fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Vec<PathBuf> {
+        let include_files: Vec<PathBuf> = value
+            .get("include_files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if include_files.is_empty() {
+            return Vec::new();
+        }
+
+        let resolve_dir = config_dir
+            .map(Path::to_path_buf)
+            .or_else(|| Self::default_config_dir().ok())
+            .unwrap_or_default();
+
+        include_files
+            .into_iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    resolve_dir.join(path)
+                }
+            })
+            .collect()
     }
 
     fn parse_value(value: Value) -> Result<Self> {
@@ -249,7 +245,7 @@ impl Config {
             ),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Self::from_default_file(&include_paths)
+                Self::parse("", None, &include_paths)
             }
             Err(err) => Err(anyhow!(
                 "Could not read the config file from the default path ({}): {}",
@@ -264,10 +260,10 @@ fn parse_toml(content: &str) -> Result<Value> {
     toml::from_str::<Value>(content).map_err(|error| anyhow!("Cannot parse TOML: {error}"))
 }
 
-/// Merges CLI --include files on top of an existing config value.
+/// Merges the given include files on top of an existing config value.
 fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Value> {
     for path in include_paths {
-        debug!("Loading CLI include file: {}", path.display());
+        debug!("Loading include file: {}", path.display());
         let content = fs::read_to_string(path)
             .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
         let include_value = parse_toml(&content)?;
@@ -308,7 +304,7 @@ mod tests {
 
     #[test]
     fn default_config_parses_successfully() {
-        Config::from_default_file(&[]).unwrap();
+        Config::parse("", None, &[]).unwrap();
     }
 
     #[test]
