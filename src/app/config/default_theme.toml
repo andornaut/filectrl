@@ -9,7 +9,7 @@ fg = "#9C9977"
 fg = "#D30102"
 
 [theme.alert.info]
-fg = "#859900"
+fg = "#7c7755" # Olive
 
 [theme.alert.warn]
 fg = "#b05533"
@@ -29,11 +29,11 @@ modifiers = ["bold"]
 fg = "#9C9977"
 
 [theme.clipboard.copy]
-bg = "#859900" # Olive Green
+bg = "#7c7755" # Olive
 fg = "#24201A"
 
 [theme.clipboard.cut]
-bg = "#B58900" # Orange Red
+bg = "#d2bb84" # Tan
 fg = "#24201A"
 
 [theme.clipboard.delete]
@@ -199,7 +199,7 @@ bg = "#33A999"
 fg = "#24201A"
 
 [theme.prompt.selected]
-bg = "#2AA198"
+bg = "#33A999"
 fg = "#DDDCCC"
 
 [theme.scrollbar]
@@ -217,7 +217,7 @@ fg = "#9C9977"
 fg = "#7c7755"
 
 [theme.status.detail]
-bg = "#2AA198"
+bg = "#33A999"
 fg = "#24201A"
 
 [theme.status.label]
@@ -229,7 +229,7 @@ bg = "#423F2E"
 fg = "#DDDCCC"
 
 [theme.table.delete]
-bg = "#B58900" # Amber
+bg = "#d2bb84" # Tan
 fg = "#24201A"
 
 [theme.table.header]
@@ -242,7 +242,7 @@ fg = "#24201A"
 modifiers = ["bold"]
 
 [theme.table.marked]
-bg = "#2AA198"
+bg = "#33A999"
 fg = "#DDDCCC"
 
 [theme.table.selected]
@@ -261,7 +261,7 @@ fg = "144" # #afaf87 - olive sage (approx #9C9977)
 fg = "160" # #d70000 - red
 
 [theme256.alert.info]
-fg = "106" # #87af00 - green (approx #859900)
+fg = "101" # #87875f - olive (approx #7c7755)
 
 [theme256.alert.warn]
 fg = "130" # #af5f00 - rust (approx #b05533)
@@ -273,7 +273,7 @@ bg = "236" # #303030 - dark (approx #373424)
 fg = "253" # #dadada
 
 [theme256.breadcrumbs.basename]
-bg = "30" # #008787 - dark teal (approx #006B6B)
+bg = "23" # #005f5f - dark teal (approx #006B6B)
 fg = "253" # #dadada
 modifiers = ["bold"]
 
@@ -281,11 +281,11 @@ modifiers = ["bold"]
 fg = "144" # #afaf87 - olive sage (approx #9C9977)
 
 [theme256.clipboard.copy]
-bg = "106" # #87af00 - green (approx #859900)
+bg = "101" # #87875f - olive (approx #7c7755)
 fg = "235" # #262626
 
 [theme256.clipboard.cut]
-bg = "136" # #af8700 - amber (approx #B58900)
+bg = "180" # #d7af87 - tan (approx #d2bb84)
 fg = "235" # #262626
 
 [theme256.clipboard.delete]
@@ -418,19 +418,19 @@ bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "235" # #262626
 
 [theme256.notice.progress]
-bg = "30" # #008787 - dark teal
-fg = "73" # #5fafaf - teal
+bg = "237" # #3a3a3a (approx #423f2e base bg)
+fg = "130" # #af5f00 - rust (approx #b05533)
 
 [theme256.notice.search]
 bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "235" # #262626
 
 [theme256.notice.search_loading]
-bg = "30" # #008787 - dark teal
-fg = "73" # #5fafaf - teal
+bg = "237" # #3a3a3a (approx #423f2e base bg)
+fg = "130" # #af5f00 - rust (approx #b05533)
 
 [theme256.prompt.cursor]
-bg = "30" # #008787
+bg = "23" # #005f5f
 fg = "253" # #dadada
 
 [theme256.prompt.delete]
@@ -450,14 +450,14 @@ bg = "73" # #5fafaf - teal
 fg = "235" # #262626
 
 [theme256.prompt.selected]
-bg = "37" # #00afaf - cyan (approx #2AA198)
+bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "253" # #dadada
 
 [theme256.scrollbar]
 show_ends = false
 
 [theme256.scrollbar.ends]
-bg = "100" # #878700 - darker olive (approx #7c7755)
+bg = "101" # #87875f - olive (approx #7c7755)
 fg = "236" # #303030
 
 [theme256.scrollbar.thumb]
@@ -465,14 +465,14 @@ bg = "236" # #303030
 fg = "144" # #afaf87
 
 [theme256.scrollbar.track]
-fg = "100" # #878700
+fg = "101" # #87875f
 
 [theme256.status.detail]
-bg = "37" # #00afaf - cyan (approx #2AA198)
+bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "235" # #262626
 
 [theme256.status.label]
-bg = "30" # #008787 - dark teal
+bg = "23" # #005f5f - dark teal
 fg = "253" # #dadada
 
 [theme256.table.body]
@@ -480,11 +480,11 @@ bg = "237" # #3a3a3a
 fg = "253" # #dadada
 
 [theme256.table.delete]
-bg = "136" # #af8700 - amber
+bg = "180" # #d7af87 - tan (approx #d2bb84)
 fg = "235" # #262626
 
 [theme256.table.header]
-bg = "100" # #878700 - darker olive (approx #7c7755)
+bg = "101" # #87875f - olive (approx #7c7755)
 fg = "235" # #262626
 
 [theme256.table.header_sorted]
@@ -493,9 +493,9 @@ fg = "235" # #262626
 modifiers = ["bold"]
 
 [theme256.table.marked]
-bg = "37" # #00afaf - cyan (approx #2AA198)
+bg = "73" # #5fafaf - teal (approx #33A999)
 fg = "253" # #dadada
 
 [theme256.table.selected]
-bg = "30" # #008787 - dark teal
+bg = "23" # #005f5f - dark teal
 fg = "253" # #dadada
