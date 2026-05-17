@@ -9,8 +9,8 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 - Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
 - Go to path with path completion suggestions
-- Deep search - recursively search directory trees
-- File operations - chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
+- Recursive search
+- File operations: chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
 - [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
 - [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
 - Responsive layout - adapts columns and content to small and large terminal windows
@@ -93,7 +93,7 @@ Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Select middle row | <kbd>z</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
-Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
+Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>Backspace</kbd>
 Go to home dir | <kbd>~</kbd>
 Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>/<kbd>Tab</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
@@ -110,9 +110,10 @@ Filter | <kbd>f</kbd>/<kbd>\</kbd>
 Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
+Toggle show hidden files | <kbd>H</kbd>
 Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
-Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
+Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
 Toggle help | <kbd>?</kbd>
 Quit | <kbd>q</kbd>
 

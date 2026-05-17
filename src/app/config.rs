@@ -48,8 +48,9 @@ struct PlatformOpeners {
 
 #[derive(Debug, Deserialize)]
 pub struct UiConfig {
-    pub sort_directories_first: bool,
     pub double_click_interval_milliseconds: u16,
+    pub show_hidden_files: bool,
+    pub sort_directories_first: bool,
 }
 
 #[derive(Deserialize)]
@@ -58,8 +59,8 @@ struct RawConfig {
     keybindings: TomlKeybindings,
     log_level: LevelFilter,
     openers: PlatformOpeners,
-    theme: Theme,
     theme256: Theme,
+    theme: Theme,
     ui: UiConfig,
 }
 
@@ -69,8 +70,8 @@ pub struct Config {
     pub keybindings: KeyBindings,
     pub log_level: LevelFilter,
     pub openers: Openers,
-    pub theme: Theme,
     pub theme256: Theme,
+    pub theme: Theme,
     pub ui: UiConfig,
 }
 

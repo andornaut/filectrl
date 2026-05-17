@@ -54,9 +54,13 @@ pub enum Action {
     SortByModified,
     SortByName,
     SortBySize,
+    ToggleShowHidden,
 
     // Prompt
     PromptCancel,
+    PromptAcceptSuggestion,
+    PromptNextSuggestion,
+    PromptPreviousSuggestion,
     PromptCopy,
     PromptCut,
     PromptPaste,
@@ -109,7 +113,12 @@ macro_rules! keybindings {
                 // Hardcoded-only actions (no TOML fields, but must be in the binding
                 // list so that hardcoded keys are inserted into the action map)
                 let mut normal: BindingList = vec![(Action::ResetView, vec![])];
-                let mut prompt: BindingList = vec![(Action::PromptCancel, vec![])];
+                let mut prompt: BindingList = vec![
+                    (Action::PromptCancel, vec![]),
+                    (Action::PromptAcceptSuggestion, vec![]),
+                    (Action::PromptNextSuggestion, vec![]),
+                    (Action::PromptPreviousSuggestion, vec![]),
+                ];
 
                 $(
                     normal.push((
@@ -169,6 +178,7 @@ keybindings! {
         sort_by_size => SortBySize,
         toggle_help => ToggleHelp,
         toggle_mark => ToggleMark,
+        toggle_show_hidden => ToggleShowHidden,
     }
     prompt {
         prompt_copy => PromptCopy,
@@ -294,6 +304,18 @@ const HARDCODED: &[(Action, &[KeyCombo])] = &[
     (
         Action::PromptCancel,
         &[KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PromptAcceptSuggestion,
+        &[KeyCombo::new(KeyCode::Tab, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PromptNextSuggestion,
+        &[KeyCombo::new(KeyCode::Down, KeyModifiers::NONE)],
+    ),
+    (
+        Action::PromptPreviousSuggestion,
+        &[KeyCombo::new(KeyCode::Up, KeyModifiers::NONE)],
     ),
 ];
 

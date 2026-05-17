@@ -29,6 +29,9 @@ open_selected_file = "open %s"
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click
 double_click_interval_milliseconds = 300
+# Whether dotfiles are shown initially; toggle at runtime with the
+# `toggle_show_hidden` keybinding
+show_hidden_files = true
 sort_directories_first = true
 
 # Keybindings for normal mode and prompt mode.
@@ -72,6 +75,7 @@ sort_by_name = "n"
 sort_by_size = "s"
 toggle_help = "?"
 toggle_mark = ["v", "Space"]
+toggle_show_hidden = "H"
 
 # Prompt mode
 prompt_copy = "Ctrl+c"

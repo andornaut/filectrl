@@ -109,6 +109,10 @@ impl PathInfo {
         self.basename.trim_start_matches('.').to_lowercase()
     }
 
+    pub fn is_hidden(&self) -> bool {
+        self.basename.starts_with('.')
+    }
+
     pub fn group(&self) -> Option<String> {
         Group::from_gid(Gid::from_raw(self.gid))
             .ok()
