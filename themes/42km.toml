@@ -259,13 +259,13 @@ bg = "237" # #3a3a3a - dark gray (approx #353a3c)
 fg = "255" # #eeeeee - near white (approx #f1f1f1)
 
 [theme256.alert]
-fg = "108" # #87af87 - sage (approx #93ada0)
+fg = "109" # #87afaf - sage (approx #93ada0)
 
 [theme256.alert.error]
 fg = "160" # #d70000 - red
 
 [theme256.alert.info]
-fg = "108" # #87af87 - sage
+fg = "109" # #87afaf - sage
 
 [theme256.alert.warn]
 fg = "202" # #ff5f00 - orange
@@ -297,10 +297,10 @@ bg = "160" # #d70000 - red (approx #c4071c)
 fg = "255" # #eeeeee
 
 [theme256.file_modified_date.less_than_minute]
-fg = "74" # #5fafd7 - steel blue (approx #4893c2)
+fg = "67" # #5f87af - steel blue (approx #4893c2)
 
 [theme256.file_modified_date.less_than_hour]
-fg = "74" # #5fafd7 - steel blue
+fg = "67" # #5f87af - steel blue
 
 [theme256.file_modified_date.less_than_day]
 fg = "48" # #00ff87 - green
@@ -315,10 +315,10 @@ fg = "205" # #ff5faf - hot pink (approx #ff69b4)
 fg = "160" # #d70000 - red
 
 [theme256.file_size.bytes]
-fg = "74" # #5fafd7 - steel blue
+fg = "67" # #5f87af - steel blue
 
 [theme256.file_size.kib]
-fg = "74" # #5fafd7 - steel blue
+fg = "67" # #5f87af - steel blue
 
 [theme256.file_size.mib]
 fg = "48" # #00ff87 - green
@@ -337,23 +337,23 @@ ls_colors_take_precedence = false
 
 [theme256.file_type.block_device]
 bg = "238" # #444444 (approx #404346)
-fg = "108" # #87af87 - sage
+fg = "109" # #87afaf - sage
 modifiers = ["bold"]
 
 [theme256.file_type.character_device]
 bg = "238" # #444444
-fg = "108" # #87af87 - sage
+fg = "109" # #87afaf - sage
 modifiers = ["bold"]
 
 [theme256.file_type.directory]
-fg = "74" # #5fafd7 - steel blue
+fg = "67" # #5f87af - steel blue
 
 [theme256.file_type.directory_other_writable]
 bg = "235" # #262626
-fg = "74" # #5fafd7
+fg = "67" # #5f87af
 
 [theme256.file_type.directory_sticky]
-bg = "74" # #5fafd7
+bg = "67" # #5f87af
 fg = "255" # #eeeeee
 
 [theme256.file_type.directory_sticky_other_writable]
@@ -407,7 +407,7 @@ fg = "160" # #d70000
 fg = "66" # #5f8787 - steel gray
 
 [theme256.help.header]
-bg = "74" # #5fafd7 - steel blue
+bg = "67" # #5f87af - steel blue
 fg = "235" # #262626
 
 [theme256.help.actions]
@@ -450,7 +450,7 @@ bg = "235" # #262626
 fg = "255" # #eeeeee
 
 [theme256.prompt.label]
-bg = "74" # #5fafd7 - steel blue
+bg = "67" # #5f87af - steel blue
 fg = "255" # #eeeeee
 
 [theme256.prompt.selected]
@@ -461,18 +461,18 @@ fg = "255" # #eeeeee
 show_ends = false
 
 [theme256.scrollbar.ends]
-bg = "108" # #87af87 - sage
+bg = "109" # #87afaf - sage
 fg = "235" # #262626
 
 [theme256.scrollbar.thumb]
 bg = "235" # #262626
-fg = "108" # #87af87 - sage
+fg = "109" # #87afaf - sage
 
 [theme256.scrollbar.track]
 fg = "240" # #585858
 
 [theme256.status.detail]
-bg = "74" # #5fafd7 - steel blue
+bg = "67" # #5f87af - steel blue
 fg = "235" # #262626
 
 [theme256.status.label]
