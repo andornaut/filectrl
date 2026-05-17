@@ -153,7 +153,7 @@ The configuration is drawn from the first of the following:
 
 Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`.
 
-You can also override only the settings you're interested in:
+You can also override only the properties you want to change:
 
 ```bash
 $ cat ~/.config/filectrl/config.toml
