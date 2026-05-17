@@ -179,6 +179,12 @@ impl PromptView {
         }
         let input = self.text_area.lines().join("");
         let (dir_prefix, partial) = Self::split_input(&input);
+        // Only suggest once a basename character has been typed; an empty
+        // partial would otherwise dump the entire directory listing.
+        if partial.is_empty() {
+            self.suggestion_index = 0;
+            return;
+        }
         let dir = self.resolve_path(dir_prefix);
         if let Ok(entries) = std::fs::read_dir(&dir) {
             let mut matches: Vec<(String, bool)> = entries
