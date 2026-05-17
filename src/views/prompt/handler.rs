@@ -32,7 +32,11 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Goto type-ahead: Tab accepts, Down/Up cycle through matches
+        // Rebindable prompt keys (lookup once, reuse after textarea input)
+        let action = Config::global().keybindings.prompt_action(code, modifiers);
+
+        // Goto type-ahead: Tab accepts, Enter accepts then submits,
+        // Down/Up cycle through matches
         if matches!(self.actions, PromptAction::Goto { .. }) {
             match code {
                 KeyCode::Tab => {
@@ -47,12 +51,13 @@ impl CommandHandler for PromptView {
                     self.cycle_suggestion(-1);
                     return CommandResult::Handled;
                 }
+                _ if matches!(action, Some(Action::PromptSubmit)) => {
+                    self.accept_suggestion();
+                    return self.submit();
+                }
                 _ => {}
             }
         }
-
-        // Rebindable prompt keys (lookup once, reuse after textarea input)
-        let action = Config::global().keybindings.prompt_action(code, modifiers);
         match action {
             Some(Action::PromptCancel) => return Command::CancelPrompt.into(),
             Some(Action::PromptSubmit) => return self.submit(),
