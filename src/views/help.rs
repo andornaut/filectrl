@@ -290,6 +290,8 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Submit".into(), d(Action::PromptSubmit)),
         ("Cancel".into(), d(Action::PromptCancel)),
         ("Reset to initial value".into(), d(Action::PromptReset)),
+        ("Accept path suggestion".into(), "Tab".into()),
+        ("Cycle path suggestions".into(), "↓/↑".into()),
         ("Select all".into(), d(Action::PromptSelectAll)),
         (
             "Copy, Cut, Paste text".into(),
