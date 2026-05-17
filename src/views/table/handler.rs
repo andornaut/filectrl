@@ -139,6 +139,7 @@ impl CommandHandler for TableView {
             // Navigation (filesystem)
             Some(Action::Refresh) => Command::Refresh.into(),
             Some(Action::Back) => Command::Back.into(),
+            Some(Action::GoToPreviousDirectory) => Command::GoToPreviousDirectory.into(),
             Some(Action::Open) => self.open_selected(),
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),

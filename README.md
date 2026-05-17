@@ -93,7 +93,8 @@ Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</
 Select first, middle, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>z</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Select top, middle, bottom visible row | <kbd>H</kbd>, <kbd>M</kbd>, <kbd>L</kbd>
 Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
-Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>Backspace</kbd>
+Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
+Go to previous dir | <kbd>-</kbd>
 Go to home dir | <kbd>~</kbd>
 Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>/<kbd>Tab</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>

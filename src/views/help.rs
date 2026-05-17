@@ -246,6 +246,10 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
         ),
         ("Go to parent dir".into(), d(Action::Back)),
+        (
+            "Go to previous dir".into(),
+            d(Action::GoToPreviousDirectory),
+        ),
         ("Go to home dir".into(), d(Action::GoHome)),
         ("Go to path".into(), d(Action::Goto)),
         // Opening
