@@ -7,13 +7,13 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Features
 
 - Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
+- [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
+- [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
+- File operations: chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
 - Go to path with path completion suggestions
 - Recursive search
-- File operations: chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
-- [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
-- [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
-- Responsive layout - adapts columns and content to small and large terminal windows
+- Responsive layout: adapts columns and content to small and large terminal windows
 
 ## Installation
 
@@ -92,7 +92,7 @@ Actions | Keys
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd>
 Select middle row | <kbd>z</kbd>
-Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
+Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>Backspace</kbd>
 Go to home dir | <kbd>~</kbd>
 Go to path | <kbd>:</kbd>/<kbd>Ctrl</kbd>+<kbd>g</kbd>/<kbd>Tab</kbd>
@@ -103,14 +103,14 @@ Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
 Range mark | <kbd>V</kbd>
 Copy, Cut, Paste | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
-Chmod (octal) | <kbd>b</kbd>
+Chmod (octal) | <kbd>P</kbd>
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Filter | <kbd>f</kbd>/<kbd>\</kbd>
-Search | <kbd>/</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>
+Search | <kbd>/</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
-Toggle show hidden files | <kbd>H</kbd>
+Toggle show hidden files | <kbd>.</kbd>
 Cancel file operation | <kbd>Ctrl</kbd>+<kbd>k</kbd>/<kbd>F8</kbd>
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
@@ -123,8 +123,8 @@ Actions | Keys
 --- | ---
 Submit | <kbd>Enter</kbd>
 Cancel | <kbd>Esc</kbd>
-Reset to initial value | <kbd>Ctrl</kbd>+<kbd>z</kbd>
-Select all | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>
+Reset to initial value | <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>z</kbd>
+Select all | <kbd>Ctrl</kbd>+<kbd>a</kbd>
 Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
 Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
@@ -327,7 +327,7 @@ toggle_help = "?"
 ...
 # Prompt mode
 prompt_submit = "Enter"
-prompt_reset = "Ctrl+z"
+prompt_reset = ["Ctrl+u", "Ctrl+z"]
 ...
 ```
 
