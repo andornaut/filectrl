@@ -491,9 +491,16 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(&fixture.dir);
         type_str(&mut view, "Apple");
+        // Enter accepts the directory suggestion (appending `/`, like Tab)
+        // and then submits, opening that directory.
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
-        let expected = PathInfo::try_from(&fixture.dir.join("Apple")).unwrap();
-        assert_eq!(result, Command::Open(expected).into());
+        let Command::Open(info) = Command::try_from(result).unwrap() else {
+            panic!("expected Command::Open");
+        };
+        assert_eq!(
+            info.path.trim_end_matches('/'),
+            fixture.dir.join("Apple").to_string_lossy()
+        );
     }
 
     #[test]
