@@ -15,7 +15,10 @@ use crate::{
         config::theme::{Clipboard, Notice as NoticeTheme, Table},
     },
     command::progress::{Progress, Task, TaskKind},
-    views::unicode::{pluralize_items, truncate_left},
+    views::{
+        right_hint_fits,
+        unicode::{pluralize_items, truncate_left},
+    },
 };
 
 const COPY_PREFIX: &str = "[Copy] ";
@@ -195,32 +198,38 @@ pub(super) fn operations_widget<'a>(
     create_notice_block(left, style, width, cancel_hint)
 }
 
-pub(super) fn search_widget<'a>(
+fn search_message_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
-    query: &'a str,
+    prefix: &'a str,
+    query: &str,
     hint: &'a str,
 ) -> Block<'a> {
     let style = theme.search();
+    let query = truncate_detail(prefix, query, width);
     let left = Line::from(vec![
-        SEARCH_PREFIX.into(),
+        prefix.into(),
         Span::styled(query, style.add_modifier(Modifier::BOLD)),
     ]);
     create_notice_block(left, style, width, hint)
 }
 
+pub(super) fn search_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    query: &str,
+    cancel_hint: &'a str,
+) -> Block<'a> {
+    search_message_widget(theme, width, SEARCH_PREFIX, query, cancel_hint)
+}
+
 pub(super) fn search_cancelled_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
-    query: &'a str,
+    query: &str,
     hint: &'a str,
 ) -> Block<'a> {
-    let style = theme.search();
-    let left = Line::from(vec![
-        SEARCH_CANCELLED_PREFIX.into(),
-        Span::styled(query, style.add_modifier(Modifier::BOLD)),
-    ]);
-    create_notice_block(left, style, width, hint)
+    search_message_widget(theme, width, SEARCH_CANCELLED_PREFIX, query, hint)
 }
 
 pub(super) fn search_loading_widget<'a>(
@@ -255,6 +264,8 @@ pub(super) fn search_loading_widget<'a>(
         .style(style)
 }
 
+/// Renders the message as the left title and, via [`right_hint_fits`], the
+/// hint as the right title only when it fits alongside the full message.
 fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a str) -> Block<'a> {
     let left_width = left.width();
     let block = Block::default()
@@ -262,7 +273,7 @@ fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a s
         .title(left)
         .style(style);
 
-    if width as usize > left_width + hint.width() {
+    if right_hint_fits(width as usize, left_width, hint.width(), 0) {
         let right = Line::from(hint).alignment(Alignment::Right);
         block.title(right)
     } else {
