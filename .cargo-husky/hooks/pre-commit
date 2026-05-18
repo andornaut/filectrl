@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# cargo-husky user hook: format, then verify before committing.
+#
+
+set -e
+
+# Format, then re-stage only files that were already staged for this commit
+# (avoids accidentally staging unrelated working-tree changes).
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+echo '+cargo fmt'
+cargo fmt
+if [ -n "$staged" ]; then
+    echo "$staged" | tr '\n' '\0' | xargs -0 git add --
+fi
+echo '+cargo test'
+cargo test
+echo '+cargo check'
+cargo check
