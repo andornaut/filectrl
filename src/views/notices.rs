@@ -20,7 +20,6 @@ pub(super) struct NoticesView {
     clipboard_entry: Option<ClipboardEntry>,
     hide_marked: bool,
     hint: String,
-    search_hint: String,
     cancel_hint: String,
     filter: String,
     mark_count: usize,
@@ -38,10 +37,6 @@ impl NoticesView {
             "(Press {} to clear)",
             keybindings.hint_for(&[Action::ResetView])
         );
-        let search_hint = format!(
-            "(Press {} to cancel)",
-            keybindings.hint_for(&[Action::ResetView])
-        );
         let cancel_hint = format!(
             "(Press {} to cancel)",
             keybindings.hint_for(&[Action::CancelTask])
@@ -52,7 +47,6 @@ impl NoticesView {
             clipboard_entry: None,
             hide_marked: false,
             hint,
-            search_hint,
             cancel_hint,
             filter: String::new(),
             mark_count: 0,

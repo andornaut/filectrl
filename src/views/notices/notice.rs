@@ -33,7 +33,6 @@ impl Notice {
         width: u16,
         tasks: &'a HashSet<Task>,
         hint: &'a str,
-        search_hint: &'a str,
         cancel_hint: &'a str,
         search_tick: u16,
     ) -> Block<'a> {
@@ -45,7 +44,7 @@ impl Notice {
             Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
             Notice::Operations => operations_widget(&theme.notice, width, tasks, cancel_hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
-            Notice::Search(query) => search_widget(&theme.notice, width, query, search_hint),
+            Notice::Search(query) => search_widget(&theme.notice, width, query, cancel_hint),
             Notice::SearchCancelled(query) => {
                 search_cancelled_widget(&theme.notice, width, query, hint)
             }
