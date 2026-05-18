@@ -36,7 +36,6 @@ impl View for NoticesView {
                     area.width,
                     &self.tasks,
                     &self.hint,
-                    &self.search_hint,
                     &self.cancel_hint,
                     self.search_tick,
                 );
