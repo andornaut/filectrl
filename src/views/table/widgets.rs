@@ -110,7 +110,7 @@ pub(super) fn row_widget_and_height<'a>(
     };
 
     let display_name = if is_bookmarks {
-        item.basename.clone()
+        item.display_name.clone()
     } else {
         display_name(item, search_root)
     };
@@ -133,8 +133,7 @@ pub(super) fn row_widget_and_height<'a>(
 fn display_name(path: &PathInfo, search_root: Option<&Path>) -> String {
     match search_root {
         Some(root) => {
-            let item_path = Path::new(&path.path);
-            let relative = item_path.strip_prefix(root).unwrap_or(item_path);
+            let relative = path.path.strip_prefix(root).unwrap_or(&path.path);
             let name = relative.to_string_lossy().to_string();
             if path.is_directory() && !name.ends_with('/') {
                 format!("{name}/")

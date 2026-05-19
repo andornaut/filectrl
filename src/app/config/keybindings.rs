@@ -347,6 +347,18 @@ fn hardcoded_keys(action: Action) -> &'static [KeyCombo] {
         .map_or(&[], |(_, keys)| *keys)
 }
 
+/// Look up an action from a key press using only hardcoded bindings.
+/// Returns `None` if the key combo is not hardcoded.
+pub fn hardcoded_action(code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
+    let combo = KeyCombo::new(*code, *modifiers);
+    for (action, keys) in HARDCODED {
+        if keys.contains(&combo) {
+            return Some(*action);
+        }
+    }
+    None
+}
+
 /// Build the key→action HashMap, detecting duplicate key mappings.
 /// Hardcoded keys are inserted first for actions present in this mode's
 /// binding list, then user bindings override them.

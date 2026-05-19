@@ -56,7 +56,7 @@ pub(super) fn clipboard_widget<'a>(
         (text, w)
     } else {
         let available_width = width.saturating_sub(prefix.width() as u16);
-        let truncated = truncate_left(&paths[0].path, available_width as usize);
+        let truncated = truncate_left(&paths[0].path.to_string_lossy(), available_width as usize);
         let w = truncated.width();
         (truncated, w)
     };

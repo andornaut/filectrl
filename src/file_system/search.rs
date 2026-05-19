@@ -12,7 +12,7 @@ use crate::command::{Command, progress::CancellationToken};
 pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: CancellationToken) {
     thread::spawn(move || {
         let query_lower = query.to_lowercase();
-        let root_path = PathBuf::from(&root.path);
+        let root_path = root.path.clone();
         let mut queue: VecDeque<PathBuf> = VecDeque::new();
         queue.push_back(root_path.clone());
 

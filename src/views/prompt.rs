@@ -521,7 +521,7 @@ mod tests {
             panic!("expected Command::Open");
         };
         assert_eq!(
-            info.path.trim_end_matches('/'),
+            info.path.to_string_lossy().trim_end_matches('/'),
             fixture.dir.join("Apple").to_string_lossy()
         );
     }

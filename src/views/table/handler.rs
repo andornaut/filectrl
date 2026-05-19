@@ -5,7 +5,10 @@ use ratatui::{
 
 use super::{TableView, columns::SortColumn, navigation::Reselect};
 use crate::{
-    app::config::{Config, keybindings::Action},
+    app::config::{
+        Config,
+        keybindings::{Action, hardcoded_action},
+    },
     command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
@@ -144,20 +147,11 @@ impl CommandHandler for TableView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        // Hardcoded keys (arrow keys, Home/End, PageUp/PageDown)
-        match (*code, *modifiers) {
-            (KeyCode::Down, KeyModifiers::NONE) => return self.select_next(),
-            (KeyCode::Up, KeyModifiers::NONE) => return self.select_previous(),
-            (KeyCode::Left, KeyModifiers::NONE) => return Command::GoToParentDirectory.into(),
-            (KeyCode::Right, KeyModifiers::NONE) => return self.open_selected(),
-            (KeyCode::Home, KeyModifiers::NONE) => return self.select_first(),
-            (KeyCode::End, KeyModifiers::NONE) => return self.select_last(),
-            (KeyCode::PageUp, KeyModifiers::NONE) => return self.previous_page(),
-            (KeyCode::PageDown, KeyModifiers::NONE) => return self.next_page(),
-            _ => {}
-        }
-        // Rebindable keys
-        match Config::global().keybindings.normal_action(code, modifiers) {
+        // Hardcoded bindings take precedence, then config bindings.
+        let action = hardcoded_action(code, modifiers)
+            .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
+
+        match action {
             // Clipboard
             Some(Action::Copy) => self.copy_to_clipboard(),
             Some(Action::Cut) => self.cut_to_clipboard(),
@@ -200,6 +194,8 @@ impl CommandHandler for TableView {
             Some(Action::SortByModified) => self.sort_by(SortColumn::Modified),
             Some(Action::SortBySize) => self.sort_by(SortColumn::Size),
             Some(Action::ToggleShowHidden) => self.toggle_show_hidden(),
+            // Global
+            Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
     }

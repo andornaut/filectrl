@@ -33,7 +33,7 @@ impl TableView {
         let directory = self
             .content
             .directory()
-            .map(|d| d.path.clone())
+            .map(|d| d.path.to_string_lossy().into_owned())
             .unwrap_or_default();
         Command::OpenPrompt(PromptAction::Goto { directory }).into()
     }
@@ -69,10 +69,10 @@ impl TableView {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => {
-                let basename = path.basename.clone();
+                let display_name = path.display_name.clone();
                 Command::OpenPrompt(PromptAction::Rename {
                     path: path.clone(),
-                    name: basename,
+                    name: display_name,
                 })
                 .into()
             }
@@ -87,7 +87,7 @@ impl TableView {
         match self.content.directory() {
             None => Command::AlertWarn("No current directory".into()).into(),
             Some(directory) => {
-                let name = directory.basename.clone();
+                let name = directory.display_name.clone();
                 Command::OpenPrompt(PromptAction::AddBookmark {
                     directory: directory.clone(),
                     name,

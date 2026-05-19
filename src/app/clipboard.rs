@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::file_system::path_info::PathInfo;
-use anyhow::{Error, anyhow};
+use anyhow::{Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
 use log::warn;
 
@@ -96,10 +96,9 @@ impl ClipboardEntry {
     }
 }
 
-/// Serialized as `"cp /path\n/path2..."` or `"mv /path\n/path2..."` in the system clipboard.
-/// Paths are stored unquoted because they are never passed to a shell -- they are parsed back
-/// into `PathInfo` values and used directly with Rust filesystem APIs (`fs::copy`, `fs::rename`,
-/// etc.), so there is no shell injection risk.
+/// Serialized as `"cp '/path/one' '/path/two'"` in the system clipboard.
+/// Paths are quoted with `shell_words::quote` so filenames containing spaces,
+/// newlines, or other shell metacharacters round-trip correctly.
 impl Display for ClipboardEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -107,12 +106,8 @@ impl Display for ClipboardEntry {
             Self::Move(_) => "mv",
         };
         write!(f, "{name}")?;
-        // First path is space-separated from the command; the rest are
-        // newline-separated. An empty path list writes just the command
-        // (which TryFrom rejects as invalid) rather than panicking.
-        for (i, path) in self.paths().iter().enumerate() {
-            let separator = if i == 0 { ' ' } else { '\n' };
-            write!(f, "{separator}{path}")?;
+        for path in self.paths() {
+            write!(f, " {}", shell_words::quote(&path.path.to_string_lossy()))?;
         }
         Ok(())
     }
@@ -122,26 +117,27 @@ impl TryFrom<&str> for ClipboardEntry {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut lines = value.lines();
+        let parts =
+            shell_words::split(value).map_err(|e| anyhow!("Invalid clipboard format: {e}"))?;
 
-        let first_line = lines.next().ok_or_else(|| anyhow!("Empty clipboard"))?;
-        let mut parts = first_line.splitn(2, ' ');
-
-        let command_str = parts.next().ok_or_else(|| anyhow!("Missing command"))?;
-        let path_str = parts.next().ok_or_else(|| anyhow!("Missing path"))?;
-
-        let mut paths = vec![PathInfo::try_from(path_str)?];
-        for line in lines {
-            if !line.is_empty() {
-                paths.push(PathInfo::try_from(line)?);
-            }
+        if parts.len() < 2 {
+            return Err(anyhow!("Missing command or path in clipboard"));
         }
 
-        match command_str {
-            "cp" => Ok(Self::Copy(paths)),
-            "mv" => Ok(Self::Move(paths)),
-            _ => Err(anyhow!("Invalid ClipboardEntry: {command_str}")),
-        }
+        parse_clipboard_parts(&parts)
+    }
+}
+
+fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
+    let command_str = &parts[0];
+    let paths: Vec<_> = parts[1..]
+        .iter()
+        .map(|p| PathInfo::try_from(p.as_str()))
+        .collect::<Result<Vec<_>, _>>()?;
+    match command_str.as_str() {
+        "cp" => Ok(ClipboardEntry::Copy(paths)),
+        "mv" => Ok(ClipboardEntry::Move(paths)),
+        _ => Err(anyhow!("Invalid ClipboardEntry: {command_str}")),
     }
 }
 

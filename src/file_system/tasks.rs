@@ -201,14 +201,11 @@ fn run_move_task(
 
 fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     let kind = TaskKind::Delete {
-        path: display_path(Path::new(&path.path)),
+        path: display_path(&path.path),
     };
     let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
-    // Use PathInfo::is_directory() (lstat-based, does not follow symlinks) so that a
-    // symlink to a directory is removed with remove_file(), not remove_dir_all().
-    // PathBuf::is_dir() follows symlinks and would incorrectly recurse into the target.
     let is_directory = path.is_directory();
-    let path = PathBuf::from(&path.path);
+    let path = path.path.clone();
     info!("Deleting {path:?}");
 
     thread::spawn(move || match remove_path(&path, is_directory) {
@@ -236,15 +233,18 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
     }
 }
 
-fn dir_total_size(path: &Path) -> Result<u64> {
+fn dir_total_size(root: &Path) -> Result<u64> {
     let mut total = 0;
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if metadata.is_dir() {
-            total += dir_total_size(&entry.path())?;
-        } else if !metadata.is_symlink() {
-            total += metadata.len();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path)? {
+            let entry = entry?;
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if metadata.is_dir() {
+                stack.push(entry.path());
+            } else if !metadata.is_symlink() {
+                total += metadata.len();
+            }
         }
     }
     Ok(total)
@@ -464,8 +464,8 @@ fn validate_paths(
     destination_directory: &PathInfo,
     operation: &str,
 ) -> Result<(PathBuf, PathBuf), CommandResult> {
-    let old_path = PathBuf::from(&source.path);
-    let new_path = PathBuf::from(&destination_directory.path).join(&source.basename);
+    let old_path = source.path.clone();
+    let new_path = destination_directory.path.join(&source.display_name);
 
     if old_path == new_path {
         return Err(anyhow!("Cannot {operation} {old_path:?} to {new_path:?}: Source and destination paths must be different").into());
@@ -508,11 +508,9 @@ mod tests {
     }
 
     fn path_info(path: &str, basename: &str) -> PathInfo {
-        // Private fields prevent literal construction; build from a real path
-        // then overwrite the public fields used by validate_paths.
         let mut info = PathInfo::try_from(Path::new("/")).unwrap();
-        info.path = path.to_string();
-        info.basename = basename.to_string();
+        info.path = PathBuf::from(path);
+        info.display_name = basename.to_string();
         info
     }
 
