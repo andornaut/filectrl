@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{ScrollbarView, View, bordered};
 use crate::{
     app::config::Config,
-    app::config::keybindings::Action,
+    app::config::keybindings::{Action, hardcoded_action},
     command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
@@ -66,6 +66,19 @@ impl HelpView {
     fn scroll_up(&mut self, lines: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
     }
+
+    fn handle_scroll_action(&mut self, action: Action) -> CommandResult {
+        match action {
+            Action::SelectNext => self.scroll_down(1),
+            Action::SelectPrevious => self.scroll_up(1),
+            Action::PageDown => self.scroll_down(self.inner_height),
+            Action::PageUp => self.scroll_up(self.inner_height),
+            Action::SelectFirst => self.reset_scroll(),
+            Action::SelectLast => self.scroll_offset = self.max_scroll,
+            _ => return CommandResult::NotHandled,
+        }
+        CommandResult::Handled
+    }
 }
 
 impl CommandHandler for HelpView {
@@ -80,60 +93,10 @@ impl CommandHandler for HelpView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        // Hardcoded keys (arrow keys, Home/End, PageUp/PageDown)
-        match (*code, *modifiers) {
-            (KeyCode::Down, KeyModifiers::NONE) => {
-                self.scroll_down(1);
-                return CommandResult::Handled;
-            }
-            (KeyCode::Up, KeyModifiers::NONE) => {
-                self.scroll_up(1);
-                return CommandResult::Handled;
-            }
-            (KeyCode::PageDown, KeyModifiers::NONE) => {
-                self.scroll_down(self.inner_height);
-                return CommandResult::Handled;
-            }
-            (KeyCode::PageUp, KeyModifiers::NONE) => {
-                self.scroll_up(self.inner_height);
-                return CommandResult::Handled;
-            }
-            (KeyCode::Home, KeyModifiers::NONE) => {
-                self.reset_scroll();
-                return CommandResult::Handled;
-            }
-            (KeyCode::End, KeyModifiers::NONE) => {
-                self.scroll_offset = self.max_scroll;
-                return CommandResult::Handled;
-            }
-            _ => {}
-        }
-        // Rebindable keys (mirrors table navigation)
-        match Config::global().keybindings.normal_action(code, modifiers) {
-            Some(Action::SelectNext) => {
-                self.scroll_down(1);
-                CommandResult::Handled
-            }
-            Some(Action::SelectPrevious) => {
-                self.scroll_up(1);
-                CommandResult::Handled
-            }
-            Some(Action::PageDown) => {
-                self.scroll_down(self.inner_height);
-                CommandResult::Handled
-            }
-            Some(Action::PageUp) => {
-                self.scroll_up(self.inner_height);
-                CommandResult::Handled
-            }
-            Some(Action::SelectFirst) => {
-                self.reset_scroll();
-                CommandResult::Handled
-            }
-            Some(Action::SelectLast) => {
-                self.scroll_offset = self.max_scroll;
-                CommandResult::Handled
-            }
+        let action = hardcoded_action(code, modifiers)
+            .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
+        match action {
+            Some(action) => self.handle_scroll_action(action),
             _ => CommandResult::NotHandled,
         }
     }
@@ -270,150 +233,122 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
     out
 }
 
+fn kb_entry(label: &str, keys: String) -> (String, String) {
+    (label.to_string(), keys)
+}
+
 /// Build normal mode keybinding display strings from KeyBindings.
 fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| annotate_uppercase(kb.display_for(a));
+    let s = |a| d(a);
+    let p = |a, b| format!("{}, {}", d(a), d(b));
+    let t = |a, b, c| format!("{}, {}, {}", d(a), d(b), d(c));
 
     vec![
         // Navigation
-        (
-            "Select next, previous row".into(),
-            format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
+        kb_entry(
+            "Select next, previous row",
+            p(Action::SelectNext, Action::SelectPrevious),
         ),
-        (
-            "Select first, middle, last row".into(),
-            format!(
-                "{}, {}, {}",
-                d(Action::SelectFirst),
-                d(Action::SelectMiddle),
-                d(Action::SelectLast)
+        kb_entry(
+            "Select first, middle, last row",
+            t(
+                Action::SelectFirst,
+                Action::SelectMiddle,
+                Action::SelectLast,
             ),
         ),
-        (
-            "Select top, middle, bottom visible row".into(),
-            format!(
-                "{}, {}, {}",
-                d(Action::SelectFirstVisible),
-                d(Action::SelectMiddleVisible),
-                d(Action::SelectLastVisible)
+        kb_entry(
+            "Select top, middle, bottom visible row",
+            t(
+                Action::SelectFirstVisible,
+                Action::SelectMiddleVisible,
+                Action::SelectLastVisible,
             ),
         ),
-        (
-            "Page down, up".into(),
-            format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
-        ),
-        ("Go to parent dir".into(), d(Action::GoToParentDirectory)),
-        (
-            "Go to previous dir".into(),
-            d(Action::GoToPreviousDirectory),
-        ),
-        ("Go to home dir".into(), d(Action::GoHome)),
-        ("Go to path".into(), d(Action::Goto)),
+        kb_entry("Page down, up", p(Action::PageDown, Action::PageUp)),
+        kb_entry("Go to parent dir", s(Action::GoToParentDirectory)),
+        kb_entry("Go to previous dir", s(Action::GoToPreviousDirectory)),
+        kb_entry("Go to home dir", s(Action::GoHome)),
+        kb_entry("Go to path", s(Action::Goto)),
         // Opening
-        ("Open".into(), d(Action::Open)),
-        (
-            "Open current directory".into(),
-            d(Action::OpenCurrentDirectory),
-        ),
-        ("Open new window".into(), d(Action::OpenNewWindow)),
+        kb_entry("Open", s(Action::Open)),
+        kb_entry("Open current directory", s(Action::OpenCurrentDirectory)),
+        kb_entry("Open new window", s(Action::OpenNewWindow)),
         // Marking
-        ("Mark/unmark item".into(), d(Action::ToggleMark)),
-        ("Range mark".into(), d(Action::RangeMark)),
+        kb_entry("Mark/unmark item", s(Action::ToggleMark)),
+        kb_entry("Range mark", s(Action::RangeMark)),
         // File operations
-        (
-            "Copy, Cut, Paste".into(),
-            format!(
-                "{}, {}, {}",
-                d(Action::Copy),
-                d(Action::Cut),
-                d(Action::Paste)
-            ),
+        kb_entry(
+            "Copy, Cut, Paste",
+            t(Action::Copy, Action::Cut, Action::Paste),
         ),
-        ("Rename".into(), d(Action::Rename)),
-        ("Chmod".into(), d(Action::Chmod)),
-        ("Create directory".into(), d(Action::CreateDirectory)),
-        ("Delete".into(), d(Action::Delete)),
+        kb_entry("Rename", s(Action::Rename)),
+        kb_entry("Chmod", s(Action::Chmod)),
+        kb_entry("Create directory", s(Action::CreateDirectory)),
+        kb_entry("Delete", s(Action::Delete)),
         // View
-        ("Filter".into(), d(Action::Filter)),
-        ("Search".into(), d(Action::Search)),
-        ("Add bookmark".into(), d(Action::AddBookmark)),
-        ("Show bookmarks".into(), d(Action::GetBookmarks)),
-        ("Refresh".into(), d(Action::Refresh)),
-        (
-            "Sort by name, modified, size".into(),
-            format!(
-                "{}, {}, {}",
-                d(Action::SortByName),
-                d(Action::SortByModified),
-                d(Action::SortBySize)
+        kb_entry("Filter", s(Action::Filter)),
+        kb_entry("Search", s(Action::Search)),
+        kb_entry("Add bookmark", s(Action::AddBookmark)),
+        kb_entry("Show bookmarks", s(Action::GetBookmarks)),
+        kb_entry("Refresh", s(Action::Refresh)),
+        kb_entry(
+            "Sort by name, modified, size",
+            t(
+                Action::SortByName,
+                Action::SortByModified,
+                Action::SortBySize,
             ),
         ),
-        (
-            "Toggle show hidden files".into(),
-            d(Action::ToggleShowHidden),
-        ),
+        kb_entry("Toggle show hidden files", s(Action::ToggleShowHidden)),
         // Application
-        (
-            "Cancel file or search operations".into(),
-            d(Action::CancelTask),
+        kb_entry("Cancel file or search operations", s(Action::CancelTask)),
+        kb_entry(
+            "Clear alerts, progress",
+            p(Action::ClearAlerts, Action::ClearProgress),
         ),
-        (
-            "Clear alerts, progress".into(),
-            format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
+        kb_entry(
+            "Clear clipboard/filter/marks/search, exit bookmarks",
+            s(Action::ResetView),
         ),
-        (
-            "Clear clipboard/filter/marks/search, exit bookmarks".into(),
-            d(Action::ResetView),
-        ),
-        ("Toggle help".into(), d(Action::ToggleHelp)),
-        ("Quit".into(), d(Action::Quit)),
+        kb_entry("Toggle help", s(Action::ToggleHelp)),
+        kb_entry("Quit", s(Action::Quit)),
     ]
 }
 
 /// Build prompt mode keybinding display strings from KeyBindings.
 fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| annotate_uppercase(kb.display_for(a));
+    let s = |a| d(a);
+    let t = |a, b, c| format!("{}, {}, {}", d(a), d(b), d(c));
+    let pair = |a, b| format!("{}/{}", d(a), d(b));
 
     vec![
-        ("Submit".into(), d(Action::PromptSubmit)),
-        ("Cancel".into(), d(Action::PromptCancel)),
-        ("Reset to initial value".into(), d(Action::PromptReset)),
-        ("Select all".into(), d(Action::PromptSelectAll)),
-        (
-            "Copy, Cut, Paste text".into(),
-            format!(
-                "{}, {}, {}",
-                d(Action::PromptCopy),
-                d(Action::PromptCut),
-                d(Action::PromptPaste)
-            ),
+        kb_entry("Submit", s(Action::PromptSubmit)),
+        kb_entry("Cancel", s(Action::PromptCancel)),
+        kb_entry("Reset to initial value", s(Action::PromptReset)),
+        kb_entry("Select all", s(Action::PromptSelectAll)),
+        kb_entry(
+            "Copy, Cut, Paste text",
+            t(Action::PromptCopy, Action::PromptCut, Action::PromptPaste),
         ),
-        ("Move cursor".into(), "←/→".into()),
-        ("Move cursor by word".into(), "Ctrl+←/→".into()),
-        (
-            "Move cursor to start, end".into(),
+        kb_entry("Move cursor", "←/→".into()),
+        kb_entry("Move cursor by word", "Ctrl+←/→".into()),
+        kb_entry(
+            "Move cursor to start, end",
             "Ctrl+a/Home, Ctrl+e/End".into(),
         ),
-        ("Select text".into(), "Shift+←/→".into()),
-        (
-            "Select to line start, end".into(),
-            "Shift+Home, Shift+End".into(),
-        ),
-        ("Select by word".into(), "Ctrl+Shift+←/→".into()),
-        (
-            "Delete before, after cursor".into(),
-            "Backspace, Delete".into(),
-        ),
-        (
-            "Accept path suggestion".into(),
-            d(Action::PromptAcceptSuggestion),
-        ),
-        (
-            "Cycle path suggestions".into(),
-            format!(
-                "{}/{}",
-                d(Action::PromptNextSuggestion),
-                d(Action::PromptPreviousSuggestion)
+        kb_entry("Select text", "Shift+←/→".into()),
+        kb_entry("Select to line start, end", "Shift+Home, Shift+End".into()),
+        kb_entry("Select by word", "Ctrl+Shift+←/→".into()),
+        kb_entry("Delete before, after cursor", "Backspace, Delete".into()),
+        kb_entry("Accept path suggestion", s(Action::PromptAcceptSuggestion)),
+        kb_entry(
+            "Cycle path suggestions",
+            pair(
+                Action::PromptNextSuggestion,
+                Action::PromptPreviousSuggestion,
             ),
         ),
     ]

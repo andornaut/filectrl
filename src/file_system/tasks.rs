@@ -14,7 +14,7 @@ use super::path_info::PathInfo;
 use crate::{
     command::{
         Command,
-        progress::{ActiveTask, CancellationToken, Task, TaskKind},
+        progress::{ActiveTask, CancellationToken, Task, TaskKind, Transfer},
         result::CommandResult,
     },
     file_system::debounce,
@@ -85,10 +85,10 @@ fn run_copy_task(
     };
 
     info!("Copying {old_path:?} to {new_path:?}");
-    let kind = TaskKind::Copy {
+    let kind = TaskKind::Copy(Transfer {
         source: display_path(&old_path),
         destination: display_path(&new_path),
-    };
+    });
 
     let is_directory = path.is_directory();
     // Pre-flight: if the directory's top level cannot even be read, fail fast
@@ -156,10 +156,10 @@ fn run_move_task(
     };
 
     info!("Moving {old_path:?} to {new_path:?}");
-    let kind = TaskKind::Move {
+    let kind = TaskKind::Move(Transfer {
         source: display_path(&old_path),
         destination: display_path(&new_path),
-    };
+    });
     let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let size = path.size;
     let source_mode = path.mode();
