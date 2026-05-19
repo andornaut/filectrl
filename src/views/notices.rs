@@ -112,3 +112,140 @@ impl NoticesView {
         CommandResult::Handled
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+    use crate::{
+        app::clipboard::ClipboardEntry,
+        command::{
+            Command,
+            progress::{ActiveTask, Task, TaskKind},
+        },
+        file_system::path_info::PathInfo,
+    };
+
+    fn view() -> NoticesView {
+        let config = Config::load(None, vec![]).unwrap();
+        Config::init(config);
+        NoticesView::new()
+    }
+
+    fn tags(notices: &[Notice]) -> Vec<&'static str> {
+        notices
+            .iter()
+            .map(|n| match n {
+                Notice::Progress => "progress",
+                Notice::Operations => "operations",
+                Notice::Search(_) => "search",
+                Notice::SearchCancelled(_) => "search_cancelled",
+                Notice::SearchLoading => "search_loading",
+                Notice::Marked(_) => "marked",
+                Notice::Clipboard(_) => "clipboard",
+                Notice::Filter(_) => "filter",
+            })
+            .collect()
+    }
+
+    fn clipboard_entry() -> ClipboardEntry {
+        ClipboardEntry::Copy(vec![PathInfo::try_from("/tmp").unwrap()])
+    }
+
+    // --- build_notices ordering / mutual exclusion ---
+
+    #[test]
+    fn clipboard_suppresses_the_marked_notice() {
+        let mut v = view();
+        v.clipboard_entry = Some(clipboard_entry());
+        v.mark_count = 3;
+        assert_eq!(tags(&v.build_notices()), vec!["clipboard"]);
+    }
+
+    #[test]
+    fn hide_marked_suppresses_the_marked_notice() {
+        let mut v = view();
+        v.mark_count = 2;
+        assert_eq!(tags(&v.build_notices()), vec!["marked"]);
+        v.hide_marked = true;
+        assert!(v.build_notices().is_empty());
+    }
+
+    #[test]
+    fn cancelled_search_replaces_loading_and_search() {
+        let mut v = view();
+        v.search_query = Some("foo".into());
+        assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
+        v.search_cancelled = true;
+        assert_eq!(tags(&v.build_notices()), vec!["search_cancelled"]);
+    }
+
+    #[test]
+    fn notices_are_emitted_in_a_fixed_priority_order() {
+        let mut v = view();
+        v.search_query = Some("q".into());
+        v.clipboard_entry = Some(clipboard_entry());
+        v.filter = "f".into();
+        // No tasks; marked is suppressed by the clipboard entry.
+        assert_eq!(
+            tags(&v.build_notices()),
+            vec!["search_loading", "search", "clipboard", "filter"]
+        );
+    }
+
+    // --- update_tasks ---
+
+    fn copy_kind() -> TaskKind {
+        TaskKind::Copy {
+            source: "/a".into(),
+            destination: "/b".into(),
+        }
+    }
+
+    fn recv_task(rx: &mpsc::Receiver<Command>) -> Task {
+        match rx.recv().unwrap() {
+            Command::Progress(t) => t,
+            _ => panic!("expected Command::Progress"),
+        }
+    }
+
+    #[test]
+    fn new_task_is_added_and_shows_progress_notices() {
+        let mut v = view();
+        let (tx, _rx) = mpsc::channel();
+        let (_at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
+        assert!(initial.is_new());
+        v.update_tasks(initial);
+        assert_eq!(tags(&v.build_notices()), vec!["progress", "operations"]);
+    }
+
+    #[test]
+    fn terminal_task_is_removed() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+        at.done(); // sends a terminal snapshot of the same task
+        v.update_tasks(recv_task(&rx));
+        assert!(v.build_notices().is_empty());
+    }
+
+    #[test]
+    fn updates_for_cleared_tasks_are_not_resurrected() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (mut at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+        v.clear_progress();
+        assert!(v.build_notices().is_empty());
+
+        // A late, non-new (in-progress) update for the cleared task is ignored.
+        at.increment(10);
+        at.send_progress();
+        let update = recv_task(&rx);
+        assert!(!update.is_new());
+        v.update_tasks(update);
+        assert!(v.build_notices().is_empty());
+    }
+}

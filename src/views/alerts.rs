@@ -174,3 +174,48 @@ impl View for AlertsView {
         widget.render(inner_area, frame.buffer_mut());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::config::Config;
+
+    fn view() -> AlertsView {
+        let config = Config::load(None, vec![]).unwrap();
+        Config::init(config);
+        AlertsView::new()
+    }
+
+    #[test]
+    fn add_alert_prepends_newest_first() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "first".into());
+        v.add_alert(AlertKind::Warn, "second".into());
+        assert_eq!(v.alerts.len(), 2);
+        assert_eq!(v.alerts.front().unwrap().1, "second");
+        assert_eq!(v.alerts.back().unwrap().1, "first");
+    }
+
+    #[test]
+    fn add_alert_caps_at_max_and_drops_the_oldest() {
+        let mut v = view();
+        for i in 0..(MAX_NUMBER_ALERTS + 2) {
+            v.add_alert(AlertKind::Info, format!("msg{i}"));
+        }
+        assert_eq!(v.alerts.len(), MAX_NUMBER_ALERTS);
+        // Newest stays at the front; the two oldest ("msg0", "msg1") fell off.
+        assert_eq!(
+            v.alerts.front().unwrap().1,
+            format!("msg{}", MAX_NUMBER_ALERTS + 1)
+        );
+        assert_eq!(v.alerts.back().unwrap().1, "msg2");
+    }
+
+    #[test]
+    fn clear_alerts_empties_the_queue() {
+        let mut v = view();
+        v.add_alert(AlertKind::Error, "boom".into());
+        v.clear_alerts();
+        assert!(v.alerts.is_empty());
+    }
+}

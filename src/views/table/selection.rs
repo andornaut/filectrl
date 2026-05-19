@@ -25,7 +25,7 @@ impl TableView {
         }
         match self.selected_path() {
             Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
-            None => CommandResult::Handled,
+            None => Command::SelectionChanged(None).into(),
         }
     }
 
@@ -37,7 +37,7 @@ impl TableView {
         }
         match self.selected_path() {
             Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
-            None => CommandResult::Handled,
+            None => Command::SelectionChanged(None).into(),
         }
     }
 

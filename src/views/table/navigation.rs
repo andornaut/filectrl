@@ -107,3 +107,127 @@ impl TableView {
         self.sort(Reselect::Top)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{Reselect, SortColumn, TableView};
+    use crate::{app::config::Config, file_system::path_info::PathInfo};
+
+    fn ensure_config_initialized() {
+        let config = Config::load(None, vec![]).unwrap();
+        Config::init(config);
+    }
+
+    struct Fixture {
+        dir: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir =
+                std::env::temp_dir().join(format!("filectrl_nav_{}_{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn file(&self, name: &str, size: usize) -> PathInfo {
+            let path = self.dir.join(name);
+            std::fs::write(&path, vec![b'x'; size]).unwrap();
+            PathInfo::try_from(&path).unwrap()
+        }
+
+        fn directory(&self) -> PathInfo {
+            PathInfo::try_from(&self.dir).unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn selected_basename(table: &TableView) -> Option<String> {
+        table.selected_path().map(|p| p.basename.clone())
+    }
+
+    #[test]
+    fn set_directory_top_selects_the_first_item() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        let children = vec![fx.file("b", 1), fx.file("a", 1), fx.file("c", 1)];
+        table.set_directory(fx.directory(), children, Reselect::Top);
+
+        assert_eq!(table.table_state.selected(), Some(0));
+        assert_eq!(selected_basename(&table).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn sort_keeps_the_selected_file_when_it_moves_position() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        // Name-ascending order: a, b, c
+        let children = vec![fx.file("a", 3), fx.file("b", 1), fx.file("c", 2)];
+        table.set_directory(fx.directory(), children, Reselect::Top);
+
+        // Select "b" (index 1 by name).
+        table.select(1);
+        assert_eq!(selected_basename(&table).as_deref(), Some("b"));
+
+        // Re-sort by size (b=1, c=2, a=3): "b" moves to index 0 but stays selected.
+        table.sort_by(SortColumn::Size);
+        assert_eq!(table.table_state.selected(), Some(0));
+        assert_eq!(selected_basename(&table).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn reselect_keep_holds_the_cursor_position_when_the_selected_file_is_deleted() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            Reselect::Top,
+        );
+        table.select(1); // "b"
+
+        // Same directory reloaded with "b" removed; cursor holds at index 1.
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("c", 1)],
+            Reselect::Keep,
+        );
+        assert_eq!(table.table_state.selected(), Some(1));
+        assert_eq!(selected_basename(&table).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn reselect_top_falls_back_to_first_when_the_selected_file_is_gone() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            Reselect::Top,
+        );
+        table.select(2); // "c"
+
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("b", 1)],
+            Reselect::Top,
+        );
+        assert_eq!(table.table_state.selected(), Some(0));
+        assert_eq!(selected_basename(&table).as_deref(), Some("a"));
+    }
+}

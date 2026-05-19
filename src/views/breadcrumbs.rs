@@ -137,7 +137,7 @@ impl View for BreadcrumbsView {
             positions.len() >= self.area.height as usize,
             "layout allocated more height than the header requested"
         );
-        let at = positions.len() - self.area.height as usize;
+        let at = positions.len().saturating_sub(self.area.height as usize);
         let container = container.split_off(at);
         self.positions = positions.split_off(at);
 
