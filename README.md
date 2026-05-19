@@ -7,6 +7,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Features
 
 - Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
+- [Bookmarks](#bookmarks) - Simple yet helpful bookmarks system
 - [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
 - [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
@@ -63,6 +64,18 @@ Options:
   --help, help      display usage information
 ```
 
+### Bookmarks
+
+Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside
+the config file (e.g. `~/.config/filectrl/bookmarks/`).
+
+- <kbd>B</kbd> adds a bookmark for the current directory. A prompt asks for
+  the bookmark name, defaulting to the current directory's name. Names must be
+  unique, cannot be empty, and cannot contain a path separator.
+- <kbd>'</kbd> or <kbd>&#96;</kbd> shows all bookmarks in the table.
+- Opening a bookmark navigates to the linked folder.
+- Bookmarks can be renamed (<kbd>r</kbd>) or deleted (<kbd>d</kbd>)
+
 ### Copy / paste
 
 When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` into your clipboard buffer
@@ -82,22 +95,6 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - In range mode, clicking always extends the range from the anchor to the clicked row
 - <kbd>Esc</kbd> clears all marks and exits range mode
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
-
-### Bookmarks
-
-Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside
-the resolved config file (e.g. `~/.config/filectrl/bookmarks/`, or
-`<dir>/bookmarks/` when `--config <dir>/config.toml` is used).
-
-- <kbd>B</kbd> adds a bookmark for the **current directory**. A prompt asks for
-  the bookmark name, defaulting to the current directory's name. Names must be
-  unique, cannot be empty, and cannot contain a path separator.
-- <kbd>'</kbd> or <kbd>&#96;</kbd> shows all bookmarks in the table. This is an
-  ephemeral view (the breadcrumbs show `[Bookmarks]`); press <kbd>Esc</kbd> to
-  return to the previous directory.
-- Opening a bookmark navigates to the linked folder.
-- Bookmarks can be renamed (<kbd>r</kbd>) or deleted (<kbd>d</kbd>) like regular
-  files; this renames/deletes the symlink, never the target folder.
 
 ### Default keybindings
 
