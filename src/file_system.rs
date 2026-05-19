@@ -163,7 +163,7 @@ impl FileSystem {
         });
     }
 
-    fn cancel_most_recent(&mut self) -> CommandResult {
+    fn cancel_most_recent_task(&mut self) -> CommandResult {
         // LIFO across file operations and search: cancel whichever was started most recently.
         while let Some(cancellable) = self.cancellables.last() {
             match cancellable {
@@ -265,28 +265,28 @@ impl FileSystem {
         }
     }
 
-    /// Read every entry in the bookmarks directory and send them as a single
-    /// batch. Synchronous: one small directory of symlinks, no streaming.
-    fn show_bookmarks(&self) {
+    /// Read every entry in the bookmarks directory and return them as a single
+    /// `Bookmarks` command. Synchronous: one small directory of symlinks, no
+    /// streaming.
+    fn get_bookmarks(&self) -> CommandResult {
         let dir = Config::global().bookmarks_dir();
         if let Err(error) = fs::create_dir_all(&dir) {
-            let _ = self.command_tx.send(Command::AlertError(format!(
+            return Command::AlertError(format!(
                 "Cannot create bookmarks directory {dir:?}: {error}"
-            )));
-            return;
+            ))
+            .into();
         }
         match fs::read_dir(&dir) {
-            Ok(entries) => {
-                let bookmarks: Vec<PathInfo> = entries
+            Ok(entries) => Command::Bookmarks {
+                bookmarks: entries
                     .flatten()
                     .filter_map(|entry| PathInfo::try_from(&entry.path()).ok())
-                    .collect();
-                let _ = self.command_tx.send(Command::ShowedBookmarks { bookmarks });
+                    .collect(),
             }
+            .into(),
             Err(error) => {
-                let _ = self.command_tx.send(Command::AlertError(format!(
-                    "Cannot read bookmarks directory {dir:?}: {error}"
-                )));
+                Command::AlertError(format!("Cannot read bookmarks directory {dir:?}: {error}"))
+                    .into()
             }
         }
     }

@@ -18,7 +18,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
         while let Some(dir) = queue.pop_front() {
             if cancel.is_cancelled() {
-                let _ = tx.send(Command::SearchComplete);
+                let _ = tx.send(Command::ExitSearch);
                 return;
             }
 
@@ -32,7 +32,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
             for entry in entries {
                 if cancel.is_cancelled() {
-                    let _ = tx.send(Command::SearchComplete);
+                    let _ = tx.send(Command::ExitSearch);
                     return;
                 }
 
@@ -65,6 +65,6 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
             }
         }
 
-        let _ = tx.send(Command::SearchComplete);
+        let _ = tx.send(Command::ExitSearch);
     });
 }

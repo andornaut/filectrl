@@ -64,7 +64,7 @@ impl CommandHandler for BreadcrumbsView {
             | Command::RefreshedDirectory { directory, .. } => {
                 self.set_directory(directory.clone())
             }
-            Command::ShowedBookmarks { .. } => {
+            Command::Bookmarks { .. } => {
                 // Ephemeral view: the listing is not a real directory. The CWD
                 // breadcrumbs are restored on Navigated/RefreshedDirectory when
                 // the view is dismissed or a bookmark is opened.

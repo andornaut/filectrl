@@ -99,8 +99,8 @@ pub enum Command {
         directory: PathInfo,
         name: String,
     },
-    ShowBookmarks, // Intent: resolved by FileSystem into ShowedBookmarks
-    ShowedBookmarks {
+    GetBookmarks, // Intent: resolved by FileSystem into Bookmarks
+    Bookmarks {
         bookmarks: Vec<PathInfo>,
     },
     CreateDirectory(String),
@@ -120,8 +120,8 @@ pub enum Command {
     Paste(PathInfo), // Intent: resolved by App into Copy or Move
 
     // Prompt
-    OpenPrompt(PromptAction),
     CancelPrompt,
+    OpenPrompt(PromptAction),
 
     // Clipboard
     ClearClipboard,
@@ -131,11 +131,11 @@ pub enum Command {
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
-    StartSearch(String),
-    SearchResult(PathInfo),
-    SearchComplete,
     CancelSearch, // Non-destructive: stop the search thread but keep results and notice
+    ExitSearch,
+    SearchResult(PathInfo),
     SearchTick,
+    StartSearch(String),
 
     // View state notifications — emitted by TableView
     FilterChanged(String),

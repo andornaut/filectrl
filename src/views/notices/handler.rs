@@ -43,7 +43,7 @@ impl CommandHandler for NoticesView {
                 self.search_tick = 0;
                 CommandResult::Handled
             }
-            Command::SearchComplete => {
+            Command::ExitSearch => {
                 if self.search_cancelled {
                     // Search was cancelled via cancel_task: keep the notice.
                     self.search_tick = 0;
