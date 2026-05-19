@@ -13,6 +13,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 - File operations: chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
 - Go to path with path completion suggestions
 - Recursive search
+- [Bookmarks](#bookmarks) - save and quickly return to frequently-used folders
 - Responsive layout: adapts columns and content to small and large terminal windows
 
 ## Installation
@@ -82,6 +83,22 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - <kbd>Esc</kbd> clears all marks and exits range mode
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
 
+### Bookmarks
+
+Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside
+the resolved config file (e.g. `~/.config/filectrl/bookmarks/`, or
+`<dir>/bookmarks/` when `--config <dir>/config.toml` is used).
+
+- <kbd>B</kbd> adds a bookmark for the **current directory**. A prompt asks for
+  the bookmark name, defaulting to the current directory's name. Names must be
+  unique, cannot be empty, and cannot contain a path separator.
+- <kbd>'</kbd> or <kbd>&#96;</kbd> shows all bookmarks in the table. This is an
+  ephemeral view (the breadcrumbs show `[Bookmarks]`); press <kbd>Esc</kbd> to
+  return to the previous directory.
+- Opening a bookmark navigates to the linked folder.
+- Bookmarks can be renamed (<kbd>r</kbd>) or deleted (<kbd>d</kbd>) like regular
+  files; this renames/deletes the symlink, never the target folder.
+
 ### Default keybindings
 
 All keybindings can be [customized](#customizing-keybindings).
@@ -110,12 +127,14 @@ Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
 Filter | <kbd>f</kbd>/<kbd>\</kbd>
 Search | <kbd>/</kbd>
+Add bookmark | <kbd>B</kbd> (Uppercase)
+Show bookmarks | <kbd>'</kbd>/<kbd>&#96;</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
 Toggle show hidden files | <kbd>.</kbd>
 Cancel file or search operations | <kbd>K</kbd> (Uppercase)
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
-Clear clipboard/filter/marks/search | <kbd>Esc</kbd>
+Clear clipboard/filter/marks/search, exit bookmarks view | <kbd>Esc</kbd>
 Toggle help | <kbd>?</kbd>
 Quit | <kbd>q</kbd>
 
@@ -244,7 +263,7 @@ Section | Description
 `prompt` | Input prompt (`cursor`, `input`, `label`, `selected`)
 `scrollbar` | Scrollbar (`ends`, `thumb`, `track`, plus `show_ends` boolean)
 `status` | Status bar (`detail`, `label`)
-`table` | File table (`body`, `header`, `header_sorted`, `selected`, `marked`, `delete`)
+`table` | File table (`body`, `header`, `header_sorted`, `selected`, `marked`, `delete`, `bookmark`)
 
 #### LS_COLORS integration
 

@@ -336,6 +336,8 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         // View
         ("Filter".into(), d(Action::Filter)),
         ("Search".into(), d(Action::Search)),
+        ("Add bookmark".into(), d(Action::AddBookmark)),
+        ("Show bookmarks".into(), d(Action::ShowBookmarks)),
         ("Refresh".into(), d(Action::Refresh)),
         (
             "Sort by name, modified, size".into(),
@@ -360,7 +362,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             format!("{}, {}", d(Action::ClearAlerts), d(Action::ClearProgress)),
         ),
         (
-            "Clear clipboard/filter/marks/search".into(),
+            "Clear clipboard/filter/marks/search, exit bookmarks".into(),
             d(Action::ResetView),
         ),
         ("Toggle help".into(), d(Action::ToggleHelp)),

@@ -11,6 +11,7 @@ pub(super) struct DirectoryContent {
     items: Vec<PathInfo>,
     items_sorted: Vec<PathInfo>,
     search_root: Option<PathBuf>,
+    bookmarks_active: bool,
     /// Runtime override for showing hidden (dotfile) entries. `None` defers to
     /// the `ui.show_hidden_files` config value.
     show_hidden: Option<bool>,
@@ -120,6 +121,24 @@ impl DirectoryContent {
 
     pub(super) fn search_root(&self) -> Option<&Path> {
         self.search_root.as_deref()
+    }
+
+    /// Replace the listing with the given bookmarks (one synchronous batch,
+    /// unlike streamed search results). The current `directory` is left
+    /// untouched so breadcrumbs/CWD restore cleanly when the view is dismissed.
+    pub(super) fn set_bookmarks(&mut self, items: Vec<PathInfo>) {
+        self.bookmarks_active = true;
+        self.filter.clear();
+        self.items = items;
+        self.items_sorted.clear();
+    }
+
+    pub(super) fn clear_bookmarks(&mut self) {
+        self.bookmarks_active = false;
+    }
+
+    pub(super) fn is_showing_bookmarks(&self) -> bool {
+        self.bookmarks_active
     }
 
     pub(super) fn find_by_inode(&self, path: &PathInfo) -> Option<usize> {

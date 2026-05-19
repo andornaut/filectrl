@@ -276,6 +276,8 @@ impl ScrollbarConfig {
 pub struct Table {
     body: StyleConfig,
     #[serde(default)]
+    bookmark: StyleConfig,
+    #[serde(default)]
     delete: StyleConfig,
     header: StyleConfig,
     header_sorted: StyleConfig,
@@ -286,6 +288,7 @@ pub struct Table {
 
 impl Table {
     style_getter!(body);
+    style_getter!(bookmark);
     style_getter!(delete);
     style_getter!(header);
     style_getter!(header_sorted);

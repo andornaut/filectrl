@@ -73,7 +73,8 @@ impl RootView {
 impl CommandHandler for RootView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Chmod { .. }
+            Command::AddBookmark { .. }
+            | Command::Chmod { .. }
             | Command::ConfirmDelete
             | Command::CreateDirectory(_)
             | Command::Open(_)

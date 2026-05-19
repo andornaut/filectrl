@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
-use crate::command::Command;
+use crate::{app::config::Config, command::Command};
 
 pub(super) fn cd(directory: &PathInfo) -> Result<(Vec<PathInfo>, usize)> {
     info!("Changing directory to {directory:?}");
@@ -72,6 +72,29 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     info!("Changing mode of {p:?} to {mode:o}");
     let permissions = fs::Permissions::from_mode(mode);
     fs::set_permissions(p, permissions)?;
+    Ok(())
+}
+
+pub(super) fn add_bookmark(target: &PathInfo, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(anyhow!("Bookmark name cannot be empty"));
+    }
+    if name.contains(std::path::MAIN_SEPARATOR) {
+        return Err(anyhow!(
+            "Bookmark name cannot contain {:?}",
+            std::path::MAIN_SEPARATOR
+        ));
+    }
+    let dir = Config::global().bookmarks_dir();
+    fs::create_dir_all(&dir)?;
+    let link = dir.join(name);
+    // Reject duplicates, including a pre-existing broken symlink.
+    if link.symlink_metadata().is_ok() {
+        return Err(anyhow!("A bookmark named {name:?} already exists"));
+    }
+    info!("Creating bookmark {link:?} -> {:?}", target.path);
+    std::os::unix::fs::symlink(&target.path, &link)?;
     Ok(())
 }
 

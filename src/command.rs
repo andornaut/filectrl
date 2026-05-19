@@ -24,6 +24,10 @@ pub enum PromptAction {
         paths: Vec<PathInfo>,
         mode: String,
     },
+    AddBookmark {
+        directory: PathInfo,
+        name: String,
+    },
     #[default]
     CreateDirectory,
     Delete(usize),
@@ -76,6 +80,14 @@ pub enum Command {
     Copy {
         srcs: Vec<PathInfo>,
         dest: PathInfo,
+    },
+    AddBookmark {
+        directory: PathInfo,
+        name: String,
+    },
+    ShowBookmarks, // Intent: resolved by FileSystem into ShowedBookmarks
+    ShowedBookmarks {
+        bookmarks: Vec<PathInfo>,
     },
     CreateDirectory(String),
     Delete(Vec<PathInfo>),

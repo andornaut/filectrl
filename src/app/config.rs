@@ -65,6 +65,7 @@ struct RawConfig {
 }
 
 pub struct Config {
+    pub config_dir: PathBuf,
     pub file_system: FileSystemConfig,
     pub is_truecolor: bool,
     pub keybindings: KeyBindings,
@@ -164,7 +165,13 @@ impl Config {
         // CLI --include paths are merged last, so they take precedence over everything
         value = merge_include_paths(value, include_paths)?;
 
-        Self::parse_value(value)
+        Self::parse_value(value, config_dir)
+    }
+
+    /// The directory containing the resolved config file. Bookmarks live in a
+    /// `bookmarks/` subdirectory beside it.
+    pub fn bookmarks_dir(&self) -> PathBuf {
+        self.config_dir.join("bookmarks")
     }
 
     /// Resolves the config's `include_files` array into absolute-or-relative
@@ -203,7 +210,11 @@ impl Config {
             .collect()
     }
 
-    fn parse_value(value: Value) -> Result<Self> {
+    fn parse_value(value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
+        let config_dir = config_dir
+            .or_else(|| Self::default_config_dir().ok())
+            .unwrap_or_default();
+
         let raw: RawConfig = value
             .try_into()
             .map_err(|error| anyhow!("Cannot deserialize config: {error}"))?;
@@ -217,6 +228,7 @@ impl Config {
         let keybindings = KeyBindings::new(&raw.keybindings)?;
 
         let mut config = Config {
+            config_dir,
             file_system: raw.file_system,
             is_truecolor: false,
             keybindings,
