@@ -7,14 +7,13 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 ## Features
 
 - Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
-- [Bookmarks](#bookmarks) - Simple yet helpful bookmarks system
+- [Bookmarks](#bookmarks) - save and quickly return to frequently-used folders
 - [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
 - [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
-- File operations: chmod, create directory, and [copy/cut paste across instances/windows](#copy--paste)
-- Go to path with path completion suggestions
+- File operations: chmod, create directory, and [copy/cut/paste across instances/windows](#copy--paste)
+- "Go to" feature with path completion suggestions
 - Recursive search
-- [Bookmarks](#bookmarks) - save and quickly return to frequently-used folders
 - Responsive layout: adapts columns and content to small and large terminal windows
 
 ## Installation
