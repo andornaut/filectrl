@@ -71,7 +71,7 @@ impl CommandHandler for TableView {
                 // this directory. A rename of a bookmark triggers a CWD refresh;
                 // reload the bookmarks list instead of showing the CWD.
                 if self.content.is_showing_bookmarks() {
-                    return Command::ShowBookmarks.into();
+                    return Command::GetBookmarks.into();
                 }
                 // Same directory reloaded: keep filter and selection.
                 self.set_directory(directory.clone(), children.to_vec(), Reselect::Keep)
@@ -118,10 +118,10 @@ impl CommandHandler for TableView {
                     CommandResult::Handled
                 }
             }
-            Command::SearchComplete => CommandResult::Handled,
-            // FileSystem resolves ShowBookmarks into ShowedBookmarks.
-            Command::ShowBookmarks => CommandResult::NotHandled,
-            Command::ShowedBookmarks { bookmarks } => {
+            Command::ExitSearch => CommandResult::Handled,
+            // FileSystem resolves GetBookmarks into Bookmarks.
+            Command::GetBookmarks => CommandResult::NotHandled,
+            Command::Bookmarks { bookmarks } => {
                 self.clear_marks();
                 self.content.set_bookmarks(bookmarks.clone());
                 self.table_state.select(None);
@@ -131,7 +131,7 @@ impl CommandHandler for TableView {
             // finishes so the deleted entry disappears.
             Command::Progress(task) => {
                 if self.content.is_showing_bookmarks() && task.is_terminal() {
-                    Command::ShowBookmarks.into()
+                    Command::GetBookmarks.into()
                 } else {
                     CommandResult::NotHandled
                 }
@@ -188,7 +188,7 @@ impl CommandHandler for TableView {
             Some(Action::RangeMark) => self.enter_range_mode(),
             // File operations
             Some(Action::AddBookmark) => self.open_add_bookmark_prompt(),
-            Some(Action::ShowBookmarks) => self.show_bookmarks(),
+            Some(Action::GetBookmarks) => self.show_bookmarks(),
             Some(Action::Chmod) => self.open_chmod_prompt(),
             Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),

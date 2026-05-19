@@ -98,7 +98,7 @@ impl TableView {
     }
 
     pub(super) fn show_bookmarks(&self) -> CommandResult {
-        Command::ShowBookmarks.into()
+        Command::GetBookmarks.into()
     }
 
     pub(super) fn open_search_prompt(&self) -> CommandResult {
