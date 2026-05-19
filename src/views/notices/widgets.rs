@@ -286,7 +286,7 @@ mod tests {
     use test_case::test_case;
 
     use super::{operation_detail, truncate_detail};
-    use crate::command::progress::TaskKind;
+    use crate::command::progress::{TaskKind, Transfer};
 
     // Left-truncation keeps the tail (destination) visible as the width
     // shrinks, e.g. `…naut/Downloads/` then `…aut/Downloads/`.
@@ -319,10 +319,10 @@ mod tests {
     }
 
     fn copy_kind() -> TaskKind {
-        TaskKind::Copy {
+        TaskKind::Copy(Transfer {
             source: "/tmp/a/file.txt".into(),
             destination: "/home/andornaut/Downloads/file.txt".into(),
-        }
+        })
     }
 
     // As the width shrinks: full source + dest dir, then left-truncated source,

@@ -122,7 +122,7 @@ mod tests {
         app::clipboard::ClipboardEntry,
         command::{
             Command,
-            progress::{ActiveTask, Task, TaskKind},
+            progress::{ActiveTask, Task, TaskKind, Transfer},
         },
         file_system::path_info::PathInfo,
     };
@@ -197,10 +197,10 @@ mod tests {
     // --- update_tasks ---
 
     fn copy_kind() -> TaskKind {
-        TaskKind::Copy {
+        TaskKind::Copy(Transfer {
             source: "/a".into(),
             destination: "/b".into(),
-        }
+        })
     }
 
     fn recv_task(rx: &mpsc::Receiver<Command>) -> Task {

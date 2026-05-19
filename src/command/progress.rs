@@ -10,12 +10,19 @@ use std::{
 
 use super::Command;
 
+/// Shared fields for copy and move operations.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Transfer {
+    pub source: String,
+    pub destination: String,
+}
+
 /// Describes what a task is doing, for display in the notices view and the
 /// cancel alert.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskKind {
-    Copy { source: String, destination: String },
-    Move { source: String, destination: String },
+    Copy(Transfer),
+    Move(Transfer),
     Delete { path: String },
 }
 
@@ -24,19 +31,24 @@ impl TaskKind {
     /// not truncated, only the `detail` is).
     pub fn prefix(&self) -> &'static str {
         match self {
-            TaskKind::Copy { .. } => "Copying ",
-            TaskKind::Move { .. } => "Moving ",
+            TaskKind::Copy(_) => "Copying ",
+            TaskKind::Move(_) => "Moving ",
             TaskKind::Delete { .. } => "Deleting ",
+        }
+    }
+
+    /// The underlying transfer, for operations that have one (copy/move).
+    fn transfer(&self) -> Option<&Transfer> {
+        match self {
+            TaskKind::Copy(t) | TaskKind::Move(t) => Some(t),
+            TaskKind::Delete { .. } => None,
         }
     }
 
     /// The source path, for operations that have one (copy/move). The
     /// operations notice truncates only this part to fit the width.
     pub fn source(&self) -> Option<&str> {
-        match self {
-            TaskKind::Copy { source, .. } | TaskKind::Move { source, .. } => Some(source),
-            TaskKind::Delete { .. } => None,
-        }
+        self.transfer().map(|t| t.source.as_str())
     }
 
     /// The source's basename (file/dir name), for copy/move.
@@ -48,26 +60,14 @@ impl TaskKind {
     /// Used by the operations notice as a fallback when the source cannot be
     /// shown at all.
     pub fn destination(&self) -> Option<&str> {
-        match self {
-            TaskKind::Copy { destination, .. } | TaskKind::Move { destination, .. } => {
-                Some(destination)
-            }
-            TaskKind::Delete { .. } => None,
-        }
+        self.transfer().map(|t| t.destination.as_str())
     }
 
     /// The target path shown in full by the operations notice: the
     /// destination directory for copy/move, or the path being deleted.
     pub fn target(&self) -> String {
         match self {
-            TaskKind::Copy {
-                source,
-                destination,
-            }
-            | TaskKind::Move {
-                source,
-                destination,
-            } => dest_display(source, destination),
+            TaskKind::Copy(t) | TaskKind::Move(t) => dest_display(&t.source, &t.destination),
             TaskKind::Delete { path } => path.clone(),
         }
     }
@@ -440,23 +440,23 @@ mod tests {
     }
 
     fn copy(source: &str, destination: &str) -> TaskKind {
-        TaskKind::Copy {
+        TaskKind::Copy(Transfer {
             source: source.to_string(),
             destination: destination.to_string(),
-        }
+        })
+    }
+
+    fn r#move(source: &str, destination: &str) -> TaskKind {
+        TaskKind::Move(Transfer {
+            source: source.to_string(),
+            destination: destination.to_string(),
+        })
     }
 
     #[test]
     fn task_kind_prefix() {
         assert_eq!("Copying ", copy("a", "b").prefix());
-        assert_eq!(
-            "Moving ",
-            TaskKind::Move {
-                source: "a".into(),
-                destination: "b".into()
-            }
-            .prefix()
-        );
+        assert_eq!("Moving ", r#move("a", "b").prefix());
         assert_eq!("Deleting ", TaskKind::Delete { path: "a".into() }.prefix());
     }
 
