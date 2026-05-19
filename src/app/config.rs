@@ -4,6 +4,7 @@ mod serde;
 pub mod theme;
 
 use std::{
+    collections::HashSet,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -211,9 +212,13 @@ impl Config {
     }
 
     fn parse_value(value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
-        let config_dir = config_dir
-            .or_else(|| Self::default_config_dir().ok())
-            .unwrap_or_default();
+        // Fail rather than fall back to an empty path: an empty config_dir
+        // would make bookmarks_dir() resolve to a relative "bookmarks" path
+        // (CWD-dependent), silently misplacing bookmark files.
+        let config_dir = match config_dir {
+            Some(dir) => dir,
+            None => Self::default_config_dir()?,
+        };
 
         let raw: RawConfig = value
             .try_into()
@@ -274,13 +279,43 @@ fn parse_toml(content: &str) -> Result<Value> {
 }
 
 /// Merges the given include files on top of an existing config value.
+/// Each include file's own `include_files` are resolved (relative to that
+/// file's directory) and merged recursively. A visited set keyed by
+/// canonicalized path breaks cycles and skips duplicate includes.
 fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Value> {
+    let mut visited = HashSet::new();
     for path in include_paths {
-        debug!("Loading include file: {}", path.display());
-        let content = fs::read_to_string(path)
-            .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
-        let include_value = parse_toml(&content)?;
-        value = merge_toml_values(value, include_value);
+        value = merge_include_file(value, path, &mut visited)?;
+    }
+    Ok(value)
+}
+
+fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
+    // Canonicalize so the same file referenced via different paths is detected.
+    // Fall back to the raw path if canonicalization fails (e.g. in tests).
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical) {
+        debug!(
+            "Skipping already-included file (cycle or duplicate): {}",
+            path.display()
+        );
+        return Ok(value);
+    }
+
+    debug!("Loading include file: {}", path.display());
+    let content = fs::read_to_string(path)
+        .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
+    let include_value = parse_toml(&content)?;
+
+    // This file's own include_files are resolved relative to its directory.
+    let nested = Config::resolve_include_files(&include_value, path.parent());
+
+    // Merge the file's content first, then its nested includes on top — the
+    // same precedence rule the top level uses (includes override the config
+    // that requested them).
+    let mut value = merge_toml_values(value, include_value);
+    for nested_path in &nested {
+        value = merge_include_file(value, nested_path, visited)?;
     }
     Ok(value)
 }

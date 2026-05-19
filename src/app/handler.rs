@@ -24,7 +24,10 @@ impl CommandHandler for App {
             }
             Command::OpenPrompt(kind) => {
                 if matches!(kind, PromptAction::Delete(_)) {
-                    let _ = self.clipboard.clear();
+                    // The derived ClearClipboard re-enters the arm above, which
+                    // performs the actual clear (and surfaces any error). Don't
+                    // also clear inline here, or it would clear twice and
+                    // swallow the first error.
                     return Command::ClearClipboard.into();
                 }
                 CommandResult::NotHandled
@@ -42,18 +45,18 @@ impl CommandHandler for App {
                 .into(),
                 None => CommandResult::Handled,
             },
-            Command::SetClipboard(entry) => match self.clipboard.set_clipboard_entry(entry) {
+            Command::SetClipboardEntry(entry) => match self.clipboard.set_clipboard_entry(entry) {
                 Ok(()) => CommandResult::Handled,
                 Err(e) => Command::AlertError(format!("Failed to update clipboard: {e}")).into(),
             },
-            Command::ReadFromClipboard => {
+            Command::GetClipboardText => {
                 if let Some(text) = self.clipboard.get_text() {
-                    Command::TextFromClipboard(text).into()
+                    Command::ClipboardText(text).into()
                 } else {
                     CommandResult::Handled
                 }
             }
-            Command::WriteToClipboard(text) => {
+            Command::SetClipboardText(text) => {
                 self.clipboard.set_text(text);
                 CommandResult::Handled
             }

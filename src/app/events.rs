@@ -32,9 +32,20 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
         loop {
             // Blocking read
             // Ref. https://docs.rs/crossterm/latest/crossterm/event/fn.read.html
-            let event = read().expect("terminal events should be readable");
+            let event = match read() {
+                Ok(event) => event,
+                Err(err) => {
+                    log::error!("Failed to read terminal event: {err}");
+                    break;
+                }
+            };
             if let Some(command) = Command::maybe_from(event) {
-                tx.send(command).expect("event channel should be open");
+                // A send error means the receiver (App) has been dropped, i.e.
+                // the app is shutting down. Exit the thread cleanly instead of
+                // panicking on a late keystroke during teardown.
+                if tx.send(command).is_err() {
+                    break;
+                }
             }
         }
     });

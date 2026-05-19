@@ -16,7 +16,7 @@ pub enum Action {
     ToggleHelp,
 
     // Navigation (filesystem)
-    Back,
+    GoToParentDirectory,
     GoToPreviousDirectory,
     GoHome,
     Open,
@@ -151,7 +151,7 @@ macro_rules! keybindings {
 
 keybindings! {
     normal {
-        back => Back,
+        back => GoToParentDirectory,
         go_to_previous_directory => GoToPreviousDirectory,
         add_bookmark => AddBookmark,
         cancel_task => CancelTask,
@@ -286,7 +286,7 @@ impl KeyBindings {
 /// These are always active regardless of config and are included in display strings.
 const HARDCODED: &[(Action, &[KeyCombo])] = &[
     (
-        Action::Back,
+        Action::GoToParentDirectory,
         &[KeyCombo::new(KeyCode::Left, KeyModifiers::NONE)],
     ),
     (
@@ -407,23 +407,42 @@ fn parse_key_spec(spec: &KeySpec) -> Result<Vec<KeyCombo>> {
 }
 
 /// Parse a key string like "q", "Ctrl+c", "Shift+G", "F5", "Enter" into a KeyCombo.
+///
+/// Modifier prefixes (`Ctrl+`, `Shift+`, `Alt+`, case-insensitive) are stripped
+/// from the front one at a time; whatever remains is the key name. This means
+/// `+` itself is a valid key (`"+"`, `"Ctrl++"`) rather than being mistaken for
+/// a separator.
 fn parse_key_combo(s: &str) -> Result<KeyCombo> {
-    let parts: Vec<&str> = s.split('+').collect();
-    let mut modifiers = KeyModifiers::NONE;
+    const PREFIXES: &[(&str, KeyModifiers)] = &[
+        ("ctrl+", KeyModifiers::CONTROL),
+        ("shift+", KeyModifiers::SHIFT),
+        ("alt+", KeyModifiers::ALT),
+    ];
 
-    for part in &parts[..parts.len() - 1] {
-        match part.to_lowercase().as_str() {
-            "ctrl" => modifiers |= KeyModifiers::CONTROL,
-            "shift" => modifiers |= KeyModifiers::SHIFT,
-            "alt" => modifiers |= KeyModifiers::ALT,
-            _ => return Err(anyhow!("Unknown modifier: '{part}'")),
+    let mut modifiers = KeyModifiers::NONE;
+    let mut rest = s;
+
+    'outer: loop {
+        for (prefix, modifier) in PREFIXES {
+            // `>` (not `>=`) so the key name is never empty: "Ctrl+" with no
+            // key falls through to the unknown-key error below. `get(..)`
+            // (not direct slicing) returns None — rather than panicking — when
+            // `prefix.len()` is not a char boundary (multibyte key strings).
+            if rest.len() > prefix.len()
+                && rest
+                    .get(..prefix.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+            {
+                modifiers |= *modifier;
+                rest = &rest[prefix.len()..];
+                continue 'outer;
+            }
         }
+        break;
     }
 
-    let key_str = parts
-        .last()
-        .expect("split always yields at least one element");
-    let code = match *key_str {
+    let key_str = rest;
+    let code = match key_str {
         "Enter" | "Return" => KeyCode::Enter,
         "Esc" | "Escape" => KeyCode::Esc,
         "Backspace" => KeyCode::Backspace,
@@ -579,6 +598,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_plus_key() {
+        let combo = parse_key_combo("+").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('+'));
+        assert_eq!(combo.modifiers, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn parse_modifier_plus_key() {
+        let combo = parse_key_combo("Ctrl++").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('+'));
+        assert_eq!(combo.modifiers, KeyModifiers::CONTROL);
+
+        let combo = parse_key_combo("Ctrl+Shift++").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('+'));
+        assert_eq!(combo.modifiers, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    }
+
+    #[test]
+    fn parse_modifier_without_key_is_error() {
+        assert!(parse_key_combo("Ctrl+").is_err());
+    }
+
+    #[test]
+    fn parse_multibyte_key_string_does_not_panic() {
+        // A multibyte char straddling the prefix-length byte index must not
+        // panic the str slicing; it should be a normal parse error.
+        assert!(parse_key_combo("aaa✓x").is_err());
+        assert!(parse_key_combo("✓").is_err());
+    }
+
+    #[test]
     fn parse_invalid_key() {
         assert!(parse_key_combo("InvalidKey").is_err());
         assert!(parse_key_combo("Ctrl+InvalidKey").is_err());
@@ -587,7 +637,9 @@ mod tests {
 
     #[test]
     fn format_round_trips() {
-        let cases = ["q", "G", "Ctrl+c", "F5", "Enter", "Esc", "Space", "/"];
+        let cases = [
+            "q", "G", "Ctrl+c", "F5", "Enter", "Esc", "Space", "/", "+", "Ctrl++",
+        ];
         for case in cases {
             let combo = parse_key_combo(case).unwrap();
             let formatted = format_key_combo(&combo);

@@ -93,8 +93,11 @@ macro_rules! file_type {
             // Pattern-based styles
             #[serde(skip)]
             extension_styles: HashMap<String, StyleConfig>,
+            // Insertion-ordered (LS_COLORS order). Lookup picks the longest
+            // matching pattern so results are deterministic and the most
+            // specific pattern wins.
             #[serde(skip)]
-            name_styles: HashMap<String, StyleConfig>,
+            name_styles: Vec<(String, StyleConfig)>,
         }
 
         impl FileType {
@@ -169,7 +172,7 @@ impl FileType {
             } else if let Some(ext) = key.strip_prefix("*.") {
                 self.extension_styles.insert(ext.to_string(), style);
             } else if let Some(name) = key.strip_prefix('*') {
-                self.name_styles.insert(name.to_string(), style);
+                self.name_styles.push((name.to_string(), style));
             }
             // Otherwise unrecognized (e.g. "ca" capabilities) — ignored.
         }
@@ -191,14 +194,12 @@ impl FileType {
             return Some(style.into());
         }
 
-        // Name pattern
-        for (pattern, &style) in &self.name_styles {
-            if name.ends_with(pattern.as_str()) {
-                return Some(style.into());
-            }
-        }
-
-        None
+        // Name pattern: longest matching suffix wins (most specific).
+        self.name_styles
+            .iter()
+            .filter(|(pattern, _)| name.ends_with(pattern.as_str()))
+            .max_by_key(|(pattern, _)| pattern.len())
+            .map(|(_, style)| (*style).into())
     }
 }
 
@@ -362,7 +363,7 @@ mod tests {
     #[test_case(".bashrc", "bashrc", true ; "dotfile matches name pattern by suffix")]
     fn name_pattern(filename: &str, pattern: &str, should_match: bool) {
         let mut ft = make_file_type();
-        ft.name_styles.insert(pattern.to_string(), red());
+        ft.name_styles.push((pattern.to_string(), red()));
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
     }
 
