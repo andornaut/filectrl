@@ -6,6 +6,7 @@ use super::path_info::PathInfo;
 use crate::command::{Command, progress::CancellationToken};
 
 const MAX_SEARCH_DEPTH: u32 = 20;
+const MAX_SEARCH_RESULTS: u32 = 10_000;
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Each matching entry is sent as a
@@ -18,6 +19,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
         let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
         queue.push_back((root_path.clone(), 0));
         let mut depth_limit_hit = false;
+        let mut result_count: u32 = 0;
 
         while let Some((dir, depth)) = queue.pop_front() {
             if cancel.is_cancelled() {
@@ -53,9 +55,18 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
                 if name.to_lowercase().contains(&query_lower)
                     && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
-                    && tx.send(Command::SearchResult(path_info)).is_err()
                 {
-                    return;
+                    if result_count >= MAX_SEARCH_RESULTS {
+                        let _ = tx.send(Command::AlertWarn(format!(
+                            "Search stopped at {MAX_SEARCH_RESULTS} results"
+                        )));
+                        let _ = tx.send(Command::ExitedSearch);
+                        return;
+                    }
+                    result_count += 1;
+                    if tx.send(Command::SearchResult(path_info)).is_err() {
+                        return;
+                    }
                 }
 
                 // Enqueue directories for BFS traversal (don't follow symlinks)

@@ -25,6 +25,14 @@ bg = "#006B6B"
 fg = "#DDDCCC"
 modifiers = ["bold"]
 
+[theme.breadcrumbs.bookmarks]
+fg = "#E0A85C"
+modifiers = ["bold"]
+
+[theme.breadcrumbs.search]
+fg = "#33A999"
+modifiers = ["bold"]
+
 [theme.breadcrumbs.separator]
 fg = "#9C9977"
 
@@ -280,6 +288,14 @@ fg = "253" # #dadada
 [theme256.breadcrumbs.basename]
 bg = "23" # #005f5f - dark teal (approx #006B6B)
 fg = "253" # #dadada
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.bookmarks]
+fg = "179" # #d7af5f - amber (approx #E0A85C)
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.search]
+fg = "73" # #5fafaf - teal (approx #33A999)
 modifiers = ["bold"]
 
 [theme256.breadcrumbs.separator]

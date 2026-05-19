@@ -1,4 +1,4 @@
-use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR};
+use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path};
 
 use ratatui::{
     Frame,
@@ -20,16 +20,45 @@ use crate::{
 #[derive(Default)]
 pub(super) struct BreadcrumbsView {
     breadcrumbs: Vec<String>,
+    is_bookmarks: bool,
+    is_searching: bool,
     area: Rect,
     positions: Vec<Vec<Position>>,
 }
 
+fn path_breadcrumbs(path: &Path) -> Vec<String> {
+    let mut parts: Vec<_> = path
+        .ancestors()
+        .map(|p| {
+            p.file_name()
+                .map_or(String::new(), |n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    parts.reverse();
+    parts
+}
+
 impl BreadcrumbsView {
+    fn display_breadcrumbs(&self) -> Vec<String> {
+        if self.is_bookmarks {
+            let mut display = vec!["[Bookmarks] ".to_string()];
+            display.extend(self.breadcrumbs.iter().cloned());
+            display
+        } else if self.is_searching {
+            let mut display = vec!["[Search] ".to_string()];
+            display.extend(self.breadcrumbs.iter().cloned());
+            display
+        } else {
+            self.breadcrumbs.clone()
+        }
+    }
+
     fn height(&self, width: u16) -> u16 {
         // Calculate height based on content length and width, without theme styling
         let (container, _) = spans(
-            &self.breadcrumbs,
+            &self.display_breadcrumbs(),
             width,
+            None,
             Style::default(),
             Style::default(),
             Style::default(),
@@ -39,6 +68,7 @@ impl BreadcrumbsView {
 
     fn set_directory(&mut self, directory: PathInfo) -> CommandResult {
         self.breadcrumbs = directory.breadcrumbs();
+        self.is_bookmarks = false;
         CommandResult::Handled
     }
 
@@ -60,15 +90,24 @@ impl BreadcrumbsView {
 impl CommandHandler for BreadcrumbsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::NavigatedDirectory { directory, .. }
-            | Command::RefreshedDirectory { directory, .. } => {
-                self.set_directory(directory.clone())
+            Command::NavigatedDirectory { directory, .. } => {
+                self.set_directory(directory.clone());
+                self.is_searching = false;
+                CommandResult::Handled
+            }
+            Command::RefreshedDirectory { directory, .. } => self.set_directory(directory.clone()),
+            Command::StartSearch(_) => {
+                self.is_searching = true;
+                CommandResult::Handled
+            }
+            Command::ResetView => {
+                self.is_searching = false;
+                CommandResult::Handled
             }
             Command::Bookmarks { .. } => {
-                // Ephemeral view: the listing is not a real directory. The CWD
-                // breadcrumbs are restored on Navigated/RefreshedDirectory when
-                // the view is dismissed or a bookmark is opened.
-                self.breadcrumbs = vec!["[Bookmarks]".to_string()];
+                let dir = Config::global().bookmarks_dir();
+                self.breadcrumbs = path_breadcrumbs(&dir);
+                self.is_bookmarks = true;
                 self.positions.clear();
                 CommandResult::Handled
             }
@@ -86,9 +125,15 @@ impl CommandHandler for BreadcrumbsView {
                 let Some(row) = self.positions.get(y as usize) else {
                     return CommandResult::Handled;
                 };
+                let has_tag = self.is_bookmarks || self.is_searching;
                 let clicked_index = row.iter().find_map(|p| {
                     if p.intersects(x) {
-                        Some(p.index())
+                        let i = p.index();
+                        if has_tag {
+                            if i == 0 { None } else { Some(i - 1) }
+                        } else {
+                            Some(i)
+                        }
                     } else {
                         None
                     }
@@ -119,10 +164,19 @@ impl View for BreadcrumbsView {
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
         let theme = Config::global().theme();
+        let display = self.display_breadcrumbs();
 
+        let tag_style = if self.is_bookmarks {
+            Some(theme.breadcrumbs.bookmarks())
+        } else if self.is_searching {
+            Some(theme.breadcrumbs.search())
+        } else {
+            None
+        };
         let (mut container, mut positions) = spans(
-            &self.breadcrumbs,
+            &display,
             self.area.width,
+            tag_style,
             theme.breadcrumbs.basename(),
             theme.breadcrumbs.ancestor(),
             theme.breadcrumbs.separator(),
@@ -168,6 +222,7 @@ impl Position {
 fn spans<'a>(
     breadcrumbs: &[String],
     width: u16,
+    tag_style: Option<Style>,
     basename_style: Style,
     ancestor_style: Style,
     separator_style: Style,
@@ -179,21 +234,24 @@ fn spans<'a>(
     let mut it = breadcrumbs.iter().enumerate().peekable();
     while let Some((i, name)) = it.next() {
         let is_last = it.peek().is_none();
-        let name_style = if is_last {
+        let is_tag = i == 0 && tag_style.is_some();
+        let name_style = if is_tag {
+            tag_style.unwrap()
+        } else if is_last {
             basename_style
         } else {
             ancestor_style
         };
 
-        let display_name = if i == 0 && is_last && name.is_empty() {
+        let display_name = if is_last && name.is_empty() {
             MAIN_SEPARATOR_STR
         } else {
             name
         };
         let name_len = display_name.width().min(u16::MAX as usize) as u16;
-        // Each non-last entry occupies name_len + 1 columns (name + separator).
-        // The last entry occupies only name_len columns (no trailing separator).
-        let entry_len = name_len + if is_last { 0 } else { 1 };
+        // Tags and the last entry have no trailing separator. Path components
+        // between them occupy name_len + 1 columns (name + separator).
+        let entry_len = name_len + if is_last || is_tag { 0 } else { 1 };
 
         if container.is_empty() || (row_len + entry_len > width && row_len > 0) {
             row_len = 0;
@@ -207,7 +265,7 @@ fn spans<'a>(
 
         let container_row = container.last_mut().unwrap();
         container_row.push(Span::styled(display_name.to_owned(), name_style));
-        if !is_last {
+        if !is_last && !is_tag {
             container_row.push(Span::styled(MAIN_SEPARATOR_STR, separator_style));
         }
 
@@ -238,6 +296,7 @@ mod tests {
         let (rows, positions) = spans(
             &bc(parts),
             width,
+            None,
             Style::default(),
             Style::default(),
             Style::default(),
@@ -247,6 +306,62 @@ mod tests {
             .map(|row| row.into_iter().map(|s| s.content.into_owned()).collect())
             .collect();
         (content, positions)
+    }
+
+    fn run_tagged_spans(
+        parts: &[&str],
+        width: u16,
+        tag_style: Style,
+    ) -> (Vec<Vec<String>>, Vec<Vec<super::Position>>) {
+        let (rows, positions) = spans(
+            &bc(parts),
+            width,
+            Some(tag_style),
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        );
+        let content = rows
+            .into_iter()
+            .map(|row| row.into_iter().map(|s| s.content.into_owned()).collect())
+            .collect();
+        (content, positions)
+    }
+
+    // ── tag display ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn tagged_breadcrumb_includes_tag_without_trailing_separator() {
+        let (rows, _) = run_tagged_spans(&["[Search] ", "home", "user"], 80, Style::default());
+        assert_eq!(
+            rows,
+            vec![vec![
+                "[Search] ".to_string(),
+                "home".to_string(),
+                SEP.to_string(),
+                "user".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn tagged_breadcrumb_shows_root_separator_at_last_position() {
+        let (rows, _) = run_tagged_spans(&["[Search] ", ""], 80, Style::default());
+        assert_eq!(rows, vec![vec!["[Search] ".to_string(), SEP.to_string()]]);
+    }
+
+    #[test]
+    fn tagged_breadcrumb_skip_tag_in_click_test_on_tag_only() {
+        let (_, positions) = run_tagged_spans(&["[Search] ", "home", "user"], 80, Style::default());
+        // Tag at index 0, click on tag should return None
+        let tag_hit = positions[0].iter().find_map(|p| {
+            if p.intersects(0) {
+                (p.index() == 0).then_some(())
+            } else {
+                None
+            }
+        });
+        assert_eq!(tag_hit, Some(()));
     }
 
     // ── row count ─────────────────────────────────────────────────────────────

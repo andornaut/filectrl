@@ -230,8 +230,10 @@ style_struct!(Alert {
 
 style_struct!(Breadcrumbs {
     base,
-    basename,
     ancestor,
+    basename,
+    bookmarks,
+    search,
     separator,
 });
 

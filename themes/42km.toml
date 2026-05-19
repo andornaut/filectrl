@@ -29,6 +29,14 @@ bg = "#c0c8cf"
 fg = "#282a2c"
 modifiers = ["bold"]
 
+[theme.breadcrumbs.bookmarks]
+fg = "#c2fe0b"
+modifiers = ["bold"]
+
+[theme.breadcrumbs.search]
+fg = "#7c48e2"
+modifiers = ["bold"]
+
 [theme.breadcrumbs.separator]
 fg = "#687880"
 
@@ -284,6 +292,14 @@ fg = "238" # #444444 (approx #404346)
 [theme256.breadcrumbs.basename]
 bg = "251" # #c6c6c6
 fg = "235" # #262626 (approx #282a2c)
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.bookmarks]
+fg = "190" # #d7ff00 - lime (approx #c2fe0b)
+modifiers = ["bold"]
+
+[theme256.breadcrumbs.search]
+fg = "98" # #875fd7 - purple (approx #7c48e2)
 modifiers = ["bold"]
 
 [theme256.breadcrumbs.separator]
