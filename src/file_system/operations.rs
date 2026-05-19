@@ -42,7 +42,7 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     if template.is_empty() {
         return Ok(());
     }
-    let command = template.replace("%s", &shell_words::quote(&path.path));
+    let command = template.replace("%s", &shell_words::quote(&path.path.to_string_lossy()));
     let mut child = spawn_detached("sh", ["-c", &command])
         .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))?;
 

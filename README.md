@@ -1,6 +1,6 @@
 # FileCTRL
 
-FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a lightweight, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 [![42KM theme](./screenshots/42KM.png)](./screenshots/42KM.png)
 
@@ -44,7 +44,7 @@ Run `filectrl --help` to view the available command line arguments and options:
 ```text
 Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--keybindings] [--] [<directory>]
 
-FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a lightweight, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 Positional Arguments:
   directory         path to a directory to navigate to
@@ -174,7 +174,7 @@ Run `filectrl --write-default-config` to write the [default configuration](./src
 You can also override only the properties you want to change:
 
 ```bash
-$ cat ~/.config/filectrl/config.toml
+cat ~/.config/filectrl/config.toml
 [openers.linux]
 open_current_directory = "alacritty --working-directory %s"
 open_new_window = "alacritty --command filectrl %s"

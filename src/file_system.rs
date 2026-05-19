@@ -128,7 +128,7 @@ impl FileSystem {
                     self.previous_directory = Some(current.clone());
                 }
                 self.directory = Some(directory.clone());
-                let path_buf = PathBuf::from(&directory.path);
+                let path_buf = directory.path.clone();
                 if let Some(watcher) = &mut self.watcher
                     && let Err(e) = watcher.watch_directory(path_buf.clone())
                 {
@@ -165,21 +165,16 @@ impl FileSystem {
 
     fn cancel_most_recent_task(&mut self) -> CommandResult {
         // LIFO across file operations and search: cancel whichever was started most recently.
-        while let Some(cancellable) = self.cancellables.last() {
+        while let Some(cancellable) = self.cancellables.pop() {
             match cancellable {
-                Cancellable::Task((_, token, _)) => {
+                Cancellable::Task((_, token, kind)) => {
                     if !token.is_cancelled() {
                         token.cancel();
-                        let Some(Cancellable::Task((_, _, kind))) = self.cancellables.pop() else {
-                            unreachable!()
-                        };
                         return Command::AlertInfo(format!("Cancelled: {}", kind.message())).into();
                     }
-                    self.cancellables.pop();
                 }
                 Cancellable::Search(token) => {
                     token.cancel();
-                    self.cancellables.pop();
                     // Non-destructive: keep streamed results and the notice;
                     // NoticesView relabels it to "Cancelled: [Searching] <query>".
                     return Command::CancelSearch.into();

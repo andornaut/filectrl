@@ -154,7 +154,7 @@ mod tests {
     }
 
     fn selected_basename(table: &TableView) -> Option<String> {
-        table.selected_path().map(|p| p.basename.clone())
+        table.selected_path().map(|p| p.display_name.clone())
     }
 
     #[test]
