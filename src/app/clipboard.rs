@@ -106,10 +106,13 @@ impl Display for ClipboardEntry {
             Self::Copy(_) => "cp",
             Self::Move(_) => "mv",
         };
-        let paths = self.paths();
-        write!(f, "{} {}", name, paths[0])?;
-        for path in &paths[1..] {
-            write!(f, "\n{}", path)?;
+        write!(f, "{name}")?;
+        // First path is space-separated from the command; the rest are
+        // newline-separated. An empty path list writes just the command
+        // (which TryFrom rejects as invalid) rather than panicking.
+        for (i, path) in self.paths().iter().enumerate() {
+            let separator = if i == 0 { ' ' } else { '\n' };
+            write!(f, "{separator}{path}")?;
         }
         Ok(())
     }

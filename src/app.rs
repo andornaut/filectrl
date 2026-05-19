@@ -98,15 +98,16 @@ impl App {
             // (e.g. OpenPrompt) is reflected in subsequent cycles.
             let mode = self.root.mode();
             let mut next_pending = Vec::new();
-            let mut derived = Vec::new();
             for cmd in pending {
+                let mut derived = Vec::new();
                 let handled = recursively_handle_command(&mut derived, &cmd, &mode, self);
                 if handled {
                     // Only derived commands (HandledWith) continue to the next cycle.
                     next_pending.append(&mut derived);
                 } else {
                     // Unhandled commands are returned as-is; never re-queued.
-                    derived.clear();
+                    // `derived` is necessarily empty here: a handler only pushes to
+                    // it via `HandledWith`, which forces `handled == true`.
                     unhandled.push(cmd);
                 }
             }
@@ -165,6 +166,11 @@ fn recursively_handle_command(
 
     // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
     // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
+    // Mouse events are deliberately NOT short-circuited. Positional clicks already reach
+    // at most one handler (visible views occupy disjoint layout regions), but scroll-wheel
+    // events are accepted by TableView regardless of cursor position, so a wheel event over
+    // another view's region must reach both. Short-circuiting would make that depend on
+    // sibling order.
     // Non-key commands (NavigatedDirectory, ResetView, …) are always broadcast to all handlers.
     let is_key = matches!(command, Command::Key(_, _));
     let mut key_consumed = is_key && handled;
@@ -211,4 +217,201 @@ fn should_quit(commands: &[Command]) -> bool {
     commands
         .iter()
         .any(|command| matches!(*command, Command::Quit))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use ratatui::crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+
+    use super::*;
+
+    /// A `CommandHandler` that records the order in which it is visited and can
+    /// be configured to consume keys or to derive a follow-up command.
+    struct Spy {
+        name: &'static str,
+        consume_key: bool,
+        derive: Option<Command>,
+        log: Rc<RefCell<Vec<&'static str>>>,
+        children: Vec<Spy>,
+    }
+
+    impl Spy {
+        fn new(name: &'static str, log: &Rc<RefCell<Vec<&'static str>>>) -> Self {
+            Self {
+                name,
+                consume_key: false,
+                derive: None,
+                log: log.clone(),
+                children: Vec::new(),
+            }
+        }
+    }
+
+    impl CommandHandler for Spy {
+        fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+            for child in &mut self.children {
+                visitor(child);
+            }
+        }
+
+        fn handle_command(&mut self, _command: &Command) -> CommandResult {
+            self.log.borrow_mut().push(self.name);
+            match &self.derive {
+                Some(command) => command.clone().into(),
+                None => CommandResult::NotHandled,
+            }
+        }
+
+        fn handle_key(&mut self, _code: &KeyCode, _modifiers: &KeyModifiers) -> CommandResult {
+            self.log.borrow_mut().push(self.name);
+            if self.consume_key {
+                CommandResult::Handled
+            } else {
+                CommandResult::NotHandled
+            }
+        }
+    }
+
+    fn mouse(kind: MouseEventKind) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn key_dispatch_short_circuits_after_first_handler() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        let mut a = Spy::new("a", &log);
+        a.consume_key = true;
+        let mut b = Spy::new("b", &log);
+        b.consume_key = true;
+        root.children = vec![a, b];
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::Key(KeyCode::Char('x'), KeyModifiers::NONE),
+            &InputMode::Normal,
+            &mut root,
+        );
+
+        assert!(handled);
+        // root is visited (and declines), a consumes the key, b is skipped.
+        assert_eq!(vec!["root", "a"], *log.borrow());
+    }
+
+    #[test]
+    fn non_key_command_is_broadcast_to_all_handlers() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        root.children = vec![Spy::new("a", &log), Spy::new("b", &log)];
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::ResetHelpScroll,
+            &InputMode::Normal,
+            &mut root,
+        );
+
+        assert!(!handled); // none of the spies handle it
+        assert_eq!(vec!["root", "a", "b"], *log.borrow());
+    }
+
+    #[test]
+    fn handled_with_pushes_derived_command() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        root.derive = Some(Command::Quit);
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::ResetHelpScroll,
+            &InputMode::Normal,
+            &mut root,
+        );
+
+        assert!(handled);
+        assert_eq!(vec![Command::Quit], derived);
+    }
+
+    #[test]
+    fn maybe_from_maps_terminal_events() {
+        assert_eq!(
+            Some(Command::Key(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            Command::maybe_from(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL
+            )))
+        );
+        assert_eq!(
+            Some(Command::Resize {
+                width: 10,
+                height: 20
+            }),
+            Command::maybe_from(Event::Resize(10, 20))
+        );
+        assert!(matches!(
+            Command::maybe_from(Event::Mouse(mouse(MouseEventKind::Down(MouseButton::Left)))),
+            Some(Command::Mouse(_))
+        ));
+        // Moved is suppressed; non-terminal events are ignored.
+        assert_eq!(
+            None,
+            Command::maybe_from(Event::Mouse(mouse(MouseEventKind::Moved)))
+        );
+        assert_eq!(None, Command::maybe_from(Event::FocusGained));
+    }
+
+    #[test]
+    fn ignorable_unhandled_only_for_terminal_input() {
+        assert!(is_ignorable_unhandled(&Command::Key(
+            KeyCode::Esc,
+            KeyModifiers::NONE
+        )));
+        assert!(is_ignorable_unhandled(&Command::Mouse(mouse(
+            MouseEventKind::Moved
+        ))));
+        assert!(is_ignorable_unhandled(&Command::Resize {
+            width: 1,
+            height: 1
+        }));
+        assert!(!is_ignorable_unhandled(&Command::Quit));
+        assert!(!is_ignorable_unhandled(&Command::AlertInfo("x".into())));
+    }
+
+    #[test]
+    fn must_not_contain_unhandled_rejects_non_ignorable() {
+        assert!(
+            must_not_contain_unhandled(&[
+                Command::Key(KeyCode::Esc, KeyModifiers::NONE),
+                Command::Resize {
+                    width: 1,
+                    height: 1
+                },
+            ])
+            .is_ok()
+        );
+        assert!(must_not_contain_unhandled(&[]).is_ok());
+        assert!(must_not_contain_unhandled(&[Command::AlertInfo("x".into())]).is_err());
+    }
+
+    #[test]
+    fn should_quit_detects_quit_command() {
+        assert!(should_quit(&[
+            Command::AlertInfo("x".into()),
+            Command::Quit
+        ]));
+        assert!(!should_quit(&[Command::AlertInfo("x".into())]));
+        assert!(!should_quit(&[]));
+    }
 }
