@@ -337,7 +337,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ("Filter".into(), d(Action::Filter)),
         ("Search".into(), d(Action::Search)),
         ("Add bookmark".into(), d(Action::AddBookmark)),
-        ("Show bookmarks".into(), d(Action::ShowBookmarks)),
+        ("Show bookmarks".into(), d(Action::GetBookmarks)),
         ("Refresh".into(), d(Action::Refresh)),
         (
             "Sort by name, modified, size".into(),

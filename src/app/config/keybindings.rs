@@ -54,7 +54,7 @@ pub enum Action {
     Goto,
     Rename,
     Search,
-    ShowBookmarks,
+    GetBookmarks,
 
     // Sort
     SortByModified,
@@ -176,7 +176,7 @@ keybindings! {
         refresh => Refresh,
         rename => Rename,
         search => Search,
-        show_bookmarks => ShowBookmarks,
+        show_bookmarks => GetBookmarks,
         select_first => SelectFirst,
         select_last => SelectLast,
         select_middle => SelectMiddle,
