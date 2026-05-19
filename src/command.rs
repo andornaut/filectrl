@@ -82,12 +82,12 @@ pub enum Command {
     OpenCurrentDirectory,
     OpenNewWindow,
 
+    // Navigation
     GoToParentDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
     GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
     Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
-    // Navigation results — emitted by FileSystem
     NavigatedDirectory {
-        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open
+        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem)
         directory: PathInfo,
         children: Vec<PathInfo>,
     },
@@ -99,7 +99,6 @@ pub enum Command {
     },
 
     // File operations
-    CancelTask, // Intent
     Chmod {
         paths: Vec<PathInfo>,
         mode: String,
@@ -113,6 +112,15 @@ pub enum Command {
         dest: PathInfo,
     },
     Paste(PathInfo), // Intent: resolved by App into Copy or Move
+    CreateDirectory(String),
+    ConfirmDelete, // Intent: resolved by TableView into Delete
+    Delete(Vec<PathInfo>),
+    Rename {
+        path: PathInfo,
+        name: String,
+    },
+
+    // Bookmarks
     AddBookmark {
         directory: PathInfo,
         name: String,
@@ -122,16 +130,9 @@ pub enum Command {
         // Result: of GetBookmarks
         bookmarks: Vec<PathInfo>,
     },
-    CreateDirectory(String),
-    ConfirmDelete, // Intent: resolved by TableView into Delete
-    Delete(Vec<PathInfo>),
-    Rename {
-        path: PathInfo,
-        name: String,
-    },
 
     // Prompt
-    CancelPrompt,
+    CancelPrompt, // Closes the prompt without submitting; returns to Normal mode
     OpenPrompt(PromptAction),
 
     // Clipboard
@@ -160,7 +161,11 @@ pub enum Command {
     AlertInfo(String),
     AlertWarn(String),
 
-    Progress(Task),
+    // Tasks
+    CancelTask,     // Intent: cancel the running task
+    Progress(Task), // Result: progress update for the running task
+
+    // Global
     Quit,
 }
 
