@@ -84,12 +84,12 @@ impl CommandHandler for TableView {
                 if self.content.is_searching() {
                     self.content.clear_search();
                     self.table_state.select(None); // search-result index is meaningless in the directory
-                    return Command::Refresh.into();
+                    return Command::RefreshDirectory.into();
                 }
                 if self.content.is_showing_bookmarks() {
                     self.content.clear_bookmarks();
                     self.table_state.select(None); // bookmarks-list index is meaningless in the directory
-                    return Command::Refresh.into();
+                    return Command::RefreshDirectory.into();
                 }
                 if had_filter {
                     return self.sort(Reselect::Top);
@@ -166,7 +166,7 @@ impl CommandHandler for TableView {
             Some(Action::PageUp) => self.previous_page(),
             Some(Action::PageDown) => self.next_page(),
             // Navigation (filesystem)
-            Some(Action::Refresh) => Command::Refresh.into(),
+            Some(Action::Refresh) => Command::RefreshDirectory.into(),
             Some(Action::GoToParentDirectory) => Command::GoToParentDirectory.into(),
             Some(Action::GoToPreviousDirectory) => Command::GoToPreviousDirectory.into(),
             Some(Action::Open) => self.open_selected(),

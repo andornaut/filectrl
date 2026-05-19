@@ -13,7 +13,7 @@ use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 ///   6 → AlertWarn simulating "no file selected" (real user-facing warning path)
 ///   7 → AlertError simulating permission denied
 ///   8 → AlertError simulating rename collision (file already exists)
-///   9 → Command::Refresh (exercises watcher/refresh path)
+///   9 → Command::RefreshDirectory (exercises watcher/refresh path)
 #[derive(Default)]
 pub(super) struct DebugHandler;
 
@@ -50,7 +50,7 @@ impl CommandHandler for DebugHandler {
                 "Failed to rename \"foo.txt\" to \"bar.txt\": file already exists".into(),
             )
             .into(),
-            (KeyCode::Char('9'), KeyModifiers::NONE) => Command::Refresh.into(),
+            (KeyCode::Char('9'), KeyModifiers::NONE) => Command::RefreshDirectory.into(),
             _ => CommandResult::NotHandled,
         }
     }
