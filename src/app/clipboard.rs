@@ -148,6 +148,12 @@ impl TryFrom<&str> for ClipboardEntry {
 #[derive(Clone)]
 struct ClipboardBackend {
     clipboard: Arc<Mutex<ArboardClipboard>>,
+    /// The last text this process wrote to the system clipboard, if any.
+    /// Used by `clear` so a window only clears the clipboard when it was the
+    /// last writer (its written content still matches the current content).
+    /// Multiple filectrl windows are separate processes, each with its own
+    /// tracker, so only the most recent writer will clear.
+    last_written: Arc<Mutex<Option<String>>>,
 }
 
 impl Debug for ClipboardBackend {
@@ -162,6 +168,7 @@ impl ClipboardBackend {
     fn try_new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             clipboard: Arc::new(Mutex::new(ArboardClipboard::new()?)),
+            last_written: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -182,10 +189,39 @@ impl ClipboardBackend {
             .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
         clipboard
             .set_text(text.to_string())
-            .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))
+            .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))?;
+        *self
+            .last_written
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock clipboard tracker: {}", e))? =
+            Some(text.to_string());
+        Ok(())
     }
 
     fn clear(&self) -> Result<(), Error> {
-        self.set_string("")
+        let last_written = self
+            .last_written
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock clipboard tracker: {}", e))?
+            .clone();
+
+        let Some(prev) = last_written else {
+            // This window never wrote to the clipboard; leave it untouched so
+            // we don't clobber content set by another app or filectrl window.
+            return Ok(());
+        };
+        if prev.is_empty() {
+            // This window already cleared the clipboard; nothing to do (and
+            // avoids a redundant empty write that would make arboard reacquire
+            // X11 selection ownership).
+            return Ok(());
+        }
+        // Only clear if the clipboard still holds exactly what this window
+        // wrote. If it differs (or is empty/unreadable), another window or app
+        // owns it now and we must not overwrite it.
+        match self.get_string() {
+            Ok(current) if current == prev => self.set_string(""),
+            _ => Ok(()),
+        }
     }
 }
