@@ -41,7 +41,7 @@ impl CommandHandler for TableView {
                 CommandResult::NotHandled
             }
 
-            Command::SetClipboard(entry) => {
+            Command::SetClipboardEntry(entry) => {
                 self.clipboard_entry = Some(entry.clone());
                 CommandResult::NotHandled
             }
@@ -148,7 +148,7 @@ impl CommandHandler for TableView {
         match (*code, *modifiers) {
             (KeyCode::Down, KeyModifiers::NONE) => return self.select_next(),
             (KeyCode::Up, KeyModifiers::NONE) => return self.select_previous(),
-            (KeyCode::Left, KeyModifiers::NONE) => return Command::Back.into(),
+            (KeyCode::Left, KeyModifiers::NONE) => return Command::GoToParentDirectory.into(),
             (KeyCode::Right, KeyModifiers::NONE) => return self.open_selected(),
             (KeyCode::Home, KeyModifiers::NONE) => return self.select_first(),
             (KeyCode::End, KeyModifiers::NONE) => return self.select_last(),
@@ -167,7 +167,7 @@ impl CommandHandler for TableView {
             Some(Action::PageDown) => self.next_page(),
             // Navigation (filesystem)
             Some(Action::Refresh) => Command::Refresh.into(),
-            Some(Action::Back) => Command::Back.into(),
+            Some(Action::GoToParentDirectory) => Command::GoToParentDirectory.into(),
             Some(Action::GoToPreviousDirectory) => Command::GoToPreviousDirectory.into(),
             Some(Action::Open) => self.open_selected(),
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),

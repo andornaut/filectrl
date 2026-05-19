@@ -69,7 +69,7 @@ impl CommandHandler for NoticesView {
                 self.search_cancelled = false;
                 CommandResult::Handled
             }
-            Command::SetClipboard(entry) => {
+            Command::SetClipboardEntry(entry) => {
                 self.clipboard_entry = Some(entry.clone());
                 CommandResult::NotHandled
             }
