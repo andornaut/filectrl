@@ -56,6 +56,18 @@ pub enum PromptAction {
     Search(String),
 }
 
+/// The single message type for the whole app: terminal input, navigation,
+/// file operations, view-state notifications, and alerts. Commands are
+/// broadcast to all `CommandHandler`s (see `app::recursively_handle_command`).
+///
+/// Lifecycle conventions used in the annotations below:
+/// - **Intent**: a request that another component resolves into a follow-up
+///   command (e.g. `Paste` -> `Copy`/`Move`). Annotated `// Intent: …`.
+/// - **Result**: emitted in response to an intent, carrying data the
+///   originator could not produce itself (e.g. `Bookmarks`,
+///   `NavigatedDirectory`). Annotated `// Result: …`.
+/// - Everything else is a terminal event, a direct action, or a view-state
+///   notification.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
     // Terminal input events
@@ -66,11 +78,11 @@ pub enum Command {
         height: u16,
     },
 
-    // Navigation — handled by FileSystem
-    GoToParentDirectory,
-    GoToPreviousDirectory,
-    Open(PathInfo),
-    Refresh,
+    // Navigation intents — resolved by FileSystem
+    GoToParentDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
+    GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
+    Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
+    RefreshDirectory,    // Intent: resolved by FileSystem into RefreshedDirectory
 
     // External commands — handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
@@ -78,10 +90,12 @@ pub enum Command {
 
     // Navigation results — emitted by FileSystem
     NavigatedDirectory {
+        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open
         directory: PathInfo,
         children: Vec<PathInfo>,
     },
     RefreshedDirectory {
+        // Result: of RefreshDirectory
         directory: PathInfo,
         children: Vec<PathInfo>,
     },
@@ -101,6 +115,7 @@ pub enum Command {
     },
     GetBookmarks, // Intent: resolved by FileSystem into Bookmarks
     Bookmarks {
+        // Result: of GetBookmarks
         bookmarks: Vec<PathInfo>,
     },
     CreateDirectory(String),
@@ -127,15 +142,15 @@ pub enum Command {
     ClearClipboard,
     SetClipboardEntry(ClipboardEntry),
     GetClipboardText,         // Intent: resolved by App into ClipboardText
-    ClipboardText(String),    // Result of GetClipboardText; handled by PromptView
+    ClipboardText(String),    // Result: of GetClipboardText; handled by PromptView
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
     CancelSearch, // Non-destructive: stop the search thread but keep results and notice
     ExitSearch,
-    SearchResult(PathInfo),
+    SearchResult(PathInfo), // Result: one search hit, appended by TableView
     SearchTick,
-    StartSearch(String),
+    StartSearch(String), // Intent: spawns the search thread; streams SearchResult
 
     // View state notifications — emitted by TableView
     FilterChanged(String),
