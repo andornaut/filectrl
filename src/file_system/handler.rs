@@ -37,7 +37,7 @@ impl CommandHandler for FileSystem {
             Command::OpenCurrentDirectory => self.open_current_directory(),
             Command::OpenNewWindow => self.open_new_window(),
             Command::Progress(task) => self.check_progress_for_error(task),
-            Command::Refresh => self.refresh(),
+            Command::RefreshDirectory => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
             Command::ExitSearch => {
                 // The search thread has exited; drop any lingering search entry.

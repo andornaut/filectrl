@@ -114,11 +114,11 @@ fn watch_for_notify_events(
                 | notify::EventKind::Modify(_)
                 | notify::EventKind::Remove(_) => {
                     if debouncer.should_trigger(Instant::now()) {
-                        if let Err(e) = command_tx.send(Command::Refresh) {
+                        if let Err(e) = command_tx.send(Command::RefreshDirectory) {
                             error!("Failed to send refresh command: {}", e);
                         }
                     } else if !debouncer.has_delayed_event() {
-                        if let Err(e) = delayed_tx.send(Command::Refresh) {
+                        if let Err(e) = delayed_tx.send(Command::RefreshDirectory) {
                             error!("Failed to schedule delayed refresh: {}", e);
                         } else {
                             debouncer.set_delayed_event();
