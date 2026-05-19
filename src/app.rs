@@ -26,7 +26,17 @@ use crate::{
     views::{View, root::RootView},
 };
 
-const BROADCASTS_COUNT: u8 = 4; // Max chain depth: Key → Open → NavigatedDirectory/RefreshedDirectory → SelectionChanged
+/// Maximum number of broadcast cycles per input command. Each cycle resolves
+/// one link in an intent → result chain; the longest legitimate chain is 4:
+///
+///   1. `Key`                          — terminal input
+///   2. `GoToParentDirectory` / `Open` — navigation intent derived from the key
+///   3. `NavigatedDirectory`           — result emitted by `FileSystem`
+///   4. `SelectionChanged`             — emitted by `TableView` for the new listing
+///
+/// Also acts as a guard against a handler stuck deriving commands forever.
+/// See `broadcast_command` for what happens when it is exceeded.
+const BROADCASTS_COUNT: u8 = 4;
 
 pub struct App {
     clipboard: Clipboard,
@@ -115,11 +125,19 @@ impl App {
         }
 
         if !pending.is_empty() {
-            log::error!(
-                "Broadcast cycle limit ({BROADCASTS_COUNT}) exceeded; dropping {} derived command(s): {:?}",
+            // A non-empty `pending` after the cap means either a chain longer
+            // than expected or a handler stuck deriving in a loop — both bugs.
+            // Fail loudly in dev/test; in release surface an alert (sent through
+            // the channel so it is non-fatal) instead of silently dropping the
+            // user's action.
+            let message = format!(
+                "Broadcast cycle limit ({BROADCASTS_COUNT}) exceeded; dropped {} derived command(s): {:?}",
                 pending.len(),
                 pending
             );
+            log::error!("{message}");
+            let _ = self.tx.send(Command::AlertError(message.clone()));
+            debug_assert!(false, "{message}");
         }
 
         unhandled

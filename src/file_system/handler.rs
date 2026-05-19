@@ -39,7 +39,7 @@ impl CommandHandler for FileSystem {
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::RefreshDirectory => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
-            Command::ExitSearch => {
+            Command::ExitedSearch => {
                 // The search thread has exited; drop any lingering search entry.
                 self.cancel_search();
                 CommandResult::NotHandled
