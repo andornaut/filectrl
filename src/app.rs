@@ -27,16 +27,22 @@ use crate::{
 };
 
 /// Maximum number of broadcast cycles per input command. Each cycle resolves
-/// one link in an intent → result chain; the longest legitimate chain is 4:
+/// one link in an intent → result chain; the longest legitimate chain is 5,
+/// which occurs when `Esc` exits the bookmarks or search view:
 ///
-///   1. `Key`                          — terminal input
-///   2. `GoToParentDirectory` / `Open` — navigation intent derived from the key
-///   3. `NavigatedDirectory`           — result emitted by `FileSystem`
-///   4. `SelectionChanged`             — emitted by `TableView` for the new listing
+///   1. `Key`              — terminal input
+///   2. `ResetView`        — derived from the key
+///   3. `RefreshDirectory` — `TableView` clears bookmarks/search and asks for a reload
+///   4. `RefreshedDirectory` — result emitted by `FileSystem`
+///   5. `SelectionChanged` — emitted by `TableView` for the new listing
+///
+/// Direct navigation (`Key → GoToParentDirectory/Open → NavigatedDirectory →
+/// SelectionChanged`) is one link shorter because the intent maps straight to
+/// `NavigatedDirectory` without a `RefreshDirectory` hop.
 ///
 /// Also acts as a guard against a handler stuck deriving commands forever.
 /// See `broadcast_command` for what happens when it is exceeded.
-const BROADCASTS_COUNT: u8 = 4;
+const BROADCASTS_COUNT: u8 = 5;
 
 pub struct App {
     clipboard: Clipboard,
