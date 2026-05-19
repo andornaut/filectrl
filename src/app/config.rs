@@ -160,7 +160,7 @@ impl Config {
         let mut value = merge_toml_values(merge_default_config()?, user_value);
 
         // Files listed in the config's `include_files` are merged first.
-        let config_includes = Self::resolve_include_files(&value, config_dir.as_deref());
+        let config_includes = Self::resolve_include_files(&value, config_dir.as_deref())?;
         value = merge_include_paths(value, &config_includes)?;
 
         // CLI --include paths are merged last, so they take precedence over everything
@@ -176,9 +176,13 @@ impl Config {
     }
 
     /// Resolves the config's `include_files` array into absolute-or-relative
-    /// paths. Relative entries are resolved against `config_dir` (falling back
-    /// to the default config directory).
-    fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Vec<PathBuf> {
+    /// paths. Relative entries are resolved against `config_dir`, falling back
+    /// to the default config directory. Errors if neither is available rather
+    /// than silently resolving relative entries against the CWD (consistent
+    /// with `parse_value`). This is defensive: the fallback is currently
+    /// unreachable because `config_dir == None` is only produced after
+    /// `default_config_dir()` has already succeeded in the same run.
+    fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
         let include_files: Vec<PathBuf> = value
             .get("include_files")
             .and_then(|v| v.as_array())
@@ -191,15 +195,15 @@ impl Config {
             .unwrap_or_default();
 
         if include_files.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
-        let resolve_dir = config_dir
-            .map(Path::to_path_buf)
-            .or_else(|| Self::default_config_dir().ok())
-            .unwrap_or_default();
+        let resolve_dir = match config_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => Self::default_config_dir()?,
+        };
 
-        include_files
+        Ok(include_files
             .into_iter()
             .map(|path| {
                 if path.is_absolute() {
@@ -208,7 +212,7 @@ impl Config {
                     resolve_dir.join(path)
                 }
             })
-            .collect()
+            .collect())
     }
 
     fn parse_value(value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
@@ -294,6 +298,16 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     // Canonicalize so the same file referenced via different paths is detected.
     // Fall back to the raw path if canonicalization fails (e.g. in tests).
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    // Resolve this file's own include_files relative to its real directory.
+    // Deriving the directory from the canonical (absolute, when canonicalize
+    // succeeds) path means a bare filename — whose `parent()` is "" — still
+    // resolves nested includes against the file's directory, not the CWD.
+    let base_dir = canonical
+        .parent()
+        .map(Path::to_path_buf)
+        .or_else(|| path.parent().map(Path::to_path_buf));
+
     if !visited.insert(canonical) {
         debug!(
             "Skipping already-included file (cycle or duplicate): {}",
@@ -307,8 +321,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
         .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
     let include_value = parse_toml(&content)?;
 
-    // This file's own include_files are resolved relative to its directory.
-    let nested = Config::resolve_include_files(&include_value, path.parent());
+    let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
 
     // Merge the file's content first, then its nested includes on top — the
     // same precedence rule the top level uses (includes override the config
