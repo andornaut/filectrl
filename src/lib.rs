@@ -16,6 +16,7 @@ use log::{LevelFilter, info};
 use self::app::{
     App,
     config::Config,
+    events::install_signal_handlers,
     terminal::{CleanupOnDropTerminal, supports_truecolor},
 };
 
@@ -38,6 +39,11 @@ pub fn run(
     info!("Terminal truecolor support: {is_truecolor}");
     config.is_truecolor = is_truecolor;
     Config::init(config);
+
+    // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP
+    // cause a graceful shutdown (terminal restored) rather than leaving the
+    // shell in a broken state.
+    install_signal_handlers()?;
 
     let terminal = CleanupOnDropTerminal::try_new()?;
     App::new(terminal).run(initial_directory)
