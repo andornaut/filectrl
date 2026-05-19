@@ -157,16 +157,16 @@ impl PromptView {
     /// Resolve user input to a path: leading `~` expands to home, absolute
     /// paths are used as-is, and relative input is joined onto `basedir`.
     fn resolve_path(&self, input: &str) -> PathBuf {
-        if let Some(rest) = input.strip_prefix('~') {
-            if let Some(base) = directories::BaseDirs::new() {
-                let home = base.home_dir();
-                let rest = rest.strip_prefix('/').unwrap_or(rest);
-                return if rest.is_empty() {
-                    home.to_path_buf()
-                } else {
-                    home.join(rest)
-                };
-            }
+        if let Some(rest) = input.strip_prefix('~')
+            && let Some(base) = directories::BaseDirs::new()
+        {
+            let home = base.home_dir();
+            let rest = rest.strip_prefix('/').unwrap_or(rest);
+            return if rest.is_empty() {
+                home.to_path_buf()
+            } else {
+                home.join(rest)
+            };
         }
         let path = Path::new(input);
         if path.is_absolute() {

@@ -51,15 +51,15 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     // still be running after 250ms and are silently ignored.
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
-        if let Ok(Some(status)) = child.try_wait() {
-            if !status.success() {
-                let code = status
-                    .code()
-                    .map_or("unknown".to_string(), |c| c.to_string());
-                let _ = command_tx.send(Command::AlertError(format!(
-                    "Command \"{command}\" failed (exit code {code})"
-                )));
-            }
+        if let Ok(Some(status)) = child.try_wait()
+            && !status.success()
+        {
+            let code = status
+                .code()
+                .map_or("unknown".to_string(), |c| c.to_string());
+            let _ = command_tx.send(Command::AlertError(format!(
+                "Command \"{command}\" failed (exit code {code})"
+            )));
         }
     });
 
