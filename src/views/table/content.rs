@@ -151,3 +151,167 @@ impl DirectoryContent {
             .position(|item| item.as_path() == target)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ensure_config_initialized() {
+        let config = Config::load(None, vec![]).unwrap();
+        Config::init(config);
+    }
+
+    /// Self-cleaning unique temp directory.
+    struct Fixture {
+        dir: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir()
+                .join(format!("filectrl_content_{}_{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn dir_entry(&self, name: &str) -> PathInfo {
+            let path = self.dir.join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            PathInfo::try_from(&path).unwrap()
+        }
+
+        fn file_entry(&self, name: &str, size: usize) -> PathInfo {
+            let path = self.dir.join(name);
+            std::fs::write(&path, vec![b'x'; size]).unwrap();
+            PathInfo::try_from(&path).unwrap()
+        }
+
+        fn directory(&self) -> PathInfo {
+            PathInfo::try_from(&self.dir).unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn names(content: &DirectoryContent) -> Vec<String> {
+        content
+            .items_sorted()
+            .iter()
+            .map(|p| p.basename.clone())
+            .collect()
+    }
+
+    #[test]
+    fn sort_by_name_ascending_groups_directories_first_then_case_insensitive() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        // Intentionally unsorted input order.
+        let items = vec![
+            fx.file_entry("Banana", 1),
+            fx.dir_entry("Apricot"),
+            fx.file_entry("apple", 1),
+            fx.file_entry(".secret", 1),
+            fx.dir_entry("Apple"),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+
+        // Directories first (config default sort_directories_first = true),
+        // then files; comparison is case-insensitive and ignores a leading dot
+        // (".secret" sorts as "secret").
+        assert_eq!(
+            names(&content),
+            vec!["Apple", "Apricot", "apple", "Banana", ".secret"]
+        );
+    }
+
+    #[test]
+    fn sort_by_name_descending_reverses_within_the_directory_grouping() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.dir_entry("Apple"),
+            fx.dir_entry("Apricot"),
+            fx.file_entry("apple", 1),
+            fx.file_entry("Banana", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+        content.sort(&SortColumn::Name, &SortDirection::Descending);
+
+        // Descending reverses the name order, but directories are still grouped
+        // ahead of files (the directories-first pass runs last and is stable).
+        assert_eq!(names(&content), vec!["Apricot", "Apple", "Banana", "apple"]);
+    }
+
+    #[test]
+    fn sort_by_size_orders_by_byte_length() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("medium", 50),
+            fx.file_entry("small", 1),
+            fx.file_entry("large", 500),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+
+        content.sort(&SortColumn::Size, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["small", "medium", "large"]);
+
+        content.sort(&SortColumn::Size, &SortDirection::Descending);
+        assert_eq!(names(&content), vec!["large", "medium", "small"]);
+    }
+
+    #[test]
+    fn filter_retains_case_insensitive_substring_matches() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("Apple", 1),
+            fx.file_entry("Apricot", 1),
+            fx.file_entry("Banana", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+        content.set_filter("ap".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+
+        assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+
+        content.clear_filter();
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(content.len(), 3);
+    }
+
+    #[test]
+    fn toggle_show_hidden_filters_dotfiles() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+
+        // Default config has show_hidden_files = true.
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(content.len(), 2);
+
+        // First toggle flips the runtime override to false.
+        content.toggle_show_hidden();
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["visible"]);
+
+        content.toggle_show_hidden();
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(content.len(), 2);
+    }
+}

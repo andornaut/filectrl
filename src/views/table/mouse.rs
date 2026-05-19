@@ -19,7 +19,9 @@ impl TableView {
         }
 
         let item = self.mapper.item(line);
-        let path = &self.content.items_sorted()[item];
+        let Some(path) = self.content.get(item) else {
+            return CommandResult::Handled;
+        };
         if self.double_click.click_and_is_double_click(path) {
             return self.open_selected();
         }
