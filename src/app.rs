@@ -2,7 +2,7 @@ pub mod clipboard;
 pub mod config;
 #[cfg(debug_assertions)]
 mod debug;
-mod events;
+pub mod events;
 mod handler;
 pub mod terminal;
 
