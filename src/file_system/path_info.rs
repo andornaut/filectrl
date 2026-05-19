@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cmp, env,
     fmt::{self, Display},
     io,
@@ -79,11 +80,11 @@ impl PathInfo {
         self.modified.map(|dt| dt.timestamp()).unwrap_or(0)
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Cow<'_, str> {
         if self.is_directory() {
-            format!("{}{MAIN_SEPARATOR}", self.display_name)
+            Cow::Owned(format!("{}{MAIN_SEPARATOR}", self.display_name))
         } else {
-            self.display_name.clone()
+            Cow::Borrowed(&self.display_name)
         }
     }
 
