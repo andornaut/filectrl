@@ -79,6 +79,28 @@ impl TableView {
         }
     }
 
+    pub(super) fn open_add_bookmark_prompt(&self) -> CommandResult {
+        if self.content.is_showing_bookmarks() {
+            return Command::AlertWarn("Cannot add a bookmark from the bookmarks view".into())
+                .into();
+        }
+        match self.content.directory() {
+            None => Command::AlertWarn("No current directory".into()).into(),
+            Some(directory) => {
+                let name = directory.basename.clone();
+                Command::OpenPrompt(PromptAction::AddBookmark {
+                    directory: directory.clone(),
+                    name,
+                })
+                .into()
+            }
+        }
+    }
+
+    pub(super) fn show_bookmarks(&self) -> CommandResult {
+        Command::ShowBookmarks.into()
+    }
+
     pub(super) fn open_search_prompt(&self) -> CommandResult {
         Command::OpenPrompt(PromptAction::Search(String::new())).into()
     }

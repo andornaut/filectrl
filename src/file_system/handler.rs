@@ -11,6 +11,11 @@ impl CommandHandler for FileSystem {
                 self.cancel_search();
                 CommandResult::NotHandled
             }
+            Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
+            Command::ShowBookmarks => {
+                self.show_bookmarks();
+                CommandResult::Handled
+            }
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {

@@ -46,6 +46,7 @@ pub enum Action {
     Paste,
 
     // File operations
+    AddBookmark,
     Chmod,
     CreateDirectory,
     Delete,
@@ -53,6 +54,7 @@ pub enum Action {
     Goto,
     Rename,
     Search,
+    ShowBookmarks,
 
     // Sort
     SortByModified,
@@ -151,6 +153,7 @@ keybindings! {
     normal {
         back => Back,
         go_to_previous_directory => GoToPreviousDirectory,
+        add_bookmark => AddBookmark,
         cancel_task => CancelTask,
         chmod => Chmod,
         clear_alerts => ClearAlerts,
@@ -173,6 +176,7 @@ keybindings! {
         refresh => Refresh,
         rename => Rename,
         search => Search,
+        show_bookmarks => ShowBookmarks,
         select_first => SelectFirst,
         select_last => SelectLast,
         select_middle => SelectMiddle,

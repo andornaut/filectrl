@@ -35,6 +35,7 @@ impl PromptView {
             PromptAction::Chmod { paths, .. } => {
                 format!(" Chmod {} (octal) ", pluralize_items(paths.len()))
             }
+            PromptAction::AddBookmark { .. } => " Add bookmark ".to_string(),
             PromptAction::CreateDirectory => " New directory ".to_string(),
             PromptAction::Delete(count) => {
                 format!(" Delete {}? (y/n) ", pluralize_items(*count))
@@ -52,7 +53,8 @@ impl PromptView {
             PromptAction::CreateDirectory | PromptAction::Delete(_) | PromptAction::Goto { .. } => {
                 String::new()
             }
-            PromptAction::Filter(text)
+            PromptAction::AddBookmark { name: text, .. }
+            | PromptAction::Filter(text)
             | PromptAction::Rename { name: text, .. }
             | PromptAction::Search(text) => text.clone(),
         };
@@ -113,6 +115,10 @@ impl PromptView {
             PromptAction::Chmod { paths, .. } => Command::Chmod {
                 paths: paths.clone(),
                 mode: value,
+            },
+            PromptAction::AddBookmark { directory, .. } => Command::AddBookmark {
+                directory: directory.clone(),
+                name: value,
             },
             PromptAction::CreateDirectory => Command::CreateDirectory(value),
             PromptAction::Delete(_) => Command::ConfirmDelete,

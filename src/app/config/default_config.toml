@@ -42,6 +42,7 @@ sort_directories_first = true
 # and modifier prefixes ("Ctrl+c", "Ctrl+Shift+a").
 [keybindings]
 # Normal mode
+add_bookmark = "B"
 back = ["h", "b", "Backspace"]
 cancel_task = "K"
 chmod = "P"
@@ -66,6 +67,7 @@ range_mark = "V"
 refresh = ["Ctrl+r", "F5"]
 rename = ["r", "F2"]
 search = "/"
+show_bookmarks = ["'", "`"]
 select_first = ["g", "^"]
 select_last = ["G", "$"]
 select_middle = "z"
