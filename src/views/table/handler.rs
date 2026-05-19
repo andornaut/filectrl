@@ -51,6 +51,7 @@ impl CommandHandler for TableView {
             } => {
                 // Different directory: nothing from the old listing carries over.
                 self.content.clear_search();
+                self.content.clear_bookmarks();
                 self.content.clear_filter();
                 self.clear_marks();
                 self.table_state.select(None);
@@ -66,6 +67,12 @@ impl CommandHandler for TableView {
                 if self.content.is_searching() {
                     return CommandResult::Handled;
                 }
+                // While showing bookmarks the listing is the bookmarks dir, not
+                // this directory. A rename of a bookmark triggers a CWD refresh;
+                // reload the bookmarks list instead of showing the CWD.
+                if self.content.is_showing_bookmarks() {
+                    return Command::ShowBookmarks.into();
+                }
                 // Same directory reloaded: keep filter and selection.
                 self.set_directory(directory.clone(), children.to_vec(), Reselect::Keep)
             }
@@ -77,6 +84,11 @@ impl CommandHandler for TableView {
                 if self.content.is_searching() {
                     self.content.clear_search();
                     self.table_state.select(None); // search-result index is meaningless in the directory
+                    return Command::Refresh.into();
+                }
+                if self.content.is_showing_bookmarks() {
+                    self.content.clear_bookmarks();
+                    self.table_state.select(None); // bookmarks-list index is meaningless in the directory
                     return Command::Refresh.into();
                 }
                 if had_filter {
@@ -107,6 +119,23 @@ impl CommandHandler for TableView {
                 }
             }
             Command::SearchComplete => CommandResult::Handled,
+            // FileSystem resolves ShowBookmarks into ShowedBookmarks.
+            Command::ShowBookmarks => CommandResult::NotHandled,
+            Command::ShowedBookmarks { bookmarks } => {
+                self.clear_marks();
+                self.content.set_bookmarks(bookmarks.clone());
+                self.table_state.select(None);
+                self.sort(Reselect::Top)
+            }
+            // A bookmark delete runs as an async task; reload the list once it
+            // finishes so the deleted entry disappears.
+            Command::Progress(task) => {
+                if self.content.is_showing_bookmarks() && task.is_terminal() {
+                    Command::ShowBookmarks.into()
+                } else {
+                    CommandResult::NotHandled
+                }
+            }
             // self.handle_key() and PromptView may emit FilterChanged()
             Command::FilterChanged(filter) => self.set_filter(filter.clone()),
 
@@ -158,6 +187,8 @@ impl CommandHandler for TableView {
             Some(Action::ToggleMark) => self.toggle_mark(),
             Some(Action::RangeMark) => self.enter_range_mode(),
             // File operations
+            Some(Action::AddBookmark) => self.open_add_bookmark_prompt(),
+            Some(Action::ShowBookmarks) => self.show_bookmarks(),
             Some(Action::Chmod) => self.open_chmod_prompt(),
             Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),

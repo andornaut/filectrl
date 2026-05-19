@@ -259,6 +259,39 @@ impl FileSystem {
         self.refresh()
     }
 
+    fn add_bookmark(&mut self, target: &PathInfo, name: &str) -> CommandResult {
+        match operations::add_bookmark(target, name) {
+            Err(error) => Command::AlertError(error.to_string()).into(),
+            Ok(_) => Command::AlertInfo(format!("Bookmark {name:?} added")).into(),
+        }
+    }
+
+    /// Read every entry in the bookmarks directory and send them as a single
+    /// batch. Synchronous: one small directory of symlinks, no streaming.
+    fn show_bookmarks(&self) {
+        let dir = Config::global().bookmarks_dir();
+        if let Err(error) = fs::create_dir_all(&dir) {
+            let _ = self.command_tx.send(Command::AlertError(format!(
+                "Cannot create bookmarks directory {dir:?}: {error}"
+            )));
+            return;
+        }
+        match fs::read_dir(&dir) {
+            Ok(entries) => {
+                let bookmarks: Vec<PathInfo> = entries
+                    .flatten()
+                    .filter_map(|entry| PathInfo::try_from(&entry.path()).ok())
+                    .collect();
+                let _ = self.command_tx.send(Command::ShowedBookmarks { bookmarks });
+            }
+            Err(error) => {
+                let _ = self.command_tx.send(Command::AlertError(format!(
+                    "Cannot read bookmarks directory {dir:?}: {error}"
+                )));
+            }
+        }
+    }
+
     fn create_directory(&mut self, name: &str) -> CommandResult {
         match operations::create_directory(self.current_directory(), name) {
             Err(error) => anyhow!("Failed to create directory {name:?}: {error}").into(),

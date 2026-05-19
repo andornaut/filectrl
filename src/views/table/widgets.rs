@@ -86,6 +86,7 @@ pub(super) fn row_widget_and_height<'a>(
     item: &'a PathInfo,
     is_marked: bool,
     is_pending_delete: bool,
+    is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> (Row<'a>, u16) {
     let (name_style, date_style, size_style, row_style) = if is_pending_delete {
@@ -96,6 +97,9 @@ pub(super) fn row_widget_and_height<'a>(
     } else if is_marked {
         let marked = theme.table.marked();
         (marked, marked, marked, marked)
+    } else if is_bookmarks {
+        let bookmark = theme.table.bookmark();
+        (bookmark, bookmark, bookmark, bookmark)
     } else {
         (
             name_style(&theme.file_type, item),
@@ -105,7 +109,11 @@ pub(super) fn row_widget_and_height<'a>(
         )
     };
 
-    let display_name = display_name(item, search_root);
+    let display_name = if is_bookmarks {
+        item.basename.clone()
+    } else {
+        display_name(item, search_root)
+    };
     let name = split_with_ellipsis(&display_name, name_column_width as usize)
         .into_iter()
         .map(Line::from)

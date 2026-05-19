@@ -232,6 +232,11 @@ fg = "#f1f1f1"
 bg = "#353a3c"
 fg = "#f1f1f1"
 
+[theme.table.bookmark]
+bg = "#353a3c"
+fg = "#c2fe0b" # Lime accent
+modifiers = ["bold"]
+
 [theme.table.delete]
 bg = "#c4071c"
 fg = "#f1f1f1"
@@ -482,6 +487,11 @@ fg = "255" # #eeeeee
 [theme256.table.body]
 bg = "237" # #3a3a3a
 fg = "255" # #eeeeee
+
+[theme256.table.bookmark]
+bg = "237" # #3a3a3a
+fg = "190" # #d7ff00 - lime accent
+modifiers = ["bold"]
 
 [theme256.table.delete]
 bg = "160" # #d70000 - red
