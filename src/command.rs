@@ -78,22 +78,20 @@ pub enum Command {
         height: u16,
     },
 
-    // Navigation intents — resolved by FileSystem
-    GoToParentDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
-    GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
-    Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
-    RefreshDirectory,    // Intent: resolved by FileSystem into RefreshedDirectory
-
     // External commands — handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
     OpenNewWindow,
 
+    GoToParentDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
+    GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
+    Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
     // Navigation results — emitted by FileSystem
     NavigatedDirectory {
         // Result: of GoToParentDirectory / GoToPreviousDirectory / Open
         directory: PathInfo,
         children: Vec<PathInfo>,
     },
+    RefreshDirectory, // Intent: resolved by FileSystem into RefreshedDirectory
     RefreshedDirectory {
         // Result: of RefreshDirectory
         directory: PathInfo,
@@ -101,6 +99,7 @@ pub enum Command {
     },
 
     // File operations
+    CancelTask, // Intent
     Chmod {
         paths: Vec<PathInfo>,
         mode: String,
@@ -109,6 +108,11 @@ pub enum Command {
         srcs: Vec<PathInfo>,
         dest: PathInfo,
     },
+    Move {
+        srcs: Vec<PathInfo>,
+        dest: PathInfo,
+    },
+    Paste(PathInfo), // Intent: resolved by App into Copy or Move
     AddBookmark {
         directory: PathInfo,
         name: String,
@@ -119,20 +123,12 @@ pub enum Command {
         bookmarks: Vec<PathInfo>,
     },
     CreateDirectory(String),
+    ConfirmDelete, // Intent: resolved by TableView into Delete
     Delete(Vec<PathInfo>),
-    Move {
-        srcs: Vec<PathInfo>,
-        dest: PathInfo,
-    },
     Rename {
         path: PathInfo,
         name: String,
     },
-
-    // File operation intents
-    CancelTask,
-    ConfirmDelete,   // Intent: resolved by TableView into Delete
-    Paste(PathInfo), // Intent: resolved by App into Copy or Move
 
     // Prompt
     CancelPrompt,
@@ -146,8 +142,8 @@ pub enum Command {
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
-    CancelSearch, // Non-destructive: stop the search thread but keep results and notice
-    ExitSearch,
+    CancelSearch, // Intent: stop the search thread non-destructively (keep results and notice)
+    ExitedSearch, // Result: search thread has exited (completed or after CancelSearch)
     SearchResult(PathInfo), // Result: one search hit, appended by TableView
     SearchTick,
     StartSearch(String), // Intent: spawns the search thread; streams SearchResult

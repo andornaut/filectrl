@@ -97,7 +97,7 @@ impl TableView {
         }
     }
 
-    pub(super) fn show_bookmarks(&self) -> CommandResult {
+    pub(super) fn get_bookmarks(&self) -> CommandResult {
         Command::GetBookmarks.into()
     }
 
