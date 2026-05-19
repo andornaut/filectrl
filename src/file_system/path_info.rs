@@ -1,6 +1,5 @@
 use std::{
     cmp, env,
-    ffi::OsStr,
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
@@ -8,51 +7,40 @@ use std::{
     time::SystemTime,
 };
 
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Error, Result};
 use chrono::{DateTime, Datelike, Local};
 use nix::unistd::{Gid, Group, Uid, User};
 
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
-trait PathExt {
-    fn to_string(&self) -> Result<String>;
-    fn to_basename(&self) -> String;
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map_or(String::new(), |n| n.to_string_lossy().into_owned())
 }
 
-impl PathExt for Path {
-    fn to_string(&self) -> Result<String> {
-        // Ref. https://stackoverflow.com/a/42579588,
-        // https://stackoverflow.com/a/67205030,
-        // https://stackoverflow.com/a/31667995
-        osstr_to_string(self.as_os_str())
-    }
-
-    fn to_basename(&self) -> String {
-        // file_name() is None for the root dir (eg. `/`)
-        self.file_name()
-            .map_or("".into(), |name| osstr_to_string(name).unwrap_or("".into()))
-    }
-}
-
-fn osstr_to_string(os_str: &OsStr) -> Result<String> {
-    // Ref. https://profpatsch.de/notes/rust-string-conversions
-    os_str
-        .to_os_string()
-        .into_string()
-        .map_err(|orig| anyhow!("Path cannot be converted to a string: {:?}", orig))
+fn breadcrumbs(path: &Path) -> Vec<String> {
+    let mut parts: Vec<_> = path
+        .ancestors()
+        .map(|p| {
+            p.file_name()
+                .map_or(String::new(), |n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    parts.reverse();
+    parts
 }
 
 #[derive(Clone, Eq)]
 pub struct PathInfo {
-    pub basename: String,
+    pub path: PathBuf,
+    pub display_name: String,
     pub modified: Option<DateTime<Local>>,
-    pub path: String,
     pub size: u64,
 
     gid: u32,
     uid: u32,
-    inode: u64, // Unique identifier for the file on the system
+    inode: u64,
     mode: u32,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
@@ -60,17 +48,11 @@ pub struct PathInfo {
 
 impl PathInfo {
     pub fn as_path(&self) -> &Path {
-        Path::new(&self.path)
+        &self.path
     }
 
     pub fn breadcrumbs(&self) -> Vec<String> {
-        let mut breadcrumbs: Vec<_> = self
-            .as_path()
-            .ancestors()
-            .map(|path| path.to_basename())
-            .collect();
-        breadcrumbs.reverse();
-        breadcrumbs
+        breadcrumbs(&self.path)
     }
 
     pub fn accessed(&self, relative_to: DateTime<Local>) -> Option<String> {
@@ -99,18 +81,18 @@ impl PathInfo {
 
     pub fn name(&self) -> String {
         if self.is_directory() {
-            format!("{}{MAIN_SEPARATOR}", self.basename)
+            format!("{}{MAIN_SEPARATOR}", self.display_name)
         } else {
-            self.basename.to_string()
+            self.display_name.clone()
         }
     }
 
     pub fn name_comparator(&self) -> String {
-        self.basename.trim_start_matches('.').to_lowercase()
+        self.display_name.trim_start_matches('.').to_lowercase()
     }
 
     pub fn is_hidden(&self) -> bool {
-        self.basename.starts_with('.')
+        self.display_name.starts_with('.')
     }
 
     pub fn group(&self) -> Option<String> {
@@ -128,7 +110,7 @@ impl PathInfo {
     }
 
     pub fn parent(&self) -> Option<PathInfo> {
-        self.as_path()
+        self.path
             .parent()
             .and_then(|parent| PathInfo::try_from(parent).ok())
     }
@@ -154,8 +136,6 @@ impl PathInfo {
     }
 
     pub fn is_door(&self) -> bool {
-        // Check if the file is a door (Solaris IPC mechanism)
-        // On non-Solaris systems, this will always return false
         #[cfg(target_os = "solaris")]
         {
             unix_mode::is_door(self.mode)
@@ -166,9 +146,8 @@ impl PathInfo {
             false
         }
     }
+
     pub fn is_executable(&self) -> bool {
-        // Check if the file is executable by anyone (user, group, or other)
-        // The executable bits are 0o111 in octal (73 in decimal)
         (self.mode & 0o111) != 0
     }
 
@@ -177,16 +156,17 @@ impl PathInfo {
     }
 
     pub fn is_other_writable(&self) -> bool {
-        // Check if the directory is writable by others (o+w)
-        // The other-writable bit is 0o002 in octal (2 in decimal)
         (self.mode & 0o002) != 0
     }
+
     pub fn is_pipe(&self) -> bool {
         unix_mode::is_fifo(self.mode)
     }
+
     pub fn is_same_inode(&self, other: &Self) -> bool {
         self.inode == other.inode
     }
+
     pub fn is_setgid(&self) -> bool {
         unix_mode::is_setgid(self.mode)
     }
@@ -208,13 +188,13 @@ impl PathInfo {
     }
 
     pub fn is_symlink_broken(&self) -> bool {
-        self.is_symlink() && !self.as_path().exists()
+        self.is_symlink() && !self.path.exists()
     }
 }
 
 impl fmt::Debug for PathInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self.path)
+        write!(f, "{:?}", self.path)
     }
 }
 
@@ -235,7 +215,7 @@ impl Default for PathInfo {
 
 impl Display for PathInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.path)
+        write!(f, "{}", self.path.display())
     }
 }
 
@@ -255,22 +235,18 @@ impl TryFrom<&Path> for PathInfo {
     type Error = Error;
 
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        // Only hold on to the data we care about, and drop DirEntry to avoid consuming File Handles on Unix.
-        // Ref: https://doc.rust-lang.org/std/fs/struct.DirEntry.html#platform-specific-behavior
-        //   On Unix, the DirEntry struct contains an internal reference to the open directory.
-        //   Holding DirEntry objects will consume a file handle even after the ReadDir iterator is dropped.
         let metadata = path.symlink_metadata()?;
 
         Ok(Self {
             accessed: maybe_time(metadata.accessed()),
-            basename: path.to_basename(),
             created: maybe_time(metadata.created()),
+            display_name: display_name(path),
+            gid: metadata.gid(),
             inode: metadata.ino(),
             mode: metadata.permissions().mode(),
             modified: maybe_time(metadata.modified()),
-            path: path.to_string()?,
+            path: path.to_path_buf(),
             size: metadata.len(),
-            gid: metadata.gid(),
             uid: metadata.uid(),
         })
     }
@@ -477,7 +453,7 @@ mod tests {
     #[test_case(".README",  "readme"  ; "strips dot and lowercases")]
     fn name_comparator_is_correct(basename: &str, expected: &str) {
         let mut info = PathInfo::try_from(Path::new(".")).unwrap();
-        info.basename = basename.to_string();
+        info.display_name = basename.to_string();
         assert_eq!(expected, info.name_comparator());
     }
 }

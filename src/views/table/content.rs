@@ -64,22 +64,22 @@ impl DirectoryContent {
     pub(super) fn sort(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
         let mut indices: Vec<usize> = (0..self.items.len()).collect();
 
-        match sort_column {
-            SortColumn::Name => {
-                let keys: Vec<_> = self.items.iter().map(|p| p.name_comparator()).collect();
-                indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
+        indices.sort_by(|a, b| {
+            let ord = match sort_column {
+                SortColumn::Name => self.items[*a]
+                    .name_comparator()
+                    .cmp(&self.items[*b].name_comparator()),
+                SortColumn::Modified => self.items[*a]
+                    .modified_comparator()
+                    .cmp(&self.items[*b].modified_comparator()),
+                SortColumn::Size => self.items[*a].size.cmp(&self.items[*b].size),
+            };
+            if *sort_direction == SortDirection::Descending {
+                ord.reverse()
+            } else {
+                ord
             }
-            SortColumn::Modified => {
-                let keys: Vec<_> = self.items.iter().map(|p| p.modified_comparator()).collect();
-                indices.sort_by(|a, b| keys[*a].cmp(&keys[*b]));
-            }
-            SortColumn::Size => {
-                indices.sort_by_key(|i| self.items[*i].size);
-            }
-        };
-        if *sort_direction == SortDirection::Descending {
-            indices.reverse();
-        }
+        });
 
         if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
             indices.sort_by_key(|i| !self.items[*i].is_directory());
@@ -205,7 +205,7 @@ mod tests {
         content
             .items_sorted()
             .iter()
-            .map(|p| p.basename.clone())
+            .map(|p| p.display_name.clone())
             .collect()
     }
 
