@@ -27,6 +27,11 @@ pub(super) struct PromptView {
     suggestions: Vec<(String, bool)>,
     /// Goto: index of the currently shown suggestion.
     suggestion_index: usize,
+    /// Goto: the directory `cached_entries` was read from. Avoids re-reading
+    /// the filesystem on every keystroke while the directory prefix is unchanged.
+    cached_dir: Option<PathBuf>,
+    /// Goto: every entry of `cached_dir` as `(name, is_dir)`, sorted ascending.
+    cached_entries: Vec<(String, bool)>,
 }
 
 impl PromptView {
@@ -64,6 +69,10 @@ impl PromptView {
         if let PromptAction::Goto { directory } = kind {
             self.basedir = directory.clone();
             self.suggestion_index = 0;
+            // Drop any cache from a previous prompt so on-disk changes since
+            // it was last open are picked up.
+            self.cached_dir = None;
+            self.cached_entries.clear();
             self.refresh_suggestions();
         }
         CommandResult::Handled
@@ -192,22 +201,30 @@ impl PromptView {
             return;
         }
         let dir = self.resolve_path(dir_prefix);
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            let mut matches: Vec<(String, bool)> = entries
-                .flatten()
-                .filter_map(|entry| {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if name.starts_with(partial) {
+        // Only hit the filesystem when the resolved directory changes; typing
+        // within the same directory just re-filters the cached listing.
+        if self.cached_dir.as_deref() != Some(dir.as_path()) {
+            self.cached_entries.clear();
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                let mut all: Vec<(String, bool)> = entries
+                    .flatten()
+                    .map(|entry| {
+                        let name = entry.file_name().to_string_lossy().into_owned();
                         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                        Some((name, is_dir))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            matches.sort_by(|a, b| a.0.cmp(&b.0));
-            self.suggestions = matches;
+                        (name, is_dir)
+                    })
+                    .collect();
+                all.sort_by(|a, b| a.0.cmp(&b.0));
+                self.cached_entries = all;
+            }
+            self.cached_dir = Some(dir);
         }
+        self.suggestions = self
+            .cached_entries
+            .iter()
+            .filter(|(name, _)| name.starts_with(partial))
+            .cloned()
+            .collect();
         if self.suggestion_index >= self.suggestions.len() {
             self.suggestion_index = 0;
         }
@@ -530,5 +547,49 @@ mod tests {
         assert!(view.current_suggestion().is_some());
         view.handle_key(&KeyCode::Left, &KeyModifiers::NONE);
         assert!(!view.cursor_at_end()); // overlay is skipped in render() when false
+    }
+
+    // ── split_input ──────────────────────────────────────────────────────────
+
+    #[test_case("",          "",      ""    ; "empty input")]
+    #[test_case("file",      "",      "file"; "no separator: all partial")]
+    #[test_case("dir/",      "dir/",  ""    ; "trailing slash: empty partial")]
+    #[test_case("dir/file",  "dir/",  "file"; "relative dir prefix")]
+    #[test_case("/abs/path", "/abs/", "path"; "absolute dir prefix")]
+    #[test_case("a/b/c",     "a/b/",  "c"   ; "splits at the last separator")]
+    #[test_case("/",         "/",     ""    ; "root only")]
+    fn split_input_cases(input: &str, expected_prefix: &str, expected_partial: &str) {
+        assert_eq!(
+            PromptView::split_input(input),
+            (expected_prefix, expected_partial)
+        );
+    }
+
+    // ── resolve_path ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_path_joins_relative_input_onto_basedir() {
+        let view = goto_prompt(Path::new("/tmp/base"));
+        assert_eq!(
+            view.resolve_path("sub/file"),
+            PathBuf::from("/tmp/base/sub/file")
+        );
+    }
+
+    #[test]
+    fn resolve_path_uses_absolute_input_as_is() {
+        let view = goto_prompt(Path::new("/tmp/base"));
+        assert_eq!(view.resolve_path("/etc/hosts"), PathBuf::from("/etc/hosts"));
+    }
+
+    #[test]
+    fn resolve_path_expands_tilde_to_home() {
+        let home = directories::BaseDirs::new()
+            .unwrap()
+            .home_dir()
+            .to_path_buf();
+        let view = goto_prompt(Path::new("/tmp/base"));
+        assert_eq!(view.resolve_path("~"), home);
+        assert_eq!(view.resolve_path("~/Documents"), home.join("Documents"));
     }
 }

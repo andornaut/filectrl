@@ -152,4 +152,50 @@ mod tests {
             assert!(marks.contains(&i));
         }
     }
+
+    #[test]
+    fn update_range_is_a_noop_when_not_in_range_mode() {
+        let mut marks = Marks::default();
+        marks.toggle(1);
+        marks.update_range(9);
+        assert_eq!(marks.len(), 1);
+        assert!(marks.contains(&1));
+        assert!(!marks.contains(&9));
+    }
+
+    #[test]
+    fn update_range_works_when_cursor_is_before_anchor() {
+        let mut marks = Marks::default();
+        marks.enter_range(5);
+        marks.update_range(2);
+        assert_eq!(marks.len(), 4);
+        for i in 2..=5 {
+            assert!(marks.contains(&i));
+        }
+    }
+
+    #[test]
+    fn update_range_shrinks_when_cursor_moves_back_toward_anchor() {
+        let mut marks = Marks::default();
+        marks.enter_range(2);
+        marks.update_range(5);
+        marks.update_range(3);
+        assert_eq!(marks.len(), 2);
+        assert!(marks.contains(&2));
+        assert!(marks.contains(&3));
+        assert!(!marks.contains(&4));
+    }
+
+    #[test]
+    fn clear_resets_both_the_set_and_the_anchor() {
+        let mut marks = Marks::default();
+        marks.enter_range(2);
+        marks.update_range(5);
+        marks.clear();
+        assert!(marks.is_empty());
+        assert!(!marks.in_range_mode());
+        // After clearing, a stale anchor must not resurrect a range.
+        marks.update_range(9);
+        assert!(marks.is_empty());
+    }
 }

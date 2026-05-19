@@ -302,7 +302,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             "Page down, up".into(),
             format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
         ),
-        ("Go to parent dir".into(), d(Action::Back)),
+        ("Go to parent dir".into(), d(Action::GoToParentDirectory)),
         (
             "Go to previous dir".into(),
             d(Action::GoToPreviousDirectory),
@@ -472,5 +472,23 @@ impl View for HelpView {
                 .style(style)
                 .render(bordered_area, frame.buffer_mut());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::annotate_uppercase;
+
+    #[test_case("End",     "End"                 ; "multi-char key is unchanged")]
+    #[test_case("G",       "G (Uppercase)"       ; "single uppercase letter is annotated")]
+    #[test_case("g",       "g"                   ; "single lowercase letter is unchanged")]
+    #[test_case("1",       "1"                   ; "single digit is not annotated")]
+    #[test_case("",        ""                    ; "empty string is unchanged")]
+    #[test_case("G/End",   "G (Uppercase)/End"   ; "annotates only the single-letter half")]
+    #[test_case("g/G",     "g/G (Uppercase)"     ; "annotates the uppercase half of a pair")]
+    fn annotate_uppercase_cases(input: &str, expected: &str) {
+        assert_eq!(annotate_uppercase(input), expected);
     }
 }
