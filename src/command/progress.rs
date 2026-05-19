@@ -582,4 +582,85 @@ mod tests {
         let combined = t.combine_progress(&progress(10, 50));
         assert_eq!(progress(10, 150), combined);
     }
+
+    fn recv_task(rx: &std::sync::mpsc::Receiver<Command>) -> Task {
+        match rx.recv().expect("a Progress command should have been sent") {
+            Command::Progress(task) => task,
+            other => panic!("expected Command::Progress, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_task_drop_without_finalize_reports_error() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        drop(active);
+
+        let task = recv_task(&rx);
+        assert_eq!(Some("Task interrupted".to_string()), task.error_message());
+        assert!(task.is_terminal());
+        // Drop sends exactly one message.
+        assert!(rx.recv().is_err());
+    }
+
+    #[test]
+    fn active_task_done_sends_done_and_drop_is_noop() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        active.done();
+
+        let task = recv_task(&rx);
+        assert!(task.is_terminal());
+        assert_eq!(None, task.error_message());
+        assert_eq!(100, task.progress.percentage());
+        // Finalization consumed the task, so Drop must not send a second update.
+        assert!(rx.recv().is_err());
+    }
+
+    #[test]
+    fn active_task_cancelled_sends_cancelled_status() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        active.cancelled();
+
+        let task = recv_task(&rx);
+        assert!(task.is_cancelled());
+        assert!(task.is_terminal());
+        assert!(rx.recv().is_err());
+    }
+
+    #[test]
+    fn active_task_error_sends_error_message() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        active.error("disk full".to_string());
+
+        let task = recv_task(&rx);
+        assert_eq!(Some("disk full".to_string()), task.error_message());
+        assert!(task.is_terminal());
+        assert!(!task.is_cancelled());
+        assert!(rx.recv().is_err());
+    }
+
+    #[test]
+    fn active_task_send_progress_then_done_emits_two_updates() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (mut active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        active.increment(40);
+        active.send_progress();
+
+        let mid = recv_task(&rx);
+        assert!(!mid.is_terminal());
+        assert_eq!(40, mid.progress.percentage());
+
+        active.done();
+        let done = recv_task(&rx);
+        assert!(done.is_terminal());
+        assert!(rx.recv().is_err());
+    }
 }

@@ -7,7 +7,7 @@ use crate::command::{Command, progress::CancellationToken};
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Each matching entry is sent as a
-/// `Command::SearchResult` through the channel. A `Command::ExitSearch`
+/// `Command::SearchResult` through the channel. A `Command::ExitedSearch`
 /// is sent when the traversal finishes (or is cancelled).
 pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: CancellationToken) {
     thread::spawn(move || {
@@ -18,7 +18,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
         while let Some(dir) = queue.pop_front() {
             if cancel.is_cancelled() {
-                let _ = tx.send(Command::ExitSearch);
+                let _ = tx.send(Command::ExitedSearch);
                 return;
             }
 
@@ -32,7 +32,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
             for entry in entries {
                 if cancel.is_cancelled() {
-                    let _ = tx.send(Command::ExitSearch);
+                    let _ = tx.send(Command::ExitedSearch);
                     return;
                 }
 
@@ -65,6 +65,6 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
             }
         }
 
-        let _ = tx.send(Command::ExitSearch);
+        let _ = tx.send(Command::ExitedSearch);
     });
 }

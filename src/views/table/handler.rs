@@ -118,7 +118,7 @@ impl CommandHandler for TableView {
                     CommandResult::Handled
                 }
             }
-            Command::ExitSearch => CommandResult::Handled,
+            Command::ExitedSearch => CommandResult::Handled,
             // FileSystem resolves GetBookmarks into Bookmarks.
             Command::GetBookmarks => CommandResult::NotHandled,
             Command::Bookmarks { bookmarks } => {
@@ -188,7 +188,7 @@ impl CommandHandler for TableView {
             Some(Action::RangeMark) => self.enter_range_mode(),
             // File operations
             Some(Action::AddBookmark) => self.open_add_bookmark_prompt(),
-            Some(Action::GetBookmarks) => self.show_bookmarks(),
+            Some(Action::GetBookmarks) => self.get_bookmarks(),
             Some(Action::Chmod) => self.open_chmod_prompt(),
             Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),
