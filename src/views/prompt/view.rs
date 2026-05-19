@@ -41,25 +41,26 @@ impl View for PromptView {
         // Goto type-ahead: paint the muted completion suffix + match counter
         // as an overlay after the typed text, only while the cursor is at the
         // end of the input (otherwise it would misalign with an interior cursor).
-        if matches!(self.actions, PromptAction::Goto { .. }) && self.cursor_at_end() {
-            if let Some((suffix, idx, total)) = self.current_suggestion() {
-                let typed_width = self.text_area.lines()[0].width() as u16;
-                let start = typed_width.saturating_sub(self.scroll_col);
-                if start < input_area.width {
-                    let text = if total > 1 {
-                        format!("{suffix} ({} of {total})", idx + 1)
-                    } else {
-                        suffix
-                    };
-                    let max_width = (input_area.width - start) as usize;
-                    frame.buffer_mut().set_stringn(
-                        input_area.x + start,
-                        input_area.y,
-                        text,
-                        max_width,
-                        theme.prompt.goto_suggestion(),
-                    );
-                }
+        if matches!(self.actions, PromptAction::Goto { .. })
+            && self.cursor_at_end()
+            && let Some((suffix, idx, total)) = self.current_suggestion()
+        {
+            let typed_width = self.text_area.lines()[0].width() as u16;
+            let start = typed_width.saturating_sub(self.scroll_col);
+            if start < input_area.width {
+                let text = if total > 1 {
+                    format!("{suffix} ({} of {total})", idx + 1)
+                } else {
+                    suffix
+                };
+                let max_width = (input_area.width - start) as usize;
+                frame.buffer_mut().set_stringn(
+                    input_area.x + start,
+                    input_area.y,
+                    text,
+                    max_width,
+                    theme.prompt.goto_suggestion(),
+                );
             }
         }
     }

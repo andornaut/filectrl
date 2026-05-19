@@ -42,7 +42,7 @@ use crate::{
 ///
 /// Also acts as a guard against a handler stuck deriving commands forever.
 /// See `broadcast_command` for what happens when it is exceeded.
-const BROADCASTS_COUNT: u8 = 5;
+const MAX_BROADCAST_CHAIN_LENGTH: u8 = 5;
 
 pub struct App {
     clipboard: Clipboard,
@@ -106,7 +106,7 @@ impl App {
         let mut pending = vec![command];
         let mut unhandled = Vec::new();
 
-        for _ in 0..BROADCASTS_COUNT {
+        for _ in 0..MAX_BROADCAST_CHAIN_LENGTH {
             if pending.is_empty() {
                 break;
             }
@@ -137,7 +137,7 @@ impl App {
             // the channel so it is non-fatal) instead of silently dropping the
             // user's action.
             let message = format!(
-                "Broadcast cycle limit ({BROADCASTS_COUNT}) exceeded; dropped {} derived command(s): {:?}",
+                "Broadcast cycle limit ({MAX_BROADCAST_CHAIN_LENGTH}) exceeded; dropped {} derived command(s): {:?}",
                 pending.len(),
                 pending
             );

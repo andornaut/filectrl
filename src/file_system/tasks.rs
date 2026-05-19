@@ -289,8 +289,13 @@ fn copy_directory(
 
     for entry in entries {
         if active.is_cancelled() {
-            let _ = fs::remove_dir_all(new_path);
-            active.cancelled();
+            if let Err(e) = fs::remove_dir_all(new_path) {
+                active.error(format!(
+                    "Cancelled, but failed to clean up {new_path:?}: {e}"
+                ));
+            } else {
+                active.cancelled();
+            }
             return None;
         }
 

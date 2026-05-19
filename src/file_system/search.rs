@@ -5,6 +5,8 @@ use log::warn;
 use super::path_info::PathInfo;
 use crate::command::{Command, progress::CancellationToken};
 
+const MAX_SEARCH_DEPTH: u32 = 20;
+
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Each matching entry is sent as a
 /// `Command::SearchResult` through the channel. A `Command::ExitedSearch`
@@ -13,10 +15,11 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
     thread::spawn(move || {
         let query_lower = query.to_lowercase();
         let root_path = root.path.clone();
-        let mut queue: VecDeque<PathBuf> = VecDeque::new();
-        queue.push_back(root_path.clone());
+        let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
+        queue.push_back((root_path.clone(), 0));
+        let mut depth_limit_hit = false;
 
-        while let Some(dir) = queue.pop_front() {
+        while let Some((dir, depth)) = queue.pop_front() {
             if cancel.is_cancelled() {
                 let _ = tx.send(Command::ExitedSearch);
                 return;
@@ -48,18 +51,25 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
                 let file_name = entry.file_name();
                 let name = file_name.to_string_lossy();
 
-                if name.to_lowercase().contains(&query_lower) {
-                    if let Ok(path_info) = PathInfo::try_from(entry_path.as_path()) {
-                        if tx.send(Command::SearchResult(path_info)).is_err() {
-                            return;
-                        }
-                    }
+                if name.to_lowercase().contains(&query_lower)
+                    && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
+                    && tx.send(Command::SearchResult(path_info)).is_err()
+                {
+                    return;
                 }
 
                 // Enqueue directories for BFS traversal (don't follow symlinks)
-                if let Ok(metadata) = entry_path.symlink_metadata() {
-                    if metadata.is_dir() {
-                        queue.push_back(entry_path);
+                if let Ok(metadata) = entry_path.symlink_metadata()
+                    && metadata.is_dir()
+                {
+                    let next_depth = depth + 1;
+                    if next_depth <= MAX_SEARCH_DEPTH {
+                        queue.push_back((entry_path, next_depth));
+                    } else if !depth_limit_hit {
+                        depth_limit_hit = true;
+                        let _ = tx.send(Command::AlertWarn(
+                                format!("Search reached maximum depth of {MAX_SEARCH_DEPTH} levels; some results may be missing")
+                            ));
                     }
                 }
             }

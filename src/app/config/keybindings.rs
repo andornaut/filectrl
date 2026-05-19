@@ -245,11 +245,11 @@ impl KeyBindings {
             return Some(*action);
         }
         // Fallback: uppercase chars may arrive with or without SHIFT depending on terminal
-        if let KeyCode::Char(c) = code {
-            if c.is_uppercase() {
-                let toggled = *modifiers ^ KeyModifiers::SHIFT;
-                return map.get(&KeyCombo::new(*code, toggled)).copied();
-            }
+        if let KeyCode::Char(c) = code
+            && c.is_uppercase()
+        {
+            let toggled = *modifiers ^ KeyModifiers::SHIFT;
+            return map.get(&KeyCombo::new(*code, toggled)).copied();
         }
         None
     }
@@ -376,15 +376,16 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
 
     for (action, combos) in bindings {
         for combo in combos {
-            if let Some(existing) = map.insert(*combo, *action) {
-                if existing != *action && !hardcoded_keys(existing).contains(combo) {
-                    return Err(anyhow!(
-                        "Key '{}' is bound to both {:?} and {:?}",
-                        format_key_combo(combo),
-                        existing,
-                        action,
-                    ));
-                }
+            if let Some(existing) = map.insert(*combo, *action)
+                && existing != *action
+                && !hardcoded_keys(existing).contains(combo)
+            {
+                return Err(anyhow!(
+                    "Key '{}' is bound to both {:?} and {:?}",
+                    format_key_combo(combo),
+                    existing,
+                    action,
+                ));
             }
         }
     }
@@ -521,7 +522,7 @@ fn format_key_combo(combo: &KeyCombo) -> String {
         KeyCode::PageUp => format!("{prefix}PgUp"),
         KeyCode::PageDown => format!("{prefix}PgDn"),
         KeyCode::F(n) => format!("{prefix}F{n}"),
-        _ => format!("{prefix}?"),
+        _ => unreachable!("all KeyCode variants must be handled in format_key_combo"),
     }
 }
 

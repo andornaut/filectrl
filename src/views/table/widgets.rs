@@ -141,6 +141,6 @@ fn display_name(path: &PathInfo, search_root: Option<&Path>) -> String {
                 name
             }
         }
-        None => path.name(),
+        None => path.name().into_owned(),
     }
 }
