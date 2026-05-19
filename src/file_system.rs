@@ -98,7 +98,7 @@ impl FileSystem {
             .expect("directory is set before any navigation command")
     }
 
-    fn back(&mut self) -> CommandResult {
+    fn go_to_parent_directory(&mut self) -> CommandResult {
         match self.current_directory().parent() {
             Some(parent) => self.cd(parent, true),
             None => CommandResult::Handled,
@@ -245,9 +245,8 @@ impl FileSystem {
     }
 
     fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {
-        let mode = match u32::from_str_radix(mode_str, 8) {
-            Ok(m) if m <= 0o7777 => m,
-            _ => return anyhow!("Invalid octal mode: {mode_str:?}").into(),
+        let Some(mode) = parse_octal_mode(mode_str) else {
+            return anyhow!("Invalid octal mode: {mode_str:?}").into();
         };
         for path in paths {
             if let Err(error) = operations::chmod(path, mode) {
@@ -357,5 +356,43 @@ impl FileSystem {
         let _ = self.command_tx.send(Command::AlertWarn(format!(
             "Failed to read directory {dir:?}: {error}"
         )));
+    }
+}
+
+/// Parses a chmod-style octal mode string. Returns `None` for non-octal input
+/// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
+fn parse_octal_mode(mode_str: &str) -> Option<u32> {
+    match u32::from_str_radix(mode_str, 8) {
+        Ok(mode) if mode <= 0o7777 => Some(mode),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_octal_mode_accepts_valid_modes() {
+        assert_eq!(Some(0o644), parse_octal_mode("644"));
+        assert_eq!(Some(0o755), parse_octal_mode("755"));
+        assert_eq!(Some(0o0), parse_octal_mode("0"));
+        assert_eq!(Some(0o7777), parse_octal_mode("7777"));
+        assert_eq!(Some(0o4755), parse_octal_mode("4755"));
+    }
+
+    #[test]
+    fn parse_octal_mode_rejects_out_of_range() {
+        assert_eq!(None, parse_octal_mode("10000"));
+        assert_eq!(None, parse_octal_mode("77777"));
+    }
+
+    #[test]
+    fn parse_octal_mode_rejects_non_octal() {
+        assert_eq!(None, parse_octal_mode("888"));
+        assert_eq!(None, parse_octal_mode("0o644"));
+        assert_eq!(None, parse_octal_mode("rwx"));
+        assert_eq!(None, parse_octal_mode(""));
+        assert_eq!(None, parse_octal_mode("-1"));
     }
 }

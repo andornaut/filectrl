@@ -221,6 +221,15 @@ impl ActiveTask {
         self.task.as_ref().map_or(0, |t| t.progress.total)
     }
 
+    /// Sets the task's total size once it becomes known (e.g. after scanning a
+    /// directory) and sends a progress update so the notice reflects it.
+    pub fn set_total(&mut self, total: u64) {
+        if let Some(task) = &mut self.task {
+            task.progress.total = total;
+        }
+        self.send_progress();
+    }
+
     pub fn increment(&mut self, additional: u64) {
         if let Some(task) = &mut self.task {
             task.increment(additional);
@@ -378,4 +387,199 @@ enum TaskStatus {
     InProgress,
     #[default]
     New,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn progress(completed: u64, total: u64) -> Progress {
+        Progress { completed, total }
+    }
+
+    #[test]
+    fn progress_percentage() {
+        assert_eq!(100, progress(0, 0).percentage()); // total == 0 is "done"
+        assert_eq!(100, progress(50, 0).percentage());
+        assert_eq!(0, progress(0, 100).percentage());
+        assert_eq!(50, progress(50, 100).percentage());
+        assert_eq!(33, progress(1, 3).percentage()); // 33.33 rounds down
+        assert_eq!(67, progress(2, 3).percentage()); // 66.67 rounds up
+        assert_eq!(100, progress(100, 100).percentage());
+    }
+
+    #[test]
+    fn progress_scaled() {
+        assert_eq!(10, progress(0, 0).scaled(10)); // done -> full factor
+        assert_eq!(10, progress(100, 100).scaled(10)); // done -> full factor
+        assert_eq!(0, progress(0, 100).scaled(10));
+        assert_eq!(5, progress(50, 100).scaled(10));
+        assert_eq!(3, progress(1, 3).scaled(10)); // 3.33 rounds down
+        assert_eq!(10, progress(200, 100).scaled(10)); // clamped to factor
+    }
+
+    #[test]
+    fn progress_increment_clamps_at_total() {
+        let mut p = progress(0, 100);
+        p.increment(40);
+        assert_eq!(progress(40, 100), p);
+        assert!(!p.is_done());
+        p.increment(1_000);
+        assert_eq!(progress(100, 100), p);
+        assert!(p.is_done());
+    }
+
+    #[test]
+    fn progress_is_done() {
+        assert!(progress(0, 0).is_done()); // zero total is done
+        assert!(progress(100, 100).is_done());
+        assert!(!progress(0, 100).is_done());
+        assert!(!progress(99, 100).is_done());
+    }
+
+    fn copy(source: &str, destination: &str) -> TaskKind {
+        TaskKind::Copy {
+            source: source.to_string(),
+            destination: destination.to_string(),
+        }
+    }
+
+    #[test]
+    fn task_kind_prefix() {
+        assert_eq!("Copying ", copy("a", "b").prefix());
+        assert_eq!(
+            "Moving ",
+            TaskKind::Move {
+                source: "a".into(),
+                destination: "b".into()
+            }
+            .prefix()
+        );
+        assert_eq!("Deleting ", TaskKind::Delete { path: "a".into() }.prefix());
+    }
+
+    #[test]
+    fn task_kind_source_and_basename() {
+        let k = copy("/a/b/file.txt", "/c/d/file.txt");
+        assert_eq!(Some("/a/b/file.txt"), k.source());
+        assert_eq!(Some("file.txt"), k.source_basename());
+
+        let del = TaskKind::Delete {
+            path: "/x/y".into(),
+        };
+        assert_eq!(None, del.source());
+        assert_eq!(None, del.source_basename());
+    }
+
+    #[test]
+    fn task_kind_copy_into_directory_shows_parent() {
+        // Same basename: show the destination's parent directory with a trailing slash.
+        let k = copy("/a/b/file.txt", "/c/d/file.txt");
+        assert_eq!("/c/d/", k.target());
+        assert_eq!("/a/b/file.txt to /c/d/", k.detail());
+        assert_eq!("Copying /a/b/file.txt to /c/d/", k.message());
+    }
+
+    #[test]
+    fn task_kind_copy_with_rename_shows_full_destination() {
+        // Different basename: show the full destination path.
+        let k = copy("/a/b/old.txt", "/c/d/new.txt");
+        assert_eq!("/c/d/new.txt", k.target());
+        assert_eq!("/a/b/old.txt to /c/d/new.txt", k.detail());
+    }
+
+    #[test]
+    fn task_kind_dest_display_edge_parents() {
+        // Destination at filesystem root: parent is "/".
+        assert_eq!("/", copy("z/file.txt", "/file.txt").target());
+        // Destination has no directory component: empty parent falls back to the
+        // destination itself, with a trailing slash appended.
+        assert_eq!("file.txt/", copy("z/file.txt", "file.txt").target());
+    }
+
+    #[test]
+    fn task_kind_delete_detail_and_message() {
+        let k = TaskKind::Delete {
+            path: "/x/y".into(),
+        };
+        assert_eq!("/x/y", k.target());
+        assert_eq!("/x/y", k.detail());
+        assert_eq!("Deleting /x/y", k.message());
+    }
+
+    fn delete_task() -> Task {
+        Task::new(TaskKind::Delete { path: "/x".into() }, 100)
+    }
+
+    #[test]
+    fn task_starts_new_with_unique_id() {
+        let a = delete_task();
+        let b = delete_task();
+        assert!(a.is_new());
+        assert!(!a.is_terminal());
+        assert_ne!(a.id(), b.id());
+    }
+
+    #[test]
+    fn task_identity_equality_and_hash() {
+        let mut a = delete_task();
+        let snapshot = a.clone();
+        a.increment(50); // progress/status diverge from the snapshot
+        // Identity-based equality: still the same task.
+        assert_eq!(a, snapshot);
+
+        let mut set = HashSet::new();
+        set.insert(snapshot);
+        // Re-inserting a later snapshot of the same task does not grow the set.
+        assert!(!set.insert(a));
+        assert_eq!(1, set.len());
+
+        // A different task is distinct.
+        assert!(set.insert(delete_task()));
+        assert_eq!(2, set.len());
+    }
+
+    #[test]
+    fn task_increment_transitions_status() {
+        let mut t = delete_task();
+        t.increment(40);
+        assert!(!t.is_new());
+        assert!(!t.is_terminal());
+        t.increment(60);
+        assert!(t.is_terminal()); // reached total -> Done
+    }
+
+    #[test]
+    fn task_done_marks_progress_complete_and_terminal() {
+        let mut t = delete_task();
+        t.done();
+        assert!(t.is_terminal());
+        assert_eq!(100, t.progress.percentage());
+    }
+
+    #[test]
+    fn task_cancelled_is_terminal() {
+        let mut t = delete_task();
+        t.cancelled();
+        assert!(t.is_cancelled());
+        assert!(t.is_terminal());
+    }
+
+    #[test]
+    fn task_error_records_message_and_is_terminal() {
+        let mut t = delete_task();
+        t.error("disk full");
+        assert_eq!(Some("disk full".to_string()), t.error_message());
+        assert!(t.is_terminal());
+        assert!(!t.is_cancelled());
+    }
+
+    #[test]
+    fn task_combine_progress_sums_fields() {
+        let t = Task::new(TaskKind::Delete { path: "/x".into() }, 100);
+        let combined = t.combine_progress(&progress(10, 50));
+        assert_eq!(progress(10, 150), combined);
+    }
 }

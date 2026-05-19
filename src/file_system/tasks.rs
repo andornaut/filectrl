@@ -91,25 +91,43 @@ fn run_copy_task(
     };
 
     let is_directory = path.is_directory();
-    let total_size = if is_directory {
-        match dir_total_size(&old_path) {
-            Ok(size) => size,
-            Err(error) => {
-                return TaskRunResult::failed(
-                    Command::AlertError(format!("Failed to read directory {old_path:?}: {error}"))
-                        .into(),
-                );
-            }
-        }
-    } else {
-        path.size
-    };
+    // Pre-flight: if the directory's top level cannot even be read, fail fast
+    // *before* the task is registered. The expensive part (the recursive size
+    // walk) still runs off the UI thread below, but this cheap top-level read
+    // catches the common failure (unreadable directory / permission denied)
+    // without ever sending an initial progress snapshot. That preserves the
+    // guarantee that a failed directory copy never orphans a progress notice:
+    // a worker-thread terminal error could otherwise race ahead of the
+    // main-thread initial snapshot and leave a stuck progress bar.
+    if is_directory && let Err(error) = fs::read_dir(&old_path) {
+        return TaskRunResult::failed(
+            Command::AlertError(format!("Failed to read directory {old_path:?}: {error}")).into(),
+        );
+    }
 
-    let (active, initial, token) = ActiveTask::new(tx, kind, total_size);
-    let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+    // Seed with the entry's own size; for a directory the real total is
+    // computed in the worker thread (the scan can be slow and must not block
+    // the UI event loop) and applied via `active.set_total`.
+    let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
+    let file_size = path.size;
     let source_mode = path.mode();
 
     thread::spawn(move || {
+        let total_size = if is_directory {
+            match dir_total_size(&old_path) {
+                Ok(size) => {
+                    active.set_total(size);
+                    size
+                }
+                Err(error) => {
+                    active.error(format!("Failed to read directory {old_path:?}: {error}"));
+                    return;
+                }
+            }
+        } else {
+            file_size
+        };
+        let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
         if let Some(active) = copy_path(
             &old_path,
             &new_path,
@@ -423,6 +441,24 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Collapses `.` and `..` components purely lexically (no filesystem access,
+/// so it works for destinations that do not exist yet). `..` pops the previous
+/// component; at the root it is a no-op.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 fn validate_paths(
     source: &PathInfo,
     destination_directory: &PathInfo,
@@ -435,5 +471,88 @@ fn validate_paths(
         return Err(anyhow!("Cannot {operation} {old_path:?} to {new_path:?}: Source and destination paths must be different").into());
     }
 
+    // Reject copying/moving a directory into its own subtree. Without this, a
+    // copy creates the destination under the source and then recurses into it
+    // forever, filling the disk. Compare lexically-absolute, `..`-collapsed
+    // paths so the component-wise prefix check is not fooled by relative paths
+    // or parent-dir segments (e.g. `/a/c/../b`).
+    let abs_old =
+        lexical_normalize(&std::path::absolute(&old_path).unwrap_or_else(|_| old_path.clone()));
+    let abs_new =
+        lexical_normalize(&std::path::absolute(&new_path).unwrap_or_else(|_| new_path.clone()));
+    if abs_new.starts_with(&abs_old) {
+        return Err(anyhow!(
+            "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
+        )
+        .into());
+    }
+
     Ok((old_path, new_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    // (len, min, max) -> expected buffer size. With BUFFER_SIZE_DIVISOR == 20.
+    #[test_case(0, 10, 100 => 0 ; "zero length")]
+    #[test_case(5, 10, 100 => 5 ; "below min uses len")]
+    #[test_case(10, 10, 100 => 10 ; "equal to min uses len")]
+    #[test_case(2000, 10, 100 => 100 ; "at max*divisor uses max")]
+    #[test_case(5000, 10, 100 => 100 ; "above max*divisor uses max")]
+    #[test_case(400, 10, 100 => 20 ; "mid range uses len/divisor")]
+    #[test_case(30, 10, 100 => 10 ; "mid range floored at min")]
+    fn buffer_bytes_is_correct(len: u64, min: u64, max: u64) -> usize {
+        buffer_bytes(len, min, max)
+    }
+
+    fn path_info(path: &str, basename: &str) -> PathInfo {
+        // Private fields prevent literal construction; build from a real path
+        // then overwrite the public fields used by validate_paths.
+        let mut info = PathInfo::try_from(Path::new("/")).unwrap();
+        info.path = path.to_string();
+        info.basename = basename.to_string();
+        info
+    }
+
+    #[test]
+    fn validate_paths_rejects_identical_source_and_destination() {
+        let src = path_info("/a/b", "b");
+        let dest = path_info("/a", "a");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_destination_inside_source() {
+        let src = path_info("/a/b", "b");
+        let dest = path_info("/a/b/c", "c");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_destination_inside_source_via_parent_dir() {
+        // new_path = "/a/c/../b" must normalize to "/a/b" and be rejected,
+        // even though a raw component-wise prefix check would not catch it.
+        let src = path_info("/a/b", "b");
+        let dest = path_info("/a/c/..", "c");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_allows_sibling_destination() {
+        let src = path_info("/a/b", "b");
+        let dest = path_info("/x", "x");
+        let (old_path, new_path) = validate_paths(&src, &dest, "copy").expect("should be allowed");
+        assert_eq!(PathBuf::from("/a/b"), old_path);
+        assert_eq!(PathBuf::from("/x/b"), new_path);
+    }
+
+    #[test]
+    fn validate_paths_allows_destination_with_shared_prefix_but_different_component() {
+        // "/a/bb" must not be treated as inside "/a/b".
+        let src = path_info("/a/b", "b");
+        let dest = path_info("/a/bb", "bb");
+        assert!(validate_paths(&src, &dest, "copy").is_ok());
+    }
 }

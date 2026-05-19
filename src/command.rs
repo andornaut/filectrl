@@ -18,6 +18,20 @@ pub enum InputMode {
     Normal,
 }
 
+/// What an open prompt is collecting input for.
+///
+/// Each variant is opened via `Command::OpenPrompt` and, on submit, resolves
+/// into a corresponding `Command` (see `PromptView::submit`). Some map to a
+/// same-named command (`Rename` -> `Command::Rename`); others to a different
+/// one (`Delete` -> `Command::ConfirmDelete`, `Filter` -> `Command::FilterChanged`,
+/// `Goto` -> `Command::Open`, `Search` -> `Command::StartSearch`).
+///
+/// The payloads differ by lifecycle stage: a `PromptAction` carries the prompt's
+/// *initial* state (e.g. `Rename.name` is the pre-filled text, `Delete(usize)` is
+/// a count for the confirmation message), whereas the resolved `Command` carries
+/// the *submitted* result (e.g. `Rename.name` is the entered text,
+/// `Delete(Vec<PathInfo>)` is the resolved paths). They are intentionally not
+/// merged for this reason.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptAction {
     Chmod {
@@ -53,7 +67,7 @@ pub enum Command {
     },
 
     // Navigation — handled by FileSystem
-    Back,
+    GoToParentDirectory,
     GoToPreviousDirectory,
     Open(PathInfo),
     Refresh,
@@ -111,17 +125,16 @@ pub enum Command {
 
     // Clipboard
     ClearClipboard,
-    SetClipboard(ClipboardEntry),
-    ReadFromClipboard,         // Intent: resolved by App into TextFromClipboard
-    TextFromClipboard(String), // Result of ReadFromClipboard; handled by PromptView
-    WriteToClipboard(String),  // Handled by App; writes text to system clipboard
+    SetClipboardEntry(ClipboardEntry),
+    GetClipboardText,         // Intent: resolved by App into ClipboardText
+    ClipboardText(String),    // Result of GetClipboardText; handled by PromptView
+    SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
     StartSearch(String),
     SearchResult(PathInfo),
     SearchComplete,
     CancelSearch, // Non-destructive: stop the search thread but keep results and notice
-
     SearchTick,
 
     // View state notifications — emitted by TableView

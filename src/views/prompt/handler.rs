@@ -14,7 +14,7 @@ impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::OpenPrompt(kind) => self.open(kind),
-            Command::TextFromClipboard(text) => {
+            Command::ClipboardText(text) => {
                 self.text_area.set_yank_text(text);
                 self.text_area.paste();
                 CommandResult::Handled
@@ -66,7 +66,7 @@ impl CommandHandler for PromptView {
                 return CommandResult::Handled;
             }
             Some(Action::PromptPaste) => {
-                return Command::ReadFromClipboard.into();
+                return Command::GetClipboardText.into();
             }
             Some(Action::PromptReset) => {
                 self.reset_text(&self.initial_text.clone());
@@ -86,7 +86,7 @@ impl CommandHandler for PromptView {
         // Copy/Cut must be checked after textarea processes the key, because
         // ratatui-textarea populates yank_text from the current selection during input().
         if matches!(action, Some(Action::PromptCopy) | Some(Action::PromptCut)) {
-            return Command::WriteToClipboard(self.text_area.yank_text()).into();
+            return Command::SetClipboardText(self.text_area.yank_text()).into();
         }
 
         CommandResult::Handled

@@ -322,13 +322,16 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
 }
 
 fn unit_index(bytes: u64) -> usize {
-    match bytes {
-        0 => 0,
-        b => {
-            let index = b.ilog10() / FACTOR.ilog10();
-            cmp::min(index, (UNITS.len() - 1) as u32) as usize
-        }
+    // Below one KiB there is no fractional rendering, so keep these values in
+    // the byte unit; otherwise 1000..=1023 would be mislabelled as "1.0K".
+    if bytes < FACTOR {
+        return 0;
     }
+    // For larger values, group by decimal-digit count. This deliberately
+    // promotes to the next unit slightly before it is numerically full (e.g.
+    // 1e9 bytes renders as "0.9G"), which is the intended display style.
+    let index = bytes.ilog10() / FACTOR.ilog10();
+    cmp::min(index, (UNITS.len() - 1) as u32) as usize
 }
 
 #[derive(Debug, PartialEq)]
@@ -398,6 +401,9 @@ mod tests {
 
     #[test_case("0",  0u64 ; "zero bytes")]
     #[test_case("499",  499u64 ; "between 1 and 999 bytes")]
+    #[test_case("1000",  1000u64 ; "1000 bytes stays in byte unit")]
+    #[test_case("1023",  1023u64 ; "1023 bytes stays in byte unit")]
+    #[test_case("1K",  1024u64 ; "1024 bytes is exactly 1K")]
     #[test_case("9.7K",  9900u64 ; "9900 bytes")]
     #[test_case("10K",  10400u64 ; "10400 bytes")]
     #[test_case("9.5M",  10_000_000u64 ; "10 million bytes (MB)")]

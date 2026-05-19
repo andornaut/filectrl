@@ -106,6 +106,12 @@ pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
 }
 
 pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
+    if new_basename.contains(std::path::MAIN_SEPARATOR) {
+        return Err(anyhow!(
+            "New name cannot contain {:?}",
+            std::path::MAIN_SEPARATOR
+        ));
+    }
     let old_path = path.as_path();
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");

@@ -16,11 +16,11 @@ impl TableView {
 
     fn set_clipboard(&mut self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
         if self.has_marks() {
-            Command::SetClipboard(make_entry(self.marked_paths())).into()
+            Command::SetClipboardEntry(make_entry(self.marked_paths())).into()
         } else {
             match self.selected_path() {
                 None => Command::AlertWarn("No file selected".into()).into(),
-                Some(path) => Command::SetClipboard(make_entry(vec![path.clone()])).into(),
+                Some(path) => Command::SetClipboardEntry(make_entry(vec![path.clone()])).into(),
             }
         }
     }

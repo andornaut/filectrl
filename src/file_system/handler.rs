@@ -4,7 +4,7 @@ use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::Back => self.back(),
+            Command::GoToParentDirectory => self.go_to_parent_directory(),
             Command::GoToPreviousDirectory => self.go_to_previous_directory(),
             Command::CancelTask => self.cancel_most_recent(),
             Command::ResetView => {
