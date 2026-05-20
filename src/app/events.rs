@@ -1,4 +1,5 @@
 use std::{
+    panic::{self, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
@@ -62,6 +63,20 @@ pub fn install_signal_handlers() -> Result<(), nix::errno::Errno> {
     Ok(())
 }
 
+/// Maximum number of commands drained from the channel per main-loop iteration.
+///
+/// A producer (search, file-system watcher) can fill the unbounded channel
+/// faster than the broadcast pipeline consumes from it. Without a cap, the
+/// drain loop never sees an empty channel and the UI freezes mid-burst with
+/// no incremental rendering. Searching "a" from "/" — which produces ~10k
+/// `SearchResult` commands as fast as the filesystem can be read — used to
+/// reproduce this.
+///
+/// 256 is high enough that typical bursts (a keystroke + a few fs events)
+/// finish in one cycle, and low enough that a 10k-result search yields
+/// ~40 render passes — smooth visible progress.
+const MAX_DRAIN_PER_CYCLE: usize = 256;
+
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives
     let Ok(first) = rx.recv() else {
@@ -75,9 +90,12 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
         return vec![Command::Quit];
     };
     let mut commands = vec![first];
-    // Drain any additional commands already queued
-    while let Ok(command) = rx.try_recv() {
-        commands.push(command);
+    // Drain any additional commands already queued, up to the cap.
+    while commands.len() < MAX_DRAIN_PER_CYCLE {
+        match rx.try_recv() {
+            Ok(command) => commands.push(command),
+            Err(_) => break,
+        }
     }
     commands
 }
@@ -87,45 +105,75 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
     // sparse enough that CPU overhead is negligible (<0.2 % on a single core).
     let poll_interval = Duration::from_millis(500);
 
-    thread::spawn(move || {
-        loop {
-            // Check the signal flag before each poll so that the window
-            // between a signal arriving and us noticing it is bounded by
-            // the poll timeout (~500 ms max). Checking first (rather than
-            // only after poll returns) also handles the unlikely case where
-            // the signal fires between poll() returning Ok(false) and the
-            // continue jumping back to the top.
-            if SIGNAL_RECEIVED.load(Ordering::Relaxed) {
-                // Signal handler fired — ask the main loop to shut down.
-                let _ = tx.send(Command::Quit);
-                break;
-            }
-
-            // poll() with a timeout. Returns Ok(true) if an event is queued
-            // (next read() is non-blocking), Ok(false) on timeout.
-            let event = match poll(poll_interval) {
-                Ok(true) => match read() {
-                    Ok(event) => event,
-                    Err(err) => {
-                        log::error!("Failed to read terminal event: {err}");
-                        break;
-                    }
-                },
-                Ok(false) => continue,
-                Err(err) => {
-                    log::error!("Failed to poll terminal event: {err}");
-                    break;
-                }
-            };
-
-            if let Some(command) = Command::maybe_from(event) {
-                // A send error means the receiver (App) has been dropped, i.e.
-                // the app is shutting down. Exit the thread cleanly instead of
-                // panicking on a late keystroke during teardown.
-                if tx.send(command).is_err() {
-                    break;
-                }
-            }
+    let builder = thread::Builder::new().name("filectrl-event-reader".into());
+    let spawn_result = builder.spawn(move || {
+        // catch_unwind so a panic in the reader thread is logged instead of
+        // silently terminating only the thread (leaving the main loop blocked
+        // forever on rx.recv()).
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            event_loop(&tx, poll_interval);
+        }));
+        if let Err(payload) = result {
+            let message = panic_message(&payload);
+            log::error!("Event reader thread panicked: {message}");
+            // Wake the main loop so it doesn't block forever.
+            let _ = tx.send(Command::Quit);
         }
     });
+
+    if let Err(err) = spawn_result {
+        log::error!("Failed to spawn event reader thread: {err}");
+    }
+}
+
+fn event_loop(tx: &Sender<Command>, poll_interval: Duration) {
+    loop {
+        // Check the signal flag before each poll so that the window
+        // between a signal arriving and us noticing it is bounded by
+        // the poll timeout (~500 ms max). Checking first (rather than
+        // only after poll returns) also handles the unlikely case where
+        // the signal fires between poll() returning Ok(false) and the
+        // continue jumping back to the top.
+        if SIGNAL_RECEIVED.load(Ordering::Relaxed) {
+            // Signal handler fired — ask the main loop to shut down.
+            let _ = tx.send(Command::Quit);
+            return;
+        }
+
+        // poll() with a timeout. Returns Ok(true) if an event is queued
+        // (next read() is non-blocking), Ok(false) on timeout.
+        let event = match poll(poll_interval) {
+            Ok(true) => match read() {
+                Ok(event) => event,
+                Err(err) => {
+                    log::error!("Failed to read terminal event: {err}");
+                    return;
+                }
+            },
+            Ok(false) => continue,
+            Err(err) => {
+                log::error!("Failed to poll terminal event: {err}");
+                return;
+            }
+        };
+
+        if let Some(command) = Command::maybe_from(event) {
+            // A send error means the receiver (App) has been dropped, i.e.
+            // the app is shutting down. Exit the thread cleanly instead of
+            // panicking on a late keystroke during teardown.
+            if tx.send(command).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "<non-string panic payload>"
+    }
 }
