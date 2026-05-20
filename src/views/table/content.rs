@@ -106,9 +106,9 @@ impl DirectoryContent {
         self.filter.clear();
     }
 
-    pub(super) fn append_search_result(&mut self, item: PathInfo) {
-        self.items.push(item.clone());
-        self.items_sorted.push(item);
+    pub(super) fn append_search_results(&mut self, items: &[PathInfo]) {
+        self.items.extend_from_slice(items);
+        self.items_sorted.extend_from_slice(items);
     }
 
     pub(super) fn clear_search(&mut self) {
