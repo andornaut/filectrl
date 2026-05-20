@@ -145,9 +145,9 @@ pub enum Command {
     // Search
     CancelSearch, // Intent: stop the search thread non-destructively (keep results and notice)
     ExitedSearch, // Result: search thread has exited (completed or after CancelSearch)
-    SearchResult(PathInfo), // Result: one search hit, appended by TableView
+    SearchResults(Vec<PathInfo>), // Result: a batch of search hits, appended by TableView
     SearchTick,
-    StartSearch(String), // Intent: spawns the search thread; streams SearchResult
+    StartSearch(String), // Intent: spawns the search thread; streams SearchResults
 
     // View state notifications — emitted by TableView
     FilterChanged(String),

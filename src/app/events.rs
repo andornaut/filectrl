@@ -63,20 +63,6 @@ pub fn install_signal_handlers() -> Result<(), nix::errno::Errno> {
     Ok(())
 }
 
-/// Maximum number of commands drained from the channel per main-loop iteration.
-///
-/// A producer (search, file-system watcher) can fill the unbounded channel
-/// faster than the broadcast pipeline consumes from it. Without a cap, the
-/// drain loop never sees an empty channel and the UI freezes mid-burst with
-/// no incremental rendering. Searching "a" from "/" — which produces ~10k
-/// `SearchResult` commands as fast as the filesystem can be read — used to
-/// reproduce this.
-///
-/// 256 is high enough that typical bursts (a keystroke + a few fs events)
-/// finish in one cycle, and low enough that a 10k-result search yields
-/// ~40 render passes — smooth visible progress.
-const MAX_DRAIN_PER_CYCLE: usize = 256;
-
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives
     let Ok(first) = rx.recv() else {
@@ -90,12 +76,11 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
         return vec![Command::Quit];
     };
     let mut commands = vec![first];
-    // Drain any additional commands already queued, up to the cap.
-    while commands.len() < MAX_DRAIN_PER_CYCLE {
-        match rx.try_recv() {
-            Ok(command) => commands.push(command),
-            Err(_) => break,
-        }
+    // Drain everything else already queued, then render once with all of it
+    // applied. No cap is needed: the search thread batches its hits
+    // (see file_system/search.rs), so no producer floods this channel.
+    while let Ok(command) = rx.try_recv() {
+        commands.push(command);
     }
     commands
 }
