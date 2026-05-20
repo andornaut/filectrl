@@ -108,15 +108,15 @@ impl CommandHandler for TableView {
                 self.table_state.select(None);
                 CommandResult::Handled
             }
-            Command::SearchResult(path_info) => {
-                if !self.content.is_searching() {
+            Command::SearchResults(path_infos) => {
+                if !self.content.is_searching() || path_infos.is_empty() {
                     return CommandResult::Handled;
                 }
-                let is_first = self.content.len() == 0;
-                self.content.append_search_result(path_info.clone());
-                if is_first {
+                let was_empty = self.content.len() == 0;
+                self.content.append_search_results(path_infos);
+                if was_empty {
                     self.table_state.select(Some(0));
-                    Command::SelectionChanged(Some(path_info.clone())).into()
+                    Command::SelectionChanged(path_infos.first().cloned()).into()
                 } else {
                     CommandResult::Handled
                 }
