@@ -1,14 +1,10 @@
-use std::{
-    fmt::{Debug, Display, Formatter},
-    sync::{Arc, Mutex},
-};
+use std::fmt::{Display, Formatter};
 
 use crate::file_system::path_info::PathInfo;
 use anyhow::{Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
 use log::warn;
 
-#[derive(Clone, Debug)]
 pub struct Clipboard {
     backend: Option<ClipboardBackend>,
 }
@@ -28,8 +24,8 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    pub fn clear(&self) -> Result<(), Error> {
-        match &self.backend {
+    pub fn clear(&mut self) -> Result<(), Error> {
+        match &mut self.backend {
             Some(backend) => backend.clear(),
             None => {
                 warn!("No clipboard backend available");
@@ -38,12 +34,12 @@ impl Clipboard {
         }
     }
 
-    pub fn get_clipboard_entry(&self) -> Option<ClipboardEntry> {
+    pub fn get_clipboard_entry(&mut self) -> Option<ClipboardEntry> {
         self.get_text()?.as_str().try_into().ok()
     }
 
-    pub fn get_text(&self) -> Option<String> {
-        let backend = match &self.backend {
+    pub fn get_text(&mut self) -> Option<String> {
+        let backend = match &mut self.backend {
             Some(b) => b,
             None => {
                 warn!("No clipboard backend available");
@@ -59,17 +55,19 @@ impl Clipboard {
         }
     }
 
-    pub fn set_text(&self, text: &str) {
-        match &self.backend {
+    pub fn set_text(&mut self, text: &str) {
+        match &mut self.backend {
             Some(backend) => {
-                let _ = backend.set_string(text);
+                if let Err(e) = backend.set_string(text) {
+                    warn!("Failed to set clipboard text: {e}");
+                }
             }
             None => warn!("No clipboard backend available"),
         }
     }
 
-    pub fn set_clipboard_entry(&self, entry: &ClipboardEntry) -> Result<(), Error> {
-        match &self.backend {
+    pub fn set_clipboard_entry(&mut self, entry: &ClipboardEntry) -> Result<(), Error> {
+        match &mut self.backend {
             Some(backend) => {
                 let text = entry.to_string();
                 backend.set_string(&text)
@@ -141,67 +139,40 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
     }
 }
 
-#[derive(Clone)]
 struct ClipboardBackend {
-    clipboard: Arc<Mutex<ArboardClipboard>>,
+    clipboard: ArboardClipboard,
     /// The last text this process wrote to the system clipboard, if any.
     /// Used by `clear` so a window only clears the clipboard when it was the
     /// last writer (its written content still matches the current content).
     /// Multiple filectrl windows are separate processes, each with its own
     /// tracker, so only the most recent writer will clear.
-    last_written: Arc<Mutex<Option<String>>>,
-}
-
-impl Debug for ClipboardBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClipboardBackend")
-            .field("clipboard", &"<arboard::Clipboard>")
-            .finish()
-    }
+    last_written: Option<String>,
 }
 
 impl ClipboardBackend {
     fn try_new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
-            clipboard: Arc::new(Mutex::new(ArboardClipboard::new()?)),
-            last_written: Arc::new(Mutex::new(None)),
+            clipboard: ArboardClipboard::new()?,
+            last_written: None,
         })
     }
 
-    fn get_string(&self) -> Result<String, Error> {
-        let mut clipboard = self
-            .clipboard
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
-        clipboard
+    fn get_string(&mut self) -> Result<String, Error> {
+        self.clipboard
             .get_text()
             .map_err(|e| anyhow!("Failed to get clipboard contents: {}", e))
     }
 
-    fn set_string(&self, text: &str) -> Result<(), Error> {
-        let mut clipboard = self
-            .clipboard
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock clipboard: {}", e))?;
-        clipboard
+    fn set_string(&mut self, text: &str) -> Result<(), Error> {
+        self.clipboard
             .set_text(text.to_string())
             .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))?;
-        *self
-            .last_written
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock clipboard tracker: {}", e))? =
-            Some(text.to_string());
+        self.last_written = Some(text.to_string());
         Ok(())
     }
 
-    fn clear(&self) -> Result<(), Error> {
-        let last_written = self
-            .last_written
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock clipboard tracker: {}", e))?
-            .clone();
-
-        let Some(prev) = last_written else {
+    fn clear(&mut self) -> Result<(), Error> {
+        let Some(prev) = self.last_written.clone() else {
             // This window never wrote to the clipboard; leave it untouched so
             // we don't clobber content set by another app or filectrl window.
             return Ok(());

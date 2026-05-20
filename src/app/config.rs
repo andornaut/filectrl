@@ -79,7 +79,13 @@ pub struct Config {
 
 impl Config {
     pub fn init(config: Config) {
-        let _ = CONFIG.set(config);
+        if CONFIG.set(config).is_err() {
+            // Tests share one global Config across parallel cases; the first
+            // init wins and later calls are intentional no-ops. In production
+            // a second init is a bug (lib::run calls this exactly once).
+            #[cfg(all(debug_assertions, not(test)))]
+            panic!("Config::init called more than once outside tests");
+        }
     }
 
     pub fn global() -> &'static Config {
@@ -156,17 +162,20 @@ impl Config {
         config_dir: Option<PathBuf>,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
-        let user_value = parse_toml(content)?;
-        let mut value = merge_toml_values(merge_default_config()?, user_value);
-
-        // Files listed in the config's `include_files` are merged first.
-        let config_includes = Self::resolve_include_files(&value, config_dir.as_deref())?;
-        value = merge_include_paths(value, &config_includes)?;
-
-        // CLI --include paths are merged last, so they take precedence over everything
+        // Precedence (low → high): built-in defaults → user config file →
+        // include_files from the user config → CLI --include paths.
+        let mut value = merge_default_config()?;
+        value = merge_toml_values(value, parse_toml(content)?);
+        value = Self::merge_config_includes(value, config_dir.as_deref())?;
         value = merge_include_paths(value, include_paths)?;
-
         Self::parse_value(value, config_dir)
+    }
+
+    /// Resolves and merges files listed in the value's own `include_files`
+    /// array. Relative entries resolve against `config_dir`.
+    fn merge_config_includes(value: Value, config_dir: Option<&Path>) -> Result<Value> {
+        let includes = Self::resolve_include_files(&value, config_dir)?;
+        merge_include_paths(value, &includes)
     }
 
     /// The directory containing the resolved config file. Bookmarks live in a
@@ -296,7 +305,9 @@ fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Va
 
 fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
     // Canonicalize so the same file referenced via different paths is detected.
-    // Fall back to the raw path if canonicalization fails (e.g. in tests).
+    // Fall back to the raw path if canonicalization fails — a missing file or
+    // permission error will then surface from `fs::read_to_string` below with
+    // a more informative message.
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     // Resolve this file's own include_files relative to its real directory.
