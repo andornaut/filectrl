@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use env_logger::{Builder, DEFAULT_FILTER_ENV, Env};
 use log::{LevelFilter, info};
 
@@ -31,6 +31,13 @@ pub fn run(
     // Configure logging with a default level before loading config, so that Info+ messages from the
     // config initialization are logged
     configure_logging();
+
+    // Validate the initial directory before entering raw mode so an invalid
+    // positional argument fails fast with a clean stderr message and a nonzero
+    // exit code, rather than silently opening the TUI in the current directory.
+    let initial_directory = initial_directory
+        .map(validate_initial_directory)
+        .transpose()?;
 
     let mut config = Config::load(config_path, include_paths)?;
     apply_log_level(&config);
@@ -58,6 +65,16 @@ pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBu
         views::keybindings_help_text(&config.keybindings, bold)
     );
     Ok(())
+}
+
+fn validate_initial_directory(path: PathBuf) -> Result<PathBuf> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("Cannot open {}", path.display()))?;
+    if !canonical.is_dir() {
+        return Err(anyhow!("Not a directory: {}", canonical.display()));
+    }
+    Ok(canonical)
 }
 
 fn apply_log_level(config: &Config) {
@@ -89,4 +106,29 @@ fn configure_logging() {
             )
         })
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_initial_directory_accepts_a_directory() {
+        let dir = env::temp_dir();
+        let result = validate_initial_directory(dir.clone()).unwrap();
+        assert_eq!(result, dir.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn validate_initial_directory_rejects_a_nonexistent_path() {
+        let path = env::temp_dir().join("filectrl-does-not-exist-xyz");
+        assert!(validate_initial_directory(path).is_err());
+    }
+
+    #[test]
+    fn validate_initial_directory_rejects_a_regular_file() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let error = validate_initial_directory(file).unwrap_err();
+        assert!(error.to_string().starts_with("Not a directory:"));
+    }
 }
