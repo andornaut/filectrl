@@ -92,10 +92,7 @@ impl PromptView {
         if width == 0 {
             return;
         }
-        let (row, col) = self.text_area.cursor();
-        let line = &self.text_area.lines()[row];
-        let end = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
-        let cursor_display_col = line[..end].cell_width();
+        let cursor_display_col = self.text_area.screen_cursor().col as u16;
         self.scroll_col = next_scroll_top(self.scroll_col, cursor_display_col, width);
     }
 
@@ -275,7 +272,8 @@ impl PromptView {
 
     /// Whether the text cursor is at the end of the input line.
     fn cursor_at_end(&self) -> bool {
-        let (row, col) = self.text_area.cursor();
+        let cursor = self.text_area.cursor();
+        let (row, col) = (cursor.0, cursor.1);
         let len = self
             .text_area
             .lines()
