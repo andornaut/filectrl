@@ -1,3 +1,4 @@
+use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
@@ -5,7 +6,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
-use unicode_width::UnicodeWidthStr;
 
 use super::{ScrollbarView, View, bordered};
 use crate::{
@@ -144,14 +144,15 @@ fn max_label_width(normal: &[(String, String)], prompt: &[(String, String)]) -> 
     normal
         .iter()
         .chain(prompt.iter())
-        .map(|(label, _)| label.width())
+        .map(|(label, _)| label.cell_width() as usize)
         .max()
         .unwrap_or(0)
 }
 
 fn add_section_header(lines: &mut Vec<Line<'_>>, title: &str, max_label_width: usize, help: &Help) {
     // Body rows insert ": " (2 cols) between label and keys; match that here.
-    let header_padding = " ".repeat((max_label_width + 2).saturating_sub(title.width()));
+    let header_padding =
+        " ".repeat((max_label_width + 2).saturating_sub(title.cell_width() as usize));
     lines.push(Line::from(vec![
         Span::styled(title.to_string(), help.header()),
         Span::raw(header_padding),
@@ -166,7 +167,7 @@ fn add_keybinding_lines<'a>(
     help: &Help,
 ) {
     lines.extend(keybindings.iter().map(|(label, keys)| {
-        let padding = " ".repeat(max_label_width.saturating_sub(label.width()));
+        let padding = " ".repeat(max_label_width.saturating_sub(label.cell_width() as usize));
         Line::from(vec![
             Span::styled(label.as_str(), help.actions()),
             Span::raw(": "),
@@ -205,7 +206,8 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
         max_width: usize,
         bold: bool,
     ) {
-        let header_padding = " ".repeat((max_width + 2).saturating_sub(title.width()));
+        let header_padding =
+            " ".repeat((max_width + 2).saturating_sub(title.cell_width() as usize));
         if bold {
             out.push_str(BOLD);
         }
@@ -217,7 +219,7 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
         }
         out.push('\n');
         for (label, keys) in bindings {
-            let padding = " ".repeat(max_width.saturating_sub(label.width()));
+            let padding = " ".repeat(max_width.saturating_sub(label.cell_width() as usize));
             out.push_str(&format!("{label}: {padding}{keys}\n"));
         }
     }
