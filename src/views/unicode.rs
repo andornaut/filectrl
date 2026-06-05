@@ -1,6 +1,5 @@
-use textwrap::{Options, WordSplitter, wrap};
+use ratatui::buffer::CellWidth;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const ELLIPSIS: &str = "…";
 const ELLIPSIS_WIDTH: usize = 1;
@@ -29,7 +28,7 @@ pub(super) fn split_with_ellipsis(line: &str, width: usize) -> Vec<String> {
 pub(super) fn truncate_left(line: &str, width: usize) -> String {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
-    if line.width() <= width {
+    if line.cell_width() as usize <= width {
         return line.into();
     }
 
@@ -39,7 +38,7 @@ pub(super) fn truncate_left(line: &str, width: usize) -> String {
     let mut end_index = line.len();
 
     for (idx, g) in line.grapheme_indices(true).rev() {
-        let g_width = g.width();
+        let g_width = g.cell_width() as usize;
         if total_width + g_width > remaining_width {
             break;
         }
@@ -54,19 +53,29 @@ pub(super) fn truncate_left(line: &str, width: usize) -> String {
 }
 
 fn split(line: &str, width: usize) -> Vec<String> {
-    if line.width() <= width {
+    if line.cell_width() as usize <= width {
         return vec![line.into()];
     }
 
-    let width = width.saturating_sub(ELLIPSIS_WIDTH);
-    let options = Options::new(width)
-        .word_splitter(WordSplitter::NoHyphenation)
-        .break_words(true);
-
-    wrap(line, options)
-        .into_iter()
-        .map(|s| s.into_owned())
-        .collect()
+    let chunk_width = width.saturating_sub(ELLIPSIS_WIDTH);
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    for g in line.graphemes(true) {
+        let g_width = g.cell_width() as usize;
+        // Break before this grapheme would overflow, but never emit an empty
+        // line: a single grapheme wider than chunk_width still gets its own line.
+        if current_width + g_width > chunk_width && !current.is_empty() {
+            parts.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push_str(g);
+        current_width += g_width;
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
 }
 
 #[cfg(test)]
@@ -87,6 +96,16 @@ mod tests {
     fn split_with_ellipsis_cjk_measures_display_width_not_bytes() {
         // "中文" has byte length 6 but display width 4; fits in one part at width 4
         assert_eq!(vec!["中文"], split_with_ellipsis("中文", 4));
+    }
+
+    #[test]
+    fn split_with_ellipsis_breaks_at_grapheme_boundary_not_word() {
+        // Wrapping is character-based, not word-based: spaces are not treated as
+        // preferred break points, so each line is filled to the available width.
+        assert_eq!(
+            vec!["ab …", "cd …", "ef"],
+            split_with_ellipsis("ab cd ef", 4)
+        );
     }
 
     #[test]

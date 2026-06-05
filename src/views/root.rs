@@ -3,7 +3,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, Paragraph, Widget, Wrap},
+    widgets::{Fill, Paragraph, Widget, Wrap},
 };
 
 use super::{
@@ -140,7 +140,7 @@ impl View for RootView {
         // Fill the entire frame with the base background color so that uncovered areas
         // (e.g. continuation lines of wrapped filenames, empty space below the last row)
         // show the correct color rather than the terminal default.
-        Block::default()
+        Fill::new(" ")
             .style(theme.base())
             .render(area, frame.buffer_mut());
 

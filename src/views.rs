@@ -12,6 +12,7 @@ mod unicode;
 pub use help::keybindings_help_text;
 pub use scrollbar::ScrollbarView;
 
+use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -20,7 +21,6 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Widget},
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::command::handler::CommandHandler;
 
@@ -52,8 +52,8 @@ fn bordered(
 ) -> Rect {
     let fits = right_hint_fits(
         area.width as usize,
-        title_left.width(),
-        title_right.width(),
+        title_left.cell_width() as usize,
+        title_right.cell_width() as usize,
         2, // left + right border
     );
     let mut block = Block::default()
@@ -64,10 +64,7 @@ fn bordered(
         block = block.title(Line::from(title_right).alignment(Alignment::Right));
     }
     block.render(area, buf);
-    area.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    })
+    area.inner(Margin::new(1, 1))
 }
 
 #[cfg(test)]

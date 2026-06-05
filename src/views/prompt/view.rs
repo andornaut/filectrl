@@ -1,9 +1,9 @@
+use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     widgets::{Paragraph, Widget},
 };
-use unicode_width::UnicodeWidthStr;
 
 use super::{PromptView, View};
 use crate::app::config::Config;
@@ -17,7 +17,7 @@ impl View for PromptView {
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let theme = Config::global().theme();
         let label = self.label();
-        let label_width = label.width() as u16;
+        let label_width = label.cell_width();
 
         if matches!(self.actions, PromptAction::Delete(_)) {
             let label_widget = Paragraph::new(label).style(theme.prompt.delete());
@@ -45,7 +45,7 @@ impl View for PromptView {
             && self.cursor_at_end()
             && let Some((suffix, idx, total)) = self.current_suggestion()
         {
-            let typed_width = self.text_area.lines()[0].width() as u16;
+            let typed_width = self.text_area.lines()[0].cell_width();
             let start = typed_width.saturating_sub(self.scroll_col);
             if start < input_area.width {
                 let text = if total > 1 {

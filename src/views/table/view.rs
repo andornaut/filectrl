@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, StatefulWidget, Widget},
+    widgets::{Fill, StatefulWidget, Widget},
 };
 
 use super::{
@@ -40,8 +40,9 @@ impl TableView {
     fn render_1x1_block(&self, area: Rect, buf: &mut Buffer) {
         let theme = Config::global().theme();
         // Extend the table header above the scrollbar as a 1x1 block
-        let block = Block::default().style(theme.table.header());
-        block.render(Rect { height: 1, ..area }, buf);
+        Fill::new(" ")
+            .style(theme.table.header())
+            .render(Rect { height: 1, ..area }, buf);
     }
 
     fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer) {

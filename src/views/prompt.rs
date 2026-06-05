@@ -3,9 +3,9 @@ mod view;
 
 use std::path::{Path, PathBuf};
 
+use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui_textarea::{CursorMove, TextArea};
-use unicode_width::UnicodeWidthChar;
 
 use super::{View, unicode::pluralize_items};
 use crate::{
@@ -93,11 +93,9 @@ impl PromptView {
             return;
         }
         let (row, col) = self.text_area.cursor();
-        let cursor_display_col: u16 = self.text_area.lines()[row]
-            .chars()
-            .take(col)
-            .map(|c| c.width().unwrap_or(0) as u16)
-            .sum();
+        let line = &self.text_area.lines()[row];
+        let end = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+        let cursor_display_col = line[..end].cell_width();
         self.scroll_col = next_scroll_top(self.scroll_col, cursor_display_col, width);
     }
 
@@ -107,8 +105,10 @@ impl PromptView {
         let line = &self.text_area.lines()[0];
         let mut remaining = display_col;
         let mut idx = 0u16;
-        for c in line.chars() {
-            let w = c.width().unwrap_or(1) as u16;
+        let mut chars = line.char_indices().peekable();
+        while let Some((start, _)) = chars.next() {
+            let end = chars.peek().map(|(i, _)| *i).unwrap_or(line.len());
+            let w = line[start..end].cell_width();
             if remaining < w {
                 break;
             }

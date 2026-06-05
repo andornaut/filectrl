@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use ratatui::buffer::CellWidth;
 use ratatui::{
     layout::Alignment,
     style::{Modifier, Style},
@@ -7,7 +8,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders},
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{
@@ -52,12 +52,12 @@ pub(super) fn clipboard_widget<'a>(
 
     let (detail, _) = if paths.len() > 1 {
         let text = pluralize_items(paths.len());
-        let w = text.width();
+        let w = text.cell_width();
         (text, w)
     } else {
-        let available_width = width.saturating_sub(prefix.width() as u16);
+        let available_width = width.saturating_sub(prefix.cell_width());
         let truncated = truncate_left(&paths[0].path.to_string_lossy(), available_width as usize);
-        let w = truncated.width();
+        let w = truncated.cell_width();
         (truncated, w)
     };
 
@@ -108,7 +108,7 @@ pub(super) fn progress_widget<'a>(
 
     let percentage = progress.percentage();
     let percentage_text = format!(" {}%", percentage);
-    let bar_width = width.saturating_sub(percentage_text.width() as u16);
+    let bar_width = width.saturating_sub(percentage_text.cell_width());
     let progress_width = progress.scaled(bar_width);
 
     let filled = block::FULL.repeat(progress_width.into());
@@ -134,10 +134,10 @@ const MIN_TRUNCATE_WIDTH: usize = 2;
 /// most relevant part for the user. When there is no room for any detail
 /// (budget below the minimum), only an ellipsis is shown (e.g. `Copying …`).
 fn truncate_detail(prefix: &str, detail: &str, width: u16) -> String {
-    let budget = (width as usize).saturating_sub(prefix.width());
+    let budget = (width as usize).saturating_sub(prefix.cell_width() as usize);
     if budget < MIN_TRUNCATE_WIDTH {
         "…".to_string()
-    } else if detail.width() <= budget {
+    } else if detail.cell_width() as usize <= budget {
         detail.to_string()
     } else {
         truncate_left(detail, budget)
@@ -156,13 +156,13 @@ fn operation_detail(kind: &TaskKind, width: u16) -> String {
     let detail = match (kind.source(), kind.source_basename(), kind.destination()) {
         (Some(source), Some(base), Some(destination)) => {
             let dir = kind.target();
-            let budget = (width as usize).saturating_sub(prefix.width());
+            let budget = (width as usize).saturating_sub(prefix.cell_width() as usize);
             let full = format!("{source} to {dir}");
             // The source basename stays intact if the full form fits as-is, or
             // if `<basename> to <dir>` survives a left-truncation (which costs
             // one column for the ellipsis). Otherwise switch to the `to` form.
-            if full.width() <= budget
-                || format!("{base} to {dir}").width() <= budget.saturating_sub(1)
+            if full.cell_width() as usize <= budget
+                || format!("{base} to {dir}").cell_width() as usize <= budget.saturating_sub(1)
             {
                 full
             } else {
@@ -273,7 +273,7 @@ fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a s
         .title(left)
         .style(style);
 
-    if right_hint_fits(width as usize, left_width, hint.width(), 0) {
+    if right_hint_fits(width as usize, left_width, hint.cell_width() as usize, 0) {
         let right = Line::from(hint).alignment(Alignment::Right);
         block.title(right)
     } else {

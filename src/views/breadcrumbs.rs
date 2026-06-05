@@ -1,5 +1,6 @@
 use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path};
 
+use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
@@ -8,7 +9,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
-use unicode_width::UnicodeWidthStr;
 
 use super::View;
 use crate::{
@@ -248,7 +248,7 @@ fn spans<'a>(
         } else {
             name
         };
-        let name_len = display_name.width().min(u16::MAX as usize) as u16;
+        let name_len = display_name.cell_width();
         // Tags and the last entry have no trailing separator. Path components
         // between them occupy name_len + 1 columns (name + separator).
         let entry_len = name_len + if is_last || is_tag { 0 } else { 1 };
