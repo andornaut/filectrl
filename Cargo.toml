@@ -22,7 +22,7 @@ directories = "6.0.0"
 log = {version = "0.4.32", default-features = false, features = ["serde"]}
 nix = {version = "0.31.3", default-features = false, features = ["signal", "user"]}
 notify = "8.2.0"
-ratatui-textarea = {version = "0.8.0", features = ["crossterm"]}
+ratatui-textarea = {version = "0.9.1", features = ["crossterm"]}
 ratatui = {version = "0.30.1", features = ["serde"]}
 serde = {version = "1.0.228", features = ["derive"]}
 toml = "1.1.2"
