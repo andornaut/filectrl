@@ -5,23 +5,22 @@ use std::{
     process::{Child, Stdio},
     sync::mpsc::Sender,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
 use log::{info, warn};
 
-use super::path_info::PathInfo;
+use super::{
+    path_info::PathInfo,
+    stream::{BATCH_FLUSH_INTERVAL, Batcher},
+};
 use crate::{
     app::config::Config,
     command::{Command, progress::CancellationToken},
 };
 
-// Entries are streamed in batches (rather than one command per entry) so a flood
-// of commands cannot starve terminal input in the single FIFO command channel.
-// A batch flushes once it reaches CD_BATCH_SIZE or CD_FLUSH_INTERVAL elapses.
 const CD_BATCH_SIZE: usize = 256;
-const CD_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
 
 /// Spawns a background thread that reads `directory` and streams its entries as
 /// `Command::DirectoryListing` batches, finishing with a
@@ -49,8 +48,11 @@ pub(super) fn stream_cd(
             }
         };
 
-        let mut batch: Vec<PathInfo> = Vec::new();
-        let mut last_flush = Instant::now();
+        let send = |items| {
+            tx.send(Command::DirectoryListing { items, generation })
+                .is_ok()
+        };
+        let mut batcher = Batcher::new(CD_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
         let mut error_count: usize = 0;
 
         for entry in entries {
@@ -68,21 +70,19 @@ pub(super) fn stream_cd(
                 }
             };
             match PathInfo::try_from(&path) {
-                Ok(info) => batch.push(info),
+                Ok(info) => {
+                    if !batcher.push(info, &send) {
+                        return; // channel closed
+                    }
+                }
                 Err(error) => {
                     warn!("Could not read metadata for {path:?}: {error}");
                     error_count += 1;
                 }
             }
-            if batch.len() >= CD_BATCH_SIZE || last_flush.elapsed() >= CD_FLUSH_INTERVAL {
-                if !flush_listing(&tx, &mut batch, generation) {
-                    return; // channel closed
-                }
-                last_flush = Instant::now();
-            }
         }
 
-        if !flush_listing(&tx, &mut batch, generation) {
+        if !batcher.flush(&send) {
             return;
         }
         if error_count > 0 {
@@ -93,19 +93,6 @@ pub(super) fn stream_cd(
         }
         let _ = tx.send(Command::DirectoryListingComplete { generation });
     });
-}
-
-/// Sends the accumulated batch (if any) as a single `Command::DirectoryListing`.
-/// Returns `false` if the channel is closed, signalling the caller to stop.
-fn flush_listing(tx: &Sender<Command>, batch: &mut Vec<PathInfo>, generation: u64) -> bool {
-    if batch.is_empty() {
-        return true;
-    }
-    tx.send(Command::DirectoryListing {
-        items: std::mem::take(batch),
-        generation,
-    })
-    .is_ok()
 }
 
 pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Command>) -> Result<()> {
