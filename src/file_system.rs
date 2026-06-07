@@ -41,6 +41,11 @@ pub struct FileSystem {
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     previous_directory: Option<PathInfo>,
+    /// Cancellation token for the in-flight streamed directory load, if any.
+    /// Cancelled when a new load starts so stale batches don't bleed across.
+    current_load: Option<CancellationToken>,
+    /// Monotonic id stamped on each load so consumers can ignore stale batches.
+    next_load_id: u64,
     open_current_directory_template: String,
     open_new_window_template: String,
     open_selected_file_template: String,
@@ -64,6 +69,8 @@ impl FileSystem {
             command_tx,
             directory: None,
             previous_directory: None,
+            current_load: None,
+            next_load_id: 0,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
             open_selected_file_template: config.openers.open_selected_file.clone(),
@@ -113,40 +120,54 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
-        match operations::cd(&directory) {
-            Ok((children, error_count)) => {
-                if error_count > 0 {
-                    let _ = self.command_tx.send(Command::AlertWarn(format!(
-                        "{error_count} entries in {directory:?} could not be read"
-                    )));
-                }
-                // Track the directory we're leaving so "-" can toggle back to it.
-                if navigate
-                    && let Some(current) = &self.directory
-                    && current.path != directory.path
-                {
-                    self.previous_directory = Some(current.clone());
-                }
-                self.directory = Some(directory.clone());
-                let path_buf = directory.path.clone();
-                if let Some(watcher) = &mut self.watcher
-                    && let Err(e) = watcher.watch_directory(path_buf.clone())
-                {
-                    self.send_directory_error(&path_buf, e);
-                }
-                if navigate {
-                    Command::NavigatedDirectory {
-                        directory,
-                        children,
-                    }
-                } else {
-                    Command::RefreshedDirectory {
-                        directory,
-                        children,
-                    }
-                }
+        // Cheap readability pre-flight so we don't switch into a directory we
+        // cannot open (e.g. permission denied). The full per-entry read happens
+        // asynchronously in `stream_cd` below.
+        if let Err(error) = fs::read_dir(&directory.path) {
+            return anyhow!("Failed to change to directory {directory:?}: {error}").into();
+        }
+
+        // Track the directory we're leaving so "-" can toggle back to it.
+        if navigate
+            && let Some(current) = &self.directory
+            && current.path != directory.path
+        {
+            self.previous_directory = Some(current.clone());
+        }
+        self.directory = Some(directory.clone());
+        let path_buf = directory.path.clone();
+        if let Some(watcher) = &mut self.watcher
+            && let Err(e) = watcher.watch_directory(path_buf.clone())
+        {
+            self.send_directory_error(&path_buf, e);
+        }
+
+        // Cancel any in-flight load so its batches don't bleed into this one,
+        // then start streaming the new directory's entries.
+        if let Some(token) = self.current_load.take() {
+            token.cancel();
+        }
+        self.next_load_id += 1;
+        let generation = self.next_load_id;
+        let token = CancellationToken::new();
+        self.current_load = Some(token.clone());
+        operations::stream_cd(
+            directory.clone(),
+            generation,
+            self.command_tx.clone(),
+            token,
+        );
+
+        if navigate {
+            Command::NavigatedDirectory {
+                directory,
+                generation,
             }
-            Err(error) => anyhow!("Failed to change to directory {directory:?}: {error}").into(),
+        } else {
+            Command::RefreshedDirectory {
+                directory,
+                generation,
+            }
         }
         .into()
     }
