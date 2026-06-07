@@ -18,27 +18,19 @@ impl TableView {
     }
 
     pub(super) fn select_next(&mut self) -> CommandResult {
-        self.table_state.scroll_down_by(1);
-        self.update_range_marks();
-        if self.marks.in_range_mode() {
-            return Command::MarkCountChanged(self.marks.len()).into();
-        }
-        match self.selected_path() {
-            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
-            None => Command::SelectionChanged(None).into(),
-        }
+        // The render pass owns the scroll offset, so moving the selection is
+        // enough; the next render re-derives the window to keep it visible.
+        let last = self.content.len().saturating_sub(1);
+        let next = self.table_state.selected().map_or(0, |i| (i + 1).min(last));
+        self.select(next)
     }
 
     pub(super) fn select_previous(&mut self) -> CommandResult {
-        self.table_state.scroll_up_by(1);
-        self.update_range_marks();
-        if self.marks.in_range_mode() {
-            return Command::MarkCountChanged(self.marks.len()).into();
-        }
-        match self.selected_path() {
-            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
-            None => Command::SelectionChanged(None).into(),
-        }
+        let previous = self
+            .table_state
+            .selected()
+            .map_or(0, |i| i.saturating_sub(1));
+        self.select(previous)
     }
 
     pub(super) fn select_first(&mut self) -> CommandResult {
@@ -78,7 +70,7 @@ impl TableView {
         scroll::previous_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),
-            self.table_state.offset(),
+            self.first_visible_item,
         )
         .map_or(CommandResult::Handled, |item| self.select(item))
     }
