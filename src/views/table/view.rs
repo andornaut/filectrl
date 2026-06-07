@@ -72,19 +72,26 @@ impl TableView {
 
         let items = self.content.items_sorted();
 
-        // Cheap per-item heights for *every* item (no Row/Cell allocation): they
-        // drive the scroll/window math and the absolute line<->item mapper that
-        // the scrollbar and mouse code rely on.
-        let item_heights: Vec<usize> = items
-            .iter()
-            .map(|item| item_height(name_width, item, is_bookmarks, search_root) as usize)
-            .collect();
+        // Per-item heights drive the scroll/window math and the absolute
+        // line<->item mapper that the scrollbar and mouse code rely on. They
+        // depend only on the name column width and the listing, so cache them
+        // (and the mapper) across frames: a height for every item plus the
+        // mapper's full line map would otherwise be O(items) on every keystroke.
+        let key = (name_width, self.content.revision());
+        if self.height_cache_key != Some(key) {
+            self.cached_heights = items
+                .iter()
+                .map(|item| item_height(name_width, item, is_bookmarks, search_root) as usize)
+                .collect();
+            self.mapper = LineItemMap::new(self.cached_heights.clone(), visible_lines_count, 0);
+            self.height_cache_key = Some(key);
+        }
 
         // Own the scroll offset (rather than letting ratatui derive it from all
         // rows) so we can build Row widgets for only the visible window.
         let selected = self.table_state.selected();
         let (start, end) = visible_window(
-            &item_heights,
+            &self.cached_heights,
             visible_lines_count,
             selected.unwrap_or(0),
             self.first_visible_item,
@@ -134,7 +141,9 @@ impl TableView {
         }
         StatefulWidget::render(table, area, buf, &mut render_state);
 
-        self.mapper = LineItemMap::new(item_heights, visible_lines_count, start);
+        // The cached mapper's line<->item data is still valid; only the viewport
+        // window (which depends on the current selection and table height) moves.
+        self.mapper.set_window(start, visible_lines_count);
     }
 }
 

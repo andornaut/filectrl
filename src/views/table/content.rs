@@ -14,6 +14,10 @@ pub(super) struct DirectoryContent {
     bookmarks_active: bool,
     /// True while a directory's entries are still streaming in.
     loading: bool,
+    /// Bumped whenever `items_sorted` or display-affecting state (search root,
+    /// bookmarks mode) changes. Lets the view cache per-item row heights and
+    /// invalidate them with a cheap equality check.
+    revision: u64,
     /// Runtime override for showing hidden (dotfile) entries. `None` defers to
     /// the `ui.show_hidden_files` config value.
     show_hidden: Option<bool>,
@@ -40,6 +44,10 @@ impl DirectoryContent {
         &self.items_sorted
     }
 
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     #[cfg(test)]
     pub(super) fn set_items(&mut self, directory: PathInfo, items: Vec<PathInfo>) {
         self.directory = Some(directory);
@@ -55,6 +63,7 @@ impl DirectoryContent {
         self.items.clear();
         self.items_sorted.clear();
         self.loading = true;
+        self.revision += 1;
     }
 
     /// Append a streamed batch in read order so partial results are visible
@@ -62,6 +71,7 @@ impl DirectoryContent {
     pub(super) fn append_listing(&mut self, items: &[PathInfo]) {
         self.items.extend_from_slice(items);
         self.items_sorted.extend_from_slice(items);
+        self.revision += 1;
     }
 
     /// Finish a streamed load: sort (and filter) the accumulated entries once.
@@ -131,6 +141,8 @@ impl DirectoryContent {
             self.items_sorted
                 .retain(|path| path.name().to_lowercase().contains(&filter_lowercase));
         }
+
+        self.revision += 1;
     }
 
     pub(super) fn start_search(&mut self) {
@@ -139,15 +151,18 @@ impl DirectoryContent {
         self.items.clear();
         self.items_sorted.clear();
         self.filter.clear();
+        self.revision += 1;
     }
 
     pub(super) fn append_search_results(&mut self, items: &[PathInfo]) {
         self.items.extend_from_slice(items);
         self.items_sorted.extend_from_slice(items);
+        self.revision += 1;
     }
 
     pub(super) fn clear_search(&mut self) {
         self.search_root = None;
+        self.revision += 1;
     }
 
     pub(super) fn is_searching(&self) -> bool {
@@ -166,10 +181,12 @@ impl DirectoryContent {
         self.filter.clear();
         self.items = items;
         self.items_sorted.clear();
+        self.revision += 1;
     }
 
     pub(super) fn clear_bookmarks(&mut self) {
         self.bookmarks_active = false;
+        self.revision += 1;
     }
 
     pub(super) fn is_showing_bookmarks(&self) -> bool {
@@ -348,6 +365,31 @@ mod tests {
         content.toggle_show_hidden();
         content.sort(&SortColumn::Name, &SortDirection::Ascending);
         assert_eq!(content.len(), 2);
+    }
+
+    #[test]
+    fn revision_changes_when_the_listing_changes_but_not_on_reads() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+
+        let r0 = content.revision();
+        content.start_listing(fx.directory());
+        let r1 = content.revision();
+        assert_ne!(r0, r1, "start_listing must bump the revision");
+
+        content.append_listing(&[fx.file_entry("a", 1)]);
+        let r2 = content.revision();
+        assert_ne!(r1, r2, "append_listing must bump the revision");
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        let r3 = content.revision();
+        assert_ne!(r2, r3, "finalize_listing (sort) must bump the revision");
+
+        // Pure reads must not bump it (cache stays valid while only scrolling).
+        let _ = content.items_sorted();
+        let _ = content.len();
+        assert_eq!(r3, content.revision());
     }
 
     #[test]
