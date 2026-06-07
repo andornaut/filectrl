@@ -3,6 +3,7 @@ mod handler;
 mod operations;
 pub mod path_info;
 mod search;
+mod stream;
 mod tasks;
 mod watch;
 
