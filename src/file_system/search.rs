@@ -1,38 +1,16 @@
-use std::{
-    collections::VecDeque,
-    fs,
-    path::PathBuf,
-    sync::mpsc::Sender,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{collections::VecDeque, fs, path::PathBuf, sync::mpsc::Sender, thread};
 
 use log::warn;
 
-use super::path_info::PathInfo;
+use super::{
+    path_info::PathInfo,
+    stream::{BATCH_FLUSH_INTERVAL, Batcher},
+};
 use crate::command::{Command, progress::CancellationToken};
 
 const MAX_SEARCH_DEPTH: u32 = 20;
 const MAX_SEARCH_RESULTS: u32 = 10_000;
-
-// Search hits are batched rather than sent one command per match: a flood of
-// individual commands would sit ahead of terminal input in the single FIFO
-// command channel, making the UI unresponsive mid-search. A batch is flushed
-// once it reaches SEARCH_BATCH_SIZE or SEARCH_FLUSH_INTERVAL has elapsed
-// (whichever comes first), so results still stream visibly when matches are
-// sparse among many directories.
 const SEARCH_BATCH_SIZE: usize = 128;
-const SEARCH_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
-
-/// Sends the accumulated batch (if any) as a single `Command::SearchResults`.
-/// Returns `false` if the channel is closed, signalling the caller to stop.
-fn flush_batch(tx: &Sender<Command>, batch: &mut Vec<PathInfo>) -> bool {
-    if batch.is_empty() {
-        return true;
-    }
-    tx.send(Command::SearchResults(std::mem::take(batch)))
-        .is_ok()
-}
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Matching entries are sent in batches as
@@ -47,12 +25,12 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
         let mut depth_limit_hit = false;
         let mut result_count: u32 = 0;
 
-        let mut batch: Vec<PathInfo> = Vec::new();
-        let mut last_flush = Instant::now();
+        let send = |items| tx.send(Command::SearchResults(items)).is_ok();
+        let mut batcher = Batcher::new(SEARCH_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
 
         while let Some((dir, depth)) = queue.pop_front() {
             if cancel.is_cancelled() {
-                let _ = flush_batch(&tx, &mut batch);
+                let _ = batcher.flush(&send);
                 let _ = tx.send(Command::ExitedSearch);
                 return;
             }
@@ -67,17 +45,14 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
             for entry in entries {
                 if cancel.is_cancelled() {
-                    let _ = flush_batch(&tx, &mut batch);
+                    let _ = batcher.flush(&send);
                     let _ = tx.send(Command::ExitedSearch);
                     return;
                 }
 
                 // Time-based flush so sparse matches still stream to the UI.
-                if last_flush.elapsed() >= SEARCH_FLUSH_INTERVAL {
-                    if !flush_batch(&tx, &mut batch) {
-                        return;
-                    }
-                    last_flush = Instant::now();
+                if !batcher.flush_if_due(&send) {
+                    return;
                 }
 
                 let entry = match entry {
@@ -96,7 +71,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
                     && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
                 {
                     if result_count >= MAX_SEARCH_RESULTS {
-                        let _ = flush_batch(&tx, &mut batch);
+                        let _ = batcher.flush(&send);
                         let _ = tx.send(Command::AlertWarn(format!(
                             "Search stopped at {MAX_SEARCH_RESULTS} results"
                         )));
@@ -104,12 +79,8 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
                         return;
                     }
                     result_count += 1;
-                    batch.push(path_info);
-                    if batch.len() >= SEARCH_BATCH_SIZE {
-                        if !flush_batch(&tx, &mut batch) {
-                            return;
-                        }
-                        last_flush = Instant::now();
+                    if !batcher.push(path_info, &send) {
+                        return;
                     }
                 }
 
@@ -130,7 +101,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
             }
         }
 
-        let _ = flush_batch(&tx, &mut batch);
+        let _ = batcher.flush(&send);
         let _ = tx.send(Command::ExitedSearch);
     });
 }
