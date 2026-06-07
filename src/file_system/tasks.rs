@@ -99,6 +99,10 @@ fn run_copy_task(
     // guarantee that a failed directory copy never orphans a progress notice:
     // a worker-thread terminal error could otherwise race ahead of the
     // main-thread initial snapshot and leave a stuck progress bar.
+    //
+    // A symlink (even to a directory) has `is_directory == false`, so it skips
+    // this check and is later recreated as a link by `copy_symlink` rather than
+    // followed.
     if is_directory && let Err(error) = fs::read_dir(&old_path) {
         return TaskRunResult::failed(
             Command::AlertError(format!("Failed to read directory {old_path:?}: {error}")).into(),
@@ -313,29 +317,38 @@ fn copy_directory(
             format!("Failed to read metadata for {src:?}")
         );
 
-        if metadata.is_symlink() {
-            let target = try_or_abort!(
-                active,
-                fs::read_link(&src),
-                format!("Failed to read symlink {src:?}")
-            );
-            try_or_abort!(
-                active,
-                std::os::unix::fs::symlink(&target, &dst),
-                format!("Failed to create symlink {dst:?}")
-            );
-        } else {
-            active = copy_path(
-                &src,
-                &dst,
-                active,
-                buffer_size,
-                metadata.is_dir(),
-                metadata.permissions().mode(),
-            )?;
-        }
+        // `metadata` comes from `symlink_metadata`, so its mode carries
+        // `S_IFLNK` for a symlink; `copy_path` dispatches links, directories,
+        // and files uniformly off that mode.
+        active = copy_path(
+            &src,
+            &dst,
+            active,
+            buffer_size,
+            metadata.is_dir(),
+            metadata.permissions().mode(),
+        )?;
     }
 
+    Some(active)
+}
+
+/// Recreates the symlink at `old_path` as a new symlink at `new_path` pointing
+/// to the same (possibly relative, possibly dangling) target. The link itself
+/// is copied; its target is never followed, so no bytes are transferred and no
+/// permissions are applied (`fs::set_permissions` would follow the link and
+/// chmod the target instead of the link).
+fn copy_symlink(old_path: &Path, new_path: &Path, active: ActiveTask) -> Option<ActiveTask> {
+    let target = try_or_abort!(
+        active,
+        fs::read_link(old_path),
+        format!("Failed to read symlink {old_path:?}")
+    );
+    try_or_abort!(
+        active,
+        std::os::unix::fs::symlink(&target, new_path),
+        format!("Failed to create symlink {new_path:?}")
+    );
     Some(active)
 }
 
@@ -407,7 +420,12 @@ fn copy_path(
     is_directory: bool,
     source_mode: u32,
 ) -> Option<ActiveTask> {
-    if is_directory {
+    // Check symlink first: `source_mode` comes from `symlink_metadata`, so a
+    // symlink (even one pointing at a directory) is recreated as a link rather
+    // than followed. `is_directory` is already false for any symlink.
+    if unix_mode::is_symlink(source_mode) {
+        copy_symlink(old_path, new_path, active)
+    } else if is_directory {
         copy_directory(old_path, new_path, active, buffer_size)
     } else {
         copy_file(old_path, new_path, active, buffer_size)
@@ -557,5 +575,74 @@ mod tests {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
         assert!(validate_paths(&src, &dest, "copy").is_ok());
+    }
+
+    /// Self-cleaning unique temp directory.
+    struct TempDir {
+        dir: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir =
+                std::env::temp_dir().join(format!("filectrl_tasks_{}_{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn new_active_task() -> ActiveTask {
+        // Leak the receiver so the channel stays open for the task's lifetime;
+        // ActiveTask ignores send errors anyway.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::mem::forget(rx);
+        let kind = TaskKind::Copy(Transfer {
+            source: String::new(),
+            destination: String::new(),
+        });
+        let (active, _initial, _token) = ActiveTask::new(tx, kind, 0);
+        active
+    }
+
+    #[test]
+    fn copy_path_recreates_a_symlink_without_following_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fx = TempDir::new();
+        let target = fx.dir.join("target.txt");
+        std::fs::write(&target, b"hello").unwrap();
+        std::fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let link = fx.dir.join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let dst = fx.dir.join("copied_link.txt");
+
+        let source_mode = fs::symlink_metadata(&link).unwrap().permissions().mode();
+        assert!(unix_mode::is_symlink(source_mode));
+
+        let result = copy_path(&link, &dst, new_active_task(), 1024, false, source_mode);
+        assert!(result.is_some());
+
+        // The destination must itself be a symlink pointing at the same target,
+        // not a regular file containing the target's bytes.
+        let dst_meta = fs::symlink_metadata(&dst).unwrap();
+        assert!(dst_meta.is_symlink(), "destination must be a symlink");
+        assert_eq!(fs::read_link(&dst).unwrap(), target);
+
+        // The link's target must be untouched: copy must not chmod through the
+        // link or rewrite its contents.
+        let target_mode = fs::symlink_metadata(&target).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(target_mode, 0o600, "copy must not chmod the symlink target");
+        assert_eq!(std::fs::read(&target).unwrap(), b"hello");
     }
 }
