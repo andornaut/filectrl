@@ -27,21 +27,22 @@ use crate::{
 };
 
 /// Maximum number of broadcast cycles per input command. Each cycle resolves
-/// one link in an intent → result chain; the longest legitimate chain is 5,
+/// one link in an intent → result chain; the longest legitimate chain is 4,
 /// which occurs when `Esc` exits the bookmarks or search view:
 ///
 ///   1. `Key`              — terminal input
 ///   2. `ResetView`        — derived from the key
 ///   3. `RefreshDirectory` — `TableView` clears bookmarks/search and asks for a reload
 ///   4. `RefreshedDirectory` — result emitted by `FileSystem`
-///   5. `SelectionChanged` — emitted by `TableView` for the new listing
 ///
-/// Direct navigation (`Key → GoToParentDirectory/Open → NavigatedDirectory →
-/// SelectionChanged`) is one link shorter because the intent maps straight to
-/// `NavigatedDirectory` without a `RefreshDirectory` hop.
+/// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
+/// entries stream in afterward as `DirectoryListing`/`DirectoryListingComplete`,
+/// which arrive as fresh channel sends (each its own short chain, e.g.
+/// `DirectoryListingComplete → SelectionChanged`) rather than extending this one.
 ///
 /// Also acts as a guard against a handler stuck deriving commands forever.
-/// See `broadcast_command` for what happens when it is exceeded.
+/// See `broadcast_command` for what happens when it is exceeded. The bound keeps
+/// one cycle of headroom over the longest real chain.
 const MAX_BROADCAST_CHAIN_LENGTH: u8 = 5;
 
 pub struct App {
@@ -75,9 +76,15 @@ impl App {
     }
 
     pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
-        // An initial command is required to start the main loop
-        self.tx
-            .send(self.file_system.run_once(initial_directory)?)?;
+        // Trigger the initial navigation and handle it synchronously *before*
+        // entering the loop. `run_once` spawns the directory loader, which begins
+        // streaming `DirectoryListing` batches into the channel immediately;
+        // handling the resulting `NavigatedDirectory` here registers its
+        // generation before those batches are drained, so none are dropped.
+        let initial = self.file_system.run_once(initial_directory)?;
+        let remaining = self.broadcast_commands(vec![initial]);
+        must_not_contain_unhandled(&remaining)?;
+        self.render()?;
 
         spawn_command_sender(self.tx.clone());
 
