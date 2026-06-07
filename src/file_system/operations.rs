@@ -5,36 +5,107 @@ use std::{
     process::{Child, Stdio},
     sync::mpsc::Sender,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::path_info::PathInfo;
-use crate::{app::config::Config, command::Command};
+use crate::{
+    app::config::Config,
+    command::{Command, progress::CancellationToken},
+};
 
-pub(super) fn cd(directory: &PathInfo) -> Result<(Vec<PathInfo>, usize)> {
-    info!("Changing directory to {directory:?}");
-    let entries = fs::read_dir(&directory.path)?;
+// Entries are streamed in batches (rather than one command per entry) so a flood
+// of commands cannot starve terminal input in the single FIFO command channel.
+// A batch flushes once it reaches CD_BATCH_SIZE or CD_FLUSH_INTERVAL elapses.
+const CD_BATCH_SIZE: usize = 256;
+const CD_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
 
-    // Use collect to gather results, then partition into successes and failures
-    let results: Vec<Result<PathInfo>> = entries
-        .map(|entry| {
-            entry
-                .map_err(Into::into)
-                .and_then(|e| PathInfo::try_from(&e.path()))
-        })
-        .collect();
+/// Spawns a background thread that reads `directory` and streams its entries as
+/// `Command::DirectoryListing` batches, finishing with a
+/// `Command::DirectoryListingComplete`. `generation` tags every message so a
+/// superseded load (the user navigated away) can be ignored; `cancel` stops the
+/// walk early when that happens. Reading off the UI thread keeps navigation into
+/// very large directories responsive.
+pub(super) fn stream_cd(
+    directory: PathInfo,
+    generation: u64,
+    tx: Sender<Command>,
+    cancel: CancellationToken,
+) {
+    info!("Streaming directory {directory:?}");
+    thread::spawn(move || {
+        let entries = match fs::read_dir(&directory.path) {
+            Ok(entries) => entries,
+            Err(error) => {
+                let _ = tx.send(Command::AlertWarn(format!(
+                    "Failed to read directory {:?}: {error}",
+                    directory.path
+                )));
+                let _ = tx.send(Command::DirectoryListingComplete { generation });
+                return;
+            }
+        };
 
-    let (children, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+        let mut batch: Vec<PathInfo> = Vec::new();
+        let mut last_flush = Instant::now();
+        let mut error_count: usize = 0;
 
-    let error_count = errors.len();
-    if error_count > 0 {
-        warn!("Some paths could not be read: {:?}", errors);
+        for entry in entries {
+            // A newer load has superseded this one: stop without sending a
+            // completion (the newer load owns the listing now).
+            if cancel.is_cancelled() {
+                return;
+            }
+            let path = match entry {
+                Ok(entry) => entry.path(),
+                Err(error) => {
+                    warn!("Could not read an entry in {:?}: {error}", directory.path);
+                    error_count += 1;
+                    continue;
+                }
+            };
+            match PathInfo::try_from(&path) {
+                Ok(info) => batch.push(info),
+                Err(error) => {
+                    warn!("Could not read metadata for {path:?}: {error}");
+                    error_count += 1;
+                }
+            }
+            if batch.len() >= CD_BATCH_SIZE || last_flush.elapsed() >= CD_FLUSH_INTERVAL {
+                if !flush_listing(&tx, &mut batch, generation) {
+                    return; // channel closed
+                }
+                last_flush = Instant::now();
+            }
+        }
+
+        if !flush_listing(&tx, &mut batch, generation) {
+            return;
+        }
+        if error_count > 0 {
+            let _ = tx.send(Command::AlertWarn(format!(
+                "{error_count} entries in {:?} could not be read",
+                directory.path
+            )));
+        }
+        let _ = tx.send(Command::DirectoryListingComplete { generation });
+    });
+}
+
+/// Sends the accumulated batch (if any) as a single `Command::DirectoryListing`.
+/// Returns `false` if the channel is closed, signalling the caller to stop.
+fn flush_listing(tx: &Sender<Command>, batch: &mut Vec<PathInfo>, generation: u64) -> bool {
+    if batch.is_empty() {
+        return true;
     }
-
-    Ok((children.into_iter().flatten().collect(), error_count))
+    tx.send(Command::DirectoryListing {
+        items: std::mem::take(batch),
+        generation,
+    })
+    .is_ok()
 }
 
 pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Command>) -> Result<()> {

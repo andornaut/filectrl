@@ -50,19 +50,19 @@ impl CommandHandler for TableView {
             }
             Command::NavigatedDirectory {
                 directory,
-                children,
+                generation,
             } => {
                 // Different directory: nothing from the old listing carries over.
                 self.content.clear_search();
                 self.content.clear_bookmarks();
                 self.content.clear_filter();
-                self.clear_marks();
-                self.table_state.select(None);
-                self.set_directory(directory.clone(), children.to_vec(), Reselect::Top)
+                self.load_generation = *generation;
+                self.begin_directory(directory.clone(), Reselect::Top);
+                CommandResult::Handled
             }
             Command::RefreshedDirectory {
                 directory,
-                children,
+                generation,
             } => {
                 // While searching, the listing holds results from a different
                 // root, not this directory. Ignore watcher/refresh events so a
@@ -77,7 +77,32 @@ impl CommandHandler for TableView {
                     return Command::GetBookmarks.into();
                 }
                 // Same directory reloaded: keep filter and selection.
-                self.set_directory(directory.clone(), children.to_vec(), Reselect::Keep)
+                self.load_generation = *generation;
+                self.begin_directory(directory.clone(), Reselect::Keep);
+                CommandResult::Handled
+            }
+            Command::DirectoryListing { items, generation } => {
+                // Ignore stale batches from a superseded load.
+                if *generation != self.load_generation
+                    || !self.content.is_loading()
+                    || items.is_empty()
+                {
+                    return CommandResult::Handled;
+                }
+                let was_empty = self.content.len() == 0;
+                self.content.append_listing(items);
+                if was_empty {
+                    self.table_state.select(Some(0));
+                    Command::SelectionChanged(items.first().cloned()).into()
+                } else {
+                    CommandResult::Handled
+                }
+            }
+            Command::DirectoryListingComplete { generation } => {
+                if *generation != self.load_generation {
+                    return CommandResult::Handled;
+                }
+                self.finish_directory()
             }
             Command::ResetView => {
                 self.clipboard_entry = None;

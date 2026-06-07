@@ -12,6 +12,8 @@ pub(super) struct DirectoryContent {
     items_sorted: Vec<PathInfo>,
     search_root: Option<PathBuf>,
     bookmarks_active: bool,
+    /// True while a directory's entries are still streaming in.
+    loading: bool,
     /// Runtime override for showing hidden (dotfile) entries. `None` defers to
     /// the `ui.show_hidden_files` config value.
     show_hidden: Option<bool>,
@@ -38,9 +40,42 @@ impl DirectoryContent {
         &self.items_sorted
     }
 
+    #[cfg(test)]
     pub(super) fn set_items(&mut self, directory: PathInfo, items: Vec<PathInfo>) {
         self.directory = Some(directory);
         self.items = items;
+    }
+
+    /// Begin a streamed directory load: switch to `directory` and clear the
+    /// listing. Entries arrive via `append_listing` and are sorted by
+    /// `finalize_listing`. Filter/search/bookmarks state is left untouched (the
+    /// caller decides what carries over for a navigate vs. a refresh).
+    pub(super) fn start_listing(&mut self, directory: PathInfo) {
+        self.directory = Some(directory);
+        self.items.clear();
+        self.items_sorted.clear();
+        self.loading = true;
+    }
+
+    /// Append a streamed batch in read order so partial results are visible
+    /// immediately. The final ordering is applied once by `finalize_listing`.
+    pub(super) fn append_listing(&mut self, items: &[PathInfo]) {
+        self.items.extend_from_slice(items);
+        self.items_sorted.extend_from_slice(items);
+    }
+
+    /// Finish a streamed load: sort (and filter) the accumulated entries once.
+    pub(super) fn finalize_listing(
+        &mut self,
+        sort_column: &SortColumn,
+        sort_direction: &SortDirection,
+    ) {
+        self.loading = false;
+        self.sort(sort_column, sort_direction);
+    }
+
+    pub(super) fn is_loading(&self) -> bool {
+        self.loading
     }
 
     pub(super) fn set_filter(&mut self, filter: String) {
@@ -313,5 +348,53 @@ mod tests {
         content.toggle_show_hidden();
         content.sort(&SortColumn::Name, &SortDirection::Ascending);
         assert_eq!(content.len(), 2);
+    }
+
+    #[test]
+    fn streamed_listing_matches_set_items_then_sort() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("Banana", 1),
+            fx.dir_entry("Apricot"),
+            fx.file_entry("apple", 1),
+            fx.dir_entry("Apple"),
+        ];
+
+        // Reference: the one-shot path.
+        let mut reference = DirectoryContent::default();
+        reference.set_items(fx.directory(), items.clone());
+        reference.sort(&SortColumn::Name, &SortDirection::Ascending);
+
+        // Streamed in two batches, then finalized once.
+        let mut streamed = DirectoryContent::default();
+        streamed.start_listing(fx.directory());
+        streamed.append_listing(&items[..2]);
+        streamed.append_listing(&items[2..]);
+        streamed.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+
+        assert_eq!(names(&streamed), names(&reference));
+    }
+
+    #[test]
+    fn listing_is_visible_in_read_order_before_finalize() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("c", 1),
+            fx.file_entry("a", 1),
+            fx.file_entry("b", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.start_listing(fx.directory());
+        assert!(content.is_loading());
+
+        content.append_listing(&items);
+        // Partial results are visible in read order before the final sort.
+        assert_eq!(names(&content), vec!["c", "a", "b"]);
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        assert!(!content.is_loading());
+        assert_eq!(names(&content), vec!["a", "b", "c"]);
     }
 }

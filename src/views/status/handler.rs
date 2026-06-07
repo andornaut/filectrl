@@ -6,12 +6,15 @@ impl CommandHandler for StatusView {
         match command {
             Command::NavigatedDirectory {
                 directory,
-                children,
+                generation,
             }
             | Command::RefreshedDirectory {
                 directory,
-                children,
-            } => self.set_directory(directory.clone(), children),
+                generation,
+            } => self.begin_directory(directory.clone(), *generation),
+            Command::DirectoryListing { items, generation } => {
+                self.count_listing(items, *generation)
+            }
             Command::SelectionChanged(selected) => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }

@@ -87,15 +87,27 @@ pub enum Command {
     GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
     Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
     NavigatedDirectory {
-        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem)
+        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem).
+        // The entries are not included; they stream in afterward as DirectoryListing.
         directory: PathInfo,
-        children: Vec<PathInfo>,
+        generation: u64,
     },
     RefreshDirectory, // Intent: resolved by FileSystem into RefreshedDirectory
     RefreshedDirectory {
-        // Result: of RefreshDirectory
+        // Result: of RefreshDirectory. Entries stream in as DirectoryListing.
         directory: PathInfo,
-        children: Vec<PathInfo>,
+        generation: u64,
+    },
+    // Result: a batch of entries for the most recent Navigated/RefreshedDirectory,
+    // streamed by FileSystem and appended (in read order) by TableView. `generation`
+    // matches the switch command so stale batches from a superseded load are ignored.
+    DirectoryListing {
+        items: Vec<PathInfo>,
+        generation: u64,
+    },
+    DirectoryListingComplete {
+        // Result: the streamed listing finished; TableView sorts and restores selection.
+        generation: u64,
     },
 
     // File operations
