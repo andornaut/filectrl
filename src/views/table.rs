@@ -46,5 +46,11 @@ pub(super) struct TableView {
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
+    /// Per-item row heights, cached across frames. Rebuilt (together with
+    /// `mapper`) only when `height_cache_key` changes, so scrolling a large
+    /// directory stays O(visible rows) instead of O(items).
+    cached_heights: Vec<usize>,
+    /// The (name column width, content revision) the cache was built for.
+    height_cache_key: Option<(u16, u64)>,
     scrollbar_view: ScrollbarView,
 }
