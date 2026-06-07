@@ -14,6 +14,17 @@ pub(super) enum Reselect {
     Keep,
 }
 
+/// Selection state captured when a streamed load begins (`begin_directory`) and
+/// applied once it finishes (`finish_directory`). Grouped because the fields are
+/// a single cohesive unit that lives and dies together.
+#[derive(Default)]
+pub(super) struct PendingLoad {
+    reselect: Reselect,
+    prev_directory: Option<PathInfo>,
+    prev_selected: Option<PathInfo>,
+    prev_selected_index: Option<usize>,
+}
+
 impl TableView {
     /// Begin a streamed directory load. Captures what to reselect once the load
     /// completes (in `finish_directory`) and clears the visible listing. The
@@ -21,10 +32,12 @@ impl TableView {
     /// controls only how the selection is restored.
     pub(super) fn begin_directory(&mut self, new_directory: PathInfo, reselect: Reselect) {
         // Capture the pre-load state BEFORE clearing the listing.
-        self.loading_reselect = reselect;
-        self.loading_prev_directory = self.content.directory().cloned();
-        self.loading_prev_selected = self.selected_path().cloned();
-        self.loading_prev_selected_index = self.table_state.selected();
+        self.pending_load = PendingLoad {
+            reselect,
+            prev_directory: self.content.directory().cloned(),
+            prev_selected: self.selected_path().cloned(),
+            prev_selected_index: self.table_state.selected(),
+        };
 
         self.clear_marks();
         self.table_state.select(None);
@@ -35,14 +48,22 @@ impl TableView {
     /// Finish a streamed directory load: sort the accumulated entries once and
     /// restore the selection captured by `begin_directory`.
     pub(super) fn finish_directory(&mut self) -> CommandResult {
-        let reselect = self.loading_reselect;
         self.content
             .finalize_listing(self.columns.sort_column(), self.columns.sort_direction());
         // Marks are stored by index, so the new listing invalidates them.
         self.clear_marks();
+        self.restore_selection()
+    }
+
+    /// Restore the selection captured by `begin_directory`: prefer the child we
+    /// came from when navigating to an ancestor, then the previously selected
+    /// file by inode, then (on a refresh) the held cursor position, else the
+    /// first item.
+    fn restore_selection(&mut self) -> CommandResult {
+        let pending = std::mem::take(&mut self.pending_load);
 
         // If we navigated to an ancestor directory, select the child we came from.
-        if let Some(prev_directory) = self.loading_prev_directory.take()
+        if let Some(prev_directory) = pending.prev_directory
             && let Some(new_directory) = self.content.directory()
         {
             let prev_path = prev_directory.as_path();
@@ -61,12 +82,12 @@ impl TableView {
 
         // Otherwise restore the previously selected file by inode, or (on a
         // refresh) hold the cursor position if it was deleted.
-        if let Some(selected_path) = self.loading_prev_selected.take() {
+        if let Some(selected_path) = pending.prev_selected {
             if let Some(new_index) = self.content.find_by_inode(&selected_path) {
                 return self.select(new_index);
             }
-            if let Reselect::Keep = reselect
-                && let Some(idx) = self.loading_prev_selected_index.take()
+            if let Reselect::Keep = pending.reselect
+                && let Some(idx) = pending.prev_selected_index
             {
                 return self.select(idx.min(self.content.len().saturating_sub(1)));
             }
