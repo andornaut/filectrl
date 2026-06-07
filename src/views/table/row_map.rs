@@ -29,6 +29,14 @@ impl LineItemMap {
         }
     }
 
+    /// Update only the viewport window (top item + visible line count) without
+    /// rebuilding the line<->item mapping, which depends solely on item heights.
+    /// Lets the view reuse a cached mapper across frames while scrolling.
+    pub(super) fn set_window(&mut self, first_visible_item: usize, visible_lines_count: usize) {
+        self.first_visible_item = first_visible_item;
+        self.visible_lines_count = visible_lines_count;
+    }
+
     pub(super) fn item(&self, line: usize) -> usize {
         self.lines_to_items.get(line).copied().unwrap_or(0)
     }
