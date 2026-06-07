@@ -32,6 +32,9 @@ pub(super) struct TableView {
 
     table_area: Rect,
     table_state: TableState,
+    /// Index of the topmost rendered item. Owned by the render pass (instead of
+    /// ratatui's auto-scroll) so only the visible window's rows are built.
+    first_visible_item: usize,
 
     columns: Columns,
     double_click: DoubleClick,
