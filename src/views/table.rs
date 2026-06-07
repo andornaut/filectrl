@@ -18,7 +18,7 @@ use ratatui::{layout::Rect, widgets::TableState};
 
 use self::{
     columns::Columns, content::DirectoryContent, double_click::DoubleClick, marks::Marks,
-    navigation::Reselect, row_map::LineItemMap,
+    navigation::PendingLoad, row_map::LineItemMap,
 };
 use super::ScrollbarView;
 use crate::{app::clipboard::ClipboardEntry, file_system::path_info::PathInfo};
@@ -41,10 +41,7 @@ pub(super) struct TableView {
     load_generation: u64,
     /// Selection state captured at the start of a streamed load, applied once it
     /// completes (see `begin_directory`/`finish_directory`).
-    loading_reselect: Reselect,
-    loading_prev_directory: Option<PathInfo>,
-    loading_prev_selected: Option<PathInfo>,
-    loading_prev_selected_index: Option<usize>,
+    pending_load: PendingLoad,
 
     columns: Columns,
     double_click: DoubleClick,
