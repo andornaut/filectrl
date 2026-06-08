@@ -207,9 +207,10 @@ impl DirectoryContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::config::RuntimeEnv;
 
     fn ensure_config_initialized() {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
     }
 

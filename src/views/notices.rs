@@ -1,7 +1,7 @@
 mod handler;
 mod notice;
 mod view;
-mod widgets;
+mod widget;
 
 use std::collections::HashSet;
 
@@ -120,6 +120,7 @@ mod tests {
     use super::*;
     use crate::{
         app::clipboard::ClipboardEntry,
+        app::config::RuntimeEnv,
         command::{
             Command,
             progress::{ActiveTask, Task, TaskKind, Transfer},
@@ -128,7 +129,7 @@ mod tests {
     };
 
     fn view() -> NoticesView {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
         NoticesView::new()
     }

@@ -9,7 +9,7 @@ use ratatui::{
 use super::{
     TableView,
     row_map::LineItemMap,
-    widgets::{item_height, row_widget_and_height, table_widget},
+    widget::{item_height, row_widget_and_height, table_widget},
 };
 use crate::{app::config::Config, views::View};
 
