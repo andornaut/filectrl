@@ -4,7 +4,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use super::{StatusView, widgets::default_widget};
+use super::{StatusView, widget::default_widget};
 use crate::{app::config::Config, views::View};
 
 impl View for StatusView {

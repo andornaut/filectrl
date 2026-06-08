@@ -177,10 +177,13 @@ mod tests {
     use test_case::test_case;
 
     use super::{item_height, row_widget_and_height};
-    use crate::{app::config::Config, file_system::path_info::PathInfo};
+    use crate::{
+        app::config::{Config, RuntimeEnv},
+        file_system::path_info::PathInfo,
+    };
 
     fn ensure_config_initialized() {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
     }
 

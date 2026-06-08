@@ -54,6 +54,15 @@ pub struct UiConfig {
     pub sort_directories_first: bool,
 }
 
+/// Runtime inputs that influence config resolution but originate from the
+/// terminal/environment rather than the config file. Passed in by the caller
+/// so that parsing stays pure and `Config` is correct-by-construction.
+#[derive(Clone, Copy, Default)]
+pub struct RuntimeEnv<'a> {
+    pub is_truecolor: bool,
+    pub ls_colors: Option<&'a str>,
+}
+
 #[derive(Deserialize)]
 struct RawConfig {
     file_system: FileSystemConfig,
@@ -68,7 +77,7 @@ struct RawConfig {
 pub struct Config {
     pub config_dir: PathBuf,
     pub file_system: FileSystemConfig,
-    pub is_truecolor: bool,
+    is_truecolor: bool,
     pub keybindings: KeyBindings,
     pub log_level: LevelFilter,
     pub openers: Openers,
@@ -100,14 +109,19 @@ impl Config {
         }
     }
 
-    pub fn load(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<Self> {
+    pub fn load(
+        env: RuntimeEnv<'_>,
+        config_path: Option<PathBuf>,
+        include_paths: Vec<PathBuf>,
+    ) -> Result<Self> {
         let Some(path) = config_path else {
-            return Self::try_from_default_path(include_paths);
+            return Self::try_from_default_path(env, include_paths);
         };
 
         debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
             Ok(content) => Self::parse(
+                env,
                 &content,
                 path.parent().map(|p| p.to_path_buf()),
                 &include_paths,
@@ -137,10 +151,7 @@ impl Config {
             path.parent()
                 .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
         )?;
-        let merged = merge_default_config()?;
-        let content = toml::to_string_pretty(&merged)
-            .map_err(|error| anyhow!("Cannot serialize default config: {error}"))?;
-        fs::write(&path, content)
+        fs::write(&path, default_config_content())
             .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
         info!("Wrote the default config to {path:?}");
         Ok(())
@@ -158,17 +169,21 @@ impl Config {
     }
 
     fn parse(
+        env: RuntimeEnv<'_>,
         content: &str,
         config_dir: Option<PathBuf>,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
         // Precedence (low → high): built-in defaults → user config file →
         // include_files from the user config → CLI --include paths.
-        let mut value = merge_default_config()?;
-        value = merge_toml_values(value, parse_toml(content)?);
+        let defaults = merge_default_config()?;
+        let mut value = merge_toml_values(defaults.clone(), parse_toml(content)?);
         value = Self::merge_config_includes(value, config_dir.as_deref())?;
         value = merge_include_paths(value, include_paths)?;
-        Self::parse_value(value, config_dir)
+        // Reject typo'd / unknown keys before deserializing so a broken config
+        // fails loudly instead of silently falling back to defaults.
+        reject_unknown_keys(&value, &defaults, "")?;
+        Self::parse_value(env, value, config_dir)
     }
 
     /// Resolves and merges files listed in the value's own `include_files`
@@ -224,7 +239,7 @@ impl Config {
             .collect())
     }
 
-    fn parse_value(value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
+    fn parse_value(env: RuntimeEnv<'_>, value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
         // Fail rather than fall back to an empty path: an empty config_dir
         // would make bookmarks_dir() resolve to a relative "bookmarks" path
         // (CWD-dependent), silently misplacing bookmark files.
@@ -237,6 +252,8 @@ impl Config {
             .try_into()
             .map_err(|error| anyhow!("Cannot deserialize config: {error}"))?;
 
+        validate_file_system(&raw.file_system)?;
+
         let openers = if cfg!(target_os = "macos") {
             raw.openers.macos
         } else {
@@ -248,7 +265,7 @@ impl Config {
         let mut config = Config {
             config_dir,
             file_system: raw.file_system,
-            is_truecolor: false,
+            is_truecolor: env.is_truecolor,
             keybindings,
             log_level: raw.log_level,
             openers,
@@ -256,12 +273,18 @@ impl Config {
             theme256: raw.theme256,
             ui: raw.ui,
         };
-        config.theme.file_type.maybe_apply_ls_colors(false);
-        config.theme256.file_type.maybe_apply_ls_colors(true);
+        config
+            .theme
+            .file_type
+            .maybe_apply_ls_colors(env.ls_colors, false);
+        config
+            .theme256
+            .file_type
+            .maybe_apply_ls_colors(env.ls_colors, true);
         Ok(config)
     }
 
-    fn try_from_default_path(include_paths: Vec<PathBuf>) -> Result<Self> {
+    fn try_from_default_path(env: RuntimeEnv<'_>, include_paths: Vec<PathBuf>) -> Result<Self> {
         let default_path = Self::default_path()?;
         debug!(
             "Attempting to load the config from the default path: {}",
@@ -270,13 +293,14 @@ impl Config {
 
         match fs::read_to_string(&default_path) {
             Ok(content) => Self::parse(
+                env,
                 &content,
                 default_path.parent().map(|p| p.to_path_buf()),
                 &include_paths,
             ),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Self::parse("", None, &include_paths)
+                Self::parse(env, "", None, &include_paths)
             }
             Err(err) => Err(anyhow!(
                 "Could not read the config file from the default path ({}): {}",
@@ -344,6 +368,69 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     Ok(value)
 }
 
+/// Validates `file_system` invariants that TOML deserialization cannot express,
+/// so a nonsensical config fails the load rather than misbehaving at runtime.
+fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
+    if fs.buffer_min_bytes == 0 {
+        return Err(anyhow!(
+            "file_system.buffer_min_bytes must be greater than 0"
+        ));
+    }
+    if fs.buffer_min_bytes > fs.buffer_max_bytes {
+        return Err(anyhow!(
+            "file_system.buffer_min_bytes ({}) must not exceed buffer_max_bytes ({})",
+            fs.buffer_min_bytes,
+            fs.buffer_max_bytes
+        ));
+    }
+    Ok(())
+}
+
+/// Style properties that may appear on any style table. The embedded default
+/// omits these where they are unset (e.g. `[theme.alert]` lists only `fg`), so
+/// they are permitted everywhere rather than validated against the default's
+/// shape — otherwise a user adding `bg`/`modifiers` to such an entry would be
+/// wrongly rejected. Misplaced occurrences are harmless and rare.
+const STYLE_KEYS: &[&str] = &["fg", "bg", "modifiers"];
+
+/// Recursively rejects any key in `value` that is absent from the embedded
+/// default `schema`, so typo'd or unrecognized config keys fail loudly. The
+/// top-level `include_files` directive is allowed (it is consumed before
+/// deserialization and is not part of the schema). `path` is the dotted key
+/// path used in error messages.
+fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> {
+    let (Value::Table(value_table), Value::Table(schema_table)) = (value, schema) else {
+        return Ok(());
+    };
+    for (key, child) in value_table {
+        if path.is_empty() && key == "include_files" {
+            continue;
+        }
+        if STYLE_KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        let key_path = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{path}.{key}")
+        };
+        match schema_table.get(key) {
+            Some(schema_child) => reject_unknown_keys(child, schema_child, &key_path)?,
+            None => return Err(anyhow!("Unknown configuration key: '{key_path}'")),
+        }
+    }
+    Ok(())
+}
+
+/// The default config written by `--write-default-config`: the two embedded
+/// source files concatenated, rather than a serialized merged TOML value, so
+/// their inline documentation comments are preserved. The base config and
+/// theme define disjoint top-level keys, so concatenation yields valid,
+/// complete TOML.
+fn default_config_content() -> String {
+    format!("{DEFAULT_CONFIG_BASE}\n{DEFAULT_THEME}")
+}
+
 /// Merges the embedded default config from its two source files:
 /// base config + theme (which includes both truecolor and 256-color variants).
 fn merge_default_config() -> Result<Value> {
@@ -372,11 +459,13 @@ pub fn merge_toml_values(base: Value, overlay: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
     fn default_config_parses_successfully() {
-        Config::parse("", None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), "", None, &[]).unwrap();
     }
 
     #[test]
@@ -402,6 +491,54 @@ mod tests {
 [openers.linux]
 open_current_directory = "alacritty --working-directory %s"
 "#;
-        Config::parse(partial, None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), partial, None, &[]).unwrap();
+    }
+
+    /// Parse a config that is expected to fail, returning the error message.
+    /// (`Config` is not `Debug`, so `unwrap_err` is unavailable.)
+    fn parse_err(toml: &str) -> String {
+        match Config::parse(RuntimeEnv::default(), toml, None, &[]) {
+            Ok(_) => panic!("expected config parse to fail"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn written_default_config_parses_and_preserves_comments() {
+        let content = default_config_content();
+        // The written file must round-trip through the loader.
+        Config::parse(RuntimeEnv::default(), &content, None, &[]).unwrap();
+        // Concatenation (not re-serialization) keeps the documentation comments.
+        assert!(content.contains('#'), "comments should be preserved");
+    }
+
+    #[test_case("not_a_key = 1", "not_a_key" ; "top-level key")]
+    #[test_case("[file_system]\nbuffer_max_byte = 1\n", "file_system.buffer_max_byte" ; "nested key (dotted path)")]
+    #[test_case("[keybindings]\nserach = \"/\"\n", "serach" ; "keybinding name")]
+    fn unknown_key_is_rejected(toml: &str, expected: &str) {
+        let err = parse_err(toml);
+        assert!(err.contains(expected), "error should name the key: {err}");
+    }
+
+    #[test]
+    fn style_property_absent_from_default_is_accepted() {
+        // The default `[theme.alert]` lists only `fg`; adding `bg`/`modifiers`
+        // must not be mistaken for an unknown key.
+        let toml = r##"
+[theme.alert]
+bg = "#000000"
+modifiers = ["bold"]
+"##;
+        Config::parse(RuntimeEnv::default(), toml, None, &[]).unwrap();
+    }
+
+    #[test_case("[file_system]\nbuffer_min_bytes = 200\nbuffer_max_bytes = 100\n" ; "min exceeds max")]
+    #[test_case("[file_system]\nbuffer_min_bytes = 0\n" ; "min is zero")]
+    fn invalid_buffer_sizes_are_rejected(toml: &str) {
+        let err = parse_err(toml);
+        assert!(
+            err.contains("buffer_min_bytes"),
+            "error should explain the invariant: {err}"
+        );
     }
 }

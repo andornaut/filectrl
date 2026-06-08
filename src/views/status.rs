@@ -1,6 +1,6 @@
 mod handler;
 mod view;
-mod widgets;
+mod widget;
 
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 

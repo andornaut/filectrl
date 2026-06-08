@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use ratatui::widgets::Block;
 
-use super::widgets::{
+use super::widget::{
     clipboard_widget, filter_widget, marked_widget, operations_widget, progress_widget,
     search_cancelled_widget, search_loading_widget, search_widget,
 };
