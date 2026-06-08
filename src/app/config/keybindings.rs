@@ -474,6 +474,11 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             let num: u8 = s[1..]
                 .parse()
                 .map_err(|_| anyhow!("Invalid F-key: '{s}'"))?;
+            // No terminal emits F0 or beyond F24; reject them so a typo fails
+            // config loading instead of producing a binding that never fires.
+            if !(1..=24).contains(&num) {
+                return Err(anyhow!("Invalid F-key: '{s}' (must be F1-F24)"));
+            }
             KeyCode::F(num)
         }
         s if s.len() == 1 => {
@@ -608,6 +613,21 @@ mod tests {
         assert_eq!(parse_key_combo("F2").unwrap().code, KeyCode::F(2));
         assert_eq!(parse_key_combo("F5").unwrap().code, KeyCode::F(5));
         assert_eq!(parse_key_combo("F12").unwrap().code, KeyCode::F(12));
+    }
+
+    #[test]
+    fn parse_f_key_boundaries() {
+        assert_eq!(parse_key_combo("F1").unwrap().code, KeyCode::F(1));
+        assert_eq!(parse_key_combo("F24").unwrap().code, KeyCode::F(24));
+    }
+
+    #[test]
+    fn parse_out_of_range_f_keys_is_error() {
+        // No terminal emits these; they must fail config loading rather than
+        // silently producing a binding that never fires.
+        assert!(parse_key_combo("F0").is_err());
+        assert!(parse_key_combo("F25").is_err());
+        assert!(parse_key_combo("F99").is_err());
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::{
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
+        let result = match command {
             Command::CancelPrompt | Command::ConfirmDelete => {
                 self.hide_marked = false;
                 CommandResult::NotHandled
@@ -87,12 +87,27 @@ impl CommandHandler for NoticesView {
                 }
             }
             _ => CommandResult::NotHandled,
+        };
+        // Keep the cached notice list in sync with the state just mutated, so
+        // `constraint`/`render` can read it without rebuilding every frame.
+        // SearchTick only advances the spinner counter (read live in render) and
+        // never changes the notice list, so skip the rebuild on that hot path.
+        if !matches!(command, Command::SearchTick) {
+            self.rebuild_notices();
         }
+        result
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
-            Some(Action::ClearProgress) => self.clear_progress(),
+            Some(Action::ClearProgress) => {
+                // The only key this view handles, and the only one that mutates
+                // notice state, so rebuild the cache here rather than on every
+                // unrelated keystroke.
+                let result = self.clear_progress();
+                self.rebuild_notices();
+                result
+            }
             _ => CommandResult::NotHandled,
         }
     }

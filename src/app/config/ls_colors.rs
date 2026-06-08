@@ -30,7 +30,7 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "34" => fg = Some(Color::Blue),
             "35" => fg = Some(Color::Magenta),
             "36" => fg = Some(Color::Cyan),
-            "37" => fg = Some(Color::White),
+            "37" => fg = Some(Color::Gray),
             "90" => fg = Some(Color::DarkGray),
             "91" => fg = Some(Color::LightRed),
             "92" => fg = Some(Color::LightGreen),
@@ -38,7 +38,7 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "94" => fg = Some(Color::LightBlue),
             "95" => fg = Some(Color::LightMagenta),
             "96" => fg = Some(Color::LightCyan),
-            "97" => fg = Some(Color::Gray),
+            "97" => fg = Some(Color::White),
 
             // Background colors (40-47, 100-107)
             "40" => bg = Some(Color::Black),
@@ -48,7 +48,7 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "44" => bg = Some(Color::Blue),
             "45" => bg = Some(Color::Magenta),
             "46" => bg = Some(Color::Cyan),
-            "47" => bg = Some(Color::White),
+            "47" => bg = Some(Color::Gray),
             "100" => bg = Some(Color::DarkGray),
             "101" => bg = Some(Color::LightRed),
             "102" => bg = Some(Color::LightGreen),
@@ -56,7 +56,7 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
             "104" => bg = Some(Color::LightBlue),
             "105" => bg = Some(Color::LightMagenta),
             "106" => bg = Some(Color::LightCyan),
-            "107" => bg = Some(Color::Gray),
+            "107" => bg = Some(Color::White),
 
             // Extended color codes
             "38" => {
@@ -151,6 +151,16 @@ mod tests {
     fn bright_foreground_color() {
         let (fg, _, _) = parse("91");
         assert_eq!(Some(Color::LightRed), fg);
+    }
+
+    #[test]
+    fn white_codes_map_to_normal_and_bright_intensity() {
+        // ratatui's `Gray` is ANSI 7 (normal white) and `White` is ANSI 15
+        // (bright white), so the normal code (37/47) must be the dimmer one.
+        assert_eq!(parse("37").0, Some(Color::Gray));
+        assert_eq!(parse("97").0, Some(Color::White));
+        assert_eq!(parse("47").1, Some(Color::Gray));
+        assert_eq!(parse("107").1, Some(Color::White));
     }
 
     #[test]

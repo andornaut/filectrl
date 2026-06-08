@@ -213,7 +213,7 @@ mod tests {
     #[test_case("/b", "", "/b"; "empty to /b absolute")]
     fn join_is_correct_when(expected: &str, left: &str, right: &str) {
         let old_path = Path::new(left);
-        let result = join_parent(&old_path, right);
+        let result = join_parent(old_path, right);
 
         assert_eq!(expected, result.to_string_lossy());
     }
