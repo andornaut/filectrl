@@ -26,7 +26,10 @@ pub(super) struct NoticesView {
     search_query: Option<String>,
     search_cancelled: bool,
     tasks: HashSet<Task>,
-    /// Cached at render time so the mouse handler can map y-position -> action
+    /// Cached notice list, rebuilt by the command handler whenever
+    /// notice-relevant state changes. Both `constraint` and `render` read this
+    /// instead of rebuilding per frame, and the mouse handler uses it to map a
+    /// y-position back to the clicked notice.
     notices: Vec<Notice>,
 }
 
@@ -90,6 +93,14 @@ impl NoticesView {
         .into_iter()
         .flatten()
         .collect()
+    }
+
+    /// Recompute the cached `notices` list. Any path that mutates
+    /// notice-relevant state (tasks, clipboard, marks, filter, search) must
+    /// call this so `constraint`/`render` read an up-to-date list; that is why
+    /// `handle_command`/`handle_key` invoke it after dispatch.
+    fn rebuild_notices(&mut self) {
+        self.notices = self.build_notices();
     }
 
     fn clear_progress(&mut self) -> CommandResult {

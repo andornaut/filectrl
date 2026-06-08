@@ -2,9 +2,10 @@ use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    widgets::{Paragraph, Widget},
+    widgets::Widget,
 };
 
+use super::widget::{delete_label_widget, label_widget, suggestion_overlay_text};
 use super::{PromptView, View};
 use crate::app::config::Config;
 use crate::command::PromptAction;
@@ -20,16 +21,14 @@ impl View for PromptView {
         let label_width = label.cell_width();
 
         if matches!(self.actions, PromptAction::Delete(_)) {
-            let label_widget = Paragraph::new(label).style(theme.prompt.delete());
-            label_widget.render(area, frame.buffer_mut());
+            delete_label_widget(label, theme).render(area, frame.buffer_mut());
             return;
         }
 
         let [label_area, input_area] =
             Layout::horizontal([Constraint::Length(label_width), Constraint::Min(1)]).areas(area);
 
-        let label_widget = Paragraph::new(label).style(theme.prompt.label());
-        label_widget.render(label_area, frame.buffer_mut());
+        label_widget(label, theme).render(label_area, frame.buffer_mut());
 
         self.text_area.set_style(theme.prompt.input());
         self.text_area.set_selection_style(theme.prompt.selected());
@@ -48,12 +47,8 @@ impl View for PromptView {
             let typed_width = self.text_area.lines()[0].cell_width();
             let start = typed_width.saturating_sub(self.scroll_col);
             if start < input_area.width {
-                let text = if total > 1 {
-                    format!("{suffix} ({} of {total})", idx + 1)
-                } else {
-                    suffix
-                };
-                let max_width = (input_area.width - start) as usize;
+                let text = suggestion_overlay_text(suffix, idx, total);
+                let max_width = input_area.width.saturating_sub(start) as usize;
                 frame.buffer_mut().set_stringn(
                     input_area.x + start,
                     input_area.y,

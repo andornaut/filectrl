@@ -297,7 +297,16 @@ impl FileSystem {
             Ok(entries) => Command::Bookmarks {
                 bookmarks: entries
                     .flatten()
-                    .filter_map(|entry| PathInfo::try_from(&entry.path()).ok())
+                    .filter_map(|entry| {
+                        let path = entry.path();
+                        match PathInfo::try_from(&path) {
+                            Ok(info) => Some(info),
+                            Err(error) => {
+                                log::warn!("Skipping unreadable bookmark {path:?}: {error}");
+                                None
+                            }
+                        }
+                    })
                     .collect(),
             }
             .into(),

@@ -189,7 +189,10 @@ impl PathInfo {
     }
 
     pub fn is_symlink_broken(&self) -> bool {
-        self.is_symlink() && !self.path.exists()
+        // Use `try_exists` so a permission error on the target (or a parent
+        // component) is not misreported as a broken link; only a confirmed
+        // "does not exist" counts as broken.
+        self.is_symlink() && matches!(self.path.try_exists(), Ok(false))
     }
 }
 
@@ -388,7 +391,7 @@ mod tests {
     #[test_case("1G",  1024u64.pow(3); "1 GiB")]
     #[test_case("477M",  500 * 1000u64.pow(2) ; "500 million bytes (MB)")]
     #[test_case("500M",  500 * 1024u64.pow(2) ; "500 MiB")]
-    #[test_case("0.9G",  1000_000_000u64 ; "1 billion bytes (MB)")]
+    #[test_case("0.9G",  1_000_000_000u64 ; "1 billion bytes (MB)")]
     #[test_case("1P",  1024u64.pow(5); "1 PiB")]
     #[test_case("1024P",   1024u64.pow(6); "greater than 1 PiB")]
     fn humanize_bytes_success_with(expected: &str, bytes: u64) {

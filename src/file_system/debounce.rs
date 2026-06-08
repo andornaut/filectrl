@@ -17,7 +17,9 @@ impl BytesDebouncer {
         Self {
             current_bytes: 0,
             has_triggered: false,
-            threshold: (total_size * debounce_threshold_percentage) / 100,
+            // saturating_mul guards against overflow for very large files;
+            // the product is divided down to the percentage threshold.
+            threshold: total_size.saturating_mul(debounce_threshold_percentage) / 100,
         }
     }
 
@@ -112,6 +114,15 @@ mod tests {
             let mut d = BytesDebouncer::new(5, 0);
             assert!(d.should_trigger(0));
             assert!(d.should_trigger(0));
+        }
+
+        #[test]
+        fn very_large_total_size_does_not_overflow() {
+            // total_size * percentage would overflow u64; saturating_mul keeps
+            // the threshold finite instead of panicking (debug) or wrapping.
+            let mut d = BytesDebouncer::new(50, u64::MAX);
+            assert!(d.should_trigger(1)); // first call always triggers
+            assert!(!d.should_trigger(1)); // below the (huge) threshold
         }
     }
 

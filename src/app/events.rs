@@ -99,7 +99,7 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
             event_loop(&tx, poll_interval);
         }));
         if let Err(payload) = result {
-            let message = panic_message(&payload);
+            let message = panic_message(payload.as_ref());
             log::error!("Event reader thread panicked: {message}");
             // Wake the main loop so it doesn't block forever.
             let _ = tx.send(Command::Quit);
@@ -127,17 +127,27 @@ fn event_loop(tx: &Sender<Command>, poll_interval: Duration) {
 
         // poll() with a timeout. Returns Ok(true) if an event is queued
         // (next read() is non-blocking), Ok(false) on timeout.
+        //
+        // A poll()/read() error means stdin is no longer usable (e.g. the
+        // terminal closed or the fd was revoked), so there is nothing to retry:
+        // continuing would busy-loop on the same error. We send Command::Quit
+        // and exit the reader thread so the main loop wakes from rx.recv(),
+        // shuts down, and CleanupOnDropTerminal::Drop restores the terminal.
+        // Without this, the main loop would block on rx.recv() forever because
+        // this thread is its only command producer.
         let event = match poll(poll_interval) {
             Ok(true) => match read() {
                 Ok(event) => event,
                 Err(err) => {
                     log::error!("Failed to read terminal event: {err}");
+                    let _ = tx.send(Command::Quit);
                     return;
                 }
             },
             Ok(false) => continue,
             Err(err) => {
                 log::error!("Failed to poll terminal event: {err}");
+                let _ = tx.send(Command::Quit);
                 return;
             }
         };
@@ -153,12 +163,38 @@ fn event_loop(tx: &Sender<Command>, poll_interval: Duration) {
     }
 }
 
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
     } else if let Some(s) = payload.downcast_ref::<String>() {
         s.as_str()
     } else {
         "<non-string panic payload>"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::panic_message;
+
+    #[test]
+    fn panic_message_extracts_str_payload() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new("boom");
+        assert_eq!(panic_message(payload.as_ref()), "boom");
+    }
+
+    #[test]
+    fn panic_message_extracts_string_payload() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("kaboom"));
+        assert_eq!(panic_message(payload.as_ref()), "kaboom");
+    }
+
+    #[test]
+    fn panic_message_falls_back_for_other_payloads() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(42u32);
+        assert_eq!(
+            panic_message(payload.as_ref()),
+            "<non-string panic payload>"
+        );
     }
 }

@@ -9,11 +9,12 @@ use crate::{app::config::Config, views::View};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect) -> Constraint {
-        Constraint::Length(self.build_notices().len() as u16)
+        // Read the cached list (rebuilt by the command handler on state change)
+        // rather than rebuilding it here; this runs before `render` each frame.
+        Constraint::Length(self.notices.len() as u16)
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        self.notices = self.build_notices();
         if self.notices.is_empty() {
             return;
         }

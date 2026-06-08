@@ -1,5 +1,6 @@
 mod handler;
 mod view;
+mod widget;
 
 use std::path::{Path, PathBuf};
 
