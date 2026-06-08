@@ -172,10 +172,13 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{Reselect, SortColumn, TableView};
-    use crate::{app::config::Config, file_system::path_info::PathInfo};
+    use crate::{
+        app::config::{Config, RuntimeEnv},
+        file_system::path_info::PathInfo,
+    };
 
     fn ensure_config_initialized() {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
     }
 

@@ -1,5 +1,5 @@
 use ratatui::style::{Color, Modifier};
-use serde::{Deserialize, Deserializer, de::value::StringDeserializer};
+use serde::{Deserialize, Deserializer, de::Error, de::value::StringDeserializer};
 
 /// Custom deserializer for Color that deserializes empty strings as None (inherit from parent)
 pub fn deserialize_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
@@ -16,32 +16,33 @@ where
 }
 
 /// Deserializes a list of modifier names (e.g. `["bold", "italic"]`) into a `Modifier`.
-/// Unknown names are ignored with a warning.
+/// An unrecognized name is a hard error so that a typo fails the config load
+/// rather than being silently dropped.
 pub fn deserialize_modifier<'de, D>(deserializer: D) -> Result<Modifier, D::Error>
 where
     D: Deserializer<'de>,
 {
     let modifiers: Vec<String> = Deserialize::deserialize(deserializer)?;
 
-    // Start with empty modifier and add each specified modifier
-    Ok(modifiers.iter().fold(Modifier::empty(), |acc, m| {
-        match m.to_lowercase().as_str() {
-            "bold" => acc | Modifier::BOLD,
-            "dim" => acc | Modifier::DIM,
-            "italic" => acc | Modifier::ITALIC,
-            "underlined" => acc | Modifier::UNDERLINED,
-            "blink" => acc | Modifier::SLOW_BLINK,
-            "rapid_blink" => acc | Modifier::RAPID_BLINK,
-            "reversed" => acc | Modifier::REVERSED,
-            "crossed_out" => acc | Modifier::CROSSED_OUT,
-            _ => {
-                log::warn!(
-                    "Unknown modifier in config: {m:?} (valid values: bold, dim, italic, underlined, blink, rapid_blink, reversed, crossed_out)"
-                );
-                acc
+    let mut result = Modifier::empty();
+    for m in &modifiers {
+        result |= match m.to_lowercase().as_str() {
+            "bold" => Modifier::BOLD,
+            "dim" => Modifier::DIM,
+            "italic" => Modifier::ITALIC,
+            "underlined" => Modifier::UNDERLINED,
+            "blink" => Modifier::SLOW_BLINK,
+            "rapid_blink" => Modifier::RAPID_BLINK,
+            "reversed" => Modifier::REVERSED,
+            "crossed_out" => Modifier::CROSSED_OUT,
+            other => {
+                return Err(D::Error::custom(format!(
+                    "Unknown modifier {other:?} (valid values: bold, dim, italic, underlined, blink, rapid_blink, reversed, crossed_out)"
+                )));
             }
-        }
-    }))
+        };
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -68,6 +69,10 @@ mod tests {
 
     fn modifier(toml: &str) -> Modifier {
         toml::from_str::<ModifierHolder>(toml).unwrap().modifiers
+    }
+
+    fn try_modifier(toml: &str) -> Result<Modifier, toml::de::Error> {
+        toml::from_str::<ModifierHolder>(toml).map(|h| h.modifiers)
     }
 
     #[test]
@@ -111,9 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_modifier_is_ignored_and_known_ones_still_apply() {
-        // "hidden" is not supported; "bold" should still take effect (a warning is logged)
-        let result = modifier(r#"modifiers = ["bold", "hidden"]"#);
-        assert_eq!(Modifier::BOLD, result);
+    fn unknown_modifier_is_an_error() {
+        // "hidden" is not supported; the whole config load must fail rather than
+        // silently dropping it.
+        let result = try_modifier(r#"modifiers = ["bold", "hidden"]"#);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("hidden"),
+            "error should name the bad modifier: {err}"
+        );
     }
 }

@@ -180,6 +180,8 @@ open_current_directory = "alacritty --working-directory %s"
 open_new_window = "alacritty --command filectrl %s"
 ```
 
+The configuration is validated strictly: an unrecognized key (for example a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) causes FileCTRL to exit with an error rather than silently ignoring it.
+
 ### Opening in other applications
 
 - [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)

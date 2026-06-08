@@ -29,20 +29,6 @@ pub(super) trait View: CommandHandler {
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>);
 }
 
-/// The left title/message always takes precedence over the right-aligned
-/// hint: the hint is only rendered when it fits alongside the full left
-/// content, so it never causes the left content to be shortened. `reserved`
-/// accounts for non-content columns (e.g. 2 for left + right borders, 0 for a
-/// borderless block).
-pub(super) fn right_hint_fits(
-    total_width: usize,
-    left_width: usize,
-    right_width: usize,
-    reserved: usize,
-) -> bool {
-    total_width > left_width + right_width + reserved
-}
-
 fn bordered(
     area: Rect,
     buf: &mut Buffer,
@@ -65,6 +51,20 @@ fn bordered(
     }
     block.render(area, buf);
     area.inner(Margin::new(1, 1))
+}
+
+/// The left title/message always takes precedence over the right-aligned
+/// hint: the hint is only rendered when it fits alongside the full left
+/// content, so it never causes the left content to be shortened. `reserved`
+/// accounts for non-content columns (e.g. 2 for left + right borders, 0 for a
+/// borderless block).
+fn right_hint_fits(
+    total_width: usize,
+    left_width: usize,
+    right_width: usize,
+    reserved: usize,
+) -> bool {
+    total_width > left_width + right_width + reserved
 }
 
 #[cfg(test)]

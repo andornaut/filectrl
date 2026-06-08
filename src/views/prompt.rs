@@ -302,7 +302,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::config::Config,
+        app::config::{Config, RuntimeEnv},
         command::{Command, PromptAction, handler::CommandHandler},
         file_system::path_info::PathInfo,
     };
@@ -312,7 +312,7 @@ mod tests {
     }
 
     fn ensure_config_initialized() {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
     }
 

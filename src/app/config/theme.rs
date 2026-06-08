@@ -137,11 +137,14 @@ file_type! {
 }
 
 impl FileType {
-    pub(super) fn maybe_apply_ls_colors(&mut self, warn_on_rgb: bool) {
+    /// Applies `LS_COLORS` (passed in by the caller, not read from the
+    /// environment here, so config parsing stays pure) on top of the
+    /// configured colors when `ls_colors_take_precedence` is set.
+    pub(super) fn maybe_apply_ls_colors(&mut self, ls_colors: Option<&str>, warn_on_rgb: bool) {
         if self.ls_colors_take_precedence
-            && let Ok(ls_colors) = std::env::var("LS_COLORS")
+            && let Some(ls_colors) = ls_colors
         {
-            self.apply_ls_colors(&ls_colors, warn_on_rgb);
+            self.apply_ls_colors(ls_colors, warn_on_rgb);
         }
     }
 

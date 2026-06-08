@@ -178,10 +178,10 @@ impl View for AlertsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::config::Config;
+    use crate::app::config::{Config, RuntimeEnv};
 
     fn view() -> AlertsView {
-        let config = Config::load(None, vec![]).unwrap();
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
         Config::init(config);
         AlertsView::new()
     }

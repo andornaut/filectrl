@@ -12,7 +12,7 @@ mod scroll;
 mod selection;
 mod style;
 mod view;
-mod widgets;
+mod widget;
 
 use ratatui::{layout::Rect, widgets::TableState};
 

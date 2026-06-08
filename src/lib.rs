@@ -15,7 +15,7 @@ use log::{LevelFilter, info};
 
 use self::app::{
     App,
-    config::Config,
+    config::{Config, RuntimeEnv},
     events::install_signal_handlers,
     terminal::{CleanupOnDropTerminal, supports_truecolor},
 };
@@ -39,12 +39,16 @@ pub fn run(
         .map(validate_initial_directory)
         .transpose()?;
 
-    let mut config = Config::load(config_path, include_paths)?;
-    apply_log_level(&config);
-
     let is_truecolor = supports_truecolor() && !colors_256;
     info!("Terminal truecolor support: {is_truecolor}");
-    config.is_truecolor = is_truecolor;
+    let ls_colors = env::var("LS_COLORS").ok();
+    let env = RuntimeEnv {
+        is_truecolor,
+        ls_colors: ls_colors.as_deref(),
+    };
+
+    let config = Config::load(env, config_path, include_paths)?;
+    apply_log_level(&config);
     Config::init(config);
 
     // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP
@@ -58,7 +62,7 @@ pub fn run(
 
 pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<()> {
     configure_logging();
-    let config = Config::load(config_path, include_paths)?;
+    let config = Config::load(RuntimeEnv::default(), config_path, include_paths)?;
     let bold = std::io::stdout().is_terminal();
     print!(
         "{}",
