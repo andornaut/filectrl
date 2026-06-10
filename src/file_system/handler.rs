@@ -20,14 +20,16 @@ impl CommandHandler for FileSystem {
                     srcs.iter()
                         .map(|src| TaskCommand::Copy(src.clone(), dest.clone())),
                 );
-                CommandResult::Handled
+                // The TableView clears its marks for these same commands; clearing
+                // the clipboard here keeps both effects on a single broadcast.
+                Command::ClearClipboard.into()
             }
             Command::Move { srcs, dest } => {
                 self.run_batch(
                     srcs.iter()
                         .map(|src| TaskCommand::Move(src.clone(), dest.clone())),
                 );
-                CommandResult::Handled
+                Command::ClearClipboard.into()
             }
             Command::Delete(paths) => {
                 self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));

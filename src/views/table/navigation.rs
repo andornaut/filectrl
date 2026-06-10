@@ -1,5 +1,8 @@
 use super::{TableView, columns::SortColumn};
-use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
+use crate::{
+    command::{Command, result::CommandResult},
+    file_system::path_info::PathInfo,
+};
 
 /// What to select after the visible items change.
 #[derive(Clone, Copy, Default)]
@@ -141,13 +144,27 @@ impl TableView {
     }
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
+        let had_marks = self.has_marks();
         self.columns.sort_by(column);
-        self.sort(Reselect::Top)
+        mark_cleared_or(had_marks, self.sort(Reselect::Top))
     }
 
     pub(super) fn toggle_show_hidden(&mut self) -> CommandResult {
+        let had_marks = self.has_marks();
         self.content.toggle_show_hidden();
-        self.sort(Reselect::Top)
+        mark_cleared_or(had_marks, self.sort(Reselect::Top))
+    }
+}
+
+/// `sort` clears the index-based marks as a side effect of reordering. When there
+/// were marks, prefer notifying the mark-count notice over `otherwise` (the
+/// selection result): the selected file is restored by inode, so its
+/// `SelectionChanged` is redundant.
+fn mark_cleared_or(had_marks: bool, otherwise: CommandResult) -> CommandResult {
+    if had_marks {
+        Command::MarkCountChanged(0).into()
+    } else {
+        otherwise
     }
 }
 
@@ -174,6 +191,7 @@ mod tests {
     use super::{Reselect, SortColumn, TableView};
     use crate::{
         app::config::{Config, RuntimeEnv},
+        command::{Command, handler::CommandHandler, result::CommandResult},
         file_system::path_info::PathInfo,
     };
 
@@ -291,5 +309,73 @@ mod tests {
         );
         assert_eq!(table.table_state.selected(), Some(0));
         assert_eq!(selected_basename(&table).as_deref(), Some("a"));
+    }
+
+    /// Build a table with three items and mark the first two.
+    fn table_with_two_marks(fx: &Fixture) -> TableView {
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            Reselect::Top,
+        );
+        table.select(0);
+        table.toggle_mark();
+        table.select(1);
+        table.toggle_mark();
+        assert_eq!(table.marks.len(), 2);
+        table
+    }
+
+    #[test]
+    fn delete_clears_marks_and_resets_the_mark_count_notice() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        let result = table.handle_command(&Command::Delete(table.marked_paths()));
+
+        assert!(!table.has_marks());
+        assert_eq!(result, Command::MarkCountChanged(0).into());
+    }
+
+    #[test]
+    fn delete_without_marks_does_not_emit_a_mark_count_command() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+
+        let result = table.handle_command(&Command::Delete(vec![]));
+
+        assert_eq!(result, CommandResult::Handled);
+    }
+
+    #[test]
+    fn refreshed_directory_clears_marks_and_resets_the_mark_count_notice() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // Simulates the watcher-triggered reload after files change on disk.
+        let result = table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+
+        assert!(!table.has_marks());
+        assert_eq!(result, Command::MarkCountChanged(0).into());
+    }
+
+    #[test]
+    fn sort_by_clears_marks_and_resets_the_mark_count_notice() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        let result = table.sort_by(SortColumn::Size);
+
+        assert!(!table.has_marks());
+        assert_eq!(result, Command::MarkCountChanged(0).into());
     }
 }

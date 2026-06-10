@@ -244,6 +244,25 @@ mod tests {
     }
 
     #[test]
+    fn filter_change_resets_the_mark_count() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.mark_count = 2;
+        v.handle_command(&Command::FilterChanged("x".into()));
+        assert_eq!(v.mark_count, 0);
+        assert_eq!(tags(&v.build_notices()), vec!["filter"]);
+    }
+
+    #[test]
+    fn showing_bookmarks_resets_the_mark_count() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.mark_count = 2;
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert_eq!(v.mark_count, 0);
+    }
+
+    #[test]
     fn updates_for_cleared_tasks_are_not_resurrected() {
         let mut v = view();
         let (tx, rx) = mpsc::channel();

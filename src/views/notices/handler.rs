@@ -73,8 +73,16 @@ impl CommandHandler for NoticesView {
                 self.clipboard_entry = Some(entry.clone());
                 CommandResult::NotHandled
             }
+            // Filtering and showing bookmarks both re-list, clearing the table's
+            // marks. Their table handlers must emit SelectionChanged, so they
+            // can't also emit MarkCountChanged; reset the count from this side.
             Command::FilterChanged(filter) => {
                 self.filter.clone_from(filter);
+                self.mark_count = 0;
+                CommandResult::NotHandled
+            }
+            Command::Bookmarks { .. } => {
+                self.mark_count = 0;
                 CommandResult::NotHandled
             }
             Command::MarkCountChanged(count) => {
