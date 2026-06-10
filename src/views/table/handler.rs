@@ -16,13 +16,12 @@ impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::Copy { .. } | Command::Move { .. } => {
-                self.clear_marks();
-                Command::ClearClipboard.into()
+                // The operation consumes the marks; the FileSystem handler clears
+                // the clipboard for these same commands. Reset the mark-count
+                // notice here so it doesn't reappear once the clipboard is gone.
+                self.clear_marks_notifying()
             }
-            Command::Chmod { .. } => {
-                self.clear_marks();
-                CommandResult::NotHandled
-            }
+            Command::Chmod { .. } => self.clear_marks_notifying(),
             Command::CancelPrompt => {
                 self.pending_delete.clear();
                 CommandResult::NotHandled
@@ -35,10 +34,7 @@ impl CommandHandler for TableView {
                     Command::Delete(paths).into()
                 }
             }
-            Command::Delete(_) => {
-                self.clear_marks();
-                CommandResult::NotHandled
-            }
+            Command::Delete(_) => self.clear_marks_notifying(),
             Command::ClearClipboard => {
                 self.clipboard_entry = None;
                 CommandResult::NotHandled
@@ -76,10 +72,12 @@ impl CommandHandler for TableView {
                 if self.content.is_showing_bookmarks() {
                     return Command::GetBookmarks.into();
                 }
-                // Same directory reloaded: keep filter and selection.
+                // Same directory reloaded: keep filter and selection. The reload
+                // invalidates the index-based marks, so clear them and notify.
                 self.load_generation = *generation;
+                let result = self.clear_marks_notifying();
                 self.begin_directory(directory.clone(), Reselect::Keep);
-                CommandResult::Handled
+                result
             }
             Command::DirectoryListing { items, generation } => {
                 // Ignore stale batches from a superseded load.
@@ -128,10 +126,9 @@ impl CommandHandler for TableView {
                 if query.is_empty() {
                     return CommandResult::Handled;
                 }
-                self.clear_marks();
                 self.content.start_search();
                 self.table_state.select(None);
-                CommandResult::Handled
+                self.clear_marks_notifying()
             }
             Command::SearchResults(path_infos) => {
                 if !self.content.is_searching() || path_infos.is_empty() {

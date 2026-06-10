@@ -95,6 +95,21 @@ impl TableView {
         self.marks.clear();
     }
 
+    /// Clear all marks and return the command that resets the mark-count notice.
+    /// Emits `MarkCountChanged(0)` only when marks were actually cleared, so
+    /// callers can `return self.clear_marks_notifying()` to keep the NoticesView
+    /// in sync (the marks set is the source of truth) without firing spurious
+    /// commands when there was nothing marked.
+    pub(super) fn clear_marks_notifying(&mut self) -> CommandResult {
+        let had_marks = self.has_marks();
+        self.clear_marks();
+        if had_marks {
+            Command::MarkCountChanged(0).into()
+        } else {
+            CommandResult::Handled
+        }
+    }
+
     pub(super) fn has_marks(&self) -> bool {
         !self.marks.is_empty()
     }
