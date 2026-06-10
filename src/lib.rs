@@ -20,7 +20,7 @@ use self::app::{
     terminal::{CleanupOnDropTerminal, supports_truecolor},
 };
 
-const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+const MODULE_PREFIX: &str = concat!(env!("CARGO_PKG_NAME"), "::");
 
 pub fn run(
     config_path: Option<PathBuf>,
@@ -40,7 +40,6 @@ pub fn run(
         .transpose()?;
 
     let is_truecolor = supports_truecolor() && !colors_256;
-    info!("Terminal truecolor support: {is_truecolor}");
     let ls_colors = env::var("LS_COLORS").ok();
     let env = RuntimeEnv {
         is_truecolor,
@@ -49,6 +48,7 @@ pub fn run(
 
     let config = Config::load(env, config_path, include_paths)?;
     apply_log_level(&config);
+    info!("Terminal truecolor support: {is_truecolor}");
     Config::init(config);
 
     // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP
@@ -94,22 +94,31 @@ fn apply_log_level(config: &Config) {
 }
 
 fn configure_logging() {
-    let prefix = format!("{PKG_NAME}::");
-
-    // Set the log level to the value of $RUST_LOG or default to Info
-    Builder::from_env(Env::default().default_filter_or(LevelFilter::Info.as_str()))
-        .format(move |buf, record| {
+    // When $RUST_LOG is unset, set env_logger's internal filter to the most
+    // permissive level so that the level can later be raised above Info from the
+    // config file. env_logger's internal filter is fixed at init() and cannot be
+    // changed afterward, so gating is done solely through log::set_max_level().
+    // When $RUST_LOG is set, it takes precedence and env_logger applies it.
+    Builder::from_env(Env::default().default_filter_or(LevelFilter::Trace.as_str()))
+        .format(|buf, record| {
             let path = record.module_path().unwrap_or_default();
             writeln!(
                 buf,
                 "[{} {}:{}] {}",
                 record.level(),
-                path.strip_prefix(&prefix).unwrap_or(path),
+                path.strip_prefix(MODULE_PREFIX).unwrap_or(path),
                 record.line().unwrap_or_default(),
                 record.args()
             )
         })
         .init();
+
+    // Gate to Info for the pre-config phase so verbose internal messages don't
+    // appear before the configured level is applied by apply_log_level(). When
+    // $RUST_LOG is set, leave the level env_logger derived from it in place.
+    if env::var(DEFAULT_FILTER_ENV).is_err() {
+        log::set_max_level(LevelFilter::Info);
+    }
 }
 
 #[cfg(test)]
