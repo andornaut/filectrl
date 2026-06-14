@@ -37,6 +37,7 @@ pub(super) fn spans<'a>(
         let is_last = it.peek().is_none();
         let is_tag = i == 0 && tag_style.is_some();
         let name_style = if is_tag {
+            // is_tag is only true when tag_style.is_some(), so this never panics.
             tag_style.unwrap()
         } else if is_last {
             basename_style
@@ -64,12 +65,15 @@ pub(super) fn spans<'a>(
         let x_end = row_len + name_len.saturating_sub(1);
         row_len += entry_len;
 
+        // The block above pushes a new row whenever the container is empty, so
+        // there is always at least one row here.
         let container_row = container.last_mut().unwrap();
         container_row.push(Span::styled(display_name.to_owned(), name_style));
         if !is_last && !is_tag {
             container_row.push(Span::styled(MAIN_SEPARATOR_STR, separator_style));
         }
 
+        // positions grows in lockstep with container above, so this is non-empty.
         let positions_row = positions.last_mut().unwrap();
         positions_row.push(Position {
             x_start,
