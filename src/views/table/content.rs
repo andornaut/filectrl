@@ -221,12 +221,13 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let dir = std::env::temp_dir()
-                .join(format!("filectrl_content_{}_{nanos}", std::process::id()));
+            // A per-process counter guarantees a unique directory even when two
+            // fixtures are created in the same nanosecond on parallel threads,
+            // so one fixture's Drop never wipes another's directory.
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir =
+                std::env::temp_dir().join(format!("filectrl_content_{}_{seq}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             Self { dir }
         }
