@@ -48,6 +48,7 @@ pub fn install_signal_handlers() -> Result<(), nix::errno::Errno> {
     // Safety: sigaction is inherently unsafe but necessary for signal handling.
     // We pass function pointers that only perform atomic stores, which is
     // signal-safe. The handlers are installed once at startup and never removed.
+    #[allow(unsafe_code)]
     unsafe {
         use nix::sys::signal::{SigAction, SigHandler, Signal, sigaction};
 
