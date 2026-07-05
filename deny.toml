@@ -2,7 +2,15 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-ignore = []
+ignore = [
+    # quick-xml < 0.41.0 DoS advisories on untrusted XML (RUSTSEC-2026-0195 unbounded NsReader
+    # allocation, RUSTSEC-2026-0194 quadratic duplicate-attribute check). quick-xml is only pulled
+    # in as a build-time proc-macro dependency of wayland-scanner, which parses trusted, bundled
+    # wayland protocol XML. wayland-scanner pins quick-xml "^0.39", so it cannot be upgraded to 0.41.
+    # filectrl never feeds untrusted XML through this path, so neither is exploitable.
+    "RUSTSEC-2026-0195",
+    "RUSTSEC-2026-0194",
+]
 
 [licenses]
 allow = [
