@@ -33,17 +33,18 @@ impl CommandHandler for App {
                 CommandResult::NotHandled
             }
             Command::Paste(dest) => match self.clipboard.get_clipboard_entry() {
-                Some(ClipboardEntry::Copy(srcs)) => Command::Copy {
+                Ok(Some(ClipboardEntry::Copy(srcs))) => Command::Copy {
                     srcs,
                     dest: dest.clone(),
                 }
                 .into(),
-                Some(ClipboardEntry::Move(srcs)) => Command::Move {
+                Ok(Some(ClipboardEntry::Move(srcs))) => Command::Move {
                     srcs,
                     dest: dest.clone(),
                 }
                 .into(),
-                None => CommandResult::Handled,
+                Ok(None) => CommandResult::Handled,
+                Err(e) => Command::AlertWarn(format!("Cannot paste: {e}")).into(),
             },
             Command::SetClipboardEntry(entry) => match self.clipboard.set_clipboard_entry(entry) {
                 Ok(()) => CommandResult::Handled,

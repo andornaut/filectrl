@@ -8,7 +8,7 @@ impl CommandHandler for FileSystem {
             Command::GoToPreviousDirectory => self.go_to_previous_directory(),
             Command::CancelTask => self.cancel_most_recent_task(),
             Command::ResetView => {
-                self.cancel_search();
+                self.pending_search_exits += self.cancel_search();
                 CommandResult::NotHandled
             }
             Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
@@ -42,8 +42,7 @@ impl CommandHandler for FileSystem {
             Command::RefreshDirectory => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
             Command::ExitedSearch => {
-                // The search thread has exited; drop any lingering search entry.
-                self.cancel_search();
+                self.on_search_exited();
                 CommandResult::NotHandled
             }
             Command::StartSearch(query) => {

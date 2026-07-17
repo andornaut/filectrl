@@ -17,6 +17,9 @@ impl CommandHandler for PromptView {
             Command::ClipboardText(text) => {
                 self.text_area.set_yank_text(text);
                 self.text_area.paste();
+                // Pasting changes the input, so the Goto suggestions must be
+                // recomputed like any other edit (no-op for other prompts).
+                self.refresh_suggestions();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,

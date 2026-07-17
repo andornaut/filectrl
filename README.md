@@ -44,7 +44,7 @@ Run `filectrl --help` to view the available command line arguments and options:
 ```text
 Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--keybindings] [--] [<directory>]
 
-FileCTRL is a lightweight, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 Positional Arguments:
   directory         path to a directory to navigate to

@@ -12,7 +12,9 @@ use ratatui::crossterm::event::{poll, read};
 
 use crate::command::Command;
 
-// Signal handling for graceful shutdown on SIGTERM / SIGHUP.
+// Signal handling for graceful shutdown on SIGTERM / SIGINT / SIGHUP.
+// Keyboard Ctrl+C never reaches this path: raw mode disables ISIG, so
+// only an externally sent SIGINT does.
 //
 // Previously, kill(1) would terminate the process instantly, leaving the
 // terminal in raw mode and the alternate screen active (broken shell).
@@ -59,6 +61,7 @@ pub fn install_signal_handlers() -> Result<(), nix::errno::Errno> {
             nix::sys::signal::SigSet::empty(),
         );
         sigaction(Signal::SIGTERM, &action)?;
+        sigaction(Signal::SIGINT, &action)?;
         sigaction(Signal::SIGHUP, &action)?;
     }
     Ok(())

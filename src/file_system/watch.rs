@@ -1,6 +1,9 @@
 use std::{
     path::PathBuf,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{
+        Arc, Mutex,
+        mpsc::{Receiver, Sender, channel},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -10,8 +13,6 @@ use log::{debug, error, warn};
 use notify::{Event, RecommendedWatcher, Watcher, recommended_watcher};
 
 use crate::{command::Command, file_system::debounce};
-
-const CHECK_DELAYED_THRESHOLD: Duration = Duration::from_millis(250);
 
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,
@@ -46,17 +47,17 @@ impl DirectoryWatcher {
         let (delayed_tx, delayed_rx) = channel();
         let command_tx_for_delayed = command_tx.clone();
         let command_tx_for_notify = command_tx.clone();
-        let debounce_threshold = self.debounce_threshold;
+        // Shared between both threads so a dispatched delayed refresh counts
+        // as a trigger (clearing the delayed flag and resetting the window).
+        let debouncer = Arc::new(Mutex::new(debounce::TimeDebouncer::new(
+            self.debounce_threshold,
+        )));
+        let debouncer_for_delayed = Arc::clone(&debouncer);
         self.handles.push(thread::spawn(move || {
-            watch_for_delayed_commands(command_tx_for_delayed, delayed_rx)
+            watch_for_delayed_commands(command_tx_for_delayed, delayed_rx, debouncer_for_delayed)
         }));
         self.handles.push(thread::spawn(move || {
-            watch_for_notify_events(
-                command_tx_for_notify,
-                delayed_tx,
-                notify_rx,
-                debounce_threshold,
-            )
+            watch_for_notify_events(command_tx_for_notify, delayed_tx, notify_rx, debouncer)
         }));
     }
 
@@ -97,28 +98,29 @@ impl Drop for DirectoryWatcher {
 /// 3. If not enough time has passed, it schedules a delayed refresh after the debounce period
 /// 4. Multiple events within the debounce period will only result in one delayed refresh
 ///
-/// The debouncing is implemented using a timer thread that sleeps for the debounce period
-/// before sending the refresh command. This ensures we don't miss the last update in a series
-/// of rapid changes.
+/// The debouncing is implemented using a timer thread that sleeps out the remainder of the
+/// debounce period before sending the refresh command. This ensures we don't miss the last
+/// update in a series of rapid changes.
 fn watch_for_notify_events(
     command_tx: Sender<Command>,
-    delayed_tx: Sender<Command>,
+    delayed_tx: Sender<Duration>,
     notify_rx: Receiver<std::result::Result<Event, notify::Error>>,
-    debounce_threshold: Duration,
+    debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
 ) {
-    let mut debouncer = debounce::TimeDebouncer::new(debounce_threshold);
     for result in notify_rx {
         match result {
             Ok(event) => match event.kind {
                 notify::EventKind::Create(_)
                 | notify::EventKind::Modify(_)
                 | notify::EventKind::Remove(_) => {
+                    let mut debouncer = debouncer.lock().unwrap();
                     if debouncer.should_trigger(Instant::now()) {
                         if let Err(e) = command_tx.send(Command::RefreshDirectory) {
                             error!("Failed to send refresh command: {}", e);
                         }
                     } else if !debouncer.has_delayed_event() {
-                        if let Err(e) = delayed_tx.send(Command::RefreshDirectory) {
+                        let delay = debouncer.remaining(Instant::now());
+                        if let Err(e) = delayed_tx.send(delay) {
                             error!("Failed to schedule delayed refresh: {}", e);
                         } else {
                             debouncer.set_delayed_event();
@@ -141,10 +143,22 @@ fn watch_for_notify_events(
     }
 }
 
-fn watch_for_delayed_commands(command_tx: Sender<Command>, delayed_rx: Receiver<Command>) {
-    while let Ok(command) = delayed_rx.recv() {
-        thread::sleep(CHECK_DELAYED_THRESHOLD);
-        if let Err(e) = command_tx.send(command) {
+/// Dispatches delayed refreshes. Each queued entry carries the remaining
+/// debounce delay; after sleeping it out, the dispatch is routed through the
+/// shared debouncer so it counts as a trigger (clearing the delayed flag and
+/// resetting the window). `should_trigger` returns false if an event already
+/// triggered a refresh while this thread was sleeping, in which case the
+/// delayed refresh is redundant and skipped.
+fn watch_for_delayed_commands(
+    command_tx: Sender<Command>,
+    delayed_rx: Receiver<Duration>,
+    debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
+) {
+    while let Ok(delay) = delayed_rx.recv() {
+        thread::sleep(delay);
+        if debouncer.lock().unwrap().should_trigger(Instant::now())
+            && let Err(e) = command_tx.send(Command::RefreshDirectory)
+        {
             debug!("Delayed refresh not sent, likely due to shutdown: {}", e);
         }
     }

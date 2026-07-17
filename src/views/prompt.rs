@@ -237,7 +237,9 @@ impl PromptView {
         let input = self.text_area.lines().join("");
         let (_, partial) = Self::split_input(&input);
         let (name, is_dir) = &self.suggestions[self.suggestion_index];
-        let mut suffix = name[partial.len()..].to_string();
+        // The suggestions can lag the input; only slice while the typed
+        // partial is still a prefix of the suggestion.
+        let mut suffix = name.strip_prefix(partial)?.to_string();
         if *is_dir {
             suffix.push('/');
         }
@@ -536,6 +538,32 @@ mod tests {
             Command::try_from(result).unwrap(),
             Command::AlertWarn(_)
         ));
+    }
+
+    #[test]
+    fn current_suggestion_is_none_when_suggestions_are_stale() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        assert!(view.current_suggestion().is_some());
+        // Mutate the text without refreshing, so the typed partial is no
+        // longer a prefix of any cached suggestion.
+        view.text_area.insert_str("XYZXYZXYZ");
+        assert_eq!(view.current_suggestion(), None);
+    }
+
+    #[test]
+    fn clipboard_paste_refreshes_goto_suggestions() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        assert_eq!(view.suggestions.len(), 2);
+
+        view.handle_command(&Command::ClipboardText("XYZ".into()));
+
+        assert_eq!(view.text_area.lines()[0], "ApXYZ");
+        assert!(view.suggestions.is_empty());
+        assert_eq!(view.current_suggestion(), None);
     }
 
     #[test]

@@ -45,6 +45,10 @@ pub struct FileSystem {
     /// Cancellation token for the in-flight streamed directory load, if any.
     /// Cancelled when a new load starts so stale batches don't bleed across.
     current_load: Option<CancellationToken>,
+    /// Number of `ExitedSearch` commands still expected from searches that
+    /// were already cancelled and removed. Each search thread emits exactly
+    /// one `ExitedSearch`; a stale one must not tear down a newer search.
+    pending_search_exits: usize,
     /// Monotonic id stamped on each load so consumers can ignore stale batches.
     next_load_id: u64,
     open_current_directory_template: String,
@@ -71,6 +75,7 @@ impl FileSystem {
             directory: None,
             previous_directory: None,
             current_load: None,
+            pending_search_exits: 0,
             next_load_id: 0,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
@@ -84,7 +89,7 @@ impl FileSystem {
             watcher.run_once(&self.command_tx);
         }
 
-        let directory = directory
+        let mut directory = directory
             .and_then(|path| {
                 path.canonicalize()
                     .inspect_err(|error| self.send_directory_error(&path, error))
@@ -96,6 +101,23 @@ impl FileSystem {
                     .ok()
             })
             .unwrap_or_default();
+
+        // Fall back to the home directory when the startup directory cannot
+        // be opened: every navigation command requires a current directory,
+        // so continuing without one is not an option. If home cannot be
+        // opened either, exit rather than run in a broken state.
+        if let Err(error) = fs::read_dir(&directory.path) {
+            let _ = self.command_tx.send(Command::AlertError(format!(
+                "Failed to change to directory {directory:?}: {error}"
+            )));
+            let home = directories::UserDirs::new()
+                .map(|dirs| dirs.home_dir().to_path_buf())
+                .ok_or_else(|| anyhow!("Cannot determine the home directory"))?;
+            directory = PathInfo::try_from(home.as_path())
+                .map_err(|error| anyhow!("Failed to read home directory {home:?}: {error}"))?;
+            fs::read_dir(&directory.path)
+                .map_err(|error| anyhow!("Failed to read home directory {home:?}: {error}"))?;
+        }
 
         self.cd(directory, true).try_into()
     }
@@ -174,15 +196,31 @@ impl FileSystem {
     }
 
     /// Full search teardown (Esc / `ResetView`): cancel and drop every search
-    /// entry. No-op if the search was already cancelled via `cancel_task`.
-    fn cancel_search(&mut self) {
+    /// entry, returning how many were dropped. No-op if the search was already
+    /// cancelled via `cancel_task`.
+    fn cancel_search(&mut self) -> usize {
+        let mut cancelled = 0;
         self.cancellables.retain(|c| match c {
             Cancellable::Search(token) => {
                 token.cancel();
+                cancelled += 1;
                 false
             }
             Cancellable::Task(_) => true,
         });
+        cancelled
+    }
+
+    /// Handles an `ExitedSearch` from a search thread. Exits owed by searches
+    /// that were already cancelled and removed are swallowed so they don't
+    /// tear down a newer search; otherwise this is the current search
+    /// finishing naturally, so drop its entry.
+    fn on_search_exited(&mut self) {
+        if self.pending_search_exits > 0 {
+            self.pending_search_exits -= 1;
+        } else {
+            self.cancel_search();
+        }
     }
 
     fn cancel_most_recent_task(&mut self) -> CommandResult {
@@ -197,6 +235,8 @@ impl FileSystem {
                 }
                 Cancellable::Search(token) => {
                     token.cancel();
+                    // The thread will still emit one final ExitedSearch.
+                    self.pending_search_exits += 1;
                     // Non-destructive: keep streamed results and the notice;
                     // NoticesView relabels it to "Cancelled: [Searching] <query>".
                     return Command::CancelSearch.into();
@@ -345,7 +385,9 @@ impl FileSystem {
             if let Some(cancel_info) = result.cancel_info {
                 self.cancellables.push(Cancellable::Task(cancel_info));
             }
-            // Send initial progress commands through the channel so NoticesView picks them up
+            // Surface validation failures (e.g. destination exists) as alerts.
+            // Started tasks send their initial progress snapshot themselves,
+            // before spawning their worker thread.
             if let CommandResult::HandledWith(cmd) = result.command_result {
                 let _ = self.command_tx.send(*cmd);
             }
@@ -353,6 +395,10 @@ impl FileSystem {
     }
 
     fn search(&mut self, query: &str) {
+        // One search at a time: cancel any previous search so its results
+        // don't mix into this one.
+        self.pending_search_exits += self.cancel_search();
+
         let token = CancellationToken::new();
         self.cancellables.push(Cancellable::Search(token.clone()));
 

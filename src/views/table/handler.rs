@@ -258,6 +258,9 @@ impl CommandHandler for TableView {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
         );
         is_scroll
+            // While dragging, Drag/Up events outside the table must still be
+            // routed here so the drag tracks and its state is released.
+            || self.scrollbar_view.is_dragging()
             || self.table_area.contains(Position {
                 x: event.column,
                 y: event.row,
