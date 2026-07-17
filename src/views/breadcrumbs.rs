@@ -34,11 +34,14 @@ impl BreadcrumbsView {
     }
 
     fn height(&self, width: u16) -> u16 {
-        // Calculate height based on content length and width, without theme styling
+        // Calculate height based on content length and width, without theme
+        // styling. The tag placeholder must match render(): a tag entry has no
+        // trailing separator, so measuring without one would wrap a column early.
+        let tag_style = (self.is_bookmarks || self.is_searching).then(Style::default);
         let (container, _) = spans(
             &self.display_breadcrumbs(),
             width,
-            None,
+            tag_style,
             Style::default(),
             Style::default(),
             Style::default(),
@@ -64,5 +67,35 @@ impl BreadcrumbsView {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view(parts: &[&str], is_searching: bool) -> BreadcrumbsView {
+        BreadcrumbsView {
+            breadcrumbs: parts.iter().map(|s| s.to_string()).collect(),
+            is_searching,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn height_with_tag_does_not_wrap_at_the_exact_width() {
+        // "[Search] "(9) + ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) fills
+        // exactly 20 columns when the tag has no trailing separator, as in render().
+        let v = view(&["", "home", "abcde"], true);
+        assert_eq!(1, v.height(20));
+        assert_eq!(2, v.height(19));
+    }
+
+    #[test]
+    fn height_without_tag_is_unchanged() {
+        // ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) = 11 columns.
+        let v = view(&["", "home", "abcde"], false);
+        assert_eq!(1, v.height(11));
+        assert_eq!(2, v.height(10));
     }
 }

@@ -65,6 +65,11 @@ impl CleanupOnDropTerminal {
         // problem.
         let original_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
+            // ratatui::restore() only disables raw mode and leaves the
+            // alternate screen, so mouse capture and the keyboard enhancement
+            // flags must be undone here as well (mirroring cleanup()).
+            // Best effort: ignore errors in a panic path.
+            let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture);
             ratatui::restore();
             original_hook(info);
         }));

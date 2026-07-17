@@ -109,15 +109,22 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     // still be running after 250ms and are silently ignored.
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
-        if let Ok(Some(status)) = child.try_wait()
-            && !status.success()
-        {
-            let code = status
-                .code()
-                .map_or("unknown".to_string(), |c| c.to_string());
-            let _ = command_tx.send(Command::AlertError(format!(
-                "Command \"{command}\" failed (exit code {code})"
-            )));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let code = status
+                        .code()
+                        .map_or("unknown".to_string(), |c| c.to_string());
+                    let _ = command_tx.send(Command::AlertError(format!(
+                        "Command \"{command}\" failed (exit code {code})"
+                    )));
+                }
+            }
+            // Still running: block in this detached thread until it exits so
+            // it is reaped rather than left as a zombie.
+            _ => {
+                let _ = child.wait();
+            }
         }
     });
 
@@ -174,6 +181,11 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");
     if old_path != new_path {
+        // Refuse to overwrite: `fs::rename` would silently replace an
+        // existing destination.
+        if new_path.symlink_metadata().is_ok() {
+            return Err(anyhow!("{new_path:?} already exists"));
+        }
         fs::rename(old_path, new_path)?;
     }
     Ok(())
@@ -216,5 +228,25 @@ mod tests {
         let result = join_parent(old_path, right);
 
         assert_eq!(expected, result.to_string_lossy());
+    }
+
+    #[test]
+    fn rename_refuses_existing_destination() {
+        let dir = std::env::temp_dir().join(format!("filectrl_ops_rename_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        fs::write(&a, b"a").unwrap();
+        fs::write(&b, b"b").unwrap();
+
+        let info = PathInfo::try_from(a.as_path()).unwrap();
+        assert!(rename(&info, "b.txt").is_err());
+        // The existing destination must be untouched.
+        assert_eq!(b"b".to_vec(), fs::read(&b).unwrap());
+
+        assert!(rename(&info, "c.txt").is_ok());
+        assert!(dir.join("c.txt").exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

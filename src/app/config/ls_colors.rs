@@ -60,22 +60,18 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
 
             // Extended color codes
             "38" => {
-                if let Some((color, skip)) = parse_extended_color(&codes, i) {
+                let (color, skip) = parse_extended_color(&codes, i);
+                if let Some(color) = color {
                     fg = Some(color);
-                    i += skip;
-                } else if i + 1 < codes.len() {
-                    // Consume the mode byte ("5" or "2") so the outer loop's
-                    // i += 1 doesn't land on it and misread it as a modifier.
-                    i += 1;
                 }
+                i += skip;
             }
             "48" => {
-                if let Some((color, skip)) = parse_extended_color(&codes, i) {
+                let (color, skip) = parse_extended_color(&codes, i);
+                if let Some(color) = color {
                     bg = Some(color);
-                    i += skip;
-                } else if i + 1 < codes.len() {
-                    i += 1;
                 }
+                i += skip;
             }
 
             _ => {}
@@ -87,28 +83,34 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     (fg, bg, attrs)
 }
 
-fn parse_extended_color(codes: &[&str], i: usize) -> Option<(Color, usize)> {
+/// Parses an extended color sequence starting at `codes[i]` ("38"/"48").
+/// Returns the color (when the sequence is complete and valid) and the number
+/// of extra codes consumed. The whole parameter group is consumed (clamped to
+/// the slice end) even when its values are invalid, so they are not
+/// reinterpreted as standalone SGR codes by the caller.
+fn parse_extended_color(codes: &[&str], i: usize) -> (Option<Color>, usize) {
     const MODE_256: &str = "5";
     const MODE_RGB: &str = "2";
     const VALUES_256: usize = 2; // Mode discriminator + color index
     const VALUES_RGB: usize = 4; // Mode discriminator + R + G + B values
 
-    if i + VALUES_256 < codes.len() && codes[i + 1] == MODE_256 {
-        // Check for 256 color mode (format: 38;5;N)
-        if let Ok(n) = codes[i + 2].parse::<u8>() {
-            return Some((Color::Indexed(n), VALUES_256));
+    let Some(&mode) = codes.get(i + 1) else {
+        return (None, 0);
+    };
+    let remaining = codes.len() - i - 1;
+    let parse_u8 = |offset: usize| codes.get(i + offset)?.parse::<u8>().ok();
+
+    match mode {
+        // 256 color mode (format: 38;5;N)
+        MODE_256 => (parse_u8(2).map(Color::Indexed), VALUES_256.min(remaining)),
+        // RGB color mode (format: 38;2;R;G;B)
+        MODE_RGB => {
+            let color = (|| Some(Color::Rgb(parse_u8(2)?, parse_u8(3)?, parse_u8(4)?)))();
+            (color, VALUES_RGB.min(remaining))
         }
-    } else if i + VALUES_RGB < codes.len() && codes[i + 1] == MODE_RGB {
-        // Check for RGB color mode (format: 38;2;R;G;B)
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            codes[i + 2].parse::<u8>(),
-            codes[i + 3].parse::<u8>(),
-            codes[i + 4].parse::<u8>(),
-        ) {
-            return Some((Color::Rgb(r, g, b), VALUES_RGB));
-        }
+        // Unrecognized mode byte: consume it so it is not misread as a code
+        _ => (None, 1),
     }
-    None
 }
 
 #[cfg(test)]
@@ -239,6 +241,33 @@ mod tests {
     fn truncated_rgb_sequence_produces_no_style() {
         // "38;2;255" is missing G and B — should produce nothing
         let (fg, bg, attrs) = parse("38;2;255");
+        assert!(fg.is_none());
+        assert!(bg.is_none());
+        assert!(attrs.is_empty());
+    }
+
+    #[test]
+    fn malformed_rgb_group_is_skipped_entirely() {
+        // 300 is not a valid u8; the whole group must be skipped so that
+        // "31" and "40" are not misread as standalone color codes.
+        let (fg, bg, attrs) = parse("38;2;300;31;40");
+        assert!(fg.is_none());
+        assert!(bg.is_none());
+        assert!(attrs.is_empty());
+    }
+
+    #[test]
+    fn malformed_rgb_group_does_not_reset_modifiers() {
+        // The trailing "0" belongs to the malformed group and must not be
+        // misread as the reset code.
+        let (fg, _, attrs) = parse("01;38;2;255;bad;0");
+        assert!(fg.is_none());
+        assert_eq!(Modifier::BOLD, attrs);
+    }
+
+    #[test]
+    fn invalid_256_index_produces_no_style() {
+        let (fg, bg, attrs) = parse("38;5;300");
         assert!(fg.is_none());
         assert!(bg.is_none());
         assert!(attrs.is_empty());

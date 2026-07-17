@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use crate::file_system::path_info::PathInfo;
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Context, Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
 use log::warn;
 
@@ -34,8 +34,17 @@ impl Clipboard {
         }
     }
 
-    pub fn get_clipboard_entry(&mut self) -> Option<ClipboardEntry> {
-        self.get_text()?.as_str().try_into().ok()
+    /// Reads the system clipboard as a `ClipboardEntry`.
+    /// - `Ok(Some(_))`: valid entry
+    /// - `Ok(None)`: clipboard empty, unreadable, or holds unrelated text
+    /// - `Err(_)`: the text looks like an entry ("cp "/"mv " prefix) but is
+    ///   invalid (e.g. a path that no longer exists); callers should surface
+    ///   this to the user rather than silently doing nothing
+    pub fn get_clipboard_entry(&mut self) -> Result<Option<ClipboardEntry>> {
+        match self.get_text() {
+            Some(text) => parse_clipboard_text(&text),
+            None => Ok(None),
+        }
     }
 
     pub fn get_text(&mut self) -> Option<String> {
@@ -126,11 +135,22 @@ impl TryFrom<&str> for ClipboardEntry {
     }
 }
 
+/// Parses clipboard text, distinguishing unrelated text (ignored) from a
+/// malformed entry (starts with "cp "/"mv " but fails to convert), which is
+/// returned as an error so the caller can alert the user.
+fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
+    match ClipboardEntry::try_from(text) {
+        Ok(entry) => Ok(Some(entry)),
+        Err(error) if text.starts_with("cp ") || text.starts_with("mv ") => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
 fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
     let command_str = &parts[0];
     let paths: Vec<_> = parts[1..]
         .iter()
-        .map(|p| PathInfo::try_from(p.as_str()))
+        .map(|p| PathInfo::try_from(p.as_str()).with_context(|| format!("Cannot access '{p}'")))
         .collect::<Result<Vec<_>, _>>()?;
     match command_str.as_str() {
         "cp" => Ok(ClipboardEntry::Copy(paths)),
@@ -190,5 +210,36 @@ impl ClipboardBackend {
             Ok(current) if current == prev => self.set_string(""),
             _ => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_clipboard_text_ignores_unrelated_text() {
+        assert!(parse_clipboard_text("some copied text").unwrap().is_none());
+        assert!(parse_clipboard_text("").unwrap().is_none());
+        // "cp" without a path is not treated as an entry
+        assert!(parse_clipboard_text("cp").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_clipboard_text_parses_valid_entry() {
+        let path = std::env::temp_dir();
+        let text = format!("cp {}", shell_words::quote(&path.to_string_lossy()));
+        let entry = parse_clipboard_text(&text).unwrap().unwrap();
+        assert!(matches!(entry, ClipboardEntry::Copy(_)));
+    }
+
+    #[test]
+    fn parse_clipboard_text_errors_on_missing_path() {
+        let result = parse_clipboard_text("mv '/filectrl-does-not-exist-xyz'");
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("filectrl-does-not-exist-xyz"),
+            "error should name the path: {error}"
+        );
     }
 }

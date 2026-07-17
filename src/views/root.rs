@@ -19,6 +19,20 @@ const MIN_WIDTH: u16 = 14;
 const MIN_HEIGHT: u16 = 5;
 const RESIZE_WINDOW: &str = "Resize window";
 
+/// Forwards broadcast commands to a view hidden behind the help screen while
+/// declining key and mouse dispatch, which must reach only the help view.
+struct CommandOnly<'a>(&'a mut dyn CommandHandler);
+
+impl CommandHandler for CommandOnly<'_> {
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        self.0.handle_command(command)
+    }
+
+    fn should_handle_key(&self, _: &InputMode) -> bool {
+        false
+    }
+}
+
 pub struct RootView {
     alerts: AlertsView,
     breadcrumbs: BreadcrumbsView,
@@ -117,8 +131,26 @@ impl CommandHandler for RootView {
     }
 
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
-        for view in self.views() {
-            visitor(view);
+        if self.is_help_visible {
+            visitor(&mut self.help);
+            // Async commands (task progress, watcher refreshes, streamed
+            // listings) keep arriving while help is shown; the hidden views
+            // must still receive them, but keys and mouse stay routed to the
+            // help view only.
+            let hidden: [&mut dyn CommandHandler; 5] = [
+                &mut self.alerts,
+                &mut self.breadcrumbs,
+                &mut self.table,
+                &mut self.notices,
+                &mut self.status,
+            ];
+            for view in hidden {
+                visitor(&mut CommandOnly(view));
+            }
+        } else {
+            for view in self.views() {
+                visitor(view);
+            }
         }
     }
 }
@@ -166,4 +198,47 @@ fn render_resize_message(buf: &mut Buffer, area: Rect) {
         .style(theme.alert.error())
         .wrap(Wrap { trim: true });
     widget.render(area, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::config::RuntimeEnv;
+
+    fn view() -> RootView {
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
+        Config::init(config);
+        RootView::new()
+    }
+
+    #[test]
+    fn commands_reach_hidden_views_while_help_is_visible() {
+        let mut root = view();
+        root.is_help_visible = true;
+
+        // AlertError is only handled by the (hidden) AlertsView.
+        let mut handled = false;
+        root.visit_command_handlers(&mut |handler| {
+            if handler.handle_command(&Command::AlertError("boom".into()))
+                != CommandResult::NotHandled
+            {
+                handled = true;
+            }
+        });
+        assert!(handled);
+    }
+
+    #[test]
+    fn keys_reach_only_the_help_view_while_help_is_visible() {
+        let mut root = view();
+        root.is_help_visible = true;
+
+        let mut key_handlers = 0;
+        root.visit_command_handlers(&mut |handler| {
+            if handler.should_handle_key(&InputMode::Normal) {
+                key_handlers += 1;
+            }
+        });
+        assert_eq!(1, key_handlers); // HelpView only
+    }
 }

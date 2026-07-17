@@ -38,10 +38,13 @@ impl TaskRunResult {
         }
     }
 
+    /// The initial progress snapshot has already been sent through the task's
+    /// channel (before the worker thread was spawned, so it always precedes
+    /// any terminal update), so no command is returned here.
     fn started(initial: Task, token: CancellationToken) -> Self {
         Self {
             cancel_info: Some((initial.id(), token, initial.kind().clone())),
-            command_result: Command::Progress(initial).into(),
+            command_result: CommandResult::Handled,
         }
     }
 }
@@ -92,13 +95,9 @@ fn run_copy_task(
 
     let is_directory = path.is_directory();
     // Pre-flight: if the directory's top level cannot even be read, fail fast
-    // *before* the task is registered. The expensive part (the recursive size
-    // walk) still runs off the UI thread below, but this cheap top-level read
-    // catches the common failure (unreadable directory / permission denied)
-    // without ever sending an initial progress snapshot. That preserves the
-    // guarantee that a failed directory copy never orphans a progress notice:
-    // a worker-thread terminal error could otherwise race ahead of the
-    // main-thread initial snapshot and leave a stuck progress bar.
+    // *before* the task is registered (no progress notice is created). The
+    // expensive part (the recursive size walk) still runs off the UI thread
+    // below.
     //
     // A symlink (even to a directory) has `is_directory == false`, so it skips
     // this check and is later recreated as a link by `copy_symlink` rather than
@@ -115,6 +114,9 @@ fn run_copy_task(
     let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let file_size = path.size;
     let source_mode = path.mode();
+    // Send the initial snapshot before spawning the worker so it always
+    // precedes any terminal update on the channel.
+    active.send_progress();
 
     thread::spawn(move || {
         let total_size = if is_directory {
@@ -168,7 +170,9 @@ fn run_move_task(
     let size = path.size;
     let source_mode = path.mode();
     let is_directory = path.is_directory();
-    let buffer_size = buffer_bytes(size, buffer_min_bytes, buffer_max_bytes);
+    // Send the initial snapshot before spawning the worker so it always
+    // precedes any terminal update on the channel.
+    active.send_progress();
 
     thread::spawn(move || match fs::rename(&old_path, &new_path) {
         Ok(_) => {
@@ -178,6 +182,23 @@ fn run_move_task(
         Err(error) => match error.kind() {
             // If the file is on a different device/mount-point, we must copy-then-delete it instead
             ErrorKind::CrossesDevices => {
+                // A directory entry's own size is not the transfer size: scan
+                // for the real total before copying (mirrors `run_copy_task`).
+                let total_size = if is_directory {
+                    match dir_total_size(&old_path) {
+                        Ok(size) => {
+                            active.set_total(size);
+                            size
+                        }
+                        Err(error) => {
+                            active.error(format!("Failed to read directory {old_path:?}: {error}"));
+                            return;
+                        }
+                    }
+                } else {
+                    size
+                };
+                let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
                 if let Some(active) = copy_path(
                     &old_path,
                     &new_path,
@@ -186,7 +207,14 @@ fn run_move_task(
                     is_directory,
                     source_mode,
                 ) {
-                    match remove_path(&old_path, is_directory) {
+                    // Not cancellable: the copy is complete, so removing the
+                    // source outright is the only way to finish the move.
+                    let removed = if is_directory {
+                        fs::remove_dir_all(&old_path)
+                    } else {
+                        fs::remove_file(&old_path)
+                    };
+                    match removed {
                         Ok(_) => active.done(),
                         Err(error) => active.error(format!(
                             "Copy succeeded, but failed to delete original {old_path:?}: {error}"
@@ -211,10 +239,14 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     let is_directory = path.is_directory();
     let path = path.path.clone();
     info!("Deleting {path:?}");
+    // Send the initial snapshot before spawning the worker so it always
+    // precedes any terminal update on the channel.
+    active.send_progress();
 
-    thread::spawn(move || match remove_path(&path, is_directory) {
-        Ok(_) => active.done(),
-        Err(error) => active.error(format!("Failed to delete {path:?}: {error}")),
+    thread::spawn(move || {
+        if let Some(active) = remove_path(&path, is_directory, active) {
+            active.done();
+        }
     });
 
     TaskRunResult::started(initial, token)
@@ -427,18 +459,69 @@ fn copy_path(
         copy_symlink(old_path, new_path, active)
     } else if is_directory {
         copy_directory(old_path, new_path, active, buffer_size)
+    } else if !unix_mode::is_file(source_mode) {
+        // FIFOs, sockets, and device nodes cannot be copied byte-wise
+        // (opening a FIFO for reading blocks until a writer appears), so
+        // skip them.
+        warn!("Skipping non-regular file {old_path:?}");
+        Some(active)
     } else {
         copy_file(old_path, new_path, active, buffer_size)
             .inspect(|_| apply_permissions(source_mode, new_path))
     }
 }
 
-fn remove_path(path: &Path, is_directory: bool) -> std::io::Result<()> {
-    if is_directory {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
+/// Removes a file or directory tree, checking for cancellation between
+/// entries. Cancelling mid-delete leaves whatever has not been removed yet.
+///
+/// Returns `Some(active)` on success, leaving finalization to the caller.
+/// Returns `None` when cancelled or on error, in which case the task has
+/// already been finalized via `active.cancelled()` / `active.error()`.
+fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<ActiveTask> {
+    if active.is_cancelled() {
+        active.cancelled();
+        return None;
     }
+    if is_directory {
+        remove_directory(path, active)
+    } else {
+        // Symlinks are removed as links (never followed): `is_directory` comes
+        // from `symlink_metadata`, so a link to a directory takes this branch.
+        try_or_abort!(
+            active,
+            fs::remove_file(path),
+            format!("Failed to delete {path:?}")
+        );
+        Some(active)
+    }
+}
+
+fn remove_directory(path: &Path, mut active: ActiveTask) -> Option<ActiveTask> {
+    let entries = try_or_abort!(
+        active,
+        fs::read_dir(path),
+        format!("Failed to read directory {path:?}")
+    );
+    for entry in entries {
+        let entry = try_or_abort!(active, entry, format!("Failed to read entry in {path:?}"));
+        let entry_path = entry.path();
+        let metadata = try_or_abort!(
+            active,
+            fs::symlink_metadata(&entry_path),
+            format!("Failed to read metadata for {entry_path:?}")
+        );
+        active = remove_path(&entry_path, metadata.is_dir(), active)?;
+    }
+    if active.is_cancelled() {
+        active.cancelled();
+        return None;
+    }
+    try_or_abort!(
+        active,
+        fs::remove_dir(path),
+        format!("Failed to delete {path:?}")
+    );
+    Some(active)
 }
 
 fn apply_permissions(mode: u32, path: &Path) {
@@ -510,6 +593,16 @@ fn validate_paths(
         .into());
     }
 
+    // Refuse to overwrite an existing destination. `File::create`/`fs::rename`
+    // would silently replace it, and truncating a destination that is a hard
+    // link to the source would destroy the source's contents as well.
+    if new_path.symlink_metadata().is_ok() {
+        return Err(anyhow!(
+            "Cannot {operation} {old_path:?} to {new_path:?}: destination already exists"
+        )
+        .into());
+    }
+
     Ok((old_path, new_path))
 }
 
@@ -575,6 +668,64 @@ mod tests {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
         assert!(validate_paths(&src, &dest, "copy").is_ok());
+    }
+
+    #[test]
+    fn validate_paths_rejects_existing_destination() {
+        let fx = TempDir::new();
+        std::fs::write(fx.dir.join("existing.txt"), b"x").unwrap();
+        let src = path_info("/elsewhere/existing.txt", "existing.txt");
+        let dest = path_info(fx.dir.to_str().unwrap(), "dir");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_existing_broken_symlink_destination() {
+        let fx = TempDir::new();
+        let link = fx.dir.join("existing.txt");
+        std::os::unix::fs::symlink(fx.dir.join("missing"), &link).unwrap();
+        let src = path_info("/elsewhere/existing.txt", "existing.txt");
+        let dest = path_info(fx.dir.to_str().unwrap(), "dir");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn remove_path_deletes_directory_tree() {
+        let fx = TempDir::new();
+        let root = fx.dir.join("doomed");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+
+        assert!(remove_path(&root, true, active).is_some());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn remove_path_stops_when_already_cancelled() {
+        let fx = TempDir::new();
+        let root = fx.dir.join("kept");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let (active, _, token) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        token.cancel();
+
+        assert!(remove_path(&root, true, active).is_none());
+        assert!(root.join("sub").join("f.txt").exists());
     }
 
     /// Self-cleaning unique temp directory.

@@ -118,6 +118,13 @@ impl Config {
             return Self::try_from_default_path(env, include_paths);
         };
 
+        // Absolutize so `parent()` yields the real containing directory.
+        // For a bare filename like `--config config.toml`, `parent()` would
+        // return `Some("")`, making `config_dir` empty and every path derived
+        // from it (bookmarks, relative includes) CWD-relative by accident.
+        let path = std::path::absolute(&path)
+            .map_err(|err| anyhow!("Cannot resolve config path {}: {}", path.display(), err))?;
+
         debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
             Ok(content) => Self::parse(

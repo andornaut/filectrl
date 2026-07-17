@@ -72,6 +72,14 @@ impl TimeDebouncer {
         }
     }
 
+    /// Time left until the debounce window ends: zero if nothing has
+    /// triggered yet or the window has already elapsed.
+    pub fn remaining(&self, at: Instant) -> Duration {
+        self.last_triggered.map_or(Duration::ZERO, |last| {
+            self.threshold.saturating_sub(at.duration_since(last))
+        })
+    }
+
     pub fn has_delayed_event(&self) -> bool {
         self.has_delayed_event
     }
@@ -149,6 +157,22 @@ mod tests {
             let now = Instant::now();
             d.should_trigger(now);
             assert!(d.should_trigger(now + Duration::from_millis(100)));
+        }
+
+        #[test]
+        fn remaining_counts_down_from_last_trigger() {
+            let mut d = TimeDebouncer::new(Duration::from_millis(100));
+            let now = Instant::now();
+            assert_eq!(Duration::ZERO, d.remaining(now)); // never triggered
+            d.should_trigger(now);
+            assert_eq!(
+                Duration::from_millis(60),
+                d.remaining(now + Duration::from_millis(40))
+            );
+            assert_eq!(
+                Duration::ZERO,
+                d.remaining(now + Duration::from_millis(150))
+            );
         }
 
         #[test]
