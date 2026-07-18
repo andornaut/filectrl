@@ -461,10 +461,11 @@ fn copy_path(
         copy_directory(old_path, new_path, active, buffer_size)
     } else if !unix_mode::is_file(source_mode) {
         // FIFOs, sockets, and device nodes cannot be copied byte-wise
-        // (opening a FIFO for reading blocks until a writer appears), so
-        // skip them.
-        warn!("Skipping non-regular file {old_path:?}");
-        Some(active)
+        // (opening a FIFO for reading blocks until a writer appears). Fail
+        // the task rather than skip: returning success here would let a
+        // cross-device move delete a source entry that was never copied.
+        active.error(format!("Cannot copy non-regular file {old_path:?}"));
+        None
     } else {
         copy_file(old_path, new_path, active, buffer_size)
             .inspect(|_| apply_permissions(source_mode, new_path))
@@ -687,6 +688,33 @@ mod tests {
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.dir.to_str().unwrap(), "dir");
         assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn copy_path_fails_on_non_regular_file() {
+        let fx = TempDir::new();
+        let src = fx.dir.join("sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&src).unwrap();
+        let dst = fx.dir.join("sock_copy");
+        let mode = std::fs::symlink_metadata(&src)
+            .unwrap()
+            .permissions()
+            .mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Copy(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            1,
+        );
+
+        // Special files must fail the task (None), not report success:
+        // a cross-device move would otherwise delete the uncopied source.
+        assert!(copy_path(&src, &dst, active, 64, false, mode).is_none());
+        assert!(!dst.exists());
+        assert!(src.exists());
     }
 
     #[test]
