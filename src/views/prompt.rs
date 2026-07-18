@@ -147,6 +147,8 @@ impl PromptView {
                 path: path.clone(),
                 name: value,
             },
+            // An empty query would match everything; treat it like Esc.
+            PromptAction::Search(_) if value.is_empty() => Command::CancelPrompt,
             PromptAction::Search(_) => Command::StartSearch(value),
         }
         .into()

@@ -43,16 +43,19 @@ impl CommandHandler for NoticesView {
                 self.search_tick = 0;
                 CommandResult::Handled
             }
-            Command::ExitedSearch => {
-                if self.search_cancelled {
-                    // Search was cancelled via cancel_task: keep the notice.
-                    self.search_tick = 0;
-                    CommandResult::Handled
-                } else {
+            Command::SearchStarted { generation } => {
+                self.search_generation = *generation;
+                CommandResult::Handled
+            }
+            Command::ExitedSearch { generation } => {
+                // Ignore exits from superseded searches (the current search
+                // is still running). For the current search: a cancelled exit
+                // keeps the relabeled notice, a natural one clears it.
+                if *generation == self.search_generation && !self.search_cancelled {
                     self.search_query = None;
                     self.search_tick = 0;
-                    CommandResult::Handled
                 }
+                CommandResult::Handled
             }
             Command::SearchTick => {
                 if self.search_query.is_some() && !self.search_cancelled {

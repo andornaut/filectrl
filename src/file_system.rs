@@ -7,7 +7,14 @@ mod stream;
 mod tasks;
 mod watch;
 
-use std::{fmt::Display, fs, path::PathBuf, sync::mpsc::Sender, thread, time::Duration};
+use std::{
+    fmt::Display,
+    fs,
+    path::PathBuf,
+    sync::{atomic::Ordering, mpsc::Sender},
+    thread,
+    time::Duration,
+};
 
 use anyhow::{Result, anyhow};
 use log::warn;
@@ -45,10 +52,10 @@ pub struct FileSystem {
     /// Cancellation token for the in-flight streamed directory load, if any.
     /// Cancelled when a new load starts so stale batches don't bleed across.
     current_load: Option<CancellationToken>,
-    /// Number of `ExitedSearch` commands still expected from searches that
-    /// were already cancelled and removed. Each search thread emits exactly
-    /// one `ExitedSearch`; a stale one must not tear down a newer search.
-    pending_search_exits: usize,
+    /// Monotonic id stamped on each search. `SearchResults`/`ExitedSearch`
+    /// carry it, so every consumer can ignore messages from a superseded
+    /// search instead of tearing down its replacement.
+    current_search_generation: u64,
     /// Monotonic id stamped on each load so consumers can ignore stale batches.
     next_load_id: u64,
     open_current_directory_template: String,
@@ -75,7 +82,7 @@ impl FileSystem {
             directory: None,
             previous_directory: None,
             current_load: None,
-            pending_search_exits: 0,
+            current_search_generation: 0,
             next_load_id: 0,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
@@ -196,60 +203,75 @@ impl FileSystem {
     }
 
     /// Full search teardown (Esc / `ResetView`): cancel and drop every search
-    /// entry, returning how many were dropped. No-op if the search was already
-    /// cancelled via `cancel_task`.
-    fn cancel_search(&mut self) -> usize {
-        let mut cancelled = 0;
+    /// entry. No-op if the search was already cancelled via `cancel_task`.
+    /// The cancelled thread still emits one final `ExitedSearch`: when a newer
+    /// search has superseded it, the stale generation makes every consumer
+    /// ignore it; otherwise it arrives with the current generation and the
+    /// handlers process it as a no-op (entry and notice state already cleared).
+    fn cancel_search(&mut self) {
         self.cancellables.retain(|c| match c {
             Cancellable::Search(token) => {
                 token.cancel();
-                cancelled += 1;
                 false
             }
             Cancellable::Task(_) => true,
         });
-        cancelled
     }
 
-    /// Handles an `ExitedSearch` from a search thread. Exits owed by searches
-    /// that were already cancelled and removed are swallowed so they don't
-    /// tear down a newer search; otherwise this is the current search
-    /// finishing naturally, so drop its entry.
-    fn on_search_exited(&mut self) {
-        if self.pending_search_exits > 0 {
-            self.pending_search_exits -= 1;
-        } else {
+    /// Handles an `ExitedSearch` from a search thread. Only the current
+    /// search's exit drops its entry; exits from superseded searches are
+    /// ignored.
+    fn on_search_exited(&mut self, generation: u64) {
+        if generation == self.current_search_generation {
             self.cancel_search();
         }
     }
 
     fn cancel_most_recent_task(&mut self) -> CommandResult {
-        // LIFO across file operations and search: cancel whichever was started most recently.
-        while let Some(cancellable) = self.cancellables.pop() {
-            match cancellable {
-                Cancellable::Task((_, token, kind)) => {
-                    if !token.is_cancelled() {
-                        token.cancel();
-                        return Command::AlertInfo(format!("Cancelled: {}", kind.message())).into();
-                    }
+        // LIFO across file operations and search: the keypress always targets
+        // the most recent entry and never falls through to an older one,
+        // which could cancel work the user did not aim at.
+        let Some(cancellable) = self.cancellables.pop() else {
+            return Command::AlertWarn("No active task to cancel".into()).into();
+        };
+        match cancellable {
+            Cancellable::Task(info) => {
+                // A task that can no longer be cancelled stays on the stack
+                // until its terminal Progress prunes it, and the user is told
+                // nothing happened. `uncancellable` covers two cases: a task
+                // still finishing a stage that cannot be interrupted, and one
+                // already finished whose terminal Progress is still in flight.
+                // The "Cannot cancel" wording fits the former; for the latter
+                // (a sub-frame race) it is momentarily imprecise.
+                if info.uncancellable.load(Ordering::Relaxed) {
+                    let message = format!("Cannot cancel: {}", info.kind.message());
+                    self.cancellables.push(Cancellable::Task(info));
+                    return Command::AlertInfo(message).into();
                 }
-                Cancellable::Search(token) => {
-                    token.cancel();
-                    // The thread will still emit one final ExitedSearch.
-                    self.pending_search_exits += 1;
-                    // Non-destructive: keep streamed results and the notice;
-                    // NoticesView relabels it to "Cancelled: [Searching] <query>".
-                    return Command::CancelSearch.into();
+                info.token.cancel();
+                Command::AlertInfo(format!("Cancelled: {}", info.kind.message())).into()
+            }
+            Cancellable::Search(token) => {
+                // A search that already finished cancels its own token on
+                // exit (see `run_search`). Keep the entry (its in-flight
+                // ExitedSearch drops it) and stay silent: the notice
+                // resolves momentarily, unlike a seconds-long task stage.
+                if token.is_cancelled() {
+                    self.cancellables.push(Cancellable::Search(token));
+                    return CommandResult::Handled;
                 }
+                token.cancel();
+                // Non-destructive: keep streamed results and the notice;
+                // NoticesView relabels it to "Cancelled: [Searching] <query>".
+                Command::CancelSearch.into()
             }
         }
-        Command::AlertWarn("No active task to cancel".into()).into()
     }
 
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
         if task.is_terminal() {
             self.cancellables.retain(|c| match c {
-                Cancellable::Task((id, _, _)) => *id != task.id(),
+                Cancellable::Task(info) => info.id != task.id(),
                 Cancellable::Search(_) => true,
             });
         }
@@ -394,10 +416,27 @@ impl FileSystem {
         }
     }
 
-    fn search(&mut self, query: &str) {
-        // One search at a time: cancel any previous search so its results
-        // don't mix into this one.
-        self.pending_search_exits += self.cancel_search();
+    fn search(&mut self, query: &str) -> CommandResult {
+        // Backstop for a StartSearch("") that bypasses the prompt (the
+        // prompt, the only producer, resolves an empty submit to
+        // CancelPrompt, so this should be unreachable). An empty needle would
+        // match every entry, so spawn no walk; emit the started/exited pair
+        // so NoticesView and TableView drop back out of search state. This is
+        // a guard, not a clean no-result search: BreadcrumbsView only leaves
+        // search state on ResetView/navigation, so it is not unwound here.
+        if query.is_empty() {
+            self.cancel_search();
+            self.current_search_generation += 1;
+            let generation = self.current_search_generation;
+            let _ = self.command_tx.send(Command::ExitedSearch { generation });
+            return Command::SearchStarted { generation }.into();
+        }
+
+        // One search at a time: cancel any previous search. Its stale
+        // results and exit are ignored by generation, not by timing.
+        self.cancel_search();
+        self.current_search_generation += 1;
+        let generation = self.current_search_generation;
 
         let token = CancellationToken::new();
         self.cancellables.push(Cancellable::Search(token.clone()));
@@ -419,9 +458,14 @@ impl FileSystem {
         search::run_search(
             self.current_directory().clone(),
             query.to_string(),
+            generation,
             self.command_tx.clone(),
             token,
         );
+
+        // Tell consumers which generation is now current, so they can ignore
+        // messages from superseded searches.
+        Command::SearchStarted { generation }.into()
     }
 
     fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {

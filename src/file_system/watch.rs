@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        mpsc::{Receiver, Sender, channel},
+        mpsc::{Receiver, RecvTimeoutError, Sender, channel},
     },
     thread,
     time::{Duration, Instant},
@@ -154,8 +154,17 @@ fn watch_for_delayed_commands(
     delayed_rx: Receiver<Duration>,
     debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
 ) {
-    while let Ok(delay) = delayed_rx.recv() {
-        thread::sleep(delay);
+    while let Ok(mut delay) = delayed_rx.recv() {
+        // Wait out the remainder on the channel rather than sleeping, so a
+        // disconnect (shutdown) interrupts the wait instead of blocking
+        // `Drop`'s join for up to the full debounce window.
+        loop {
+            match delayed_rx.recv_timeout(delay) {
+                Ok(next) => delay = next,
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        }
         if debouncer.lock().unwrap().should_trigger(Instant::now())
             && let Err(e) = command_tx.send(Command::RefreshDirectory)
         {

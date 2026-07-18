@@ -39,6 +39,9 @@ pub(super) struct TableView {
     /// Generation of the directory load currently being streamed in. Batches
     /// stamped with a different generation are stale and ignored.
     load_generation: u64,
+    /// Generation of the current search (from `SearchStarted`); result
+    /// batches from superseded searches are stale and ignored.
+    search_generation: u64,
     /// Selection state captured at the start of a streamed load, applied once it
     /// completes (see `begin_directory`/`finish_directory`).
     pending_load: PendingLoad,

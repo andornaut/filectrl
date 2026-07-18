@@ -28,6 +28,13 @@ impl CommandHandler for CommandOnly<'_> {
         self.0.handle_command(command)
     }
 
+    fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+        // Wrap children too, so a view that gains child handlers keeps
+        // receiving commands (but not input) while help is open.
+        self.0
+            .visit_command_handlers(&mut |child| visitor(&mut CommandOnly(child)));
+    }
+
     fn should_handle_key(&self, _: &InputMode) -> bool {
         false
     }
