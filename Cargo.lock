@@ -552,6 +552,7 @@ dependencies = [
  "notify",
  "ratatui",
  "ratatui-textarea",
+ "rustix 1.1.4",
  "serde",
  "shell-words",
  "test-case",
