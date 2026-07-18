@@ -120,30 +120,27 @@ fn run_copy_task(
 
     thread::spawn(move || {
         let total_size = if is_directory {
-            match dir_total_size(&old_path) {
-                Ok(size) => {
-                    active.set_total(size);
-                    size
-                }
-                Err(error) => {
-                    active.error(format!("Failed to read directory {old_path:?}: {error}"));
-                    return;
-                }
-            }
+            let size = dir_total_size(&old_path);
+            active.set_total(size);
+            size
         } else {
             file_size
         };
         let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-        if let Some(active) = copy_path(
+        let mut errors = Vec::new();
+        if !copy_path(
             &old_path,
             &new_path,
-            active,
+            &mut active,
+            &mut errors,
             buffer_size,
             is_directory,
             source_mode,
         ) {
-            active.done();
+            active.cancelled();
+            return;
         }
+        finalize_copy(active, errors);
     });
 
     TaskRunResult::started(initial, token)
@@ -185,41 +182,46 @@ fn run_move_task(
                 // A directory entry's own size is not the transfer size: scan
                 // for the real total before copying (mirrors `run_copy_task`).
                 let total_size = if is_directory {
-                    match dir_total_size(&old_path) {
-                        Ok(size) => {
-                            active.set_total(size);
-                            size
-                        }
-                        Err(error) => {
-                            active.error(format!("Failed to read directory {old_path:?}: {error}"));
-                            return;
-                        }
-                    }
+                    let size = dir_total_size(&old_path);
+                    active.set_total(size);
+                    size
                 } else {
                     size
                 };
                 let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-                if let Some(active) = copy_path(
+                let mut errors = Vec::new();
+                if !copy_path(
                     &old_path,
                     &new_path,
-                    active,
+                    &mut active,
+                    &mut errors,
                     buffer_size,
                     is_directory,
                     source_mode,
                 ) {
-                    // Not cancellable: the copy is complete, so removing the
-                    // source outright is the only way to finish the move.
-                    let removed = if is_directory {
-                        fs::remove_dir_all(&old_path)
-                    } else {
-                        fs::remove_file(&old_path)
-                    };
-                    match removed {
-                        Ok(_) => active.done(),
-                        Err(error) => active.error(format!(
-                            "Copy succeeded, but failed to delete original {old_path:?}: {error}"
-                        )),
-                    }
+                    active.cancelled();
+                    return;
+                }
+                // Like `mv`: the source is removed only after a fully clean
+                // copy. If any entry failed, the entire source is left in
+                // place (even entries that copied fine) and the partial
+                // destination is kept.
+                if !errors.is_empty() {
+                    finalize_copy(active, errors);
+                    return;
+                }
+                // Not cancellable: the copy is complete, so removing the
+                // source outright is the only way to finish the move.
+                let removed = if is_directory {
+                    fs::remove_dir_all(&old_path)
+                } else {
+                    fs::remove_file(&old_path)
+                };
+                match removed {
+                    Ok(_) => active.done(),
+                    Err(error) => active.error(format!(
+                        "Copy succeeded, but failed to delete original {old_path:?}: {error}"
+                    )),
                 }
             }
             _ => active.error(format!(
@@ -269,13 +271,19 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
     }
 }
 
-fn dir_total_size(root: &Path) -> Result<u64> {
+/// Best-effort recursive size for the progress total. Entries that cannot be
+/// read are skipped here; the copy itself reports them as errors.
+fn dir_total_size(root: &Path) -> u64 {
     let mut total = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
-        for entry in fs::read_dir(&path)? {
-            let entry = entry?;
-            let metadata = fs::symlink_metadata(entry.path())?;
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+                continue;
+            };
             if metadata.is_dir() {
                 stack.push(entry.path());
             } else if !metadata.is_symlink() {
@@ -283,7 +291,7 @@ fn dir_total_size(root: &Path) -> Result<u64> {
             }
         }
     }
-    Ok(total)
+    total
 }
 
 /// Unwraps a `Result`, or finalizes `$active` with `"{$ctx}: {error}"` and
@@ -301,68 +309,103 @@ macro_rules! try_or_abort {
     };
 }
 
+/// Finalizes a copy/move task following coreutils semantics: success when no
+/// per-entry errors were recorded, otherwise a single error alert summarizing
+/// them. Every recorded error is also logged.
+fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
+    if errors.is_empty() {
+        active.done();
+        return;
+    }
+    for error in &errors {
+        warn!("{error}");
+    }
+    let summary = if errors.len() == 1 {
+        errors.into_iter().next().expect("errors is non-empty")
+    } else {
+        format!(
+            "{} ({} more errors; see the log)",
+            errors[0],
+            errors.len() - 1
+        )
+    };
+    active.error(summary);
+}
+
+/// The copy functions below follow coreutils `cp -R`/`mv` semantics: an entry
+/// that cannot be copied is recorded in `errors` and the copy continues with
+/// the remaining entries. Each returns `false` only when the task was
+/// cancelled, in which case the caller must finalize with
+/// `active.cancelled()`; otherwise the caller finalizes via `finalize_copy`.
 fn copy_directory(
     old_path: &Path,
     new_path: &Path,
-    mut active: ActiveTask,
+    active: &mut ActiveTask,
+    errors: &mut Vec<String>,
     buffer_size: usize,
-) -> Option<ActiveTask> {
-    try_or_abort!(
-        active,
-        fs::create_dir(new_path),
-        format!("Failed to create directory {new_path:?}")
-    );
+) -> bool {
+    if let Err(error) = fs::create_dir(new_path) {
+        // The subtree cannot be copied at all; skip it and continue with
+        // the siblings.
+        errors.push(format!("Failed to create directory {new_path:?}: {error}"));
+        return true;
+    }
 
     if let Ok(metadata) = fs::symlink_metadata(old_path) {
         apply_permissions(metadata.permissions().mode(), new_path);
     }
 
-    let entries = try_or_abort!(
-        active,
-        fs::read_dir(old_path),
-        format!("Failed to read directory {old_path:?}")
-    );
+    let entries = match fs::read_dir(old_path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            errors.push(format!("Failed to read directory {old_path:?}: {error}"));
+            return true;
+        }
+    };
 
     for entry in entries {
         if active.is_cancelled() {
-            if let Err(e) = fs::remove_dir_all(new_path) {
-                active.error(format!(
-                    "Cancelled, but failed to clean up {new_path:?}: {e}"
-                ));
-            } else {
-                active.cancelled();
+            if let Err(error) = fs::remove_dir_all(new_path) {
+                warn!("Cancelled, but failed to clean up {new_path:?}: {error}");
             }
-            return None;
+            return false;
         }
 
-        let entry = try_or_abort!(
-            active,
-            entry,
-            format!("Failed to read entry in {old_path:?}")
-        );
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!("Failed to read entry in {old_path:?}: {error}"));
+                continue;
+            }
+        };
 
         let src = entry.path();
         let dst = new_path.join(entry.file_name());
-        let metadata = try_or_abort!(
-            active,
-            fs::symlink_metadata(&src),
-            format!("Failed to read metadata for {src:?}")
-        );
+        let metadata = match fs::symlink_metadata(&src) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                errors.push(format!("Failed to read metadata for {src:?}: {error}"));
+                continue;
+            }
+        };
 
         // `metadata` comes from `symlink_metadata`, so its mode carries
         // `S_IFLNK` for a symlink; `copy_path` dispatches links, directories,
         // and files uniformly off that mode.
-        active = copy_path(
+        if !copy_path(
             &src,
             &dst,
             active,
+            errors,
             buffer_size,
             metadata.is_dir(),
             metadata.permissions().mode(),
-        )?;
+        ) {
+            return false;
+        }
     }
 
-    Some(active)
+    true
 }
 
 /// Recreates the symlink at `old_path` as a new symlink at `new_path` pointing
@@ -370,105 +413,141 @@ fn copy_directory(
 /// is copied; its target is never followed, so no bytes are transferred and no
 /// permissions are applied (`fs::set_permissions` would follow the link and
 /// chmod the target instead of the link).
-fn copy_symlink(old_path: &Path, new_path: &Path, active: ActiveTask) -> Option<ActiveTask> {
-    let target = try_or_abort!(
-        active,
-        fs::read_link(old_path),
-        format!("Failed to read symlink {old_path:?}")
-    );
-    try_or_abort!(
-        active,
-        std::os::unix::fs::symlink(&target, new_path),
-        format!("Failed to create symlink {new_path:?}")
-    );
-    Some(active)
+fn copy_symlink(old_path: &Path, new_path: &Path, errors: &mut Vec<String>) {
+    match fs::read_link(old_path) {
+        Ok(target) => {
+            if let Err(error) = std::os::unix::fs::symlink(&target, new_path) {
+                errors.push(format!("Failed to create symlink {new_path:?}: {error}"));
+            }
+        }
+        Err(error) => errors.push(format!("Failed to read symlink {old_path:?}: {error}")),
+    }
 }
 
-/// Copies a file chunk-by-chunk, sending debounced progress updates via `active`.
-///
-/// Returns `Some(active)` on success, leaving finalization to the caller.
-/// Returns `None` if an error occurred — the task has already been finalized via `active.error()`.
+/// Copies a file chunk-by-chunk, sending debounced progress updates via
+/// `active` and applying `source_mode`'s permissions on success. Failures are
+/// recorded in `errors`; returns `false` only when cancelled.
 fn copy_file(
     old_path: &Path,
     new_path: &Path,
-    mut active: ActiveTask,
+    active: &mut ActiveTask,
+    errors: &mut Vec<String>,
     buffer_size: usize,
-) -> Option<ActiveTask> {
+    source_mode: u32,
+) -> bool {
     let total_size = active.total_size();
-    match open_files(old_path, new_path) {
+    let (mut old_file, mut new_file) = match open_files(old_path, new_path) {
+        Ok(files) => files,
         Err(error) => {
-            active.error(format!(
+            errors.push(format!(
                 "Failed to copy {old_path:?} to {new_path:?}: {error}"
             ));
-            None
+            return true;
+        }
+    };
+
+    let mut buffer = vec![0; buffer_size];
+    let mut debouncer = debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
+
+    loop {
+        if active.is_cancelled() {
+            drop(old_file);
+            drop(new_file);
+            let _ = fs::remove_file(new_path);
+            return false;
         }
 
-        Ok((mut old_file, mut new_file)) => {
-            let mut buffer = vec![0; buffer_size];
-            let mut debouncer =
-                debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
-
-            loop {
-                if active.is_cancelled() {
-                    drop(old_file);
-                    drop(new_file);
-                    let _ = fs::remove_file(new_path);
-                    active.cancelled();
-                    break None;
-                }
-
-                match old_file.read(&mut buffer) {
-                    Ok(0) => break Some(active),
-                    Ok(bytes) => match new_file.write_all(&buffer[..bytes]) {
-                        Ok(()) => {
-                            active.increment(bytes as u64);
-                            if debouncer.should_trigger(bytes as u64) {
-                                active.send_progress();
-                            }
-                        }
-                        Err(error) => {
-                            active.error(format!("Failed to write {new_path:?}: {error}"));
-                            break None;
-                        }
-                    },
-                    Err(error) => {
-                        active.error(format!("Failed to read {old_path:?}: {error}"));
-                        break None;
+        match old_file.read(&mut buffer) {
+            Ok(0) => {
+                apply_permissions(source_mode, new_path);
+                return true;
+            }
+            Ok(bytes) => match new_file.write_all(&buffer[..bytes]) {
+                Ok(()) => {
+                    active.increment(bytes as u64);
+                    if debouncer.should_trigger(bytes as u64) {
+                        active.send_progress();
                     }
                 }
+                Err(error) => {
+                    errors.push(format!("Failed to write {new_path:?}: {error}"));
+                    return true;
+                }
+            },
+            Err(error) => {
+                errors.push(format!("Failed to read {old_path:?}: {error}"));
+                return true;
             }
         }
     }
 }
 
-/// Copies a directory or file, dispatching on `is_directory`. For files, the
-/// source mode is applied to the destination on success; directories apply
-/// their own permissions recursively in `copy_directory`.
+/// Copies a directory, file, symlink, or special file, dispatching on
+/// `is_directory` and `source_mode`. Per-entry failures accumulate in
+/// `errors`; returns `false` only when the task was cancelled.
 fn copy_path(
     old_path: &Path,
     new_path: &Path,
-    active: ActiveTask,
+    active: &mut ActiveTask,
+    errors: &mut Vec<String>,
     buffer_size: usize,
     is_directory: bool,
     source_mode: u32,
-) -> Option<ActiveTask> {
+) -> bool {
     // Check symlink first: `source_mode` comes from `symlink_metadata`, so a
     // symlink (even one pointing at a directory) is recreated as a link rather
     // than followed. `is_directory` is already false for any symlink.
     if unix_mode::is_symlink(source_mode) {
-        copy_symlink(old_path, new_path, active)
+        copy_symlink(old_path, new_path, errors);
+        true
     } else if is_directory {
-        copy_directory(old_path, new_path, active, buffer_size)
-    } else if !unix_mode::is_file(source_mode) {
-        // FIFOs, sockets, and device nodes cannot be copied byte-wise
-        // (opening a FIFO for reading blocks until a writer appears). Fail
-        // the task rather than skip: returning success here would let a
-        // cross-device move delete a source entry that was never copied.
-        active.error(format!("Cannot copy non-regular file {old_path:?}"));
-        None
+        copy_directory(old_path, new_path, active, errors, buffer_size)
+    } else if unix_mode::is_file(source_mode) {
+        copy_file(old_path, new_path, active, errors, buffer_size, source_mode)
     } else {
-        copy_file(old_path, new_path, active, buffer_size)
-            .inspect(|_| apply_permissions(source_mode, new_path))
+        copy_special(old_path, new_path, errors, source_mode);
+        true
+    }
+}
+
+/// Recreates a special file (FIFO, socket, or device node) as a fresh node at
+/// `new_path` with the source's permission bits, like `cp -R` does. No bytes
+/// are transferred: reading a FIFO would block until a writer appears. FIFOs
+/// and sockets need no privileges; device nodes require root, so as a normal
+/// user they record a "not permitted" error here, exactly as `cp` reports.
+fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, source_mode: u32) {
+    use nix::sys::stat::{Mode, SFlag, mknod};
+
+    let kind = if unix_mode::is_fifo(source_mode) {
+        SFlag::S_IFIFO
+    } else if unix_mode::is_socket(source_mode) {
+        SFlag::S_IFSOCK
+    } else if unix_mode::is_block_device(source_mode) {
+        SFlag::S_IFBLK
+    } else if unix_mode::is_char_device(source_mode) {
+        SFlag::S_IFCHR
+    } else {
+        errors.push(format!("Cannot copy {old_path:?}: unsupported file type"));
+        return;
+    };
+
+    // Device nodes need the source's device numbers; zero for the rest.
+    let rdev = if matches!(kind, SFlag::S_IFBLK | SFlag::S_IFCHR) {
+        use std::os::unix::fs::MetadataExt;
+        match fs::symlink_metadata(old_path) {
+            Ok(metadata) => metadata.rdev() as nix::libc::dev_t,
+            Err(error) => {
+                errors.push(format!("Failed to read metadata for {old_path:?}: {error}"));
+                return;
+            }
+        }
+    } else {
+        0
+    };
+
+    let permissions = Mode::from_bits_truncate(source_mode);
+    if let Err(error) = mknod(new_path, kind, permissions, rdev) {
+        errors.push(format!("Cannot create special file {new_path:?}: {error}"));
     }
 }
 
@@ -690,8 +769,20 @@ mod tests {
         assert!(validate_paths(&src, &dest, "copy").is_err());
     }
 
+    fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Copy(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            1,
+        );
+        active
+    }
+
     #[test]
-    fn copy_path_fails_on_non_regular_file() {
+    fn copy_path_recreates_socket() {
         let fx = TempDir::new();
         let src = fx.dir.join("sock");
         let _listener = std::os::unix::net::UnixListener::bind(&src).unwrap();
@@ -701,20 +792,102 @@ mod tests {
             .permissions()
             .mode();
         let (tx, _rx) = std::sync::mpsc::channel();
-        let (active, _, _) = ActiveTask::new(
-            tx,
-            TaskKind::Copy(Transfer {
-                source: String::new(),
-                destination: String::new(),
-            }),
-            1,
-        );
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
 
-        // Special files must fail the task (None), not report success:
-        // a cross-device move would otherwise delete the uncopied source.
-        assert!(copy_path(&src, &dst, active, 64, false, mode).is_none());
-        assert!(!dst.exists());
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            64,
+            false,
+            mode
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        let dst_mode = std::fs::symlink_metadata(&dst)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert!(unix_mode::is_socket(dst_mode));
         assert!(src.exists());
+        active.done();
+    }
+
+    #[test]
+    fn copy_path_recreates_fifo() {
+        let fx = TempDir::new();
+        let src = fx.dir.join("fifo");
+        nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
+        let dst = fx.dir.join("fifo_copy");
+        let mode = std::fs::symlink_metadata(&src)
+            .unwrap()
+            .permissions()
+            .mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            64,
+            false,
+            mode
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        let dst_mode = std::fs::symlink_metadata(&dst)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert!(unix_mode::is_fifo(dst_mode));
+        assert_eq!(0o644, dst_mode & 0o7777);
+        active.done();
+    }
+
+    #[test]
+    fn copy_path_continues_past_unreadable_entries() {
+        // Root can read a chmod-000 file, which would defeat the test.
+        if nix::unistd::geteuid().is_root() {
+            return;
+        }
+        let fx = TempDir::new();
+        let src = fx.dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        std::fs::write(src.join("bad"), b"x").unwrap();
+        std::fs::write(src.join("c.txt"), b"c").unwrap();
+        let mut permissions = std::fs::metadata(src.join("bad")).unwrap().permissions();
+        permissions.set_mode(0o000);
+        std::fs::set_permissions(src.join("bad"), permissions).unwrap();
+
+        let dst = fx.dir.join("dst");
+        let mode = std::fs::symlink_metadata(&src)
+            .unwrap()
+            .permissions()
+            .mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        // Like cp -R: the unreadable entry is recorded and the rest is copied.
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            64,
+            true,
+            mode
+        ));
+        assert_eq!(1, errors.len(), "expected one error: {errors:?}");
+        assert!(errors[0].contains("bad"), "unexpected error: {}", errors[0]);
+        assert!(dst.join("a.txt").exists());
+        assert!(dst.join("c.txt").exists());
+        assert!(!dst.join("bad").exists());
+        active.done();
     }
 
     #[test]
@@ -810,8 +983,19 @@ mod tests {
         let source_mode = fs::symlink_metadata(&link).unwrap().permissions().mode();
         assert!(unix_mode::is_symlink(source_mode));
 
-        let result = copy_path(&link, &dst, new_active_task(), 1024, false, source_mode);
-        assert!(result.is_some());
+        let mut active = new_active_task();
+        let mut errors = Vec::new();
+        assert!(copy_path(
+            &link,
+            &dst,
+            &mut active,
+            &mut errors,
+            1024,
+            false,
+            source_mode
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        active.done();
 
         // The destination must itself be a symlink pointing at the same target,
         // not a regular file containing the target's bytes.

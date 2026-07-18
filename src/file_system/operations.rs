@@ -182,17 +182,33 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     info!("Renaming {old_path:?} to {new_path:?}");
     if old_path != new_path {
         // Refuse to overwrite: `fs::rename` would silently replace an
-        // existing destination. Exception: when both paths resolve to the
-        // same file nothing can be lost. This allows case-only renames on
-        // case-insensitive filesystems, where the destination path resolves
-        // to the source itself; renaming onto another hard link of the same
-        // inode is likewise a POSIX no-op, not an overwrite.
-        if new_path.symlink_metadata().is_ok() && !is_same_file(old_path, &new_path) {
-            return Err(anyhow!("{new_path:?} already exists"));
+        // existing destination.
+        if new_path.symlink_metadata().is_ok() {
+            if !is_same_file(old_path, &new_path) {
+                return Err(anyhow!("{new_path:?} already exists"));
+            }
+            // Same underlying file. A case-only change of the name is a real
+            // rename on a case-insensitive filesystem (where the destination
+            // path resolves to the source itself), so let it through.
+            // Renaming onto another hard link of the same inode is a POSIX
+            // no-op that would silently change nothing, so report it instead.
+            if !is_case_only_change(old_path, &new_path) {
+                return Err(anyhow!("{old_path:?} and {new_path:?} are the same file"));
+            }
         }
         fs::rename(old_path, new_path)?;
     }
     Ok(())
+}
+
+/// True when the two paths' file names differ only by letter case.
+fn is_case_only_change(a: &Path, b: &Path) -> bool {
+    match (a.file_name(), b.file_name()) {
+        (Some(a), Some(b)) => {
+            a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        }
+        _ => false,
+    }
 }
 
 /// True when both paths resolve to the same underlying file (device and
@@ -266,9 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn rename_allows_same_inode_destination() {
+    fn rename_reports_same_file_for_hard_link_destination() {
         let dir =
             std::env::temp_dir().join(format!("filectrl_ops_samefile_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let a = dir.join("a.txt");
         let b = dir.join("b.txt");
@@ -276,11 +293,33 @@ mod tests {
         fs::hard_link(&a, &b).unwrap();
 
         let info = PathInfo::try_from(a.as_path()).unwrap();
-        // Renaming onto another hard link of the same inode is a POSIX no-op,
-        // not an overwrite; it must not be refused. This is also the shape of
-        // a case-only rename on a case-insensitive filesystem.
-        assert!(rename(&info, "b.txt").is_ok());
+        // Renaming onto another hard link of the same inode would be a POSIX
+        // no-op; report it rather than silently succeeding.
+        let error = rename(&info, "b.txt").unwrap_err().to_string();
+        assert!(error.contains("same file"), "unexpected error: {error}");
+        assert!(a.exists());
         assert!(b.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_allows_case_only_change_to_same_file() {
+        let dir =
+            std::env::temp_dir().join(format!("filectrl_ops_casechange_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        // On a case-insensitive filesystem the destination of a case-only
+        // rename resolves to the source itself; a case-variant hard link is
+        // the closest equivalent constructible on a case-sensitive one.
+        let upper = dir.join("A.TXT");
+        fs::write(&a, b"a").unwrap();
+        fs::hard_link(&a, &upper).unwrap();
+
+        let info = PathInfo::try_from(a.as_path()).unwrap();
+        assert!(rename(&info, "A.TXT").is_ok());
+        assert!(upper.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
