@@ -30,6 +30,7 @@ nix = {version = "0.31.3", default-features = false, features = ["fs", "signal",
 notify = "8.2.0"
 ratatui-textarea = {version = "0.9.1", features = ["crossterm"]}
 ratatui = {version = "0.30.2", features = ["serde"]}
+rustix = {version = "1.1", features = ["fs"]}
 serde = {version = "1.0.228", features = ["derive"]}
 toml = "1.1.2"
 unicode-segmentation = "1.13.3"

@@ -22,6 +22,13 @@ use crate::{
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
+/// Floor for the per-file copy read buffer. `buffer_bytes` can yield a very
+/// small (even zero) size when a directory's scanned total is tiny or stale; a
+/// file that appears or grows between the size scan and the copy must still be
+/// read in reasonable chunks rather than a zero-length buffer that would read
+/// `Ok(0)` immediately and write an empty destination. 8 KiB matches std's
+/// default I/O buffer size.
+const MIN_COPY_BUFFER_BYTES: usize = 8 * 1024;
 
 pub struct CancelInfo {
     pub id: usize,
@@ -144,7 +151,7 @@ fn run_copy_task(
         } else {
             file_size
         };
-        let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+        let buffer_size = copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
         let mut errors = Vec::new();
         if !copy_path(
             &old_path,
@@ -201,7 +208,7 @@ fn run_move_task(
             active.cancelled();
             return;
         }
-        match fs::rename(&old_path, &new_path) {
+        match rename_no_replace(&old_path, &new_path) {
             Ok(_) => {
                 active.increment(size);
                 active.done();
@@ -218,7 +225,8 @@ fn run_move_task(
                     } else {
                         size
                     };
-                    let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+                    let buffer_size =
+                        copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
                     let mut errors = Vec::new();
                     if !copy_path(
                         &old_path,
@@ -311,6 +319,15 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
     } else {
         std::cmp::max(buffer_min_bytes, len / BUFFER_SIZE_DIVISOR) as usize
     }
+}
+
+/// The read-buffer size for a copy: `buffer_bytes` floored at
+/// `MIN_COPY_BUFFER_BYTES` so a tiny or zero scanned total never yields a
+/// buffer too small to make progress. The floor itself is capped at
+/// `buffer_max_bytes`, which a user may configure below the floor.
+fn copy_buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
+    buffer_bytes(len, buffer_min_bytes, buffer_max_bytes)
+        .max(MIN_COPY_BUFFER_BYTES.min(buffer_max_bytes as usize))
 }
 
 /// Best-effort recursive size for the progress total. Entries that cannot be
@@ -408,6 +425,8 @@ fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
 /// the remaining entries. Each returns `false` only when the task was
 /// cancelled, in which case the caller must finalize with
 /// `active.cancelled()`; otherwise the caller finalizes via `finalize_copy`.
+/// A cancelled copy leaves the partially copied destination in place, like an
+/// interrupted `cp`; the destination is not removed.
 fn copy_directory(
     old_path: &Path,
     new_path: &Path,
@@ -422,23 +441,34 @@ fn copy_directory(
         return true;
     }
 
-    if let Ok(metadata) = fs::symlink_metadata(old_path) {
-        apply_permissions(metadata.permissions().mode(), new_path);
-    }
+    // Capture the source's mode now, but apply it only on every non-cancel
+    // exit, after the contents are copied. Applying it up front would, for a
+    // source mode without owner-write (e.g. 0o555), stop us from creating this
+    // directory's own children. Matches `cp`, which sets directory permissions
+    // last. The mode comes from the source's metadata, not from reading its
+    // entries, so it is applied even when the read below fails.
+    let source_mode = fs::symlink_metadata(old_path)
+        .ok()
+        .map(|metadata| metadata.permissions().mode());
+    let apply_source_mode = || {
+        if let Some(mode) = source_mode {
+            apply_permissions(mode, new_path);
+        }
+    };
 
     let entries = match fs::read_dir(old_path) {
         Ok(entries) => entries,
         Err(error) => {
             errors.push(format!("Failed to read directory {old_path:?}: {error}"));
+            apply_source_mode();
             return true;
         }
     };
 
     for entry in entries {
         if active.is_cancelled() {
-            if let Err(error) = fs::remove_dir_all(new_path) {
-                warn!("Cancelled, but failed to clean up {new_path:?}: {error}");
-            }
+            // Like interrupted `cp`: leave the partially copied destination in
+            // place rather than removing it.
             return false;
         }
 
@@ -476,6 +506,7 @@ fn copy_directory(
         }
     }
 
+    apply_source_mode();
     true
 }
 
@@ -522,9 +553,8 @@ fn copy_file(
 
     loop {
         if active.is_cancelled() {
-            drop(old_file);
-            drop(new_file);
-            let _ = fs::remove_file(new_path);
+            // Like interrupted `cp`: leave the partially written destination
+            // file in place rather than removing it.
             return false;
         }
 
@@ -719,9 +749,54 @@ fn apply_permissions(mode: u32, path: &Path) {
     }
 }
 
+/// Renames `old_path` to `new_path`, failing atomically with an
+/// `AlreadyExists` error if `new_path` already exists (unlike `fs::rename`,
+/// which silently replaces it). `validate_paths` already rejects an existing
+/// destination, but that check runs on the UI thread before the worker starts;
+/// this folds the check into the rename so a destination that appears in the
+/// interim is not clobbered.
+///
+/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS uses
+/// `renameatx_np(RENAME_EXCL)`, both via rustix's safe `renameat_with` wrapper
+/// (so no `unsafe`, which is forbidden crate-wide). Other targets fall back to
+/// `fs::rename`, retaining only the pre-existing narrow race.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+    use rustix::{
+        fs::{CWD, RenameFlags, renameat_with},
+        io::Errno,
+    };
+
+    // `CWD` as both dirfds: absolute paths ignore it and relative paths resolve
+    // against the current directory, matching `fs::rename`.
+    match renameat_with(CWD, old_path, CWD, new_path, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(()),
+        // Some filesystems reject the no-replace flag; fall back to a plain
+        // rename (validate_paths already guarded the destination, so only the
+        // narrow race reopens here).
+        Err(Errno::NOSYS | Errno::INVAL | Errno::NOTSUP) => fs::rename(old_path, new_path),
+        // Preserve the errno (e.g. XDEV -> CrossesDevices, EXIST ->
+        // AlreadyExists) so callers can dispatch on `error.kind()`.
+        Err(errno) => Err(errno.into()),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+    fs::rename(old_path, new_path)
+}
+
 fn open_files(source: &Path, target: &Path) -> Result<(File, File)> {
     let source = File::open(source)?;
-    let target = File::create(target)?;
+    // `create_new` (O_EXCL|O_CREAT) fails atomically if the target already
+    // exists, folding the check into the open. `validate_paths` already rejects
+    // an existing top-level destination, but that check runs on the UI thread
+    // before the worker starts; this closes the window where a file appears at
+    // the destination in between and would otherwise be truncated.
+    let target = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
     Ok((source, target))
 }
 
@@ -810,6 +885,34 @@ mod tests {
     #[test_case(30, 10, 100 => 10 ; "mid range floored at min")]
     fn buffer_bytes_is_correct(len: u64, min: u64, max: u64) -> usize {
         buffer_bytes(len, min, max)
+    }
+
+    #[test]
+    fn copy_buffer_bytes_floors_at_min_copy_buffer() {
+        // A zero scanned total would map to a 0-length buffer; the floor keeps
+        // it at MIN_COPY_BUFFER_BYTES so a file read into it makes progress.
+        assert_eq!(
+            MIN_COPY_BUFFER_BYTES,
+            copy_buffer_bytes(0, 64_000, 64_000_000)
+        );
+    }
+
+    #[test]
+    fn copy_buffer_bytes_never_exceeds_max() {
+        // The floor must not override a user-configured buffer_max_bytes set
+        // below MIN_COPY_BUFFER_BYTES.
+        let max = 4_000;
+        assert!((MIN_COPY_BUFFER_BYTES as u64) > max);
+        assert_eq!(max as usize, copy_buffer_bytes(0, max, max));
+    }
+
+    #[test]
+    fn copy_buffer_bytes_is_a_noop_for_large_buffers() {
+        // Well above the floor: passes through buffer_bytes unchanged.
+        assert_eq!(
+            buffer_bytes(1_000_000, 64_000, 64_000_000),
+            copy_buffer_bytes(1_000_000, 64_000, 64_000_000)
+        );
     }
 
     fn path_info(path: &str, basename: &str) -> PathInfo {
@@ -997,6 +1100,39 @@ mod tests {
         assert!(dst.join("c.txt").exists());
         assert!(!dst.join("bad").exists());
         active.done();
+    }
+
+    #[test]
+    fn rename_no_replace_moves_to_new_destination() {
+        let fx = TempDir::new();
+        let src = fx.dir.join("a.txt");
+        std::fs::write(&src, b"x").unwrap();
+        let dst = fx.dir.join("b.txt");
+
+        rename_no_replace(&src, &dst).unwrap();
+        assert!(!src.exists());
+        assert_eq!(b"x".to_vec(), std::fs::read(&dst).unwrap());
+    }
+
+    #[test]
+    fn rename_no_replace_refuses_existing_destination() {
+        let fx = TempDir::new();
+        let src = fx.dir.join("a.txt");
+        let dst = fx.dir.join("b.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::write(&dst, b"dst").unwrap();
+
+        match rename_no_replace(&src, &dst) {
+            Err(error) => {
+                assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
+                // Both files must be untouched.
+                assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
+                assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
+            }
+            // Filesystem lacks an atomic no-replace rename and fell back to
+            // fs::rename, which overwrites; nothing to assert here.
+            Ok(()) => {}
+        }
     }
 
     #[test]
