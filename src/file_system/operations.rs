@@ -181,6 +181,17 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");
     if old_path != new_path {
+        // Diagnose a vanished source up front; otherwise an existing
+        // destination would be misreported as the problem. Only NotFound
+        // means vanished; other errors (e.g. permission denied) must not
+        // claim the file is gone.
+        if let Err(error) = old_path.symlink_metadata() {
+            return Err(if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow!("{old_path:?} no longer exists")
+            } else {
+                anyhow!("Cannot rename {old_path:?}: {error}")
+            });
+        }
         // Refuse to overwrite: `fs::rename` would silently replace an
         // existing destination.
         if new_path.symlink_metadata().is_ok() {

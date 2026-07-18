@@ -155,9 +155,21 @@ pub enum Command {
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
+    // `generation` is a monotonic id stamped by FileSystem when a search
+    // starts. Consumers ignore results/exits from superseded generations, so
+    // a cancelled search's final messages cannot disturb its replacement.
     CancelSearch, // Intent: stop the search thread non-destructively (keep results and notice)
-    ExitedSearch, // Result: search thread has exited (completed or after CancelSearch)
-    SearchResults(Vec<PathInfo>), // Result: a batch of search hits, appended by TableView
+    ExitedSearch {
+        generation: u64,
+    }, // Result: search thread has exited (completed or after CancelSearch)
+    SearchResults {
+        // Result: a batch of search hits, appended by TableView
+        items: Vec<PathInfo>,
+        generation: u64,
+    },
+    SearchStarted {
+        generation: u64,
+    }, // Result: FileSystem spawned the search thread
     SearchTick,
     StartSearch(String), // Intent: spawns the search thread; streams SearchResults
 

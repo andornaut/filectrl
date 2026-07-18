@@ -25,6 +25,9 @@ pub(super) struct NoticesView {
     mark_count: usize,
     search_query: Option<String>,
     search_cancelled: bool,
+    /// Generation of the current search (from `SearchStarted`), used to
+    /// ignore `ExitedSearch` from superseded searches.
+    search_generation: u64,
     tasks: HashSet<Task>,
     /// Cached notice list, rebuilt by the command handler whenever
     /// notice-relevant state changes. Both `constraint` and `render` read this
@@ -55,6 +58,7 @@ impl NoticesView {
             mark_count: 0,
             search_query: None,
             search_cancelled: false,
+            search_generation: 0,
             tasks: HashSet::new(),
             notices: Vec::new(),
         }
@@ -260,6 +264,38 @@ mod tests {
         v.mark_count = 2;
         v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert_eq!(v.mark_count, 0);
+    }
+
+    #[test]
+    fn stale_search_exit_does_not_clear_the_current_search() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.handle_command(&Command::StartSearch("q".into()));
+        v.handle_command(&Command::SearchStarted { generation: 2 });
+
+        // A superseded search's exit must not clear the current notice.
+        v.handle_command(&Command::ExitedSearch { generation: 1 });
+        assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
+
+        v.handle_command(&Command::ExitedSearch { generation: 2 });
+        assert!(v.build_notices().is_empty());
+    }
+
+    #[test]
+    fn set_total_does_not_resurrect_cleared_tasks() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (mut at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+        v.clear_progress();
+
+        // A late total update (e.g. after a directory size scan) must not
+        // re-add the cleared task.
+        at.set_total(500);
+        let update = recv_task(&rx);
+        assert!(!update.is_new());
+        v.update_tasks(update);
+        assert!(v.build_notices().is_empty());
     }
 
     #[test]

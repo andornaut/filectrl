@@ -16,7 +16,13 @@ const SEARCH_BATCH_SIZE: usize = 128;
 /// name search starting from `root`. Matching entries are sent in batches as
 /// `Command::SearchResults` through the channel. A `Command::ExitedSearch`
 /// is sent when the traversal finishes (or is cancelled).
-pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: CancellationToken) {
+pub fn run_search(
+    root: PathInfo,
+    query: String,
+    generation: u64,
+    tx: Sender<Command>,
+    cancel: CancellationToken,
+) {
     thread::spawn(move || {
         let query_lower = query.to_lowercase();
         let root_path = root.path.clone();
@@ -25,13 +31,24 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
         let mut depth_limit_hit = false;
         let mut result_count: u32 = 0;
 
-        let send = |items| tx.send(Command::SearchResults(items)).is_ok();
+        let send = |items| {
+            tx.send(Command::SearchResults { items, generation })
+                .is_ok()
+        };
         let mut batcher = Batcher::new(SEARCH_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
+        // Every exit path flushes pending hits and self-cancels before
+        // announcing the exit: the cancel stack treats a cancelled token as
+        // "nothing left to cancel", so a cancel keypress racing the
+        // in-flight exit cannot relabel a completed search as cancelled.
+        let exit = |batcher: &mut Batcher| {
+            let _ = batcher.flush(&send);
+            cancel.cancel();
+            let _ = tx.send(Command::ExitedSearch { generation });
+        };
 
         while let Some((dir, depth)) = queue.pop_front() {
             if cancel.is_cancelled() {
-                let _ = batcher.flush(&send);
-                let _ = tx.send(Command::ExitedSearch);
+                exit(&mut batcher);
                 return;
             }
 
@@ -45,8 +62,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
 
             for entry in entries {
                 if cancel.is_cancelled() {
-                    let _ = batcher.flush(&send);
-                    let _ = tx.send(Command::ExitedSearch);
+                    exit(&mut batcher);
                     return;
                 }
 
@@ -71,11 +87,14 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
                     && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
                 {
                     if result_count >= MAX_SEARCH_RESULTS {
-                        let _ = batcher.flush(&send);
-                        let _ = tx.send(Command::AlertWarn(format!(
-                            "Search stopped at {MAX_SEARCH_RESULTS} results"
-                        )));
-                        let _ = tx.send(Command::ExitedSearch);
+                        // A superseded search must not announce truncation:
+                        // the user would read it as their current search.
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(Command::AlertWarn(format!(
+                                "Search stopped at {MAX_SEARCH_RESULTS} results"
+                            )));
+                        }
+                        exit(&mut batcher);
                         return;
                     }
                     result_count += 1;
@@ -91,7 +110,7 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
                     let next_depth = depth + 1;
                     if next_depth <= MAX_SEARCH_DEPTH {
                         queue.push_back((entry_path, next_depth));
-                    } else if !depth_limit_hit {
+                    } else if !depth_limit_hit && !cancel.is_cancelled() {
                         depth_limit_hit = true;
                         let _ = tx.send(Command::AlertWarn(
                                 format!("Search reached maximum depth of {MAX_SEARCH_DEPTH} levels; some results may be missing")
@@ -101,7 +120,6 @@ pub fn run_search(root: PathInfo, query: String, tx: Sender<Command>, cancel: Ca
             }
         }
 
-        let _ = batcher.flush(&send);
-        let _ = tx.send(Command::ExitedSearch);
+        exit(&mut batcher);
     });
 }

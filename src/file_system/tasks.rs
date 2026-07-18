@@ -3,7 +3,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::mpsc::Sender,
+    sync::{Arc, atomic::AtomicBool, mpsc::Sender},
     thread,
 };
 
@@ -23,7 +23,15 @@ use crate::{
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 
-pub type CancelInfo = (usize, CancellationToken, TaskKind);
+pub struct CancelInfo {
+    pub id: usize,
+    pub token: CancellationToken,
+    pub kind: TaskKind,
+    /// Flips to `true` when the task can no longer be meaningfully cancelled
+    /// (terminal state reached, or a non-interruptible stage entered). The
+    /// cancel stack drops such entries without cancelling anything.
+    pub uncancellable: Arc<AtomicBool>,
+}
 
 pub struct TaskRunResult {
     pub command_result: CommandResult,
@@ -41,9 +49,14 @@ impl TaskRunResult {
     /// The initial progress snapshot has already been sent through the task's
     /// channel (before the worker thread was spawned, so it always precedes
     /// any terminal update), so no command is returned here.
-    fn started(initial: Task, token: CancellationToken) -> Self {
+    fn started(initial: Task, token: CancellationToken, uncancellable: Arc<AtomicBool>) -> Self {
         Self {
-            cancel_info: Some((initial.id(), token, initial.kind().clone())),
+            cancel_info: Some(CancelInfo {
+                id: initial.id(),
+                token,
+                kind: initial.kind().clone(),
+                uncancellable,
+            }),
             command_result: CommandResult::Handled,
         }
     }
@@ -86,6 +99,10 @@ fn run_copy_task(
         Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
+    let path = match restat_source("copy", &old_path) {
+        Ok(fresh) => fresh,
+        Err(result) => return TaskRunResult::failed(result),
+    };
 
     info!("Copying {old_path:?} to {new_path:?}");
     let kind = TaskKind::Copy(Transfer {
@@ -117,6 +134,7 @@ fn run_copy_task(
     // Send the initial snapshot before spawning the worker so it always
     // precedes any terminal update on the channel.
     active.send_progress();
+    let uncancellable = active.uncancellable_handle();
 
     thread::spawn(move || {
         let total_size = if is_directory {
@@ -143,7 +161,7 @@ fn run_copy_task(
         finalize_copy(active, errors);
     });
 
-    TaskRunResult::started(initial, token)
+    TaskRunResult::started(initial, token, uncancellable)
 }
 
 fn run_move_task(
@@ -155,6 +173,10 @@ fn run_move_task(
 ) -> TaskRunResult {
     let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
         Ok(paths) => paths,
+        Err(result) => return TaskRunResult::failed(result),
+    };
+    let path = match restat_source("move", &old_path) {
+        Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
 
@@ -170,70 +192,89 @@ fn run_move_task(
     // Send the initial snapshot before spawning the worker so it always
     // precedes any terminal update on the channel.
     active.send_progress();
+    let uncancellable = active.uncancellable_handle();
 
-    thread::spawn(move || match fs::rename(&old_path, &new_path) {
-        Ok(_) => {
-            active.increment(size);
-            active.done();
+    thread::spawn(move || {
+        // Narrow the cancel-vs-rename window: a keypress that lands before
+        // the worker starts is honored instead of racing the rename.
+        if active.is_cancelled() {
+            active.cancelled();
+            return;
         }
-        Err(error) => match error.kind() {
-            // If the file is on a different device/mount-point, we must copy-then-delete it instead
-            ErrorKind::CrossesDevices => {
-                // A directory entry's own size is not the transfer size: scan
-                // for the real total before copying (mirrors `run_copy_task`).
-                let total_size = if is_directory {
-                    let size = dir_total_size(&old_path);
-                    active.set_total(size);
-                    size
-                } else {
-                    size
-                };
-                let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-                let mut errors = Vec::new();
-                if !copy_path(
-                    &old_path,
-                    &new_path,
-                    &mut active,
-                    &mut errors,
-                    buffer_size,
-                    is_directory,
-                    source_mode,
-                ) {
-                    active.cancelled();
-                    return;
-                }
-                // Like `mv`: the source is removed only after a fully clean
-                // copy. If any entry failed, the entire source is left in
-                // place (even entries that copied fine) and the partial
-                // destination is kept.
-                if !errors.is_empty() {
-                    finalize_copy(active, errors);
-                    return;
-                }
-                // Not cancellable: the copy is complete, so removing the
-                // source outright is the only way to finish the move.
-                let removed = if is_directory {
-                    fs::remove_dir_all(&old_path)
-                } else {
-                    fs::remove_file(&old_path)
-                };
-                match removed {
-                    Ok(_) => active.done(),
-                    Err(error) => active.error(format!(
-                        "Copy succeeded, but failed to delete original {old_path:?}: {error}"
-                    )),
-                }
+        match fs::rename(&old_path, &new_path) {
+            Ok(_) => {
+                active.increment(size);
+                active.done();
             }
-            _ => active.error(format!(
-                "Failed to move {old_path:?} to {new_path:?}: {error}"
-            )),
-        },
+            Err(error) => match error.kind() {
+                // If the file is on a different device/mount-point, we must copy-then-delete it instead
+                ErrorKind::CrossesDevices => {
+                    // A directory entry's own size is not the transfer size: scan
+                    // for the real total before copying (mirrors `run_copy_task`).
+                    let total_size = if is_directory {
+                        let size = dir_total_size(&old_path);
+                        active.set_total(size);
+                        size
+                    } else {
+                        size
+                    };
+                    let buffer_size = buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+                    let mut errors = Vec::new();
+                    if !copy_path(
+                        &old_path,
+                        &new_path,
+                        &mut active,
+                        &mut errors,
+                        buffer_size,
+                        is_directory,
+                        source_mode,
+                    ) {
+                        active.cancelled();
+                        return;
+                    }
+                    // Like `mv`: the source is removed only after a fully clean
+                    // copy. If any entry failed, the entire source is left in
+                    // place (even entries that copied fine) and the partial
+                    // destination is kept.
+                    if !errors.is_empty() {
+                        finalize_copy(active, errors);
+                        return;
+                    }
+                    // Not cancellable: the copy is complete, so removing the
+                    // source outright is the only way to finish the move. Mark it
+                    // so a cancel keypress during this stage does not claim to
+                    // have cancelled anything.
+                    active.set_uncancellable();
+                    let removed = if is_directory {
+                        fs::remove_dir_all(&old_path)
+                    } else {
+                        fs::remove_file(&old_path)
+                    };
+                    match removed {
+                        Ok(_) => active.done(),
+                        Err(error) => active.error(format!(
+                            "Copy succeeded, but failed to delete original {old_path:?}: {error}"
+                        )),
+                    }
+                }
+                _ => active.error(format!(
+                    "Failed to move {old_path:?} to {new_path:?}: {error}"
+                )),
+            },
+        }
     });
 
-    TaskRunResult::started(initial, token)
+    TaskRunResult::started(initial, token, uncancellable)
 }
 
 fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
+    // Same staleness class as copy/move: the selection-time metadata may be
+    // outdated. A directory replaced by a symlink must be unlinked as a
+    // link, not followed into its target.
+    let path = match restat_source("delete", &path.path) {
+        Ok(fresh) => fresh,
+        Err(result) => return TaskRunResult::failed(result),
+    };
     let kind = TaskKind::Delete {
         path: display_path(&path.path),
     };
@@ -244,6 +285,7 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     // Send the initial snapshot before spawning the worker so it always
     // precedes any terminal update on the channel.
     active.send_progress();
+    let uncancellable = active.uncancellable_handle();
 
     thread::spawn(move || {
         if let Some(active) = remove_path(&path, is_directory, active) {
@@ -251,7 +293,7 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
         }
     });
 
-    TaskRunResult::started(initial, token)
+    TaskRunResult::started(initial, token, uncancellable)
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
@@ -307,6 +349,35 @@ macro_rules! try_or_abort {
             }
         }
     };
+}
+
+/// Lists `$dir` for `remove_path`: unwraps the collected entries, finalizes
+/// `$active` as cancelled and returns `None` if the drain was cancelled, or
+/// as an error and returns `None` if the read failed.
+macro_rules! list_or_abort {
+    ($active:expr, $dir:expr) => {{
+        let dir = $dir;
+        match list_entries(&$active, dir) {
+            Ok(Some(entries)) => entries,
+            Ok(None) => {
+                $active.cancelled();
+                return None;
+            }
+            Err(error) => {
+                $active.error(format!("Failed to read directory {dir:?}: {error}"));
+                return None;
+            }
+        }
+    }};
+}
+
+/// Re-stats the source at task start: selection- and yank-time metadata may
+/// be stale, and the path may have changed since (e.g. replaced by a FIFO,
+/// which a byte-wise copy would block on forever, or by a symlink, which a
+/// delete must unlink rather than follow).
+fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandResult> {
+    PathInfo::try_from(old_path)
+        .map_err(|error| anyhow!("Cannot {operation} {old_path:?}: {error}").into())
 }
 
 /// Finalizes a copy/move task following coreutils semantics: success when no
@@ -545,7 +616,8 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
         0
     };
 
-    let permissions = Mode::from_bits_truncate(source_mode);
+    // `mode_t` is u32 on Linux but u16 on macOS, so cast rather than assume.
+    let permissions = Mode::from_bits_truncate(source_mode as nix::libc::mode_t);
     if let Err(error) = mknod(new_path, kind, permissions, rdev) {
         errors.push(format!("Cannot create special file {new_path:?}: {error}"));
     }
@@ -553,6 +625,8 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
 
 /// Removes a file or directory tree, checking for cancellation between
 /// entries. Cancelling mid-delete leaves whatever has not been removed yet.
+/// Iterative (explicit stack), so directory depth cannot overflow the thread
+/// stack.
 ///
 /// Returns `Some(active)` on success, leaving finalization to the caller.
 /// Returns `None` when cancelled or on error, in which case the task has
@@ -562,9 +636,7 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
         active.cancelled();
         return None;
     }
-    if is_directory {
-        remove_directory(path, active)
-    } else {
+    if !is_directory {
         // Symlinks are removed as links (never followed): `is_directory` comes
         // from `symlink_metadata`, so a link to a directory takes this branch.
         try_or_abort!(
@@ -572,36 +644,73 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
             fs::remove_file(path),
             format!("Failed to delete {path:?}")
         );
-        Some(active)
+        return Some(active);
     }
+
+    // Post-order walk. Each directory is drained into a Vec before anything
+    // is deleted: the directory fd closes immediately (depth is not bounded
+    // by the fd limit) and nothing is unlinked while a ReadDir stream is
+    // open (mutating a directory mid-iteration can skip entries on some
+    // filesystems, e.g. NFS). The trade is peak memory: each level's
+    // not-yet-visited entries stay held on the stack, so memory is
+    // proportional to the widest root-to-leaf path rather than O(1) per
+    // level. A directory is removed once its collected entries are done, so
+    // a cancelled or failed delete leaves each subtree either fully removed
+    // or still intact.
+    let root = path.to_path_buf();
+    let entries = list_or_abort!(active, &root);
+    let mut stack = vec![(root, entries.into_iter())];
+    while let Some(top) = stack.last_mut() {
+        if active.is_cancelled() {
+            active.cancelled();
+            return None;
+        }
+        match top.1.next() {
+            // This directory's entries are done; remove it.
+            None => {
+                let (directory, _) = stack.pop().expect("stack is non-empty");
+                try_or_abort!(
+                    active,
+                    fs::remove_dir(&directory),
+                    format!("Failed to delete {directory:?}")
+                );
+            }
+            Some((entry_path, true)) => {
+                let entries = list_or_abort!(active, &entry_path);
+                stack.push((entry_path, entries.into_iter()));
+            }
+            Some((entry_path, false)) => {
+                try_or_abort!(
+                    active,
+                    fs::remove_file(&entry_path),
+                    format!("Failed to delete {entry_path:?}")
+                );
+            }
+        }
+    }
+    Some(active)
 }
 
-fn remove_directory(path: &Path, mut active: ActiveTask) -> Option<ActiveTask> {
-    let entries = try_or_abort!(
-        active,
-        fs::read_dir(path),
-        format!("Failed to read directory {path:?}")
-    );
-    for entry in entries {
-        let entry = try_or_abort!(active, entry, format!("Failed to read entry in {path:?}"));
-        let entry_path = entry.path();
-        let metadata = try_or_abort!(
-            active,
-            fs::symlink_metadata(&entry_path),
-            format!("Failed to read metadata for {entry_path:?}")
-        );
-        active = remove_path(&entry_path, metadata.is_dir(), active)?;
+/// Collects `(path, is_directory)` for each entry of `directory`, closing the
+/// directory's fd before the caller deletes anything. `file_type()` does not
+/// follow symlinks, so a link to a directory reports `false` and is later
+/// unlinked rather than descended into. Checks `active` for cancellation once
+/// per entry (matching the per-entry cadence of the delete loop) so a huge
+/// directory does not delay a cancel; returns `Ok(None)` when cancelled.
+fn list_entries(
+    active: &ActiveTask,
+    directory: &Path,
+) -> std::io::Result<Option<Vec<(PathBuf, bool)>>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        if active.is_cancelled() {
+            return Ok(None);
+        }
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        entries.push((entry.path(), file_type.is_dir()));
     }
-    if active.is_cancelled() {
-        active.cancelled();
-        return None;
-    }
-    try_or_abort!(
-        active,
-        fs::remove_dir(path),
-        format!("Failed to delete {path:?}")
-    );
-    Some(active)
+    Ok(Some(entries))
 }
 
 fn apply_permissions(mode: u32, path: &Path) {
@@ -927,6 +1036,25 @@ mod tests {
 
         assert!(remove_path(&root, true, active).is_none());
         assert!(root.join("sub").join("f.txt").exists());
+    }
+
+    #[test]
+    fn list_entries_reports_cancellation_during_the_drain() {
+        let fx = TempDir::new();
+        std::fs::write(fx.dir.join("a.txt"), b"x").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let (active, _, token) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        token.cancel();
+
+        // A cancel observed while listing yields Ok(None), so the caller
+        // aborts instead of deleting a directory it never finished reading.
+        assert!(list_entries(&active, &fx.dir).unwrap().is_none());
     }
 
     /// Self-cleaning unique temp directory.

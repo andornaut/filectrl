@@ -180,18 +180,20 @@ impl Progress {
 /// phantom progress bar from the UI.
 pub struct ActiveTask {
     cancel_token: CancellationToken,
+    /// Set once the task can no longer be meaningfully cancelled: it reached
+    /// a terminal state, or it entered a stage that cannot be interrupted.
+    /// Shared with the cancel stack, which drops such entries instead of
+    /// cancelling them.
+    uncancellable: Arc<AtomicBool>,
     task: Option<Task>,
     tx: Sender<Command>,
 }
 
 impl Drop for ActiveTask {
     fn drop(&mut self) {
-        if let Some(mut task) = self.task.take() {
-            // Dropped without finalization — the operation exited early
-            // Report as an error so the UI clears the progress bar and alerts the user.
-            task.error("Task interrupted");
-            let _ = self.tx.send(Command::Progress(task));
-        }
+        // Dropped without finalization: the operation exited early.
+        // Report as an error so the UI clears the progress bar and alerts the user.
+        self.finalize(|task| task.error("Task interrupted"));
     }
 }
 
@@ -205,6 +207,7 @@ impl ActiveTask {
         (
             Self {
                 cancel_token: cancel_token.clone(),
+                uncancellable: Arc::new(AtomicBool::new(false)),
                 task: Some(task),
                 tx,
             },
@@ -217,6 +220,32 @@ impl ActiveTask {
         self.cancel_token.is_cancelled()
     }
 
+    /// A shared flag that flips to `true` when the task can no longer be
+    /// cancelled, for consumers that cannot wait for the terminal `Progress`
+    /// command (e.g. the cancel stack).
+    pub fn uncancellable_handle(&self) -> Arc<AtomicBool> {
+        self.uncancellable.clone()
+    }
+
+    /// Marks the task as no longer cancellable without finalizing it, for
+    /// stages that cannot be interrupted (e.g. removing the source after a
+    /// cross-device move's copy has completed).
+    pub fn set_uncancellable(&self) {
+        self.uncancellable.store(true, Ordering::Relaxed);
+    }
+
+    /// Single chokepoint for every terminal path: takes the task, marks it
+    /// uncancellable, applies the terminal transition, and sends the final
+    /// snapshot. Idempotent once the task has been taken.
+    fn finalize(&mut self, transition: impl FnOnce(&mut Task)) {
+        if let Some(mut task) = self.task.take() {
+            self.uncancellable.store(true, Ordering::Relaxed);
+            transition(&mut task);
+            // Err means the receiver was dropped (app is shutting down); silently ignore.
+            let _ = self.tx.send(Command::Progress(task));
+        }
+    }
+
     pub fn total_size(&self) -> u64 {
         self.task.as_ref().map_or(0, |t| t.progress.total)
     }
@@ -226,6 +255,9 @@ impl ActiveTask {
     pub fn set_total(&mut self, total: u64) {
         if let Some(task) = &mut self.task {
             task.progress.total = total;
+            // The worker is already running; a `New`-status snapshot sent now
+            // could resurrect a task the user cleared from the notices view.
+            task.start();
         }
         self.send_progress();
     }
@@ -245,29 +277,17 @@ impl ActiveTask {
 
     /// Marks the task as successfully completed. Consumes `self`.
     pub fn done(mut self) {
-        if let Some(mut task) = self.task.take() {
-            task.done();
-            // Err means the receiver was dropped (app is shutting down); silently ignore.
-            let _ = self.tx.send(Command::Progress(task));
-        }
+        self.finalize(|task| task.done());
     }
 
     /// Marks the task as cancelled by the user. Consumes `self`.
     pub fn cancelled(mut self) {
-        if let Some(mut task) = self.task.take() {
-            task.cancelled();
-            // Err means the receiver was dropped (app is shutting down); silently ignore.
-            let _ = self.tx.send(Command::Progress(task));
-        }
+        self.finalize(|task| task.cancelled());
     }
 
     /// Marks the task as failed with an error message. Consumes `self`.
     pub fn error(mut self, message: String) {
-        if let Some(mut task) = self.task.take() {
-            task.error(message);
-            // Err means the receiver was dropped (app is shutting down); silently ignore.
-            let _ = self.tx.send(Command::Progress(task));
-        }
+        self.finalize(|task| task.error(message));
     }
 }
 
@@ -334,6 +354,13 @@ impl Task {
 
     fn error(&mut self, message: impl Into<String>) {
         self.status = TaskStatus::Error(message.into())
+    }
+
+    /// Transitions a `New` task to `InProgress`; no-op in any other state.
+    fn start(&mut self) {
+        if self.status == TaskStatus::New {
+            self.status = TaskStatus::InProgress;
+        }
     }
 
     pub fn error_message(&self) -> Option<String> {

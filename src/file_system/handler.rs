@@ -8,7 +8,7 @@ impl CommandHandler for FileSystem {
             Command::GoToPreviousDirectory => self.go_to_previous_directory(),
             Command::CancelTask => self.cancel_most_recent_task(),
             Command::ResetView => {
-                self.pending_search_exits += self.cancel_search();
+                self.cancel_search();
                 CommandResult::NotHandled
             }
             Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
@@ -41,14 +41,11 @@ impl CommandHandler for FileSystem {
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::RefreshDirectory => self.refresh(),
             Command::Rename { path, name } => self.rename(path, name),
-            Command::ExitedSearch => {
-                self.on_search_exited();
+            Command::ExitedSearch { generation } => {
+                self.on_search_exited(*generation);
                 CommandResult::NotHandled
             }
-            Command::StartSearch(query) => {
-                self.search(query);
-                CommandResult::Handled
-            }
+            Command::StartSearch(query) => self.search(query),
             _ => CommandResult::NotHandled,
         }
     }

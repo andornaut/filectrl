@@ -130,20 +130,27 @@ impl CommandHandler for TableView {
                 self.table_state.select(None);
                 self.clear_marks_notifying()
             }
-            Command::SearchResults(path_infos) => {
-                if !self.content.is_searching() || path_infos.is_empty() {
+            Command::SearchStarted { generation } => {
+                self.search_generation = *generation;
+                CommandResult::Handled
+            }
+            Command::SearchResults { items, generation } => {
+                if *generation != self.search_generation
+                    || !self.content.is_searching()
+                    || items.is_empty()
+                {
                     return CommandResult::Handled;
                 }
                 let was_empty = self.content.len() == 0;
-                self.content.append_search_results(path_infos);
+                self.content.append_search_results(items);
                 if was_empty {
                     self.table_state.select(Some(0));
-                    Command::SelectionChanged(path_infos.first().cloned()).into()
+                    Command::SelectionChanged(items.first().cloned()).into()
                 } else {
                     CommandResult::Handled
                 }
             }
-            Command::ExitedSearch => CommandResult::Handled,
+            Command::ExitedSearch { .. } => CommandResult::Handled,
             // FileSystem resolves GetBookmarks into Bookmarks.
             Command::GetBookmarks => CommandResult::NotHandled,
             Command::Bookmarks { bookmarks } => {

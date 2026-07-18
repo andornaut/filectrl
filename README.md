@@ -1,6 +1,6 @@
 # FileCTRL
 
-FileCTRL is a lightweight, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
+FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
 [![42KM theme](./screenshots/42KM.png)](./screenshots/42KM.png)
 

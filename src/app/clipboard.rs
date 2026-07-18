@@ -136,14 +136,39 @@ impl TryFrom<&str> for ClipboardEntry {
 }
 
 /// Parses clipboard text, distinguishing unrelated text (ignored) from a
-/// malformed entry (starts with "cp "/"mv " but fails to convert), which is
-/// returned as an error so the caller can alert the user.
+/// malformed entry (shaped like "cp <path>"/"mv <path>" but failing to
+/// convert), which is returned as an error so the caller can alert the user.
+/// The text is tokenized exactly once, so classification and parsing cannot
+/// disagree about token boundaries.
 fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
-    match ClipboardEntry::try_from(text) {
+    let Ok(parts) = shell_words::split(text) else {
+        // Unparseable quoting after an operation token is most likely a
+        // truncated entry (filectrl quotes paths), so surface the error;
+        // anything else is unrelated text.
+        let mut tokens = text.split_whitespace();
+        if matches!(tokens.next(), Some("cp" | "mv")) && tokens.next().is_some() {
+            return Err(anyhow!("Malformed clipboard entry: {text:?}"));
+        }
+        return Ok(None);
+    };
+    if parts.len() < 2 {
+        return Ok(None);
+    }
+    match parse_clipboard_parts(&parts) {
         Ok(entry) => Ok(Some(entry)),
-        Err(error) if text.starts_with("cp ") || text.starts_with("mv ") => Err(error),
+        Err(error) if is_entry_shaped(&parts) => Err(error),
         Err(_) => Ok(None),
     }
+}
+
+/// True when the parsed tokens are shaped like an entry filectrl itself
+/// writes: a "cp"/"mv" command token followed by absolute paths. The
+/// absolute-path requirement keeps ordinary copied shell lines (e.g. an
+/// indented "cp build dist" from a script) from raising alerts: filectrl
+/// always writes absolute paths.
+fn is_entry_shaped(parts: &[String]) -> bool {
+    matches!(parts.first().map(String::as_str), Some("cp" | "mv"))
+        && parts[1..].iter().all(|part| part.starts_with('/'))
 }
 
 fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
@@ -231,6 +256,39 @@ mod tests {
         let text = format!("cp {}", shell_words::quote(&path.to_string_lossy()));
         let entry = parse_clipboard_text(&text).unwrap().unwrap();
         assert!(matches!(entry, ClipboardEntry::Copy(_)));
+    }
+
+    #[test]
+    fn parse_clipboard_text_errors_on_tab_separated_missing_path() {
+        // The entry parser splits on any whitespace, so classification must
+        // not depend on a literal "cp "/"mv " space prefix.
+        assert!(parse_clipboard_text("mv\t'/filectrl-does-not-exist-xyz'").is_err());
+    }
+
+    #[test]
+    fn parse_clipboard_text_errors_on_truncated_quoted_entry() {
+        // A filectrl-written entry mangled by a clipboard manager: the quote
+        // never closes, so tokenizing fails, but the operation token makes
+        // it clearly an entry, not prose.
+        assert!(parse_clipboard_text("cp '/path wi").is_err());
+        // Unclosed quotes without an operation token stay silent.
+        assert!(parse_clipboard_text("don't").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_clipboard_text_ignores_relative_path_shell_lines() {
+        // An ordinary copied shell line: filectrl writes absolute paths only,
+        // so a failing relative-path "entry" is unrelated text, not an error.
+        assert!(
+            parse_clipboard_text("cp filectrl-nonexistent-dir/ dist/")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_clipboard_text("\tmv filectrl-nonexistent-dir/ dist/")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
