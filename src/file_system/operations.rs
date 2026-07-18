@@ -182,13 +182,28 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     info!("Renaming {old_path:?} to {new_path:?}");
     if old_path != new_path {
         // Refuse to overwrite: `fs::rename` would silently replace an
-        // existing destination.
-        if new_path.symlink_metadata().is_ok() {
+        // existing destination. Exception: when both paths resolve to the
+        // same file nothing can be lost. This allows case-only renames on
+        // case-insensitive filesystems, where the destination path resolves
+        // to the source itself; renaming onto another hard link of the same
+        // inode is likewise a POSIX no-op, not an overwrite.
+        if new_path.symlink_metadata().is_ok() && !is_same_file(old_path, &new_path) {
             return Err(anyhow!("{new_path:?} already exists"));
         }
         fs::rename(old_path, new_path)?;
     }
     Ok(())
+}
+
+/// True when both paths resolve to the same underlying file (device and
+/// inode). Links are not followed, so a symlink is compared as the link
+/// itself.
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (a.symlink_metadata(), b.symlink_metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
 }
 
 fn spawn_detached<I, S>(program: &str, args: I) -> Result<Child>
@@ -246,6 +261,26 @@ mod tests {
 
         assert!(rename(&info, "c.txt").is_ok());
         assert!(dir.join("c.txt").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_allows_same_inode_destination() {
+        let dir =
+            std::env::temp_dir().join(format!("filectrl_ops_samefile_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        fs::write(&a, b"a").unwrap();
+        fs::hard_link(&a, &b).unwrap();
+
+        let info = PathInfo::try_from(a.as_path()).unwrap();
+        // Renaming onto another hard link of the same inode is a POSIX no-op,
+        // not an overwrite; it must not be refused. This is also the shape of
+        // a case-only rename on a case-insensitive filesystem.
+        assert!(rename(&info, "b.txt").is_ok());
+        assert!(b.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
