@@ -6,6 +6,7 @@ use super::BreadcrumbsView;
 use crate::{
     app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
+    views::ListingMode,
 };
 
 fn path_breadcrumbs(path: &Path) -> Vec<String> {
@@ -22,25 +23,25 @@ fn path_breadcrumbs(path: &Path) -> Vec<String> {
 
 impl CommandHandler for BreadcrumbsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
+        // Mode membership comes from the shared transition; the arms below
+        // handle the breadcrumb data.
+        if let Some(mode) = ListingMode::transition(command) {
+            self.mode = mode;
+        }
         match command {
-            Command::NavigatedDirectory { directory, .. } => {
-                self.set_directory(directory.clone());
-                self.is_searching = false;
-                CommandResult::Handled
+            Command::NavigatedDirectory { directory, .. } => self.set_directory(directory.clone()),
+            Command::RefreshedDirectory { directory, .. } => {
+                // In bookmarks mode the listing reloads via a follow-up
+                // Bookmarks command; keep the bookmarks breadcrumbs meanwhile.
+                if self.mode == ListingMode::Bookmarks {
+                    return CommandResult::Handled;
+                }
+                self.set_directory(directory.clone())
             }
-            Command::RefreshedDirectory { directory, .. } => self.set_directory(directory.clone()),
-            Command::StartSearch(_) => {
-                self.is_searching = true;
-                CommandResult::Handled
-            }
-            Command::ResetView => {
-                self.is_searching = false;
-                CommandResult::Handled
-            }
+            Command::StartSearch(_) | Command::ResetView => CommandResult::Handled,
             Command::Bookmarks { .. } => {
                 let dir = Config::global().bookmarks_dir();
                 self.breadcrumbs = path_breadcrumbs(&dir);
-                self.is_bookmarks = true;
                 self.positions.clear();
                 CommandResult::Handled
             }
@@ -58,7 +59,7 @@ impl CommandHandler for BreadcrumbsView {
                 let Some(row) = self.positions.get(y as usize) else {
                     return CommandResult::Handled;
                 };
-                let has_tag = self.is_bookmarks || self.is_searching;
+                let has_tag = self.mode != ListingMode::Normal;
                 let clicked_index = row.iter().find_map(|p| {
                     if p.intersects(x) {
                         let i = p.index();

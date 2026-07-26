@@ -16,7 +16,7 @@ pub(super) fn max_label_width(normal: &[(String, String)], prompt: &[(String, St
 }
 
 pub(super) fn add_section_header(
-    lines: &mut Vec<Line<'_>>,
+    lines: &mut Vec<Line<'static>>,
     title: &str,
     max_label_width: usize,
     help: &Help,
@@ -31,19 +31,19 @@ pub(super) fn add_section_header(
     ]));
 }
 
-pub(super) fn add_keybinding_lines<'a>(
-    lines: &mut Vec<Line<'a>>,
-    keybindings: &'a [(String, String)],
+pub(super) fn add_keybinding_lines(
+    lines: &mut Vec<Line<'static>>,
+    keybindings: &[(String, String)],
     max_label_width: usize,
     help: &Help,
 ) {
     lines.extend(keybindings.iter().map(|(label, keys)| {
         let padding = " ".repeat(max_label_width.saturating_sub(label.cell_width() as usize));
         Line::from(vec![
-            Span::styled(label.as_str(), help.actions()),
+            Span::styled(label.clone(), help.actions()),
             Span::raw(": "),
             Span::raw(padding),
-            Span::styled(keys.as_str(), help.shortcuts()),
+            Span::styled(keys.clone(), help.shortcuts()),
         ])
     }));
 }

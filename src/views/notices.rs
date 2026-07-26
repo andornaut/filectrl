@@ -112,6 +112,14 @@ impl NoticesView {
         CommandResult::Handled
     }
 
+    /// Reset the search-notice state in full: query, cancelled flag, and
+    /// spinner tick.
+    fn clear_search_notice(&mut self) {
+        self.search_query = None;
+        self.search_cancelled = false;
+        self.search_tick = 0;
+    }
+
     fn update_tasks(&mut self, task: Task) -> CommandResult {
         // If the task is not new and not in our set, it means we previously cleared it.
         // In this case, we should ignore the update to prevent resurrecting cleared tasks.
@@ -264,6 +272,24 @@ mod tests {
         v.mark_count = 2;
         v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert_eq!(v.mark_count, 0);
+    }
+
+    #[test]
+    fn showing_bookmarks_clears_the_search_notice() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.handle_command(&Command::StartSearch("q".into()));
+        v.handle_command(&Command::SearchStarted { generation: 1 });
+        assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
+
+        // The cancelled walker's ExitedSearch may lag; the notice must clear
+        // immediately.
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert!(v.build_notices().is_empty());
+
+        // The eventual exit stays a no-op.
+        v.handle_command(&Command::ExitedSearch { generation: 1 });
+        assert!(v.build_notices().is_empty());
     }
 
     #[test]

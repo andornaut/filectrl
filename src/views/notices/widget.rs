@@ -50,15 +50,11 @@ pub(super) fn clipboard_widget<'a>(
         ClipboardEntry::Move(_) => theme.cut(),
     };
 
-    let (detail, _) = if paths.len() > 1 {
-        let text = pluralize_items(paths.len());
-        let w = text.cell_width();
-        (text, w)
+    let detail = if paths.len() > 1 {
+        pluralize_items(paths.len())
     } else {
         let available_width = width.saturating_sub(prefix.cell_width());
-        let truncated = truncate_left(&paths[0].path.to_string_lossy(), available_width as usize);
-        let w = truncated.cell_width();
-        (truncated, w)
+        truncate_left(&paths[0].path.to_string_lossy(), available_width as usize)
     };
 
     let left = Line::from(vec![

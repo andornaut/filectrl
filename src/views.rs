@@ -22,11 +22,36 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
-use crate::command::handler::CommandHandler;
+use crate::command::{Command, handler::CommandHandler};
 
 pub(super) trait View: CommandHandler {
     fn constraint(&self, area: Rect) -> Constraint;
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>);
+}
+
+/// Which listing the table is showing. Search and bookmarks are mutually
+/// exclusive. Every view with mode-dependent state must derive transitions
+/// from [`ListingMode::transition`] so the rules are written exactly once.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum ListingMode {
+    #[default]
+    Normal,
+    Search,
+    Bookmarks,
+}
+
+impl ListingMode {
+    /// The mode in effect after `command`, or `None` when the command does
+    /// not change the mode.
+    pub(super) fn transition(command: &Command) -> Option<Self> {
+        match command {
+            Command::NavigatedDirectory { .. } | Command::ResetView => Some(Self::Normal),
+            // The table rejects an empty query, so it must not enter search mode.
+            Command::StartSearch(query) if !query.is_empty() => Some(Self::Search),
+            Command::Bookmarks { .. } => Some(Self::Bookmarks),
+            _ => None,
+        }
+    }
 }
 
 fn bordered(
@@ -71,7 +96,45 @@ fn right_hint_fits(
 mod tests {
     use test_case::test_case;
 
-    use super::right_hint_fits;
+    use super::{ListingMode, right_hint_fits};
+    use crate::{command::Command, file_system::path_info::PathInfo};
+
+    #[test]
+    fn listing_mode_transitions_cover_the_mode_changing_commands() {
+        let dir = PathInfo::try_from("/tmp").unwrap();
+        assert_eq!(
+            Some(ListingMode::Normal),
+            ListingMode::transition(&Command::NavigatedDirectory {
+                directory: dir.clone(),
+                generation: 1,
+            })
+        );
+        assert_eq!(
+            Some(ListingMode::Normal),
+            ListingMode::transition(&Command::ResetView)
+        );
+        assert_eq!(
+            Some(ListingMode::Search),
+            ListingMode::transition(&Command::StartSearch("q".into()))
+        );
+        // An empty query never starts a search.
+        assert_eq!(
+            None,
+            ListingMode::transition(&Command::StartSearch(String::new()))
+        );
+        assert_eq!(
+            Some(ListingMode::Bookmarks),
+            ListingMode::transition(&Command::Bookmarks { bookmarks: vec![] })
+        );
+        // A refresh keeps the current mode.
+        assert_eq!(
+            None,
+            ListingMode::transition(&Command::RefreshedDirectory {
+                directory: dir,
+                generation: 1,
+            })
+        );
+    }
 
     // Borderless (reserved = 0): the hint needs at least one spare column
     // beyond the full left content.

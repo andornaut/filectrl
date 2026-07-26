@@ -251,6 +251,12 @@ impl PromptView {
     /// Replace the typed basename with the selected suggestion and move the
     /// cursor to the end, so typing can continue into an accepted directory.
     fn accept_suggestion(&mut self) {
+        // The suggestion overlay only renders while the cursor is at the end
+        // of the input (see `render`), so acceptance must mirror that guard:
+        // a suggestion that is not displayed must never be applied.
+        if !self.cursor_at_end() {
+            return;
+        }
         let Some((name, is_dir)) = self.suggestions.get(self.suggestion_index).cloned() else {
             return;
         };
@@ -267,6 +273,12 @@ impl PromptView {
 
     /// Cycle the active suggestion by `delta` (wrapping).
     fn cycle_suggestion(&mut self, delta: isize) {
+        // The suggestion overlay only renders while the cursor is at the end
+        // of the input (see `render`), so cycling must mirror that guard: the
+        // index must not move while the overlay is hidden.
+        if !self.cursor_at_end() {
+            return;
+        }
         let n = self.suggestions.len() as isize;
         if n == 0 {
             return;
@@ -514,6 +526,18 @@ mod tests {
     }
 
     #[test]
+    fn cycling_with_cursor_mid_line_does_not_move_the_hidden_suggestion_index() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
+        view.text_area.move_cursor(CursorMove::Back);
+        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        assert_eq!(view.suggestion_index, 0);
+        view.handle_key(&KeyCode::Up, &KeyModifiers::NONE);
+        assert_eq!(view.suggestion_index, 0);
+    }
+
+    #[test]
     fn goto_submit_existing_directory_returns_open() {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(&fixture.dir);
@@ -528,6 +552,31 @@ mod tests {
             info.path.to_string_lossy().trim_end_matches('/'),
             fixture.dir.join("Apple").to_string_lossy()
         );
+    }
+
+    #[test]
+    fn tab_with_cursor_mid_line_does_not_apply_hidden_suggestion() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        view.text_area.move_cursor(CursorMove::Back);
+        view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
+        assert_eq!(view.text_area.lines()[0], "Ap");
+    }
+
+    #[test]
+    fn enter_with_cursor_mid_line_submits_typed_text_not_hidden_suggestion() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(&fixture.dir);
+        type_str(&mut view, "Ap");
+        view.text_area.move_cursor(CursorMove::Back);
+        // "Ap" does not exist, so submitting the typed text (rather than the
+        // hidden "Apple/" suggestion) must warn instead of opening a path.
+        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        assert!(matches!(
+            Command::try_from(result).unwrap(),
+            Command::AlertWarn(_)
+        ));
     }
 
     #[test]

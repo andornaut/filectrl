@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::columns::{SortColumn, SortDirection};
 use crate::app::config::Config;
 use crate::file_system::path_info::PathInfo;
+use crate::views::ListingMode;
 
 #[derive(Default)]
 pub(super) struct DirectoryContent {
@@ -10,8 +11,10 @@ pub(super) struct DirectoryContent {
     filter: String,
     items: Vec<PathInfo>,
     items_sorted: Vec<PathInfo>,
+    /// Which listing is shown. Mode membership lives here; `search_root` and
+    /// the bookmark items are per-mode data.
+    mode: ListingMode,
     search_root: Option<PathBuf>,
-    bookmarks_active: bool,
     /// True while a directory's entries are still streaming in.
     loading: bool,
     /// Bumped whenever `items_sorted` or display-affecting state (search root,
@@ -66,22 +69,64 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
-    /// Append a streamed batch in read order so partial results are visible
-    /// immediately. The final ordering is applied once by `finalize_listing`.
-    pub(super) fn append_listing(&mut self, items: &[PathInfo]) {
+    /// Append a streamed batch (directory entries or search results) in read
+    /// order so partial results are visible immediately. The visibility
+    /// predicate is applied per batch so mid-stream rendering honors it; the
+    /// final ordering is applied once by `finalize_listing`.
+    pub(super) fn append(&mut self, items: &[PathInfo]) {
+        let visibility = self.visibility();
+        self.items_sorted.extend(
+            items
+                .iter()
+                .filter(|path| visibility.is_visible(path))
+                .cloned(),
+        );
         self.items.extend_from_slice(items);
-        self.items_sorted.extend_from_slice(items);
         self.revision += 1;
     }
 
-    /// Finish a streamed load: sort (and filter) the accumulated entries once.
+    /// Apply a listing-mode transition (see `ListingMode::transition`).
+    /// Leaving search mode drops the search root, which doubles as
+    /// display-affecting state for the relative-path rendering.
+    pub(super) fn set_mode(&mut self, mode: ListingMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        if mode != ListingMode::Search {
+            self.search_root = None;
+        }
+        self.revision += 1;
+    }
+
+    pub(super) fn mode(&self) -> ListingMode {
+        self.mode
+    }
+
+    /// The visibility predicate for the current mode, with per-entry state
+    /// (lowercased filter, show-hidden setting) computed once. Both `append`
+    /// and `sort` derive visibility from this so their semantics cannot drift.
+    fn visibility(&self) -> Visibility {
+        Visibility {
+            // Search results bypass the show-hidden setting: the user
+            // explicitly asked for name matches, so a hidden match must not
+            // be dropped (neither mid-stream nor on a later re-sort).
+            show_hidden: self.show_hidden() || self.is_searching(),
+            filter_lowercase: self.filter.to_lowercase(),
+        }
+    }
+
+    /// Finish a streamed load: sort the entries accumulated (and already
+    /// filtered) by `append` once, in place. Visibility changes mid-stream go
+    /// through `sort`, which re-derives from the unfiltered items.
     pub(super) fn finalize_listing(
         &mut self,
         sort_column: &SortColumn,
         sort_direction: &SortDirection,
     ) {
         self.loading = false;
-        self.sort(sort_column, sort_direction);
+        self.sort_in_place(sort_column, sort_direction);
+        self.revision += 1;
     }
 
     pub(super) fn is_loading(&self) -> bool {
@@ -105,19 +150,30 @@ impl DirectoryContent {
         self.show_hidden = Some(!self.show_hidden());
     }
 
-    /// Sort and filter items into `items_sorted`.
+    /// Sort and filter items into `items_sorted`. Visibility is re-derived
+    /// from the unfiltered `items`, so a toggled show-hidden setting or filter
+    /// change takes effect on the next sort.
     pub(super) fn sort(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
-        let mut indices: Vec<usize> = (0..self.items.len()).collect();
+        let visibility = self.visibility();
+        self.items_sorted = self
+            .items
+            .iter()
+            .filter(|path| visibility.is_visible(path))
+            .cloned()
+            .collect();
+        self.sort_in_place(sort_column, sort_direction);
+        self.revision += 1;
+    }
 
-        indices.sort_by(|a, b| {
+    /// Sort `items_sorted` without re-deriving visibility: `append` applies
+    /// the same predicate, so finalizing a stream can skip the re-filter and
+    /// re-clone of every entry.
+    fn sort_in_place(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
+        self.items_sorted.sort_by(|a, b| {
             let ord = match sort_column {
-                SortColumn::Name => self.items[*a]
-                    .name_comparator()
-                    .cmp(&self.items[*b].name_comparator()),
-                SortColumn::Modified => self.items[*a]
-                    .modified_comparator()
-                    .cmp(&self.items[*b].modified_comparator()),
-                SortColumn::Size => self.items[*a].size.cmp(&self.items[*b].size),
+                SortColumn::Name => a.name_comparator().cmp(&b.name_comparator()),
+                SortColumn::Modified => a.modified_comparator().cmp(&b.modified_comparator()),
+                SortColumn::Size => a.size.cmp(&b.size),
             };
             if *sort_direction == SortDirection::Descending {
                 ord.reverse()
@@ -127,25 +183,12 @@ impl DirectoryContent {
         });
 
         if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
-            indices.sort_by_key(|i| !self.items[*i].is_directory());
+            self.items_sorted.sort_by_key(|path| !path.is_directory());
         }
-
-        self.items_sorted = indices.into_iter().map(|i| self.items[i].clone()).collect();
-
-        if !self.show_hidden() {
-            self.items_sorted.retain(|path| !path.is_hidden());
-        }
-
-        if !self.filter.is_empty() {
-            let filter_lowercase = self.filter.to_lowercase();
-            self.items_sorted
-                .retain(|path| path.name().to_lowercase().contains(&filter_lowercase));
-        }
-
-        self.revision += 1;
     }
 
     pub(super) fn start_search(&mut self) {
+        self.set_mode(ListingMode::Search);
         // The search root is always the current directory.
         self.search_root = self.directory.as_ref().map(|d| PathBuf::from(&d.path));
         self.items.clear();
@@ -154,19 +197,13 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
-    pub(super) fn append_search_results(&mut self, items: &[PathInfo]) {
-        self.items.extend_from_slice(items);
-        self.items_sorted.extend_from_slice(items);
-        self.revision += 1;
-    }
-
+    #[cfg(test)]
     pub(super) fn clear_search(&mut self) {
-        self.search_root = None;
-        self.revision += 1;
+        self.set_mode(ListingMode::Normal);
     }
 
     pub(super) fn is_searching(&self) -> bool {
-        self.search_root.is_some()
+        self.mode == ListingMode::Search
     }
 
     pub(super) fn search_root(&self) -> Option<&Path> {
@@ -177,20 +214,15 @@ impl DirectoryContent {
     /// unlike streamed search results). The current `directory` is left
     /// untouched so breadcrumbs/CWD restore cleanly when the view is dismissed.
     pub(super) fn set_bookmarks(&mut self, items: Vec<PathInfo>) {
-        self.bookmarks_active = true;
+        self.set_mode(ListingMode::Bookmarks);
         self.filter.clear();
         self.items = items;
         self.items_sorted.clear();
         self.revision += 1;
     }
 
-    pub(super) fn clear_bookmarks(&mut self) {
-        self.bookmarks_active = false;
-        self.revision += 1;
-    }
-
     pub(super) fn is_showing_bookmarks(&self) -> bool {
-        self.bookmarks_active
+        self.mode == ListingMode::Bookmarks
     }
 
     pub(super) fn find_by_inode(&self, path: &PathInfo) -> Option<usize> {
@@ -201,6 +233,35 @@ impl DirectoryContent {
         self.items_sorted
             .iter()
             .position(|item| item.as_path() == target)
+    }
+}
+
+/// Snapshot of the visibility predicate (see `DirectoryContent::visibility`).
+struct Visibility {
+    show_hidden: bool,
+    filter_lowercase: String,
+}
+
+impl Visibility {
+    fn is_visible(&self, path: &PathInfo) -> bool {
+        (self.show_hidden || !path.is_hidden()) && self.matches_filter(&path.display_name)
+    }
+
+    /// Case-insensitive substring match on the display name. The common
+    /// all-ASCII case compares in place instead of allocating a lowercased
+    /// copy of every entry name.
+    fn matches_filter(&self, name: &str) -> bool {
+        if self.filter_lowercase.is_empty() {
+            return true;
+        }
+        if self.filter_lowercase.is_ascii() && name.is_ascii() {
+            let filter = self.filter_lowercase.as_bytes();
+            return name
+                .as_bytes()
+                .windows(filter.len())
+                .any(|window| window.eq_ignore_ascii_case(filter));
+        }
+        name.to_lowercase().contains(&self.filter_lowercase)
     }
 }
 
@@ -380,9 +441,9 @@ mod tests {
         let r1 = content.revision();
         assert_ne!(r0, r1, "start_listing must bump the revision");
 
-        content.append_listing(&[fx.file_entry("a", 1)]);
+        content.append(&[fx.file_entry("a", 1)]);
         let r2 = content.revision();
-        assert_ne!(r1, r2, "append_listing must bump the revision");
+        assert_ne!(r1, r2, "append must bump the revision");
 
         content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
         let r3 = content.revision();
@@ -413,8 +474,8 @@ mod tests {
         // Streamed in two batches, then finalized once.
         let mut streamed = DirectoryContent::default();
         streamed.start_listing(fx.directory());
-        streamed.append_listing(&items[..2]);
-        streamed.append_listing(&items[2..]);
+        streamed.append(&items[..2]);
+        streamed.append(&items[2..]);
         streamed.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
 
         assert_eq!(names(&streamed), names(&reference));
@@ -433,12 +494,100 @@ mod tests {
         content.start_listing(fx.directory());
         assert!(content.is_loading());
 
-        content.append_listing(&items);
+        content.append(&items);
         // Partial results are visible in read order before the final sort.
         assert_eq!(names(&content), vec!["c", "a", "b"]);
 
         content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
         assert!(!content.is_loading());
         assert_eq!(names(&content), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn appended_batches_honor_the_active_filter_before_finalize() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("Apple", 1),
+            fx.file_entry("Banana", 1),
+            fx.file_entry("Apricot", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_filter("ap".to_string());
+        content.start_listing(fx.directory());
+
+        content.append(&items);
+        // Non-matching entries must not flash into view mid-stream.
+        assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+    }
+
+    #[test]
+    fn appended_batches_honor_show_hidden_before_finalize() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
+        let mut content = DirectoryContent::default();
+        // Default config has show_hidden_files = true; toggle it off.
+        content.toggle_show_hidden();
+        content.start_listing(fx.directory());
+
+        content.append(&items);
+        // Hidden entries must not flash into view mid-stream.
+        assert_eq!(names(&content), vec!["visible"]);
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["visible"]);
+    }
+
+    #[test]
+    fn search_results_bypass_the_show_hidden_filter() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), vec![]);
+        // Default config has show_hidden_files = true; toggle it off.
+        content.toggle_show_hidden();
+        content.start_search();
+
+        // A search explicitly matched these names, so hidden results are kept.
+        content.append(&[fx.file_entry(".hidden", 1), fx.file_entry("visible", 1)]);
+        assert_eq!(names(&content), vec![".hidden", "visible"]);
+
+        // Re-sorting search results must not drop hidden matches either.
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec![".hidden", "visible"]);
+    }
+
+    #[test]
+    fn finalize_after_a_mid_stream_filter_change_matches_a_full_sort() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.start_listing(fx.directory());
+        content.append(&[fx.file_entry("Banana", 1), fx.file_entry("Apple", 1)]);
+
+        // A filter arrives mid-stream; `sort` re-derives from the unfiltered
+        // items, after which finalize only has to order the survivors.
+        content.set_filter("ap".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.append(&[fx.file_entry("Apricot", 1), fx.file_entry("Cherry", 1)]);
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+    }
+
+    #[test]
+    fn filter_is_case_insensitive_for_non_ascii_names() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![fx.file_entry("Équipe", 1), fx.file_entry("autre", 1)];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+        content.set_filter("équipe".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["Équipe"]);
     }
 }

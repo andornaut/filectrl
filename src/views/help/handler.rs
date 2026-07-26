@@ -5,7 +5,7 @@ use ratatui::{
 
 use super::HelpView;
 use crate::{
-    app::config::{Config, keybindings::hardcoded_action},
+    app::config::{Config, keybindings::hardcoded_normal_action},
     command::{Command, handler::CommandHandler, result::CommandResult},
 };
 
@@ -21,7 +21,7 @@ impl CommandHandler for HelpView {
     }
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        let action = hardcoded_action(code, modifiers)
+        let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
         match action {
             Some(action) => self.handle_scroll_action(action),

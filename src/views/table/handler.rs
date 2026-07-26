@@ -7,13 +7,21 @@ use super::{TableView, columns::SortColumn, navigation::Reselect};
 use crate::{
     app::config::{
         Config,
-        keybindings::{Action, hardcoded_action},
+        keybindings::{Action, hardcoded_normal_action},
     },
     command::{Command, handler::CommandHandler, result::CommandResult},
+    views::ListingMode,
 };
 
 impl CommandHandler for TableView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
+        // Mode membership comes from the shared transition; the arms below
+        // handle per-mode data and side effects. `previous_mode` preserves
+        // the pre-transition mode for arms that dispatch on it.
+        let previous_mode = self.content.mode();
+        if let Some(mode) = ListingMode::transition(command) {
+            self.content.set_mode(mode);
+        }
         match command {
             Command::Copy { .. } | Command::Move { .. } => {
                 // The operation consumes the marks; the FileSystem handler clears
@@ -49,8 +57,6 @@ impl CommandHandler for TableView {
                 generation,
             } => {
                 // Different directory: nothing from the old listing carries over.
-                self.content.clear_search();
-                self.content.clear_bookmarks();
                 self.content.clear_filter();
                 self.load_generation = *generation;
                 self.begin_directory(directory.clone(), Reselect::Top);
@@ -88,10 +94,11 @@ impl CommandHandler for TableView {
                     return CommandResult::Handled;
                 }
                 let was_empty = self.content.len() == 0;
-                self.content.append_listing(items);
-                if was_empty {
-                    self.table_state.select(Some(0));
-                    Command::SelectionChanged(items.first().cloned()).into()
+                self.content.append(items);
+                // The batch may filter down to nothing; select only once an
+                // item survives the filter.
+                if was_empty && self.content.len() > 0 {
+                    self.select(0)
                 } else {
                     CommandResult::Handled
                 }
@@ -107,20 +114,15 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 let had_filter = !self.content.filter().is_empty();
                 self.content.clear_filter();
-                if self.content.is_searching() {
-                    self.content.clear_search();
-                    self.table_state.select(None); // search-result index is meaningless in the directory
-                    return Command::RefreshDirectory.into();
+                match previous_mode {
+                    // The search/bookmarks index is meaningless in the directory.
+                    ListingMode::Search | ListingMode::Bookmarks => {
+                        self.table_state.select(None);
+                        Command::RefreshDirectory.into()
+                    }
+                    ListingMode::Normal if had_filter => self.sort(Reselect::Top),
+                    ListingMode::Normal => CommandResult::Handled,
                 }
-                if self.content.is_showing_bookmarks() {
-                    self.content.clear_bookmarks();
-                    self.table_state.select(None); // bookmarks-list index is meaningless in the directory
-                    return Command::RefreshDirectory.into();
-                }
-                if had_filter {
-                    return self.sort(Reselect::Top);
-                }
-                CommandResult::Handled
             }
             Command::StartSearch(query) => {
                 if query.is_empty() {
@@ -142,10 +144,11 @@ impl CommandHandler for TableView {
                     return CommandResult::Handled;
                 }
                 let was_empty = self.content.len() == 0;
-                self.content.append_search_results(items);
-                if was_empty {
-                    self.table_state.select(Some(0));
-                    Command::SelectionChanged(items.first().cloned()).into()
+                self.content.append(items);
+                // The batch may filter down to nothing; select only once an
+                // item survives the filter.
+                if was_empty && self.content.len() > 0 {
+                    self.select(0)
                 } else {
                     CommandResult::Handled
                 }
@@ -177,7 +180,7 @@ impl CommandHandler for TableView {
 
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         // Hardcoded bindings take precedence, then config bindings.
-        let action = hardcoded_action(code, modifiers)
+        let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
 
         match action {

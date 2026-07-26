@@ -41,6 +41,7 @@ pub struct PathInfo {
 
     gid: u32,
     uid: u32,
+    device: u64,
     inode: u64,
     mode: u32,
     accessed: Option<DateTime<Local>>,
@@ -165,7 +166,10 @@ impl PathInfo {
     }
 
     pub fn is_same_inode(&self, other: &Self) -> bool {
-        self.inode == other.inode
+        // Inode numbers are only unique within one filesystem; entries from
+        // different mounts (e.g. two mount points in one listing) can share
+        // an inode number, so the device must match too.
+        self.device == other.device && self.inode == other.inode
     }
 
     pub fn is_setgid(&self) -> bool {
@@ -244,6 +248,7 @@ impl TryFrom<&Path> for PathInfo {
         Ok(Self {
             accessed: maybe_time(metadata.accessed()),
             created: maybe_time(metadata.created()),
+            device: metadata.dev(),
             display_name: display_name(path),
             gid: metadata.gid(),
             inode: metadata.ino(),
@@ -450,6 +455,16 @@ mod tests {
     }
 
     // name_comparator: strips all leading dots, then lowercases
+
+    #[test]
+    fn is_same_inode_requires_matching_device() {
+        let a = PathInfo::try_from(Path::new(".")).unwrap();
+        let mut b = a.clone();
+        assert!(a.is_same_inode(&b));
+        // Same inode number on a different filesystem is a different file.
+        b.device = b.device.wrapping_add(1);
+        assert!(!a.is_same_inode(&b));
+    }
 
     #[test_case(".bashrc",  "bashrc"  ; "strips single leading dot")]
     #[test_case("..hidden", "hidden"  ; "strips all leading dots")]

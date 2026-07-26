@@ -7,10 +7,19 @@ use super::{NoticesView, notice::Notice};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
+    views::ListingMode,
 };
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
+        // Any listing-mode transition away from search clears the search
+        // notice; the transition rules live in ListingMode. Every transition
+        // command has an arm below, so the rebuild at the end still runs.
+        if let Some(mode) = ListingMode::transition(command)
+            && mode != ListingMode::Search
+        {
+            self.clear_search_notice();
+        }
         let result = match command {
             Command::CancelPrompt | Command::ConfirmDelete => {
                 self.hide_marked = false;
@@ -27,8 +36,6 @@ impl CommandHandler for NoticesView {
             Command::NavigatedDirectory { .. } => {
                 self.filter.clear();
                 self.mark_count = 0;
-                self.search_query = None;
-                self.search_cancelled = false;
                 CommandResult::Handled
             }
             Command::StartSearch(query) => {
@@ -57,19 +64,20 @@ impl CommandHandler for NoticesView {
                 }
                 CommandResult::Handled
             }
+            // SearchTick only advances the spinner counter (read live in
+            // render) and never changes the notice list, so skip the rebuild
+            // below on this hot path.
             Command::SearchTick => {
                 if self.search_query.is_some() && !self.search_cancelled {
                     self.search_tick = self.search_tick.wrapping_add(1);
                 }
-                CommandResult::Handled
+                return CommandResult::Handled;
             }
             Command::Progress(task) => self.update_tasks(task.clone()),
             Command::ResetView => {
                 self.clipboard_entry = None;
                 self.filter.clear();
                 self.mark_count = 0;
-                self.search_query = None;
-                self.search_cancelled = false;
                 CommandResult::Handled
             }
             Command::SetClipboardEntry(entry) => {
@@ -84,6 +92,9 @@ impl CommandHandler for NoticesView {
                 self.mark_count = 0;
                 CommandResult::NotHandled
             }
+            // Opening bookmarks cancels any in-flight search; the transition
+            // hook above clears the notice immediately (the walker's eventual
+            // ExitedSearch can lag and is then a no-op).
             Command::Bookmarks { .. } => {
                 self.mark_count = 0;
                 CommandResult::NotHandled
@@ -97,15 +108,14 @@ impl CommandHandler for NoticesView {
                     CommandResult::Handled
                 }
             }
-            _ => CommandResult::NotHandled,
+            // Commands that never touch notice state must not trigger a
+            // rebuild on every broadcast.
+            _ => return CommandResult::NotHandled,
         };
-        // Keep the cached notice list in sync with the state just mutated, so
-        // `constraint`/`render` can read it without rebuilding every frame.
-        // SearchTick only advances the spinner counter (read live in render) and
-        // never changes the notice list, so skip the rebuild on that hot path.
-        if !matches!(command, Command::SearchTick) {
-            self.rebuild_notices();
-        }
+        // Keep the cached notice list in sync with the state the matched arm
+        // just mutated, so `constraint`/`render` can read it without
+        // rebuilding every frame.
+        self.rebuild_notices();
         result
     }
 

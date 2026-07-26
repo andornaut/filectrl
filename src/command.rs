@@ -233,6 +233,9 @@ impl TryFrom<CommandResult> for Command {
         match value {
             CommandResult::HandledWith(command) => Ok(*command),
             CommandResult::Handled => Err(anyhow!("expected HandledWith, got Handled")),
+            CommandResult::HandledWithMany(_) => {
+                Err(anyhow!("expected HandledWith, got HandledWithMany"))
+            }
             CommandResult::NotHandled => Err(anyhow!("expected HandledWith, got NotHandled")),
         }
     }

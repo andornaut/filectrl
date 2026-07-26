@@ -94,7 +94,8 @@ impl AlertsView {
     }
 
     fn alerts(&self, inner_width: u16) -> Vec<(AlertKind, Line<'_>)> {
-        let width_without_prefix = inner_width.saturating_sub(2);
+        // The rendered prefix (" • " or "   ") occupies 3 columns.
+        let width_without_prefix = inner_width.saturating_sub(3);
 
         self.alerts
             .iter()

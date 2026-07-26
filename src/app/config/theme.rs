@@ -187,14 +187,17 @@ impl FileType {
     }
 
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
-        // Extension pattern — only match if the dot is not the leading character,
-        // so that dotfiles like ".bashrc" are not treated as having extension "bashrc".
-        if let Some(&style) = name
-            .rsplit_once('.')
-            .filter(|(prefix, _)| !prefix.is_empty())
-            .and_then(|(_, ext)| self.extension_styles.get(ext))
-        {
-            return Some(style.into());
+        // Extension patterns: try every dot-separated suffix, longest first,
+        // so a multi-dot pattern like "tar.gz" wins over "gz". A leading dot
+        // does not count, so dotfiles like ".bashrc" are not treated as
+        // having extension "bashrc".
+        for (i, _) in name.match_indices('.') {
+            if i == 0 {
+                continue;
+            }
+            if let Some(&style) = self.extension_styles.get(&name[i + 1..]) {
+                return Some(style.into());
+            }
         }
 
         // Name pattern: longest matching suffix wins (most specific).
@@ -358,6 +361,17 @@ mod tests {
         let mut ft = make_file_type();
         ft.extension_styles.insert(ext.to_string(), red());
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
+    }
+
+    #[test]
+    fn multi_dot_extension_pattern_wins_over_shorter_suffix() {
+        let mut ft = make_file_type();
+        ft.apply_ls_colors("*.tar.gz=34:*.gz=31", false);
+        assert_eq!(
+            ft.pattern_styles("foo.tar.gz").unwrap().fg,
+            Some(Color::Blue)
+        );
+        assert_eq!(ft.pattern_styles("foo.gz").unwrap().fg, Some(Color::Red));
     }
 
     // --- pattern_styles: name branch ---

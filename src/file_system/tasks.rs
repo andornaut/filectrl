@@ -77,6 +77,15 @@ pub enum TaskCommand {
 }
 
 impl TaskCommand {
+    /// The source path the task operates on.
+    pub fn source(&self) -> &PathInfo {
+        match self {
+            TaskCommand::Copy(path, _) | TaskCommand::Move(path, _) | TaskCommand::Delete(path) => {
+                path
+            }
+        }
+    }
+
     pub fn run(
         self,
         tx: Sender<Command>,
@@ -135,7 +144,7 @@ fn run_copy_task(
     // Seed with the entry's own size; for a directory the real total is
     // computed in the worker thread (the scan can be slow and must not block
     // the UI event loop) and applied via `active.set_total`.
-    let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
+    let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let file_size = path.size;
     let source_mode = path.mode();
     // Send the initial snapshot before spawning the worker so it always
@@ -144,28 +153,18 @@ fn run_copy_task(
     let uncancellable = active.uncancellable_handle();
 
     thread::spawn(move || {
-        let total_size = if is_directory {
-            let size = dir_total_size(&old_path);
-            active.set_total(size);
-            size
-        } else {
-            file_size
-        };
-        let buffer_size = copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-        let mut errors = Vec::new();
-        if !copy_path(
+        if let Some((active, errors)) = copy_with_progress(
             &old_path,
             &new_path,
-            &mut active,
-            &mut errors,
-            buffer_size,
+            active,
+            file_size,
             is_directory,
             source_mode,
+            buffer_min_bytes,
+            buffer_max_bytes,
         ) {
-            active.cancelled();
-            return;
+            finalize_copy(active, errors);
         }
-        finalize_copy(active, errors);
     });
 
     TaskRunResult::started(initial, token, uncancellable)
@@ -216,30 +215,18 @@ fn run_move_task(
             Err(error) => match error.kind() {
                 // If the file is on a different device/mount-point, we must copy-then-delete it instead
                 ErrorKind::CrossesDevices => {
-                    // A directory entry's own size is not the transfer size: scan
-                    // for the real total before copying (mirrors `run_copy_task`).
-                    let total_size = if is_directory {
-                        let size = dir_total_size(&old_path);
-                        active.set_total(size);
-                        size
-                    } else {
-                        size
-                    };
-                    let buffer_size =
-                        copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
-                    let mut errors = Vec::new();
-                    if !copy_path(
+                    let Some((active, errors)) = copy_with_progress(
                         &old_path,
                         &new_path,
-                        &mut active,
-                        &mut errors,
-                        buffer_size,
+                        active,
+                        size,
                         is_directory,
                         source_mode,
-                    ) {
-                        active.cancelled();
+                        buffer_min_bytes,
+                        buffer_max_bytes,
+                    ) else {
                         return;
-                    }
+                    };
                     // Like `mv`: the source is removed only after a fully clean
                     // copy. If any entry failed, the entire source is left in
                     // place (even entries that copied fine) and the partial
@@ -330,6 +317,49 @@ fn copy_buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> 
         .max(MIN_COPY_BUFFER_BYTES.min(buffer_max_bytes as usize))
 }
 
+/// The byte-copy stage shared by copy and cross-device move: for a directory
+/// source, scans the real transfer total (a directory entry's own size is not
+/// the transfer size) and applies it via `set_total`, sizes the read buffer,
+/// and copies the tree.
+///
+/// Returns `None` when the task was cancelled, in which case it has already
+/// been finalized via `active.cancelled()`. Otherwise returns the task and
+/// the accumulated per-entry errors for the caller to finalize.
+#[allow(clippy::too_many_arguments)]
+fn copy_with_progress(
+    old_path: &Path,
+    new_path: &Path,
+    mut active: ActiveTask,
+    entry_size: u64,
+    is_directory: bool,
+    source_mode: u32,
+    buffer_min_bytes: u64,
+    buffer_max_bytes: u64,
+) -> Option<(ActiveTask, Vec<String>)> {
+    let total_size = if is_directory {
+        let size = dir_total_size(old_path);
+        active.set_total(size);
+        size
+    } else {
+        entry_size
+    };
+    let buffer_size = copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+    let mut errors = Vec::new();
+    if !copy_path(
+        old_path,
+        new_path,
+        &mut active,
+        &mut errors,
+        buffer_size,
+        is_directory,
+        source_mode,
+    ) {
+        active.cancelled();
+        return None;
+    }
+    Some((active, errors))
+}
+
 /// Best-effort recursive size for the progress total. Entries that cannot be
 /// read are skipped here; the copy itself reports them as errors.
 fn dir_total_size(root: &Path) -> u64 {
@@ -340,7 +370,9 @@ fn dir_total_size(root: &Path) -> u64 {
             continue;
         };
         for entry in entries.flatten() {
-            let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+            // `DirEntry::metadata` does not follow symlinks and avoids a
+            // second path lookup per entry.
+            let Ok(metadata) = entry.metadata() else {
                 continue;
             };
             if metadata.is_dir() {
@@ -835,7 +867,13 @@ fn validate_paths(
     operation: &str,
 ) -> Result<(PathBuf, PathBuf), CommandResult> {
     let old_path = source.path.clone();
-    let new_path = destination_directory.path.join(&source.display_name);
+    // Join the source's raw `OsStr` file name rather than its display name:
+    // the display name is lossy UTF-8, which would silently mangle a non-UTF8
+    // name at the destination.
+    let Some(file_name) = source.path.file_name() else {
+        return Err(anyhow!("Cannot {operation} {old_path:?}: path has no file name").into());
+    };
+    let new_path = destination_directory.path.join(file_name);
 
     if old_path == new_path {
         return Err(anyhow!("Cannot {operation} {old_path:?} to {new_path:?}: Source and destination paths must be different").into());
@@ -960,6 +998,26 @@ mod tests {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
         assert!(validate_paths(&src, &dest, "copy").is_ok());
+    }
+
+    #[test]
+    fn validate_paths_preserves_non_utf8_source_names() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        // The display name is lossy UTF-8; the destination must be built from
+        // the raw file name so the bytes survive.
+        let name = OsStr::from_bytes(b"caf\xe9.txt");
+        let mut src = path_info("/a/placeholder", "placeholder");
+        src.path = PathBuf::from("/a").join(name);
+        let dest = path_info("/x", "x");
+        let (_, new_path) = validate_paths(&src, &dest, "copy").expect("should be allowed");
+        assert_eq!(PathBuf::from("/x").join(name), new_path);
+    }
+
+    #[test]
+    fn validate_paths_rejects_source_without_file_name() {
+        let src = path_info("/", "");
+        let dest = path_info("/x", "x");
+        assert!(validate_paths(&src, &dest, "copy").is_err());
     }
 
     #[test]
@@ -1122,16 +1180,13 @@ mod tests {
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dst").unwrap();
 
-        match rename_no_replace(&src, &dst) {
-            Err(error) => {
-                assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
-                // Both files must be untouched.
-                assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
-                assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
-            }
-            // Filesystem lacks an atomic no-replace rename and fell back to
-            // fs::rename, which overwrites; nothing to assert here.
-            Ok(()) => {}
+        // An Ok result means the filesystem lacks an atomic no-replace rename
+        // and fell back to fs::rename, which overwrites; nothing to assert.
+        if let Err(error) = rename_no_replace(&src, &dst) {
+            assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
+            // Both files must be untouched.
+            assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
+            assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
         }
     }
 

@@ -2,9 +2,12 @@ mod handler;
 mod view;
 mod widget;
 
-use ratatui::layout::Rect;
+use ratatui::{layout::Rect, text::Line};
 
-use self::widget::{build_normal_keybindings, build_prompt_keybindings};
+use self::widget::{
+    add_keybinding_lines, add_section_header, build_normal_keybindings, build_prompt_keybindings,
+    max_label_width,
+};
 use super::ScrollbarView;
 use crate::{
     app::config::{Config, keybindings::Action},
@@ -17,33 +20,45 @@ const MIN_HEIGHT: u16 = 5;
 
 pub(super) struct HelpView {
     area: Rect,
+    /// Rendered content height in lines, cached at construction.
+    content_height: u16,
     /// Bordered header hint, cached at construction.
     hint: String,
     inner_height: u16,
+    /// Help content lines, cached at construction (keybindings and theme
+    /// never change after startup).
+    lines: Vec<Line<'static>>,
     max_scroll: u16,
-    /// Keybinding display strings, cached at construction (keybindings never change).
-    normal_keybindings: Vec<(String, String)>,
-    prompt_keybindings: Vec<(String, String)>,
     scroll_offset: u16,
     scrollbar_view: ScrollbarView,
 }
 
 impl HelpView {
     pub fn new() -> Self {
-        let kb = &Config::global().keybindings;
+        let config = Config::global();
+        let kb = &config.keybindings;
         let hint = format!(
             "(Press {} to close)",
             kb.hint_for(&[Action::ToggleHelp, Action::ResetView])
         );
         let normal_keybindings = build_normal_keybindings(kb);
         let prompt_keybindings = build_prompt_keybindings(kb);
+        let help_theme = &config.theme().help;
+        let max_width = max_label_width(&normal_keybindings, &prompt_keybindings);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        add_section_header(&mut lines, "Normal Mode", max_width, help_theme);
+        add_keybinding_lines(&mut lines, &normal_keybindings, max_width, help_theme);
+        lines.push(Line::raw(""));
+        add_section_header(&mut lines, "Prompt Mode", max_width, help_theme);
+        add_keybinding_lines(&mut lines, &prompt_keybindings, max_width, help_theme);
+        let content_height = lines.len() as u16;
         Self {
             area: Rect::default(),
+            content_height,
             hint,
             inner_height: 0,
+            lines,
             max_scroll: 0,
-            normal_keybindings,
-            prompt_keybindings,
             scroll_offset: 0,
             scrollbar_view: ScrollbarView::default(),
         }

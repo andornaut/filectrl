@@ -150,8 +150,8 @@ Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
-Accept path suggestion | <kbd>Tab</kbd>
-Cycle path suggestions | <kbd>↓</kbd>/<kbd>↑</kbd>
+Accept path suggestion (while the cursor is at the end of the input) | <kbd>Tab</kbd>
+Cycle path suggestions (while the cursor is at the end of the input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
@@ -284,6 +284,7 @@ include_files = ["my-theme.toml"]
 - **Absolute paths** are used as-is
 - Included files are **merged on top** of the base config - keys in included files override the base
 - Multiple files are merged in order; later files override earlier ones
+- The value must be an array of strings; if it is any other type, or if any element is not a string, FileCTRL exits with an error
 - If a file doesn't exist or can't be parsed, FileCTRL exits with an error
 
 To get started with custom themes, export the built-in defaults as standalone files:
@@ -336,7 +337,7 @@ filectrl --include themes/42km.toml
 
 Keybindings are configured in the `[keybindings]` section of `config.toml`. Edit the values to change any binding. Values can be a single key string or an array of key strings.
 
-Arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, and <kbd>Esc</kbd> are hardcoded and always work in addition to any configured keys.
+Some keys are hardcoded and always work in addition to any configured keys. In normal mode: arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, and <kbd>Esc</kbd>. In prompt mode: <kbd>Esc</kbd> (cancel), <kbd>Tab</kbd> (accept suggestion), and <kbd>↓</kbd>/<kbd>↑</kbd> (cycle suggestions). Hardcoded keys are scoped to their mode, so <kbd>Tab</kbd> is configurable in normal mode (the default `goto` binding uses it). Binding a hardcoded key to a different action in the same mode is a configuration error that prevents startup; binding a hardcoded key to its own action is allowed.
 
 ```toml
 [keybindings]
@@ -354,11 +355,13 @@ Key strings support:
 
 - Single characters: `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
 - Uppercase characters (implies Shift): `"G"`, `"V"`, `"N"`
-- Named keys: `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
+- Named keys: `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
 - Function keys: `"F2"`, `"F5"`
 - Modifier prefixes: `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
 
-Duplicate keybindings (the same key assigned to two different actions within the same mode) are detected at startup and cause an error.
+`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` is equivalent to `"BackTab"`.
+
+Duplicate keybindings (the same key assigned to two different actions within the same mode) are detected at startup and cause an error. Assigning the same key to one action more than once is allowed.
 
 The help view (<kbd>?</kbd>) always reflects the currently configured keybindings.
 

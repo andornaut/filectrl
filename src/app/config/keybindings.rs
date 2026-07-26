@@ -106,7 +106,7 @@ macro_rules! keybindings {
         prompt { $($p_field:ident => $p_action:ident),+ $(,)? }
     ) => {
         /// Keybindings from the TOML `[keybindings]` section.
-        /// All fields are required — defaults are provided by the embedded default_config.toml.
+        /// All fields are required; defaults are provided by the embedded default_config.toml.
         #[derive(Debug, Deserialize)]
         pub struct TomlKeybindings {
             $($n_field: KeySpec,)+
@@ -282,9 +282,10 @@ impl KeyBindings {
     }
 }
 
-/// Hardcoded keys per action (arrow keys, Home/End, PageUp/PageDown, Esc).
-/// These are always active regardless of config and are included in display strings.
-const HARDCODED: &[(Action, &[KeyCombo])] = &[
+/// Hardcoded keys per normal-mode action (arrow keys, Home/End,
+/// PageUp/PageDown, Esc). These are always active in normal mode regardless
+/// of config and are included in display strings.
+const HARDCODED_NORMAL: &[(Action, &[KeyCombo])] = &[
     (
         Action::GoToParentDirectory,
         &[KeyCombo::new(KeyCode::Left, KeyModifiers::NONE)],
@@ -321,6 +322,13 @@ const HARDCODED: &[(Action, &[KeyCombo])] = &[
         Action::ResetView,
         &[KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE)],
     ),
+];
+
+/// Hardcoded keys per prompt-mode action (Esc, Tab, Up/Down). These are
+/// always active in prompt mode regardless of config and are included in
+/// display strings. They are reachable through the prompt action map, which
+/// seeds them via `build_action_map`.
+const HARDCODED_PROMPT: &[(Action, &[KeyCombo])] = &[
     (
         Action::PromptCancel,
         &[KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE)],
@@ -339,19 +347,22 @@ const HARDCODED: &[(Action, &[KeyCombo])] = &[
     ),
 ];
 
-/// Hardcoded keys for an action, or an empty slice if it has none.
+/// Hardcoded keys for an action in either mode, or an empty slice if it has none.
 fn hardcoded_keys(action: Action) -> &'static [KeyCombo] {
-    HARDCODED
+    HARDCODED_NORMAL
         .iter()
+        .chain(HARDCODED_PROMPT.iter())
         .find(|(a, _)| *a == action)
         .map_or(&[], |(_, keys)| *keys)
 }
 
-/// Look up an action from a key press using only hardcoded bindings.
-/// Returns `None` if the key combo is not hardcoded.
-pub fn hardcoded_action(code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
+/// Look up an action from a key press using only normal-mode hardcoded
+/// bindings. Returns `None` if the key combo is not hardcoded in normal mode.
+/// Prompt-mode hardcoded keys (e.g. Tab) are excluded so they cannot shadow
+/// configurable normal-mode bindings such as the default `goto = "Tab"`.
+pub fn hardcoded_normal_action(code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
     let combo = KeyCombo::new(*code, *modifiers);
-    for (action, keys) in HARDCODED {
+    for (action, keys) in HARDCODED_NORMAL {
         if keys.contains(&combo) {
             return Some(*action);
         }
@@ -361,12 +372,15 @@ pub fn hardcoded_action(code: &KeyCode, modifiers: &KeyModifiers) -> Option<Acti
 
 /// Build the key→action HashMap, detecting duplicate key mappings.
 /// Hardcoded keys are inserted first for actions present in this mode's
-/// binding list, then user bindings override them.
+/// binding list. A config binding may repeat one of its own action's keys,
+/// but binding a key that belongs to a different action (hardcoded or not)
+/// is an error: hardcoded keys always stay active, so such a binding could
+/// never take effect.
 fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyCombo, Action>> {
     let mut map = HashMap::new();
 
     let binding_actions: HashSet<Action> = bindings.iter().map(|(a, _)| *a).collect();
-    for (action, keys) in HARDCODED {
+    for (action, keys) in HARDCODED_NORMAL.iter().chain(HARDCODED_PROMPT.iter()) {
         if binding_actions.contains(action) {
             for combo in *keys {
                 map.insert(*combo, *action);
@@ -378,7 +392,6 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
         for combo in combos {
             if let Some(existing) = map.insert(*combo, *action)
                 && existing != *action
-                && !hardcoded_keys(existing).contains(combo)
             {
                 return Err(anyhow!(
                     "Key '{}' is bound to both {:?} and {:?}",
@@ -439,7 +452,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         for (prefix, modifier) in PREFIXES {
             // `>` (not `>=`) so the key name is never empty: "Ctrl+" with no
             // key falls through to the unknown-key error below. `get(..)`
-            // (not direct slicing) returns None — rather than panicking — when
+            // (not direct slicing) returns None, rather than panicking, when
             // `prefix.len()` is not a char boundary (multibyte key strings).
             if rest.len() > prefix.len()
                 && rest
@@ -455,13 +468,14 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
     }
 
     let key_str = rest;
-    let code = match key_str {
+    let mut code = match key_str {
         "Enter" | "Return" => KeyCode::Enter,
         "Esc" | "Escape" => KeyCode::Esc,
         "Backspace" => KeyCode::Backspace,
         "Delete" | "Del" => KeyCode::Delete,
         "Space" => KeyCode::Char(' '),
         "Tab" => KeyCode::Tab,
+        "BackTab" => KeyCode::BackTab,
         "Up" => KeyCode::Up,
         "Down" => KeyCode::Down,
         "Left" => KeyCode::Left,
@@ -482,7 +496,14 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             KeyCode::F(num)
         }
         s if s.len() == 1 => {
-            let ch = s.chars().next().expect("s.len() == 1 guarantees a char");
+            let mut ch = s.chars().next().expect("s.len() == 1 guarantees a char");
+            // Terminals emit a plain shifted letter as the uppercase character,
+            // so normalize "Shift+q" to the same combo as "Q". With further
+            // modifiers (e.g. "Ctrl+Shift+a") the kitty protocol reports the
+            // unshifted codepoint instead, so the letter stays lowercase.
+            if ch.is_ascii_lowercase() && modifiers == KeyModifiers::SHIFT {
+                ch = ch.to_ascii_uppercase();
+            }
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_ascii_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
                 modifiers |= KeyModifiers::SHIFT;
@@ -491,6 +512,15 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         }
         _ => return Err(anyhow!("Unknown key: '{key_str}'")),
     };
+
+    // Terminals report Shift+Tab as BackTab (with the SHIFT modifier), never
+    // as Tab+SHIFT, so normalize to the combo that will actually arrive.
+    if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+        code = KeyCode::BackTab;
+    }
+    if code == KeyCode::BackTab {
+        modifiers |= KeyModifiers::SHIFT;
+    }
 
     Ok(KeyCombo::new(code, modifiers))
 }
@@ -505,8 +535,11 @@ fn format_key_combo(combo: &KeyCombo) -> String {
     if combo.modifiers.contains(KeyModifiers::ALT) {
         prefix.push_str("Alt+");
     }
-    // Only show Shift explicitly for non-character keys (uppercase chars imply Shift)
-    if combo.modifiers.contains(KeyModifiers::SHIFT) && !matches!(combo.code, KeyCode::Char(_)) {
+    // Only show Shift explicitly for non-character keys (uppercase chars imply
+    // Shift, and BackTab renders as "Shift+Tab" below)
+    if combo.modifiers.contains(KeyModifiers::SHIFT)
+        && !matches!(combo.code, KeyCode::Char(_) | KeyCode::BackTab)
+    {
         prefix.push_str("Shift+");
     }
 
@@ -518,6 +551,7 @@ fn format_key_combo(combo: &KeyCombo) -> String {
         KeyCode::Backspace => format!("{prefix}Backspace"),
         KeyCode::Delete => format!("{prefix}Delete"),
         KeyCode::Tab => format!("{prefix}Tab"),
+        KeyCode::BackTab => format!("{prefix}Shift+Tab"),
         KeyCode::Up => format!("{prefix}↑"),
         KeyCode::Down => format!("{prefix}↓"),
         KeyCode::Left => format!("{prefix}←"),
@@ -574,6 +608,32 @@ mod tests {
         let combo = parse_key_combo("G").unwrap();
         assert_eq!(combo.code, KeyCode::Char('G'));
         assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+    }
+
+    #[test]
+    fn parse_shift_lowercase_normalizes_to_uppercase() {
+        // Terminals emit shifted letters as the uppercase character, so
+        // "Shift+q" must produce the same combo as "Q".
+        let combo = parse_key_combo("Shift+q").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('Q'));
+        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+        assert_eq!(combo, parse_key_combo("Q").unwrap());
+    }
+
+    #[test]
+    fn parse_shift_uppercase() {
+        let combo = parse_key_combo("Shift+Q").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('Q'));
+        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+    }
+
+    #[test]
+    fn parse_shift_tab_normalizes_to_backtab() {
+        // Terminals report Shift+Tab as BackTab with SHIFT, never Tab+SHIFT.
+        let combo = parse_key_combo("Shift+Tab").unwrap();
+        assert_eq!(combo.code, KeyCode::BackTab);
+        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+        assert_eq!(combo, parse_key_combo("BackTab").unwrap());
     }
 
     #[test]
@@ -671,7 +731,17 @@ mod tests {
     #[test]
     fn format_round_trips() {
         let cases = [
-            "q", "G", "Ctrl+c", "F5", "Enter", "Esc", "Space", "/", "+", "Ctrl++",
+            "q",
+            "G",
+            "Ctrl+c",
+            "F5",
+            "Enter",
+            "Esc",
+            "Space",
+            "/",
+            "+",
+            "Ctrl++",
+            "Shift+Tab",
         ];
         for case in cases {
             let combo = parse_key_combo(case).unwrap();
@@ -701,6 +771,36 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("j"), "Error should mention the key: {err}");
+    }
+
+    #[test]
+    fn binding_a_hardcoded_key_to_another_action_is_an_error() {
+        // ↓ is hardcoded to SelectNext and always active, so a config binding
+        // of the same key to a different action could never take effect.
+        let result = keybindings_with_override(
+            r#"
+            [keybindings]
+            select_previous = "Down"
+            "#,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("↓"), "Error should mention the key: {err}");
+    }
+
+    #[test]
+    fn rebinding_a_hardcoded_key_to_its_own_action_is_allowed() {
+        let kb = keybindings_with_override(
+            r#"
+            [keybindings]
+            select_next = ["j", "Down"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            kb.normal_action(&KeyCode::Down, &KeyModifiers::NONE),
+            Some(Action::SelectNext)
+        );
     }
 
     #[test]
@@ -770,7 +870,7 @@ mod tests {
     fn uppercase_fallback_with_shift() {
         let kb = default_keybindings();
         // SelectLast default is "G" which parses to Char('G') + SHIFT.
-        // Terminal might send Char('G') with NONE — fallback should find it.
+        // Terminal might send Char('G') with NONE; fallback should find it.
         assert_eq!(
             kb.normal_action(&KeyCode::Char('G'), &KeyModifiers::NONE),
             Some(Action::SelectLast)
@@ -786,6 +886,44 @@ mod tests {
             kb.normal_action(&KeyCode::Char('V'), &KeyModifiers::SHIFT),
             Some(Action::RangeMark)
         );
+    }
+
+    #[test]
+    fn normal_mode_tab_resolves_to_goto() {
+        // Tab is hardcoded only in prompt mode, so it must not shadow the
+        // configurable normal-mode binding (default: goto = [":", "Tab"]).
+        assert_eq!(
+            hardcoded_normal_action(&KeyCode::Tab, &KeyModifiers::NONE),
+            None
+        );
+        let kb = default_keybindings();
+        assert_eq!(
+            kb.normal_action(&KeyCode::Tab, &KeyModifiers::NONE),
+            Some(Action::Goto)
+        );
+    }
+
+    #[test]
+    fn prompt_mode_tab_resolves_to_accept_suggestion() {
+        let kb = default_keybindings();
+        assert_eq!(
+            kb.prompt_action(&KeyCode::Tab, &KeyModifiers::NONE),
+            Some(Action::PromptAcceptSuggestion)
+        );
+    }
+
+    #[test]
+    fn display_includes_hardcoded_keys_from_both_modes() {
+        let kb = default_keybindings();
+        let accept = kb.display_for(Action::PromptAcceptSuggestion);
+        assert_eq!(accept, "Tab");
+        let goto = kb.display_for(Action::Goto);
+        assert!(
+            goto.contains(':') && goto.contains("Tab"),
+            "Goto display should list its configured keys: {goto}"
+        );
+        let cancel = kb.display_for(Action::PromptCancel);
+        assert_eq!(cancel, "Esc");
     }
 
     #[test]

@@ -45,6 +45,19 @@ impl LineItemMap {
         self.item_first_lines.get(item).copied().unwrap_or(0)
     }
 
+    /// The first item whose row starts at or after `line`, clamped to the
+    /// last item. A line inside a wrapped (multi-line) row snaps forward to
+    /// the next row boundary: pinning the wrapped row to the top would make
+    /// the trailing items unreachable when scrolling to the bottom.
+    pub(super) fn snap_to_item_start(&self, line: usize) -> usize {
+        let item = self.item(line);
+        if self.first_line(item) < line {
+            (item + 1).min(self.item_first_lines.len().saturating_sub(1))
+        } else {
+            item
+        }
+    }
+
     pub(super) fn last_line(&self, item: usize) -> usize {
         self.item_first_lines
             .get(item + 1)
@@ -118,6 +131,28 @@ mod tests {
         assert_eq!(0, m.first_line(0));
         assert_eq!(2, m.first_line(1));
         assert_eq!(3, m.first_line(2));
+    }
+
+    #[test]
+    fn snap_keeps_a_line_at_an_item_boundary() {
+        let m = map(vec![1, 1, 3, 1, 1], 3);
+        assert_eq!(0, m.snap_to_item_start(0));
+        assert_eq!(2, m.snap_to_item_start(2));
+    }
+
+    #[test]
+    fn snap_moves_a_line_inside_a_wrapped_row_to_the_next_item() {
+        // Item 2 spans lines 2..=4.
+        let m = map(vec![1, 1, 3, 1, 1], 3);
+        assert_eq!(3, m.snap_to_item_start(3));
+        assert_eq!(3, m.snap_to_item_start(4));
+    }
+
+    #[test]
+    fn snap_clamps_to_the_last_item() {
+        // The trailing item spans lines 1..=5.
+        let m = map(vec![1, 5], 3);
+        assert_eq!(1, m.snap_to_item_start(3));
     }
 
     #[test]
