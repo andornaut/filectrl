@@ -145,27 +145,47 @@ impl TableView {
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
         let had_marks = self.has_marks();
+        let previously_selected = self.selected_path().cloned();
         self.columns.sort_by(column);
-        mark_cleared_or(had_marks, self.sort(Reselect::Top))
+        let result = self.sort(Reselect::Top);
+        mark_cleared_or(had_marks, previously_selected, self.selected_path(), result)
     }
 
     pub(super) fn toggle_show_hidden(&mut self) -> CommandResult {
+        // Search results always show hidden entries, so the setting has no
+        // visible effect during a search; toggling then would only cause
+        // invisible state changes (the persisted flag, the sort order, and
+        // the marks).
+        if self.content.is_searching() {
+            return CommandResult::Handled;
+        }
         let had_marks = self.has_marks();
+        let previously_selected = self.selected_path().cloned();
         self.content.toggle_show_hidden();
-        mark_cleared_or(had_marks, self.sort(Reselect::Top))
+        let result = self.sort(Reselect::Top);
+        mark_cleared_or(had_marks, previously_selected, self.selected_path(), result)
     }
 }
 
-/// `sort` clears the index-based marks as a side effect of reordering. When there
-/// were marks, prefer notifying the mark-count notice over `otherwise` (the
-/// selection result): the selected file is restored by inode, so its
-/// `SelectionChanged` is redundant.
-fn mark_cleared_or(had_marks: bool, otherwise: CommandResult) -> CommandResult {
-    if had_marks {
-        Command::MarkCountChanged(0).into()
-    } else {
-        otherwise
+/// `sort` clears the index-based marks as a side effect of reordering. When
+/// marks were cleared, the mark-count notice must be reset. When the selected
+/// file is unchanged (restored by inode) its `SelectionChanged` is redundant,
+/// so the mark reset is returned alone; when the selection also moved, the
+/// status bar needs the selection result too, so the mark reset is prepended
+/// to it.
+fn mark_cleared_or(
+    had_marks: bool,
+    previously_selected: Option<PathInfo>,
+    selected: Option<&PathInfo>,
+    otherwise: CommandResult,
+) -> CommandResult {
+    if !had_marks {
+        return otherwise;
     }
+    if previously_selected.as_ref() == selected {
+        return Command::MarkCountChanged(0).into();
+    }
+    otherwise.prepend(Command::MarkCountChanged(0))
 }
 
 /// Synchronous convenience for tests: runs the streamed begin/append/finish
@@ -179,7 +199,7 @@ impl TableView {
         reselect: Reselect,
     ) -> CommandResult {
         self.begin_directory(directory, reselect);
-        self.content.append_listing(&children);
+        self.content.append(&children);
         self.finish_directory()
     }
 }
@@ -378,5 +398,109 @@ mod tests {
 
         assert!(!table.has_marks());
         assert_eq!(result, Command::MarkCountChanged(0).into());
+    }
+
+    #[test]
+    fn toggle_show_hidden_emits_mark_reset_and_selection_change_when_the_selection_moves() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        // Sorted (a leading dot is ignored when comparing names): a, .b
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file(".b", 1)],
+            Reselect::Top,
+        );
+        table.select(1); // ".b"
+        table.toggle_mark();
+
+        // Hiding dotfiles removes the selected file, so both the mark-count
+        // notice and the status bar must be notified.
+        let result = table.toggle_show_hidden();
+
+        assert!(!table.has_marks());
+        assert_eq!(selected_basename(&table).as_deref(), Some("a"));
+        match result {
+            CommandResult::HandledWithMany(commands) => {
+                assert_eq!(2, commands.len());
+                assert_eq!(Command::MarkCountChanged(0), commands[0]);
+                assert!(matches!(commands[1], Command::SelectionChanged(Some(_))));
+            }
+            other => panic!("expected HandledWithMany, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn toggle_show_hidden_is_a_noop_during_a_search() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file(".b", 1)],
+            Reselect::Top,
+        );
+        assert_eq!(table.content.len(), 2);
+
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::SearchResults {
+            items: vec![fx.file("a", 1)],
+            generation: 1,
+        });
+        table.select(0);
+        table.toggle_mark();
+        assert!(table.has_marks());
+
+        let result = table.toggle_show_hidden();
+
+        assert_eq!(result, CommandResult::Handled);
+        assert!(table.has_marks());
+
+        // The setting must not have flipped: reloading the directory after
+        // the search still shows the hidden file.
+        table.content.clear_search();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file(".b", 1)],
+            Reselect::Top,
+        );
+        assert_eq!(table.content.len(), 2);
+    }
+
+    #[test]
+    fn showing_bookmarks_clears_an_active_search() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+        table.handle_command(&Command::StartSearch("a".into()));
+        assert!(table.content.is_searching());
+
+        table.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert!(!table.content.is_searching());
+        assert!(table.content.is_showing_bookmarks());
+
+        // With the search cleared, a directory refresh reloads the bookmarks
+        // list instead of being swallowed by the search guard.
+        let result = table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        assert_eq!(result, Command::GetBookmarks.into());
+    }
+
+    #[test]
+    fn starting_a_search_clears_the_bookmarks_view() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+        table.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert!(table.content.is_showing_bookmarks());
+
+        table.handle_command(&Command::StartSearch("a".into()));
+        assert!(!table.content.is_showing_bookmarks());
+        assert!(table.content.is_searching());
     }
 }

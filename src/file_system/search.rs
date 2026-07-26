@@ -103,9 +103,12 @@ pub fn run_search(
                     }
                 }
 
-                // Enqueue directories for BFS traversal (don't follow symlinks)
-                if let Ok(metadata) = entry_path.symlink_metadata()
-                    && metadata.is_dir()
+                // Enqueue directories for BFS traversal. `file_type` does not
+                // follow symlinks (so a link to a directory is not descended
+                // into) and is usually free from the readdir data, unlike a
+                // per-entry stat.
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_dir()
                 {
                     let next_depth = depth + 1;
                     if next_depth <= MAX_SEARCH_DEPTH {

@@ -35,6 +35,10 @@ pub(super) struct TableView {
     /// Index of the topmost rendered item. Owned by the render pass (instead of
     /// ratatui's auto-scroll) so only the visible window's rows are built.
     first_visible_item: usize,
+    /// Line the scrollbar thumb is dragged to, tracked while a drag is active
+    /// so the thumb renders at the cursor even when the window top snaps
+    /// across a wrapped row.
+    drag_line: Option<usize>,
 
     /// Generation of the directory load currently being streamed in. Batches
     /// stamped with a different generation are stale and ignored.

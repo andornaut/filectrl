@@ -7,29 +7,36 @@ use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR};
 use ratatui::{layout::Rect, style::Style};
 
 use self::widget::{Position, spans};
+use super::ListingMode;
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 #[derive(Default)]
 pub(super) struct BreadcrumbsView {
     breadcrumbs: Vec<String>,
-    is_bookmarks: bool,
-    is_searching: bool,
+    /// Which listing the header describes; transitions come solely from
+    /// `ListingMode::transition`.
+    mode: ListingMode,
     area: Rect,
     positions: Vec<Vec<Position>>,
 }
 
 impl BreadcrumbsView {
+    fn tag(&self) -> Option<&'static str> {
+        match self.mode {
+            ListingMode::Normal => None,
+            ListingMode::Search => Some("[Search] "),
+            ListingMode::Bookmarks => Some("[Bookmarks] "),
+        }
+    }
+
     fn display_breadcrumbs(&self) -> Vec<String> {
-        if self.is_bookmarks {
-            let mut display = vec!["[Bookmarks] ".to_string()];
-            display.extend(self.breadcrumbs.iter().cloned());
-            display
-        } else if self.is_searching {
-            let mut display = vec!["[Search] ".to_string()];
-            display.extend(self.breadcrumbs.iter().cloned());
-            display
-        } else {
-            self.breadcrumbs.clone()
+        match self.tag() {
+            Some(tag) => {
+                let mut display = vec![tag.to_string()];
+                display.extend(self.breadcrumbs.iter().cloned());
+                display
+            }
+            None => self.breadcrumbs.clone(),
         }
     }
 
@@ -37,7 +44,7 @@ impl BreadcrumbsView {
         // Calculate height based on content length and width, without theme
         // styling. The tag placeholder must match render(): a tag entry has no
         // trailing separator, so measuring without one would wrap a column early.
-        let tag_style = (self.is_bookmarks || self.is_searching).then(Style::default);
+        let tag_style = self.tag().map(|_| Style::default());
         let (container, _) = spans(
             &self.display_breadcrumbs(),
             width,
@@ -51,7 +58,6 @@ impl BreadcrumbsView {
 
     fn set_directory(&mut self, directory: PathInfo) -> CommandResult {
         self.breadcrumbs = directory.breadcrumbs();
-        self.is_bookmarks = false;
         CommandResult::Handled
     }
 
@@ -73,11 +79,20 @@ impl BreadcrumbsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        app::config::{Config, RuntimeEnv},
+        command::{Command, handler::CommandHandler},
+    };
 
-    fn view(parts: &[&str], is_searching: bool) -> BreadcrumbsView {
+    fn ensure_config_initialized() {
+        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
+        Config::init(config);
+    }
+
+    fn view(parts: &[&str], mode: ListingMode) -> BreadcrumbsView {
         BreadcrumbsView {
             breadcrumbs: parts.iter().map(|s| s.to_string()).collect(),
-            is_searching,
+            mode,
             ..Default::default()
         }
     }
@@ -86,7 +101,7 @@ mod tests {
     fn height_with_tag_does_not_wrap_at_the_exact_width() {
         // "[Search] "(9) + ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) fills
         // exactly 20 columns when the tag has no trailing separator, as in render().
-        let v = view(&["", "home", "abcde"], true);
+        let v = view(&["", "home", "abcde"], ListingMode::Search);
         assert_eq!(1, v.height(20));
         assert_eq!(2, v.height(19));
     }
@@ -94,8 +109,30 @@ mod tests {
     #[test]
     fn height_without_tag_is_unchanged() {
         // ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) = 11 columns.
-        let v = view(&["", "home", "abcde"], false);
+        let v = view(&["", "home", "abcde"], ListingMode::Normal);
         assert_eq!(1, v.height(11));
         assert_eq!(2, v.height(10));
+    }
+
+    #[test]
+    fn search_after_bookmarks_shows_the_search_tag() {
+        ensure_config_initialized();
+        let mut v = BreadcrumbsView::default();
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert_eq!(v.display_breadcrumbs()[0], "[Bookmarks] ");
+
+        v.handle_command(&Command::StartSearch("q".into()));
+        assert_eq!(v.display_breadcrumbs()[0], "[Search] ");
+    }
+
+    #[test]
+    fn bookmarks_after_search_shows_the_bookmarks_tag() {
+        ensure_config_initialized();
+        let mut v = BreadcrumbsView::default();
+        v.handle_command(&Command::StartSearch("q".into()));
+        assert_eq!(v.display_breadcrumbs()[0], "[Search] ");
+
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        assert_eq!(v.display_breadcrumbs()[0], "[Bookmarks] ");
     }
 }

@@ -17,10 +17,13 @@ impl ScrollbarView {
         max_position: usize,
         viewport_size: usize,
     ) {
-        self.area = area;
         if max_position == 0 {
+            // Nothing is drawn, so clear the hit-test area: clicks in this
+            // column must not be treated as scrollbar interactions.
+            self.area = Rect::default();
             return;
         }
+        self.area = area;
 
         self.state = self
             .state

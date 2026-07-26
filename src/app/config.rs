@@ -214,16 +214,22 @@ impl Config {
     /// unreachable because `config_dir == None` is only produced after
     /// `default_config_dir()` has already succeeded in the same run.
     fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
-        let include_files: Vec<PathBuf> = value
-            .get("include_files")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(PathBuf::from)
-                    .collect()
+        let Some(include_value) = value.get("include_files") else {
+            return Ok(Vec::new());
+        };
+        // A malformed value must fail the load rather than silently yielding
+        // no includes.
+        let entries = include_value
+            .as_array()
+            .ok_or_else(|| anyhow!("'include_files' must be an array of file paths"))?;
+        let include_files: Vec<PathBuf> = entries
+            .iter()
+            .map(|entry| {
+                entry.as_str().map(PathBuf::from).ok_or_else(|| {
+                    anyhow!("'include_files' entries must be strings, but found: {entry}")
+                })
             })
-            .unwrap_or_default();
+            .collect::<Result<_>>()?;
 
         if include_files.is_empty() {
             return Ok(Vec::new());
@@ -537,6 +543,16 @@ bg = "#000000"
 modifiers = ["bold"]
 "##;
         Config::parse(RuntimeEnv::default(), toml, None, &[]).unwrap();
+    }
+
+    #[test_case("include_files = \"theme.toml\"" ; "string instead of array")]
+    #[test_case("include_files = [42]" ; "non-string element")]
+    fn malformed_include_files_is_rejected(toml: &str) {
+        let err = parse_err(toml);
+        assert!(
+            err.contains("include_files"),
+            "error should name the key: {err}"
+        );
     }
 
     #[test_case("[file_system]\nbuffer_min_bytes = 200\nbuffer_max_bytes = 100\n" ; "min exceeds max")]

@@ -49,19 +49,12 @@ pub(super) fn previous_page(
         return Some(viewport_offset);
     }
 
-    // Calculate new position based on current selection
+    // Calculate the new position based on the current selection. A first
+    // line inside a wrapped row snaps forward, so the current first item
+    // stays visible instead of being scrolled past.
     let new_last_item_first_line = mapper.first_line(selected_item);
     let new_first_line = mapper.first_visible_line_ending_at(new_last_item_first_line);
-    let mut new_first_item = mapper.item(new_first_line);
-
-    // Adjust if necessary to keep the selected item visible
-    // If the first item overflows, ratatui will scroll up until it is fully visible,
-    // so we need to "scroll down" `new_first_item`, so that the `current_first_item` remains visible.
-    let new_first_item_first_line = mapper.first_line(new_first_item);
-    if new_first_item_first_line < new_first_line {
-        new_first_item = new_first_item.saturating_add(1);
-    }
-    Some(new_first_item)
+    Some(mapper.snap_to_item_start(new_first_line))
 }
 
 #[cfg(test)]

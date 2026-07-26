@@ -1,14 +1,10 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    text::Line,
     widgets::{Paragraph, Widget},
 };
 
-use super::{
-    HelpView, MIN_HEIGHT,
-    widget::{add_keybinding_lines, add_section_header, max_label_width},
-};
+use super::{HelpView, MIN_HEIGHT};
 use crate::{
     app::config::Config,
     views::{View, bordered},
@@ -29,17 +25,8 @@ impl View for HelpView {
         let style = theme.help.base();
         let bordered_area = bordered(area, frame.buffer_mut(), style, "Help", &self.hint);
 
-        let max_width = max_label_width(&self.normal_keybindings, &self.prompt_keybindings);
-        let mut lines: Vec<Line> = Vec::new();
-        add_section_header(&mut lines, "Normal Mode", max_width, &theme.help);
-        add_keybinding_lines(&mut lines, &self.normal_keybindings, max_width, &theme.help);
-        lines.push(Line::raw(""));
-        add_section_header(&mut lines, "Prompt Mode", max_width, &theme.help);
-        add_keybinding_lines(&mut lines, &self.prompt_keybindings, max_width, &theme.help);
-
-        let content_height = lines.len() as u16;
         self.inner_height = bordered_area.height;
-        self.max_scroll = content_height.saturating_sub(self.inner_height);
+        self.max_scroll = self.content_height.saturating_sub(self.inner_height);
         let scroll = self.scroll_offset.min(self.max_scroll);
 
         if self.max_scroll > 0 {
@@ -48,7 +35,7 @@ impl View for HelpView {
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .areas(bordered_area);
 
-            Paragraph::new(lines)
+            Paragraph::new(self.lines.clone())
                 .style(style)
                 .scroll((scroll, 0))
                 .render(content_area, frame.buffer_mut());
@@ -63,7 +50,7 @@ impl View for HelpView {
         } else {
             self.scrollbar_view
                 .render(Rect::default(), frame.buffer_mut(), 0, 0, 0);
-            Paragraph::new(lines)
+            Paragraph::new(self.lines.clone())
                 .style(style)
                 .render(bordered_area, frame.buffer_mut());
         }

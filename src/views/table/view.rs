@@ -49,13 +49,13 @@ impl TableView {
         let total = self.mapper.total_lines_count();
         let visible = self.mapper.visible_lines_count();
         let max_position = total.saturating_sub(visible);
-        self.scrollbar_view.render(
-            area,
-            buf,
+        let position = scrollbar_position(
+            self.drag_line,
             self.mapper.first_visible_line(),
             max_position,
-            visible,
         );
+        self.scrollbar_view
+            .render(area, buf, position, max_position, visible);
     }
 
     fn render_table_and_init_mapper(&mut self, area: Rect, buf: &mut Buffer) {
@@ -210,6 +210,19 @@ fn highest_start_keeping_visible(
     start
 }
 
+/// The thumb position: the dragged-to line while a drag is active, so the
+/// thumb tracks the cursor exactly even when the window top snaps across a
+/// wrapped row; otherwise the first visible line. Clamped because the
+/// bottom-most window can underfill (a tall row forces an earlier anchor),
+/// pushing its first line past `max_position`.
+fn scrollbar_position(
+    drag_line: Option<usize>,
+    first_visible_line: usize,
+    max_position: usize,
+) -> usize {
+    drag_line.unwrap_or(first_visible_line).min(max_position)
+}
+
 fn layout(area: Rect) -> (Rect, Rect, Rect) {
     let [table_area, mut scrollbar_area] = Layout::default()
         .direction(Direction::Horizontal)
@@ -227,7 +240,25 @@ fn layout(area: Rect) -> (Rect, Rect, Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_window;
+    use super::{scrollbar_position, visible_window};
+
+    // heights [1, 1, 3, 1, 1] with a viewport of 3: the drag scale is 0..=4
+    // (total - visible). Dragging to line 3 snaps the window top past the
+    // wrapped row (first visible line 5); the thumb must stay on the cursor.
+    #[test]
+    fn thumb_tracks_the_cursor_while_dragging_across_a_wrapped_row() {
+        assert_eq!(3, scrollbar_position(Some(3), 5, 4));
+    }
+
+    #[test]
+    fn thumb_settles_on_the_clamped_first_visible_line_after_release() {
+        assert_eq!(4, scrollbar_position(None, 5, 4));
+    }
+
+    #[test]
+    fn thumb_follows_the_first_visible_line_without_a_drag() {
+        assert_eq!(2, scrollbar_position(None, 2, 4));
+    }
 
     #[test]
     fn empty_or_zero_viewport_is_empty_window() {

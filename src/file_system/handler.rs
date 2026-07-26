@@ -1,5 +1,8 @@
-use super::{FileSystem, tasks::TaskCommand};
-use crate::command::{Command, handler::CommandHandler, result::CommandResult};
+use super::{FileSystem, path_info::PathInfo, tasks::TaskCommand};
+use crate::{
+    app::clipboard::ClipboardEntry,
+    command::{Command, handler::CommandHandler, result::CommandResult},
+};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -12,24 +15,31 @@ impl CommandHandler for FileSystem {
                 CommandResult::NotHandled
             }
             Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
-            Command::GetBookmarks => self.get_bookmarks(),
+            Command::GetBookmarks => {
+                // The bookmarks view replaces any in-flight search; cancel it
+                // so its walk stops and its final ExitedSearch clears the
+                // search notice. No-op when no search is running.
+                self.cancel_search();
+                self.get_bookmarks()
+            }
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
-                self.run_batch(
+                let failed = self.run_batch(
                     srcs.iter()
                         .map(|src| TaskCommand::Copy(src.clone(), dest.clone())),
                 );
-                // The TableView clears its marks for these same commands; clearing
-                // the clipboard here keeps both effects on a single broadcast.
-                Command::ClearClipboard.into()
+                // The TableView clears its marks for these same commands, so
+                // the clipboard follow-up (see `clipboard_follow_up`) rides
+                // the same broadcast.
+                clipboard_follow_up(srcs.len(), ClipboardEntry::Copy, failed)
             }
             Command::Move { srcs, dest } => {
-                self.run_batch(
+                let failed = self.run_batch(
                     srcs.iter()
                         .map(|src| TaskCommand::Move(src.clone(), dest.clone())),
                 );
-                Command::ClearClipboard.into()
+                clipboard_follow_up(srcs.len(), ClipboardEntry::Move, failed)
             }
             Command::Delete(paths) => {
                 self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));
@@ -48,5 +58,25 @@ impl CommandHandler for FileSystem {
             Command::StartSearch(query) => self.search(query),
             _ => CommandResult::NotHandled,
         }
+    }
+}
+
+/// The clipboard follow-up for a paste batch. When every source started, the
+/// clipboard is cleared; when none started, it is kept untouched so the paste
+/// can be retried as-is; when only some started, it is reduced to the failed
+/// sources with the same operation, because a full retry would fail on the
+/// already-pasted sources (their destinations now exist). `SetClipboardEntry`
+/// updates the system clipboard text and the clipboard notice.
+fn clipboard_follow_up(
+    source_count: usize,
+    entry: fn(Vec<PathInfo>) -> ClipboardEntry,
+    failed: Vec<PathInfo>,
+) -> CommandResult {
+    if failed.is_empty() {
+        Command::ClearClipboard.into()
+    } else if failed.len() == source_count {
+        CommandResult::Handled
+    } else {
+        Command::SetClipboardEntry(entry(failed)).into()
     }
 }

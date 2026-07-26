@@ -27,13 +27,17 @@ use crate::{
 };
 
 /// Maximum number of broadcast cycles per input command. Each cycle resolves
-/// one link in an intent → result chain; the longest legitimate chain is 4,
-/// which occurs when `Esc` exits the bookmarks or search view:
+/// one link in an intent → result chain; the longest legitimate chain is 6,
+/// which occurs when renaming a bookmark while the bookmarks view is showing
+/// (`Chmod` and `CreateDirectory` submitted from that view follow the same
+/// shape):
 ///
-///   1. `Key`              — terminal input
-///   2. `ResetView`        — derived from the key
-///   3. `RefreshDirectory` — `TableView` clears bookmarks/search and asks for a reload
-///   4. `RefreshedDirectory` — result emitted by `FileSystem`
+///   1. `Key`                - terminal input
+///   2. `Rename`             - submitted by the prompt
+///   3. `RefreshedDirectory` - `FileSystem` renames, then refreshes the CWD
+///   4. `GetBookmarks`       - `TableView` reloads the shown bookmarks list
+///   5. `Bookmarks`          - result emitted by `FileSystem`
+///   6. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
 ///
 /// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
 /// entries stream in afterward as `DirectoryListing`/`DirectoryListingComplete`,
@@ -43,7 +47,7 @@ use crate::{
 /// Also acts as a guard against a handler stuck deriving commands forever.
 /// See `broadcast_command` for what happens when it is exceeded. The bound keeps
 /// one cycle of headroom over the longest real chain.
-const MAX_BROADCAST_CHAIN_LENGTH: u8 = 5;
+const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
 
 pub struct App {
     clipboard: Clipboard,
@@ -130,7 +134,8 @@ impl App {
                 } else {
                     // Unhandled commands are returned as-is; never re-queued.
                     // `derived` is necessarily empty here: a handler only pushes to
-                    // it via `HandledWith`, which forces `handled == true`.
+                    // it via `HandledWith`/`HandledWithMany`, which force
+                    // `handled == true`.
                     unhandled.push(cmd);
                 }
             }
@@ -191,8 +196,12 @@ fn recursively_handle_command(
 
     let mut handled = !matches!(result, CommandResult::NotHandled);
 
-    if let CommandResult::HandledWith(derived_command) = result {
-        derived.push(*derived_command);
+    match result {
+        CommandResult::HandledWith(derived_command) => derived.push(*derived_command),
+        // Sibling commands: all are queued for the same next cycle, so
+        // deriving several does not lengthen the chain.
+        CommandResult::HandledWithMany(derived_commands) => derived.extend(derived_commands),
+        CommandResult::Handled | CommandResult::NotHandled => {}
     }
 
     // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
@@ -266,6 +275,7 @@ mod tests {
         name: &'static str,
         consume_key: bool,
         derive: Option<Command>,
+        derive_many: Vec<Command>,
         log: Rc<RefCell<Vec<&'static str>>>,
         children: Vec<Spy>,
     }
@@ -276,6 +286,7 @@ mod tests {
                 name,
                 consume_key: false,
                 derive: None,
+                derive_many: Vec::new(),
                 log: log.clone(),
                 children: Vec::new(),
             }
@@ -291,6 +302,9 @@ mod tests {
 
         fn handle_command(&mut self, _command: &Command) -> CommandResult {
             self.log.borrow_mut().push(self.name);
+            if !self.derive_many.is_empty() {
+                return CommandResult::HandledWithMany(self.derive_many.clone());
+            }
             match &self.derive {
                 Some(command) => command.clone().into(),
                 None => CommandResult::NotHandled,
@@ -373,6 +387,24 @@ mod tests {
 
         assert!(handled);
         assert_eq!(vec![Command::Quit], derived);
+    }
+
+    #[test]
+    fn handled_with_many_pushes_all_derived_commands() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        root.derive_many = vec![Command::MarkCountChanged(0), Command::Quit];
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::ResetHelpScroll,
+            &InputMode::Normal,
+            &mut root,
+        );
+
+        assert!(handled);
+        assert_eq!(vec![Command::MarkCountChanged(0), Command::Quit], derived);
     }
 
     #[test]

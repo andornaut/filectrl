@@ -65,7 +65,14 @@ impl DirectoryWatcher {
         let Some(watcher) = &mut self.watcher else {
             return Ok(());
         };
-        if let Some(old_path) = &self.watched_directory
+        // Rewatch even when the path is unchanged: an external delete and
+        // recreate of the directory invalidates the watch on the old inode,
+        // and a refresh must re-register on the new one.
+        //
+        // Clear the bookkeeping before unwatching and set it only after a
+        // successful watch, so `watched_directory` never names a path
+        // without an active watch.
+        if let Some(old_path) = self.watched_directory.take()
             && let Err(e) = watcher.unwatch(old_path.as_path())
         {
             warn!("Failed to unwatch directory: {}", e);
@@ -170,5 +177,37 @@ fn watch_for_delayed_commands(
         {
             debug!("Delayed refresh not sent, likely due to shutdown: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watch_directory_tracks_only_successful_watches() {
+        let dir = std::env::temp_dir().join(format!("filectrl_watch_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut watcher = DirectoryWatcher::try_new(100).unwrap();
+
+        watcher.watch_directory(dir.clone()).unwrap();
+        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+
+        // Re-watching the unchanged path must re-register rather than assume
+        // the existing watch is still valid: an external delete and recreate
+        // of the directory invalidates the watch on the old inode.
+        watcher.watch_directory(dir.clone()).unwrap();
+        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+
+        // A failed watch must not record its path: there is no active watch,
+        // so a later return to the previous directory must re-register.
+        let missing = dir.join("missing");
+        assert!(watcher.watch_directory(missing).is_err());
+        assert!(watcher.watched_directory.is_none());
+
+        watcher.watch_directory(dir.clone()).unwrap();
+        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

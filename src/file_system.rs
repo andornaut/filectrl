@@ -397,15 +397,22 @@ impl FileSystem {
         self.cd(self.current_directory().clone(), false)
     }
 
-    fn run_batch(&mut self, tasks: impl Iterator<Item = TaskCommand>) {
+    /// Runs each task, registering started tasks on the cancel stack. Returns
+    /// the sources of the tasks that failed validation, in batch order; an
+    /// empty result means every task started. Each failure also produces an
+    /// alert.
+    fn run_batch(&mut self, tasks: impl Iterator<Item = TaskCommand>) -> Vec<PathInfo> {
+        let mut failed = Vec::new();
         for task in tasks {
+            let source = task.source().clone();
             let result = task.run(
                 self.command_tx.clone(),
                 self.buffer_min_bytes,
                 self.buffer_max_bytes,
             );
-            if let Some(cancel_info) = result.cancel_info {
-                self.cancellables.push(Cancellable::Task(cancel_info));
+            match result.cancel_info {
+                Some(cancel_info) => self.cancellables.push(Cancellable::Task(cancel_info)),
+                None => failed.push(source),
             }
             // Surface validation failures (e.g. destination exists) as alerts.
             // Started tasks send their initial progress snapshot themselves,
@@ -414,6 +421,7 @@ impl FileSystem {
                 let _ = self.command_tx.send(*cmd);
             }
         }
+        failed
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
@@ -435,6 +443,12 @@ impl FileSystem {
         // One search at a time: cancel any previous search. Its stale
         // results and exit are ignored by generation, not by timing.
         self.cancel_search();
+        // Also stop the in-flight directory load: its remaining batches carry
+        // the current load generation, so they would pass the table view's
+        // generation guard and be appended into the search listing.
+        if let Some(token) = self.current_load.take() {
+            token.cancel();
+        }
         self.current_search_generation += 1;
         let generation = self.current_search_generation;
 
@@ -486,7 +500,185 @@ fn parse_octal_mode(mode_str: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use crate::{app::clipboard::ClipboardEntry, command::handler::CommandHandler};
+
+    fn test_file_system(command_tx: Sender<Command>) -> FileSystem {
+        FileSystem {
+            buffer_max_bytes: 64_000_000,
+            buffer_min_bytes: 64_000,
+            cancellables: Vec::new(),
+            command_tx,
+            directory: None,
+            previous_directory: None,
+            current_load: None,
+            current_search_generation: 0,
+            next_load_id: 0,
+            open_current_directory_template: String::new(),
+            open_new_window_template: String::new(),
+            open_selected_file_template: String::new(),
+            watcher: None,
+        }
+    }
+
+    #[test]
+    fn run_batch_reports_every_source_when_every_task_fails_validation() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        // A vanished source fails the pre-flight re-stat, so no task starts.
+        let mut src = PathInfo::try_from(Path::new("/")).unwrap();
+        src.path = PathBuf::from("/nonexistent/filectrl_missing.txt");
+        src.display_name = "filectrl_missing.txt".to_string();
+        let dest = PathInfo::try_from(std::env::temp_dir().as_path()).unwrap();
+
+        let failed = file_system.run_batch(std::iter::once(TaskCommand::Copy(src.clone(), dest)));
+
+        assert_eq!(vec![src], failed);
+        assert!(file_system.cancellables.is_empty());
+        // The failure surfaces as an alert on the channel.
+        assert!(matches!(rx.try_recv(), Ok(Command::AlertError(_))));
+    }
+
+    #[test]
+    fn run_batch_reports_no_failed_sources_when_every_task_starts() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        let dir =
+            std::env::temp_dir().join(format!("filectrl_fs_run_batch_{}", std::process::id()));
+        let src_dir = dir.join("src");
+        let dest_dir = dir.join("dest");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), b"x").unwrap();
+        let src = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
+        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+
+        let failed = file_system.run_batch(std::iter::once(TaskCommand::Copy(src, dest)));
+
+        assert!(failed.is_empty());
+        assert_eq!(1, file_system.cancellables.len());
+        // Drain until the terminal progress so the worker has finished with
+        // the fixture directory before it is removed.
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::Progress(task)) if task.is_terminal() => break,
+                Ok(_) => {}
+                Err(error) => panic!("task did not finish: {error}"),
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_batch_reports_only_the_failed_sources_on_partial_failure() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        let dir = std::env::temp_dir().join(format!(
+            "filectrl_fs_run_batch_mixed_{}",
+            std::process::id()
+        ));
+        let src_dir = dir.join("src");
+        let dest_dir = dir.join("dest");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), b"x").unwrap();
+        let good = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
+        let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
+        missing.path = src_dir.join("missing.txt");
+        missing.display_name = "missing.txt".to_string();
+        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+
+        let failed = file_system.run_batch(
+            [
+                TaskCommand::Copy(missing.clone(), dest.clone()),
+                TaskCommand::Copy(good, dest),
+            ]
+            .into_iter(),
+        );
+
+        // Only the failed source is reported: the handler reduces the
+        // clipboard to exactly these so a retry carries only what was not
+        // pasted.
+        assert_eq!(vec![missing], failed);
+        assert_eq!(1, file_system.cancellables.len());
+        // Drain until the terminal progress so the worker has finished with
+        // the fixture directory before it is removed; the failed task must
+        // have surfaced an alert along the way.
+        let mut saw_alert = false;
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::AlertError(_)) => saw_alert = true,
+                Ok(Command::Progress(task)) if task.is_terminal() => break,
+                Ok(_) => {}
+                Err(error) => panic!("task did not finish: {error}"),
+            }
+        }
+        assert!(saw_alert);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_with_partial_failure_reduces_the_clipboard_to_the_failed_sources() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        let dir = std::env::temp_dir().join(format!(
+            "filectrl_fs_partial_clipboard_{}",
+            std::process::id()
+        ));
+        let src_dir = dir.join("src");
+        let dest_dir = dir.join("dest");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), b"x").unwrap();
+        let good = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
+        let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
+        missing.path = src_dir.join("missing.txt");
+        missing.display_name = "missing.txt".to_string();
+        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+
+        let result = file_system.handle_command(&Command::Copy {
+            srcs: vec![missing.clone(), good],
+            dest,
+        });
+
+        // The clipboard entry keeps the operation and only the failed source,
+        // so a retry carries just what was not pasted.
+        let command = Command::try_from(result).expect("expected a derived command");
+        let Command::SetClipboardEntry(ClipboardEntry::Copy(paths)) = command else {
+            panic!("expected SetClipboardEntry(Copy), got {command:?}");
+        };
+        assert_eq!(vec![missing], paths);
+        // Drain until the terminal progress so the worker has finished with
+        // the fixture directory before it is removed.
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::Progress(task)) if task.is_terminal() => break,
+                Ok(_) => {}
+                Err(error) => panic!("task did not finish: {error}"),
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_cancels_the_in_flight_directory_load() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
+        let load_token = CancellationToken::new();
+        file_system.current_load = Some(load_token.clone());
+
+        let _ = file_system.search("query");
+
+        // A load left running would keep streaming DirectoryListing batches
+        // that carry the current load generation, which the table view would
+        // append into the search listing.
+        assert!(load_token.is_cancelled());
+        assert!(file_system.current_load.is_none());
+        drop(rx);
+    }
 
     #[test]
     fn parse_octal_mode_accepts_valid_modes() {

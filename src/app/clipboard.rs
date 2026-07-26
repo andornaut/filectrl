@@ -120,21 +120,6 @@ impl Display for ClipboardEntry {
     }
 }
 
-impl TryFrom<&str> for ClipboardEntry {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let parts =
-            shell_words::split(value).map_err(|e| anyhow!("Invalid clipboard format: {e}"))?;
-
-        if parts.len() < 2 {
-            return Err(anyhow!("Missing command or path in clipboard"));
-        }
-
-        parse_clipboard_parts(&parts)
-    }
-}
-
 /// Parses clipboard text, distinguishing unrelated text (ignored) from a
 /// malformed entry (shaped like "cp <path>"/"mv <path>" but failing to
 /// convert), which is returned as an error so the caller can alert the user.

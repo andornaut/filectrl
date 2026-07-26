@@ -6,7 +6,10 @@ use ratatui::{
 };
 
 use super::{BreadcrumbsView, widget::spans};
-use crate::{app::config::Config, views::View};
+use crate::{
+    app::config::Config,
+    views::{ListingMode, View},
+};
 
 impl View for BreadcrumbsView {
     fn constraint(&self, area: Rect) -> Constraint {
@@ -18,12 +21,10 @@ impl View for BreadcrumbsView {
         let theme = Config::global().theme();
         let display = self.display_breadcrumbs();
 
-        let tag_style = if self.is_bookmarks {
-            Some(theme.breadcrumbs.bookmarks())
-        } else if self.is_searching {
-            Some(theme.breadcrumbs.search())
-        } else {
-            None
+        let tag_style = match self.mode {
+            ListingMode::Normal => None,
+            ListingMode::Search => Some(theme.breadcrumbs.search()),
+            ListingMode::Bookmarks => Some(theme.breadcrumbs.bookmarks()),
         };
         let (mut container, mut positions) = spans(
             &display,

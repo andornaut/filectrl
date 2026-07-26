@@ -370,13 +370,14 @@ impl Task {
         }
     }
 
+    /// Advances byte progress. Never sets a terminal status: byte counts can
+    /// reach a stale total while work remains (e.g. a source that grows after
+    /// the size scan, or a cross-device move that still has to remove the
+    /// source), so only finalization (`done`/`cancelled`/`error`) ends the
+    /// task.
     fn increment(&mut self, additional: u64) {
         self.progress.increment(additional);
-        self.status = if self.progress.is_done() {
-            TaskStatus::Done
-        } else {
-            TaskStatus::InProgress
-        };
+        self.status = TaskStatus::InProgress;
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -575,7 +576,23 @@ mod tests {
         assert!(!t.is_new());
         assert!(!t.is_terminal());
         t.increment(60);
-        assert!(t.is_terminal()); // reached total -> Done
+        // Byte counts reaching the total must not end the task: the total may
+        // be stale (source grew after the size scan) or work may remain (a
+        // cross-device move still has to remove the source).
+        assert!(!t.is_terminal());
+    }
+
+    #[test]
+    fn task_increment_to_total_stays_in_progress_until_done() {
+        let mut t = delete_task();
+        t.increment(100);
+        assert!(!t.is_new());
+        assert!(!t.is_terminal());
+        // A filled-but-unfinalized task still renders as 100%.
+        assert_eq!(100, t.progress.percentage());
+        assert_eq!(10, t.progress.scaled(10));
+        t.done();
+        assert!(t.is_terminal());
     }
 
     #[test]

@@ -30,11 +30,27 @@ impl TableView {
     }
 
     pub(super) fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
-        let max_position = self.mapper.total_lines_count().saturating_sub(1);
-        self.scrollbar_view
+        // Use the same scale as the rendered thumb (line offset over
+        // `total - visible`, see `render_scrollbar`). The dragged-to line
+        // becomes the top of the window, snapped forward across wrapped rows
+        // so the track bottom always reaches the bottom-most window; the
+        // thumb meanwhile renders at `drag_line` so it stays on the cursor.
+        let max_position = self
+            .mapper
+            .total_lines_count()
+            .saturating_sub(self.mapper.visible_lines_count());
+        let result = self
+            .scrollbar_view
             .handle_mouse(event, max_position)
             .map_or(CommandResult::Handled, |line| {
-                self.select(self.mapper.item(line))
-            })
+                self.drag_line = Some(line);
+                let item = self.mapper.snap_to_item_start(line);
+                self.first_visible_item = item;
+                self.select(item)
+            });
+        if !self.scrollbar_view.is_dragging() {
+            self.drag_line = None;
+        }
+        result
     }
 }

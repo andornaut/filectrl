@@ -95,23 +95,29 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
     let poll_interval = Duration::from_millis(500);
 
     let builder = thread::Builder::new().name("filectrl-event-reader".into());
+    let reader_tx = tx.clone();
     let spawn_result = builder.spawn(move || {
         // catch_unwind so a panic in the reader thread is logged instead of
         // silently terminating only the thread (leaving the main loop blocked
         // forever on rx.recv()).
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            event_loop(&tx, poll_interval);
+            event_loop(&reader_tx, poll_interval);
         }));
         if let Err(payload) = result {
             let message = panic_message(payload.as_ref());
             log::error!("Event reader thread panicked: {message}");
             // Wake the main loop so it doesn't block forever.
-            let _ = tx.send(Command::Quit);
+            let _ = reader_tx.send(Command::Quit);
         }
     });
 
     if let Err(err) = spawn_result {
         log::error!("Failed to spawn event reader thread: {err}");
+        // Without the reader thread there is no terminal input and the signal
+        // flag is never polled, so the main loop would block on rx.recv()
+        // forever with no way to exit short of SIGKILL. Enqueue Quit so the
+        // app shuts down cleanly and the terminal is restored.
+        let _ = tx.send(Command::Quit);
     }
 }
 
