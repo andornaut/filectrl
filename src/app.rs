@@ -40,7 +40,7 @@ use crate::{
 ///   6. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
 ///
 /// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
-/// entries stream in afterward as `DirectoryListing`/`DirectoryListingComplete`,
+/// entries stream in afterward as `ListingBatch`/`DirectoryListingComplete`,
 /// which arrive as fresh channel sends (each its own short chain, e.g.
 /// `DirectoryListingComplete → SelectionChanged`) rather than extending this one.
 ///
@@ -82,11 +82,11 @@ impl App {
     pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
         // Trigger the initial navigation and handle it synchronously *before*
         // entering the loop. `run_once` spawns the directory loader, which begins
-        // streaming `DirectoryListing` batches into the channel immediately;
-        // handling the resulting `NavigatedDirectory` here registers its
-        // generation before those batches are drained, so none are dropped.
+        // streaming `ListingBatch`es into the channel immediately; handling
+        // the resulting `NavigatedDirectory` here registers its generation
+        // before those batches are drained, so none are dropped.
         let initial = self.file_system.run_once(initial_directory)?;
-        let remaining = self.broadcast_commands(vec![initial]);
+        let remaining = self.broadcast_commands(initial);
         must_not_contain_unhandled(&remaining)?;
         self.render()?;
 
@@ -195,14 +195,9 @@ fn recursively_handle_command(
     };
 
     let mut handled = !matches!(result, CommandResult::NotHandled);
-
-    match result {
-        CommandResult::HandledWith(derived_command) => derived.push(*derived_command),
-        // Sibling commands: all are queued for the same next cycle, so
-        // deriving several does not lengthen the chain.
-        CommandResult::HandledWithMany(derived_commands) => derived.extend(derived_commands),
-        CommandResult::Handled | CommandResult::NotHandled => {}
-    }
+    // Sibling commands are queued for the same next cycle, so deriving
+    // several does not lengthen the chain.
+    derived.extend(result.into_commands());
 
     // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
     // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
@@ -362,7 +357,7 @@ mod tests {
         let mut derived = Vec::new();
         let handled = recursively_handle_command(
             &mut derived,
-            &Command::ResetHelpScroll,
+            &Command::SearchTick,
             &InputMode::Normal,
             &mut root,
         );
@@ -380,7 +375,7 @@ mod tests {
         let mut derived = Vec::new();
         let handled = recursively_handle_command(
             &mut derived,
-            &Command::ResetHelpScroll,
+            &Command::SearchTick,
             &InputMode::Normal,
             &mut root,
         );
@@ -393,18 +388,18 @@ mod tests {
     fn handled_with_many_pushes_all_derived_commands() {
         let log = Rc::new(RefCell::new(Vec::new()));
         let mut root = Spy::new("root", &log);
-        root.derive_many = vec![Command::MarkCountChanged(0), Command::Quit];
+        root.derive_many = vec![Command::CancelTask, Command::Quit];
 
         let mut derived = Vec::new();
         let handled = recursively_handle_command(
             &mut derived,
-            &Command::ResetHelpScroll,
+            &Command::SearchTick,
             &InputMode::Normal,
             &mut root,
         );
 
         assert!(handled);
-        assert_eq!(vec![Command::MarkCountChanged(0), Command::Quit], derived);
+        assert_eq!(vec![Command::CancelTask, Command::Quit], derived);
     }
 
     #[test]

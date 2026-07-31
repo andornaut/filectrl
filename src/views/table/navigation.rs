@@ -1,8 +1,5 @@
 use super::{TableView, columns::SortColumn};
-use crate::{
-    command::{Command, result::CommandResult},
-    file_system::path_info::PathInfo,
-};
+use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 /// What to select after the visible items change.
 #[derive(Clone, Copy, Default)]
@@ -144,11 +141,8 @@ impl TableView {
     }
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
-        let had_marks = self.has_marks();
-        let previously_selected = self.selected_path().cloned();
         self.columns.sort_by(column);
-        let result = self.sort(Reselect::Top);
-        mark_cleared_or(had_marks, previously_selected, self.selected_path(), result)
+        self.sort(Reselect::Top)
     }
 
     pub(super) fn toggle_show_hidden(&mut self) -> CommandResult {
@@ -159,33 +153,9 @@ impl TableView {
         if self.content.is_searching() {
             return CommandResult::Handled;
         }
-        let had_marks = self.has_marks();
-        let previously_selected = self.selected_path().cloned();
         self.content.toggle_show_hidden();
-        let result = self.sort(Reselect::Top);
-        mark_cleared_or(had_marks, previously_selected, self.selected_path(), result)
+        self.sort(Reselect::Top)
     }
-}
-
-/// `sort` clears the index-based marks as a side effect of reordering. When
-/// marks were cleared, the mark-count notice must be reset. When the selected
-/// file is unchanged (restored by inode) its `SelectionChanged` is redundant,
-/// so the mark reset is returned alone; when the selection also moved, the
-/// status bar needs the selection result too, so the mark reset is prepended
-/// to it.
-fn mark_cleared_or(
-    had_marks: bool,
-    previously_selected: Option<PathInfo>,
-    selected: Option<&PathInfo>,
-    otherwise: CommandResult,
-) -> CommandResult {
-    if !had_marks {
-        return otherwise;
-    }
-    if previously_selected.as_ref() == selected {
-        return Command::MarkCountChanged(0).into();
-    }
-    otherwise.prepend(Command::MarkCountChanged(0))
 }
 
 /// Synchronous convenience for tests: runs the streamed begin/append/finish
@@ -256,6 +226,20 @@ mod tests {
 
     fn selected_basename(table: &TableView) -> Option<String> {
         table.selected_path().map(|p| p.display_name.clone())
+    }
+
+    /// Asserts that `result` is a single `SelectionChanged` snapshot with a
+    /// mark count of zero (the marks were cleared).
+    fn assert_mark_reset_snapshot(result: &CommandResult) {
+        match result {
+            CommandResult::HandledWith(command) => {
+                assert!(
+                    matches!(**command, Command::SelectionChanged { mark_count: 0, .. }),
+                    "expected a mark-reset snapshot, got {command:?}"
+                );
+            }
+            other => panic!("expected a SelectionChanged snapshot, got {other:?}"),
+        }
     }
 
     #[test]
@@ -357,7 +341,7 @@ mod tests {
         let result = table.handle_command(&Command::Delete(table.marked_paths()));
 
         assert!(!table.has_marks());
-        assert_eq!(result, Command::MarkCountChanged(0).into());
+        assert_mark_reset_snapshot(&result);
     }
 
     #[test]
@@ -373,19 +357,22 @@ mod tests {
     }
 
     #[test]
-    fn refreshed_directory_clears_marks_and_resets_the_mark_count_notice() {
+    fn refreshed_directory_clears_marks_silently() {
         ensure_config_initialized();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
         // Simulates the watcher-triggered reload after files change on disk.
+        // No snapshot is emitted here: the selection is indeterminate until
+        // the stream completes, and the post-load snapshot carries the
+        // cleared mark count.
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,
         });
 
         assert!(!table.has_marks());
-        assert_eq!(result, Command::MarkCountChanged(0).into());
+        assert_eq!(result, CommandResult::Handled);
     }
 
     #[test]
@@ -397,11 +384,11 @@ mod tests {
         let result = table.sort_by(SortColumn::Size);
 
         assert!(!table.has_marks());
-        assert_eq!(result, Command::MarkCountChanged(0).into());
+        assert_mark_reset_snapshot(&result);
     }
 
     #[test]
-    fn toggle_show_hidden_emits_mark_reset_and_selection_change_when_the_selection_moves() {
+    fn toggle_show_hidden_snapshot_carries_the_new_selection_and_cleared_marks() {
         ensure_config_initialized();
         let fx = Fixture::new();
         let mut table = TableView::default();
@@ -414,20 +401,20 @@ mod tests {
         table.select(1); // ".b"
         table.toggle_mark();
 
-        // Hiding dotfiles removes the selected file, so both the mark-count
-        // notice and the status bar must be notified.
+        // Hiding dotfiles removes the selected file; one snapshot must carry
+        // both the fallback selection and the cleared mark count.
         let result = table.toggle_show_hidden();
 
         assert!(!table.has_marks());
         assert_eq!(selected_basename(&table).as_deref(), Some("a"));
-        match result {
-            CommandResult::HandledWithMany(commands) => {
-                assert_eq!(2, commands.len());
-                assert_eq!(Command::MarkCountChanged(0), commands[0]);
-                assert!(matches!(commands[1], Command::SelectionChanged(Some(_))));
+        assert_eq!(
+            result,
+            Command::SelectionChanged {
+                selected: table.selected_path().cloned(),
+                mark_count: 0,
             }
-            other => panic!("expected HandledWithMany, got {other:?}"),
-        }
+            .into()
+        );
     }
 
     #[test]
@@ -444,7 +431,7 @@ mod tests {
 
         table.handle_command(&Command::StartSearch("a".into()));
         table.handle_command(&Command::SearchStarted { generation: 1 });
-        table.handle_command(&Command::SearchResults {
+        table.handle_command(&Command::ListingBatch {
             items: vec![fx.file("a", 1)],
             generation: 1,
         });
@@ -466,6 +453,78 @@ mod tests {
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
+    }
+
+    #[test]
+    fn stale_listing_batches_are_ignored() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 2,
+        });
+
+        // A batch from a superseded stream must not be appended.
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("stale", 1)],
+            generation: 1,
+        });
+        assert_eq!(table.content.len(), 0);
+
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("fresh", 1)],
+            generation: 2,
+        });
+        assert_eq!(table.content.len(), 1);
+    }
+
+    #[test]
+    fn late_search_batches_are_dropped_in_bookmarks_mode() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 2,
+        });
+        assert!(table.content.is_loading());
+
+        // The load is cancelled by the starting search and never finalizes,
+        // so only the mode transition can clear the loading flag.
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 3 });
+        assert!(!table.content.is_loading());
+
+        table.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        // The cancelled search's final flush still carries the current
+        // generation; bookmarks mode accepts no batches.
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("late", 1)],
+            generation: 3,
+        });
+        assert!(table.content.is_showing_bookmarks());
+        assert_eq!(table.content.len(), 0);
+    }
+
+    #[test]
+    fn search_started_outside_search_mode_keeps_the_load_generation() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 2,
+        });
+
+        // The empty-query backstop emits SearchStarted while the table never
+        // entered search mode; the in-flight load must keep streaming.
+        table.handle_command(&Command::SearchStarted { generation: 9 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1)],
+            generation: 2,
+        });
+        assert_eq!(table.content.len(), 1);
     }
 
     #[test]

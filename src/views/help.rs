@@ -64,7 +64,7 @@ impl HelpView {
         }
     }
 
-    fn reset_scroll(&mut self) {
+    pub(super) fn reset_scroll(&mut self) {
         self.scroll_offset = 0;
     }
 
