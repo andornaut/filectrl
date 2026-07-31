@@ -4,7 +4,7 @@ use log::warn;
 
 use super::{
     path_info::PathInfo,
-    stream::{BATCH_FLUSH_INTERVAL, Batcher},
+    stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
 use crate::command::{Command, progress::CancellationToken};
 
@@ -14,7 +14,7 @@ const SEARCH_BATCH_SIZE: usize = 128;
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Matching entries are sent in batches as
-/// `Command::SearchResults` through the channel. A `Command::ExitedSearch`
+/// `Command::ListingBatch` through the channel. A `Command::ExitedSearch`
 /// is sent when the traversal finishes (or is cancelled).
 pub fn run_search(
     root: PathInfo,
@@ -31,10 +31,7 @@ pub fn run_search(
         let mut depth_limit_hit = false;
         let mut result_count: u32 = 0;
 
-        let send = |items| {
-            tx.send(Command::SearchResults { items, generation })
-                .is_ok()
-        };
+        let send = batch_sender(&tx, generation);
         let mut batcher = Batcher::new(SEARCH_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
         // Every exit path flushes pending hits and self-cancels before
         // announcing the exit: the cancel stack treats a cancelled token as

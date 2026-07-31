@@ -43,13 +43,8 @@ impl CommandHandler for TableView {
                 }
             }
             Command::Delete(_) => self.clear_marks_notifying(),
-            Command::ClearClipboard => {
-                self.clipboard_entry = None;
-                CommandResult::NotHandled
-            }
-
             Command::SetClipboardEntry(entry) => {
-                self.clipboard_entry = Some(entry.clone());
+                self.clipboard_entry = entry.clone();
                 CommandResult::NotHandled
             }
             Command::NavigatedDirectory {
@@ -58,7 +53,7 @@ impl CommandHandler for TableView {
             } => {
                 // Different directory: nothing from the old listing carries over.
                 self.content.clear_filter();
-                self.load_generation = *generation;
+                self.stream_generation = *generation;
                 self.begin_directory(directory.clone(), Reselect::Top);
                 CommandResult::Handled
             }
@@ -78,17 +73,21 @@ impl CommandHandler for TableView {
                 if self.content.is_showing_bookmarks() {
                     return Command::GetBookmarks.into();
                 }
-                // Same directory reloaded: keep filter and selection. The reload
-                // invalidates the index-based marks, so clear them and notify.
-                self.load_generation = *generation;
-                let result = self.clear_marks_notifying();
+                // Same directory reloaded: keep filter and selection. The
+                // reload invalidates the index-based marks; begin_directory
+                // clears them silently, and the post-load snapshot reports
+                // mark_count: 0 once the new listing is known. Notifying here
+                // would assert a selection read from the listing being
+                // discarded (stale if the refresh was caused by its deletion).
+                self.stream_generation = *generation;
                 self.begin_directory(directory.clone(), Reselect::Keep);
-                result
+                CommandResult::Handled
             }
-            Command::DirectoryListing { items, generation } => {
-                // Ignore stale batches from a superseded load.
-                if *generation != self.load_generation
-                    || !self.content.is_loading()
+            Command::ListingBatch { items, generation } => {
+                // Only an in-flight load or search accepts batches; stale
+                // generations (superseded streams) are ignored.
+                if *generation != self.stream_generation
+                    || !(self.content.is_loading() || self.content.is_searching())
                     || items.is_empty()
                 {
                     return CommandResult::Handled;
@@ -104,7 +103,7 @@ impl CommandHandler for TableView {
                 }
             }
             Command::DirectoryListingComplete { generation } => {
-                if *generation != self.load_generation {
+                if *generation != self.stream_generation {
                     return CommandResult::Handled;
                 }
                 self.finish_directory()
@@ -133,25 +132,13 @@ impl CommandHandler for TableView {
                 self.clear_marks_notifying()
             }
             Command::SearchStarted { generation } => {
-                self.search_generation = *generation;
+                // The empty-query backstop emits SearchStarted without the
+                // table entering search mode; an in-flight load's generation
+                // must not be clobbered then.
+                if self.content.is_searching() {
+                    self.stream_generation = *generation;
+                }
                 CommandResult::Handled
-            }
-            Command::SearchResults { items, generation } => {
-                if *generation != self.search_generation
-                    || !self.content.is_searching()
-                    || items.is_empty()
-                {
-                    return CommandResult::Handled;
-                }
-                let was_empty = self.content.len() == 0;
-                self.content.append(items);
-                // The batch may filter down to nothing; select only once an
-                // item survives the filter.
-                if was_empty && self.content.len() > 0 {
-                    self.select(0)
-                } else {
-                    CommandResult::Handled
-                }
             }
             Command::ExitedSearch { .. } => CommandResult::Handled,
             // FileSystem resolves GetBookmarks into Bookmarks.

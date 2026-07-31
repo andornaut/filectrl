@@ -11,19 +11,15 @@ pub enum CommandResult {
 }
 
 impl CommandResult {
-    /// Prepends `command` to this result's derived commands, normalizing
-    /// through the same length rules as `From<Vec<Command>>`. `Handled` and
-    /// `NotHandled` carry no derived commands, so both become
-    /// `HandledWith(command)`: composing a command into a result means the
-    /// triggering command was handled.
-    pub fn prepend(self, command: Command) -> Self {
-        let mut commands = vec![command];
+    /// The derived commands, dropping the handled/not-handled distinction.
+    /// The lossless way for production code to consume a result: it never
+    /// assumes a single derived command.
+    pub fn into_commands(self) -> Vec<Command> {
         match self {
-            Self::HandledWith(existing) => commands.push(*existing),
-            Self::HandledWithMany(existing) => commands.extend(existing),
-            Self::Handled | Self::NotHandled => {}
+            Self::HandledWith(command) => vec![*command],
+            Self::HandledWithMany(commands) => commands,
+            Self::Handled | Self::NotHandled => Vec::new(),
         }
-        commands.into()
     }
 }
 
@@ -85,40 +81,16 @@ mod tests {
     }
 
     #[test]
-    fn prepend_to_handled_yields_handled_with() {
+    fn into_commands_covers_every_variant() {
+        assert!(CommandResult::Handled.into_commands().is_empty());
+        assert!(CommandResult::NotHandled.into_commands().is_empty());
         assert_eq!(
-            CommandResult::HandledWith(Box::new(Command::Quit)),
-            CommandResult::Handled.prepend(Command::Quit)
+            vec![Command::Quit],
+            CommandResult::from(Command::Quit).into_commands()
         );
-    }
-
-    #[test]
-    fn prepend_to_not_handled_yields_handled_with() {
         assert_eq!(
-            CommandResult::HandledWith(Box::new(Command::Quit)),
-            CommandResult::NotHandled.prepend(Command::Quit)
-        );
-    }
-
-    #[test]
-    fn prepend_to_handled_with_yields_handled_with_many() {
-        assert_eq!(
-            CommandResult::HandledWithMany(vec![Command::Quit, Command::ResetView]),
-            CommandResult::from(Command::ResetView).prepend(Command::Quit)
-        );
-    }
-
-    #[test]
-    fn prepend_to_handled_with_many_extends_in_order() {
-        let existing =
-            CommandResult::HandledWithMany(vec![Command::ResetView, Command::ResetHelpScroll]);
-        assert_eq!(
-            CommandResult::HandledWithMany(vec![
-                Command::Quit,
-                Command::ResetView,
-                Command::ResetHelpScroll
-            ]),
-            existing.prepend(Command::Quit)
+            vec![Command::Quit, Command::ResetView],
+            CommandResult::HandledWithMany(vec![Command::Quit, Command::ResetView]).into_commands()
         );
     }
 

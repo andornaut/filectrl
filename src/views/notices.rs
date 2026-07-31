@@ -256,22 +256,60 @@ mod tests {
     }
 
     #[test]
-    fn filter_change_resets_the_mark_count() {
+    fn selection_snapshot_updates_the_mark_count() {
         use crate::command::handler::CommandHandler;
         let mut v = view();
-        v.mark_count = 2;
-        v.handle_command(&Command::FilterChanged("x".into()));
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+        });
+        assert_eq!(v.mark_count, 2);
+        assert_eq!(tags(&v.build_notices()), vec!["marked"]);
+
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 0,
+        });
         assert_eq!(v.mark_count, 0);
-        assert_eq!(tags(&v.build_notices()), vec!["filter"]);
+        assert!(v.build_notices().is_empty());
     }
 
     #[test]
-    fn showing_bookmarks_resets_the_mark_count() {
+    fn unchanged_mark_count_keeps_the_clipboard_and_skips_the_rebuild() {
         use crate::command::handler::CommandHandler;
         let mut v = view();
-        v.mark_count = 2;
-        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
-        assert_eq!(v.mark_count, 0);
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+        });
+        // Copying marked files sets the clipboard while the marks are kept.
+        v.clipboard_entry = Some(clipboard_entry());
+        let cached = tags(&v.notices);
+
+        // A cursor move re-emits the same mark count.
+        let result = v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+        });
+
+        assert_eq!(result, CommandResult::Handled);
+        assert!(v.clipboard_entry.is_some());
+        // No rebuild: the cached notice list is untouched.
+        assert_eq!(cached, tags(&v.notices));
+    }
+
+    #[test]
+    fn marking_derives_a_clipboard_clear() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.clipboard_entry = Some(clipboard_entry());
+
+        // Marks and clipboard are mutually exclusive.
+        let result = v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 1,
+        });
+        assert_eq!(result, Command::SetClipboardEntry(None).into());
     }
 
     #[test]

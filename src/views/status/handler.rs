@@ -12,10 +12,8 @@ impl CommandHandler for StatusView {
                 directory,
                 generation,
             } => self.begin_directory(directory.clone(), *generation),
-            Command::DirectoryListing { items, generation } => {
-                self.count_listing(items, *generation)
-            }
-            Command::SelectionChanged(selected) => self.set_selected(selected.clone()),
+            Command::ListingBatch { items, generation } => self.count_listing(items, *generation),
+            Command::SelectionChanged { selected, .. } => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }
     }

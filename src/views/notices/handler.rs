@@ -29,10 +29,6 @@ impl CommandHandler for NoticesView {
                 self.hide_marked = true;
                 CommandResult::NotHandled
             }
-            Command::ClearClipboard => {
-                self.clipboard_entry = None;
-                CommandResult::NotHandled
-            }
             Command::NavigatedDirectory { .. } => {
                 self.filter.clear();
                 self.mark_count = 0;
@@ -81,29 +77,29 @@ impl CommandHandler for NoticesView {
                 CommandResult::Handled
             }
             Command::SetClipboardEntry(entry) => {
-                self.clipboard_entry = Some(entry.clone());
+                self.clipboard_entry = entry.clone();
                 CommandResult::NotHandled
             }
-            // Filtering and showing bookmarks both re-list, clearing the table's
-            // marks. Their table handlers must emit SelectionChanged, so they
-            // can't also emit MarkCountChanged; reset the count from this side.
             Command::FilterChanged(filter) => {
                 self.filter.clone_from(filter);
-                self.mark_count = 0;
                 CommandResult::NotHandled
             }
             // Opening bookmarks cancels any in-flight search; the transition
             // hook above clears the notice immediately (the walker's eventual
             // ExitedSearch can lag and is then a no-op).
-            Command::Bookmarks { .. } => {
-                self.mark_count = 0;
-                CommandResult::NotHandled
-            }
-            Command::MarkCountChanged(count) => {
-                self.mark_count = *count;
-                // Marks and clipboard are mutually exclusive
-                if *count > 0 && self.clipboard_entry.is_some() {
-                    Command::ClearClipboard.into()
+            Command::Bookmarks { .. } => CommandResult::NotHandled,
+            Command::SelectionChanged { mark_count, .. } => {
+                // Every cursor move carries the (usually unchanged) mark
+                // count; skip the rebuild and the derivation below for those.
+                if *mark_count == self.mark_count {
+                    return CommandResult::Handled;
+                }
+                self.mark_count = *mark_count;
+                // Marks and clipboard are mutually exclusive. Fires only on a
+                // mark-count change: a clipboard set while marks are held
+                // (copying marked files) must survive plain cursor movement.
+                if *mark_count > 0 && self.clipboard_entry.is_some() {
+                    Command::SetClipboardEntry(None).into()
                 } else {
                     CommandResult::Handled
                 }

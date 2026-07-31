@@ -2,12 +2,16 @@ pub mod handler;
 pub mod progress;
 pub mod result;
 
-use anyhow::{Error, anyhow};
+use anyhow::Error;
+#[cfg(test)]
+use anyhow::anyhow;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-use self::{progress::Task, result::CommandResult};
+use self::progress::Task;
+#[cfg(test)]
+use self::result::CommandResult;
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
@@ -88,20 +92,23 @@ pub enum Command {
     Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
     NavigatedDirectory {
         // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem).
-        // The entries are not included; they stream in afterward as DirectoryListing.
+        // The entries are not included; they stream in afterward as ListingBatch.
         directory: PathInfo,
         generation: u64,
     },
     RefreshDirectory, // Intent: resolved by FileSystem into RefreshedDirectory
     RefreshedDirectory {
-        // Result: of RefreshDirectory. Entries stream in as DirectoryListing.
+        // Result: of RefreshDirectory. Entries stream in as ListingBatch.
         directory: PathInfo,
         generation: u64,
     },
-    // Result: a batch of entries for the most recent Navigated/RefreshedDirectory,
-    // streamed by FileSystem and appended (in read order) by TableView. `generation`
-    // matches the switch command so stale batches from a superseded load are ignored.
-    DirectoryListing {
+    // Result: a batch of streamed entries (directory load or search hits),
+    // appended (in read order) by TableView. `generation` matches the command
+    // that started the stream (Navigated/RefreshedDirectory or SearchStarted),
+    // so stale batches from a superseded stream are ignored. Loads and
+    // searches draw from the same monotonic counter, so a generation is never
+    // ambiguous between the two.
+    ListingBatch {
         items: Vec<PathInfo>,
         generation: u64,
     },
@@ -148,10 +155,9 @@ pub enum Command {
     OpenPrompt(PromptAction),
 
     // Clipboard
-    ClearClipboard,
-    SetClipboardEntry(ClipboardEntry),
-    GetClipboardText,         // Intent: resolved by App into ClipboardText
-    ClipboardText(String),    // Result: of GetClipboardText; handled by PromptView
+    SetClipboardEntry(Option<ClipboardEntry>), // None clears the clipboard
+    GetClipboardText,                          // Intent: resolved by App into ClipboardText
+    ClipboardText(String),                     // Result: of GetClipboardText; handled by PromptView
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
@@ -162,23 +168,22 @@ pub enum Command {
     ExitedSearch {
         generation: u64,
     }, // Result: search thread has exited (completed or after CancelSearch)
-    SearchResults {
-        // Result: a batch of search hits, appended by TableView
-        items: Vec<PathInfo>,
-        generation: u64,
-    },
     SearchStarted {
         generation: u64,
     }, // Result: FileSystem spawned the search thread
     SearchTick,
-    StartSearch(String), // Intent: spawns the search thread; streams SearchResults
+    StartSearch(String), // Intent: spawns the search thread; streams ListingBatch
 
     // View state notifications — emitted by TableView
     FilterChanged(String),
-    MarkCountChanged(usize),
-    SelectionChanged(Option<PathInfo>),
+    SelectionChanged {
+        // Snapshot of the table's cursor and mark count, taken whenever either
+        // may have changed. StatusView reads `selected`; NoticesView reads
+        // `mark_count`.
+        selected: Option<PathInfo>,
+        mark_count: usize,
+    },
     ResetView, // Returns to Normal mode; clears clipboard, filter, marks, and help
-    ResetHelpScroll,
 
     // Alerts
     AlertError(String),
@@ -226,6 +231,10 @@ impl From<Error> for Command {
     }
 }
 
+/// Test-only downcast to exactly one derived command. Production code must
+/// consume every derived command via `CommandResult::into_commands`, which
+/// cannot silently drop siblings.
+#[cfg(test)]
 impl TryFrom<CommandResult> for Command {
     type Error = Error;
 

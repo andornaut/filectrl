@@ -128,10 +128,11 @@ impl CommandHandler for RootView {
             Some(Action::ToggleHelp) => {
                 self.is_help_visible = !self.is_help_visible;
                 if self.is_help_visible {
-                    Command::ResetHelpScroll.into()
-                } else {
-                    CommandResult::Handled
+                    // RootView owns the help view, so the scroll reset is a
+                    // direct call rather than a broadcast command.
+                    self.help.reset_scroll();
                 }
+                CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
         }

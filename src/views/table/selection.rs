@@ -8,13 +8,16 @@ impl TableView {
     pub(super) fn select(&mut self, item: usize) -> CommandResult {
         self.table_state.select(Some(item));
         self.update_range_marks();
-        if self.marks.in_range_mode() {
-            return Command::MarkCountChanged(self.marks.len()).into();
+        self.selection_snapshot()
+    }
+
+    /// The current selection and mark count as a single snapshot command.
+    pub(super) fn selection_snapshot(&self) -> CommandResult {
+        Command::SelectionChanged {
+            selected: self.selected_path().cloned(),
+            mark_count: self.marks.len(),
         }
-        match self.selected_path() {
-            Some(path) => Command::SelectionChanged(Some(path.clone())).into(),
-            None => Command::SelectionChanged(None).into(),
-        }
+        .into()
     }
 
     pub(super) fn select_next(&mut self) -> CommandResult {

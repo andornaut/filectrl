@@ -96,6 +96,12 @@ impl DirectoryContent {
         if mode != ListingMode::Search {
             self.search_root = None;
         }
+        // A load cancelled mid-stream never finalizes, so leaving the
+        // plain-listing flow must clear the loading flag; a stale value
+        // would let late batches through the table's accept guard.
+        if mode != ListingMode::Normal {
+            self.loading = false;
+        }
         self.revision += 1;
     }
 

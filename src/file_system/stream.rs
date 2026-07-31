@@ -1,10 +1,24 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::mpsc::Sender,
+    time::{Duration, Instant},
+};
 
 use super::path_info::PathInfo;
+use crate::command::Command;
 
 /// Default interval after which a partial batch is flushed even if not full, so
 /// results still stream visibly when items arrive sparsely.
 pub(super) const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
+
+/// The per-batch send closure shared by the streaming producers: builds a
+/// `ListingBatch` stamped with `generation` and reports whether the channel
+/// is still open.
+pub(super) fn batch_sender(
+    tx: &Sender<Command>,
+    generation: u64,
+) -> impl Fn(Vec<PathInfo>) -> bool {
+    move |items| tx.send(Command::ListingBatch { items, generation }).is_ok()
+}
 
 /// Accumulates `PathInfo`s and flushes them as batches through a caller-supplied
 /// sender. Background producers (the directory loader and the recursive search)

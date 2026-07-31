@@ -52,12 +52,14 @@ pub struct FileSystem {
     /// Cancellation token for the in-flight streamed directory load, if any.
     /// Cancelled when a new load starts so stale batches don't bleed across.
     current_load: Option<CancellationToken>,
-    /// Monotonic id stamped on each search. `SearchResults`/`ExitedSearch`
-    /// carry it, so every consumer can ignore messages from a superseded
-    /// search instead of tearing down its replacement.
+    /// The latest search's generation. `ExitedSearch` carries it, so every
+    /// consumer can ignore messages from a superseded search instead of
+    /// tearing down its replacement.
     current_search_generation: u64,
-    /// Monotonic id stamped on each load so consumers can ignore stale batches.
-    next_load_id: u64,
+    /// Monotonic id stamped on each directory load and search so consumers
+    /// can ignore stale `ListingBatch`es. Shared by both stream kinds so a
+    /// generation is never ambiguous between them.
+    next_generation: u64,
     open_current_directory_template: String,
     open_new_window_template: String,
     open_selected_file_template: String,
@@ -83,7 +85,7 @@ impl FileSystem {
             previous_directory: None,
             current_load: None,
             current_search_generation: 0,
-            next_load_id: 0,
+            next_generation: 0,
             open_current_directory_template: config.openers.open_current_directory.clone(),
             open_new_window_template: config.openers.open_new_window.clone(),
             open_selected_file_template: config.openers.open_selected_file.clone(),
@@ -91,7 +93,7 @@ impl FileSystem {
         }
     }
 
-    pub fn run_once(&mut self, directory: Option<PathBuf>) -> Result<Command> {
+    pub fn run_once(&mut self, directory: Option<PathBuf>) -> Result<Vec<Command>> {
         if let Some(watcher) = &mut self.watcher {
             watcher.run_once(&self.command_tx);
         }
@@ -126,7 +128,7 @@ impl FileSystem {
                 .map_err(|error| anyhow!("Failed to read home directory {home:?}: {error}"))?;
         }
 
-        self.cd(directory, true).try_into()
+        Ok(self.cd(directory, true).into_commands())
     }
 
     fn current_directory(&self) -> &PathInfo {
@@ -174,11 +176,8 @@ impl FileSystem {
 
         // Cancel any in-flight load so its batches don't bleed into this one,
         // then start streaming the new directory's entries.
-        if let Some(token) = self.current_load.take() {
-            token.cancel();
-        }
-        self.next_load_id += 1;
-        let generation = self.next_load_id;
+        self.cancel_current_load();
+        let generation = self.bump_generation();
         let token = CancellationToken::new();
         self.current_load = Some(token.clone());
         operations::stream_cd(
@@ -200,6 +199,21 @@ impl FileSystem {
             }
         }
         .into()
+    }
+
+    /// The next stream generation. Shared by directory loads and searches so
+    /// a generation is never ambiguous between the two.
+    fn bump_generation(&mut self) -> u64 {
+        self.next_generation += 1;
+        self.next_generation
+    }
+
+    /// Cancels the in-flight streamed directory load, if any. No-op when
+    /// nothing is streaming.
+    fn cancel_current_load(&mut self) {
+        if let Some(token) = self.current_load.take() {
+            token.cancel();
+        }
     }
 
     /// Full search teardown (Esc / `ResetView`): cancel and drop every search
@@ -417,8 +431,8 @@ impl FileSystem {
             // Surface validation failures (e.g. destination exists) as alerts.
             // Started tasks send their initial progress snapshot themselves,
             // before spawning their worker thread.
-            if let CommandResult::HandledWith(cmd) = result.command_result {
-                let _ = self.command_tx.send(*cmd);
+            for command in result.command_result.into_commands() {
+                let _ = self.command_tx.send(command);
             }
         }
         failed
@@ -434,8 +448,7 @@ impl FileSystem {
         // search state on ResetView/navigation, so it is not unwound here.
         if query.is_empty() {
             self.cancel_search();
-            self.current_search_generation += 1;
-            let generation = self.current_search_generation;
+            let generation = self.bump_generation();
             let _ = self.command_tx.send(Command::ExitedSearch { generation });
             return Command::SearchStarted { generation }.into();
         }
@@ -443,14 +456,15 @@ impl FileSystem {
         // One search at a time: cancel any previous search. Its stale
         // results and exit are ignored by generation, not by timing.
         self.cancel_search();
-        // Also stop the in-flight directory load: its remaining batches carry
-        // the current load generation, so they would pass the table view's
-        // generation guard and be appended into the search listing.
-        if let Some(token) = self.current_load.take() {
-            token.cancel();
-        }
-        self.current_search_generation += 1;
-        let generation = self.current_search_generation;
+        // Also stop the in-flight directory load: the search replaces the
+        // listing, so the load's remaining work is wasted and its batches are
+        // stale (their generation is superseded by the search's).
+        self.cancel_current_load();
+        // Stamped only here: `current_search_generation` tracks the search
+        // whose token is registered below, so an `ExitedSearch` from any
+        // other generation is ignored by `on_search_exited`.
+        let generation = self.bump_generation();
+        self.current_search_generation = generation;
 
         let token = CancellationToken::new();
         self.cancellables.push(Cancellable::Search(token.clone()));
@@ -515,7 +529,7 @@ mod tests {
             previous_directory: None,
             current_load: None,
             current_search_generation: 0,
-            next_load_id: 0,
+            next_generation: 0,
             open_current_directory_template: String::new(),
             open_new_window_template: String::new(),
             open_selected_file_template: String::new(),
@@ -646,7 +660,7 @@ mod tests {
         // The clipboard entry keeps the operation and only the failed source,
         // so a retry carries just what was not pasted.
         let command = Command::try_from(result).expect("expected a derived command");
-        let Command::SetClipboardEntry(ClipboardEntry::Copy(paths)) = command else {
+        let Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths))) = command else {
             panic!("expected SetClipboardEntry(Copy), got {command:?}");
         };
         assert_eq!(vec![missing], paths);
@@ -663,6 +677,23 @@ mod tests {
     }
 
     #[test]
+    fn get_bookmarks_cancels_the_in_flight_directory_load() {
+        let config = Config::load(crate::app::config::RuntimeEnv::default(), None, vec![]).unwrap();
+        Config::init(config);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        let load_token = CancellationToken::new();
+        file_system.current_load = Some(load_token.clone());
+
+        let _ = file_system.handle_command(&Command::GetBookmarks);
+
+        // Load batches must not stream into the bookmarks listing.
+        assert!(load_token.is_cancelled());
+        assert!(file_system.current_load.is_none());
+        drop(rx);
+    }
+
+    #[test]
     fn search_cancels_the_in_flight_directory_load() {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(tx);
@@ -672,9 +703,8 @@ mod tests {
 
         let _ = file_system.search("query");
 
-        // A load left running would keep streaming DirectoryListing batches
-        // that carry the current load generation, which the table view would
-        // append into the search listing.
+        // A load left running would keep walking the directory for batches
+        // that are already stale (the search generation supersedes theirs).
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
         drop(rx);

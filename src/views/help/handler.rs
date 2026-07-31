@@ -6,20 +6,10 @@ use ratatui::{
 use super::HelpView;
 use crate::{
     app::config::{Config, keybindings::hardcoded_normal_action},
-    command::{Command, handler::CommandHandler, result::CommandResult},
+    command::{handler::CommandHandler, result::CommandResult},
 };
 
 impl CommandHandler for HelpView {
-    fn handle_command(&mut self, command: &Command) -> CommandResult {
-        match command {
-            Command::ResetHelpScroll => {
-                self.reset_scroll();
-                CommandResult::Handled
-            }
-            _ => CommandResult::NotHandled,
-        }
-    }
-
     fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
         let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));

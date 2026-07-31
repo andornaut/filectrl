@@ -13,7 +13,7 @@ use log::{info, warn};
 
 use super::{
     path_info::PathInfo,
-    stream::{BATCH_FLUSH_INTERVAL, Batcher},
+    stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
 use crate::{
     app::config::Config,
@@ -23,7 +23,7 @@ use crate::{
 const CD_BATCH_SIZE: usize = 256;
 
 /// Spawns a background thread that reads `directory` and streams its entries as
-/// `Command::DirectoryListing` batches, finishing with a
+/// `Command::ListingBatch` batches, finishing with a
 /// `Command::DirectoryListingComplete`. `generation` tags every message so a
 /// superseded load (the user navigated away) can be ignored; `cancel` stops the
 /// walk early when that happens. Reading off the UI thread keeps navigation into
@@ -48,10 +48,7 @@ pub(super) fn stream_cd(
             }
         };
 
-        let send = |items| {
-            tx.send(Command::DirectoryListing { items, generation })
-                .is_ok()
-        };
+        let send = batch_sender(&tx, generation);
         let mut batcher = Batcher::new(CD_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
         let mut error_count: usize = 0;
 

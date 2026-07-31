@@ -1,9 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::{
-    command::{Command, result::CommandResult},
-    file_system::path_info::PathInfo,
-};
+use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 use super::TableView;
 
@@ -81,30 +78,30 @@ impl TableView {
                 self.marks.toggle(i);
             }
         }
-        Command::MarkCountChanged(self.marks.len()).into()
+        self.selection_snapshot()
     }
 
     pub(super) fn enter_range_mode(&mut self) -> CommandResult {
         if let Some(i) = self.table_state.selected() {
             self.marks.enter_range(i);
         }
-        Command::MarkCountChanged(self.marks.len()).into()
+        self.selection_snapshot()
     }
 
     pub(super) fn clear_marks(&mut self) {
         self.marks.clear();
     }
 
-    /// Clear all marks and return the command that resets the mark-count notice.
-    /// Emits `MarkCountChanged(0)` only when marks were actually cleared, so
-    /// callers can `return self.clear_marks_notifying()` to keep the NoticesView
-    /// in sync (the marks set is the source of truth) without firing spurious
-    /// commands when there was nothing marked.
+    /// Clear all marks and return the snapshot that resets the mark-count
+    /// notice. Emits only when marks were actually cleared, so callers can
+    /// `return self.clear_marks_notifying()` to keep the NoticesView in sync
+    /// (the marks set is the source of truth) without firing spurious commands
+    /// when there was nothing marked.
     pub(super) fn clear_marks_notifying(&mut self) -> CommandResult {
         let had_marks = self.has_marks();
         self.clear_marks();
         if had_marks {
-            Command::MarkCountChanged(0).into()
+            self.selection_snapshot()
         } else {
             CommandResult::Handled
         }

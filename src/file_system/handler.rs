@@ -18,8 +18,11 @@ impl CommandHandler for FileSystem {
             Command::GetBookmarks => {
                 // The bookmarks view replaces any in-flight search; cancel it
                 // so its walk stops and its final ExitedSearch clears the
-                // search notice. No-op when no search is running.
+                // search notice. The in-flight directory load is cancelled
+                // too, so its batches cannot stream into the bookmarks
+                // listing. Both are no-ops when nothing is running.
                 self.cancel_search();
+                self.cancel_current_load();
                 self.get_bookmarks()
             }
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
@@ -73,10 +76,10 @@ fn clipboard_follow_up(
     failed: Vec<PathInfo>,
 ) -> CommandResult {
     if failed.is_empty() {
-        Command::ClearClipboard.into()
+        Command::SetClipboardEntry(None).into()
     } else if failed.len() == source_count {
         CommandResult::Handled
     } else {
-        Command::SetClipboardEntry(entry(failed)).into()
+        Command::SetClipboardEntry(Some(entry(failed))).into()
     }
 }

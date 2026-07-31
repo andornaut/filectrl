@@ -16,7 +16,7 @@ impl CommandHandler for App {
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
-            Command::ClearClipboard | Command::ResetView => {
+            Command::SetClipboardEntry(None) | Command::ResetView => {
                 if let Err(e) = self.clipboard.clear() {
                     return Command::AlertError(format!("Failed to clear clipboard: {e}")).into();
                 }
@@ -24,11 +24,11 @@ impl CommandHandler for App {
             }
             Command::OpenPrompt(kind) => {
                 if matches!(kind, PromptAction::Delete(_)) {
-                    // The derived ClearClipboard re-enters the arm above, which
-                    // performs the actual clear (and surfaces any error). Don't
-                    // also clear inline here, or it would clear twice and
-                    // swallow the first error.
-                    return Command::ClearClipboard.into();
+                    // The derived SetClipboardEntry(None) re-enters the arm
+                    // above, which performs the actual clear (and surfaces any
+                    // error). Don't also clear inline here, or it would clear
+                    // twice and swallow the first error.
+                    return Command::SetClipboardEntry(None).into();
                 }
                 CommandResult::NotHandled
             }
@@ -46,7 +46,10 @@ impl CommandHandler for App {
                 Ok(None) => CommandResult::Handled,
                 Err(e) => Command::AlertWarn(format!("Cannot paste: {e}")).into(),
             },
-            Command::SetClipboardEntry(entry) => match self.clipboard.set_clipboard_entry(entry) {
+            Command::SetClipboardEntry(Some(entry)) => match self
+                .clipboard
+                .set_clipboard_entry(entry)
+            {
                 Ok(()) => CommandResult::Handled,
                 Err(e) => Command::AlertError(format!("Failed to update clipboard: {e}")).into(),
             },
