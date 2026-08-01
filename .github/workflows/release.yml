@@ -136,16 +136,39 @@ jobs:
           make_latest: "false"
           files: artifacts/filectrl
 
+  # upload-rust-binary-action uploads to an existing release rather than
+  # creating one, so the release has to exist before the matrix fans out.
+  create-release:
+    needs: check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+
+      - name: Create release
+        # Tolerate an existing release so the workflow can be re-run.
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Versioned releases. The action builds, archives as
   # {name}_{system}_{arch}.tar.gz, emits a sha256 per archive, and uploads.
   # It selects and installs cross itself for non-host targets.
   release:
-    needs: check
+    needs: create-release
     runs-on: ${{ matrix.os }}
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     strategy:
+      # Surface every failing target instead of stopping at the first, so a
+      # broken leg cannot leave the release silently missing an asset.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
