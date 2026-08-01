@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn refreshed_directory_while_showing_bookmarks_reloads_them_and_resets_the_marks() {
+    fn refreshed_directory_while_showing_bookmarks_reloads_them_and_keeps_the_marks() {
         ensure_config_initialized();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
@@ -447,25 +447,18 @@ mod tests {
         assert_eq!(table.marks.len(), 2);
 
         // Renaming a bookmark refreshes the CWD; the bookmarks list is
-        // reloaded instead. The pending reload invalidates the index-based
-        // marks, so both the reload and the notice reset ride this broadcast.
+        // reloaded instead.
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,
         });
 
-        assert!(!table.has_marks());
-        let commands = result.into_commands();
-        assert!(
-            matches!(
-                commands.as_slice(),
-                [
-                    Command::GetBookmarks,
-                    Command::SelectionChanged { mark_count: 0, .. }
-                ]
-            ),
-            "expected GetBookmarks and a mark-reset snapshot, got {commands:?}"
-        );
+        // The marks belong to the listing still on screen and are cleared by
+        // the Bookmarks handler once the new one arrives. Clearing them here
+        // would drop valid marks when the read fails and no Bookmarks command
+        // follows.
+        assert_eq!(table.marks.len(), 2);
+        assert_eq!(result, Command::GetBookmarks.into());
     }
 
     #[test]
