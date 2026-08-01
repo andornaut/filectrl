@@ -107,9 +107,15 @@ jobs:
           cp artifacts/filectrl-macos/filectrl release-assets/filectrl-macos
           cp artifacts/filectrl-macos-arm64/filectrl release-assets/filectrl-macos-arm64
           # {name}_{system}_{arch}.tar.gz containing the bare binary, for provisioning
-          # tools that install from the release tarball.
+          # tools that install from the release tarball. Arch uses GoReleaser naming
+          # (x86_64, arm64) to match the sibling tools' assets. Artifact upload/download
+          # does not preserve the executable bit, so restore it before archiving.
           chmod +x artifacts/filectrl-linux/filectrl
-          tar -czf release-assets/filectrl_linux_amd64.tar.gz -C artifacts/filectrl-linux filectrl
+          chmod +x artifacts/filectrl-macos/filectrl
+          chmod +x artifacts/filectrl-macos-arm64/filectrl
+          tar -czf release-assets/filectrl_linux_x86_64.tar.gz -C artifacts/filectrl-linux filectrl
+          tar -czf release-assets/filectrl_darwin_x86_64.tar.gz -C artifacts/filectrl-macos filectrl
+          tar -czf release-assets/filectrl_darwin_arm64.tar.gz -C artifacts/filectrl-macos-arm64 filectrl
 
       - name: Delete previous dev release
         if: github.ref == 'refs/heads/main'
@@ -132,4 +138,6 @@ jobs:
             release-assets/filectrl-linux
             release-assets/filectrl-macos
             release-assets/filectrl-macos-arm64
-            release-assets/filectrl_linux_amd64.tar.gz
+            release-assets/filectrl_linux_x86_64.tar.gz
+            release-assets/filectrl_darwin_x86_64.tar.gz
+            release-assets/filectrl_darwin_arm64.tar.gz
