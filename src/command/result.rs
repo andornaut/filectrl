@@ -2,6 +2,12 @@ use anyhow::Error;
 
 use super::Command;
 
+/// The outcome of `CommandHandler::handle_command`/`handle_key`/`handle_mouse`.
+///
+/// Build the derived-command variants through `From` (`command.into()` for one,
+/// `commands.into()` for a `Vec`) rather than naming them directly: the `Vec`
+/// conversion normalizes by length, and a hand-built `HandledWithMany` holding
+/// zero or one command compares unequal to the `Handled`/`HandledWith` it means.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandResult {
     Handled,

@@ -71,7 +71,12 @@ impl CommandHandler for TableView {
                 // this directory. A rename of a bookmark triggers a CWD refresh;
                 // reload the bookmarks list instead of showing the CWD.
                 if self.content.is_showing_bookmarks() {
-                    return Command::GetBookmarks.into();
+                    // The reload invalidates the index-based marks, so clear
+                    // them and reset the notice in this same broadcast rather
+                    // than leaving it to the Bookmarks handler a cycle later.
+                    let mut commands = vec![Command::GetBookmarks];
+                    commands.extend(self.clear_marks_notifying().into_commands());
+                    return commands.into();
                 }
                 // Same directory reloaded: keep the filter, and let
                 // begin_directory restore the selection once the stream

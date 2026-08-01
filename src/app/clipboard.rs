@@ -24,6 +24,15 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
+    /// A clipboard with no backend, so nothing reaches the system clipboard.
+    /// Every method already handles the backend-less state (it is what a
+    /// failed `try_new` leaves behind), so handlers still run their real
+    /// paths and return their real `CommandResult`s.
+    #[cfg(test)]
+    pub fn disabled() -> Self {
+        Self { backend: None }
+    }
+
     pub fn clear(&mut self) -> Result<(), Error> {
         match &mut self.backend {
             Some(backend) => backend.clear(),

@@ -49,12 +49,19 @@ use crate::{
 /// one cycle of headroom over the longest real chain.
 const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
 
-pub struct App {
+/// The command-handling half of the app: the whole tree a broadcast visits.
+/// Split from `App` so it can be built and driven without a terminal, which
+/// is what lets the broadcast be exercised in tests.
+struct Handlers {
     clipboard: Clipboard,
     #[cfg(debug_assertions)]
     debug: debug::DebugHandler,
     file_system: FileSystem,
     root: RootView,
+}
+
+pub struct App {
+    handlers: Handlers,
     terminal: CleanupOnDropTerminal,
     rx: Receiver<Command>,
     tx: Sender<Command>, // Held to keep the channel open for the lifetime of App
@@ -64,15 +71,15 @@ impl App {
     pub fn new(terminal: CleanupOnDropTerminal) -> Self {
         let (tx, rx) = mpsc::channel();
         let config = Config::global();
-        let clipboard = Clipboard::default();
-        let file_system = FileSystem::new(config, tx.clone());
-        let root = RootView::new();
-        Self {
-            clipboard,
+        let handlers = Handlers {
+            clipboard: Clipboard::default(),
             #[cfg(debug_assertions)]
             debug: debug::DebugHandler,
-            file_system,
-            root,
+            file_system: FileSystem::new(config, tx.clone()),
+            root: RootView::new(),
+        };
+        Self {
+            handlers,
             terminal,
             rx,
             tx,
@@ -85,7 +92,7 @@ impl App {
         // streaming `ListingBatch`es into the channel immediately; handling
         // the resulting `NavigatedDirectory` here registers its generation
         // before those batches are drained, so none are dropped.
-        let initial = self.file_system.run_once(initial_directory)?;
+        let initial = self.handlers.file_system.run_once(initial_directory)?;
         let remaining = self.broadcast_commands(initial);
         must_not_contain_unhandled(&remaining)?;
         self.render()?;
@@ -123,11 +130,12 @@ impl App {
             }
             // Re-read mode each iteration so a derived command that changes mode
             // (e.g. OpenPrompt) is reflected in subsequent cycles.
-            let mode = self.root.mode();
+            let mode = self.handlers.root.mode();
             let mut next_pending = Vec::new();
             for cmd in pending {
                 let mut derived = Vec::new();
-                let handled = recursively_handle_command(&mut derived, &cmd, &mode, self);
+                let handled =
+                    recursively_handle_command(&mut derived, &cmd, &mode, &mut self.handlers);
                 if handled {
                     // Only derived commands (HandledWith) continue to the next cycle.
                     next_pending.append(&mut derived);
@@ -162,9 +170,10 @@ impl App {
     }
 
     fn render(&mut self) -> Result<()> {
+        let root = &mut self.handlers.root;
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            self.root.render(area, frame);
+            root.render(area, frame);
         })?;
         Ok(())
     }
@@ -253,6 +262,9 @@ fn should_quit(commands: &[Command]) -> bool {
         .iter()
         .any(|command| matches!(*command, Command::Quit))
 }
+
+#[cfg(test)]
+mod claims;
 
 #[cfg(test)]
 mod tests {

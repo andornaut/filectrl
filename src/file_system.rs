@@ -345,18 +345,23 @@ impl FileSystem {
         let Some(mode) = parse_octal_mode(mode_str) else {
             return anyhow!("Invalid octal mode: {mode_str:?}").into();
         };
-        for path in paths {
-            if let Err(error) = operations::chmod(path, mode) {
-                let _ = self
-                    .command_tx
-                    .send(anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into());
-            }
-        }
-        self.refresh()
+        // Return the failures alongside the refresh instead of sending them
+        // separately, so they are ordered against it rather than racing the
+        // channel drain.
+        let mut commands: Vec<Command> = paths
+            .iter()
+            .filter_map(|path| {
+                operations::chmod(path, mode)
+                    .err()
+                    .map(|error| anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into())
+            })
+            .collect();
+        commands.extend(self.refresh().into_commands());
+        commands.into()
     }
 
     fn add_bookmark(&mut self, target: &PathInfo, name: &str) -> CommandResult {
-        match operations::add_bookmark(target, name) {
+        match operations::add_bookmark(&self.bookmarks_dir, target, name) {
             Err(error) => Command::AlertError(error.to_string()).into(),
             Ok(_) => Command::AlertInfo(format!("Bookmark {name:?} added")).into(),
         }
@@ -381,11 +386,17 @@ impl FileSystem {
     }
 
     /// Runs each task, registering started tasks on the cancel stack. Returns
-    /// the sources of the tasks that failed validation, in batch order; an
-    /// empty result means every task started. Each failure also produces an
-    /// alert.
-    fn run_batch(&mut self, tasks: impl Iterator<Item = TaskCommand>) -> Vec<PathInfo> {
+    /// the sources of the tasks that failed validation, in batch order (an
+    /// empty result means every task started), together with the alerts those
+    /// failures produced (e.g. destination exists). The caller broadcasts the
+    /// alerts alongside its own follow-up. Started tasks send their initial
+    /// progress snapshot themselves, before spawning their worker thread.
+    fn run_batch(
+        &mut self,
+        tasks: impl Iterator<Item = TaskCommand>,
+    ) -> (Vec<PathInfo>, Vec<Command>) {
         let mut failed = Vec::new();
+        let mut commands = Vec::new();
         for task in tasks {
             let source = task.source().clone();
             let result = task.run(
@@ -397,14 +408,9 @@ impl FileSystem {
                 Some(cancel_info) => self.cancellables.push(Cancellable::Task(cancel_info)),
                 None => failed.push(source),
             }
-            // Surface validation failures (e.g. destination exists) as alerts.
-            // Started tasks send their initial progress snapshot themselves,
-            // before spawning their worker thread.
-            for command in result.command_result.into_commands() {
-                let _ = self.command_tx.send(command);
-            }
+            commands.extend(result.command_result.into_commands());
         }
-        failed
+        (failed, commands)
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
@@ -415,11 +421,15 @@ impl FileSystem {
         // so NoticesView and TableView drop back out of search state. This is
         // a guard, not a clean no-result search: BreadcrumbsView only leaves
         // search state on ResetView/navigation, so it is not unwound here.
+        // Returning both keeps started-before-exited ordering explicit.
         if query.is_empty() {
             self.cancel_search();
             let generation = self.bump_generation();
-            let _ = self.command_tx.send(Command::ExitedSearch { generation });
-            return Command::SearchStarted { generation }.into();
+            return vec![
+                Command::SearchStarted { generation },
+                Command::ExitedSearch { generation },
+            ]
+            .into();
         }
 
         // One search at a time: cancel any previous search. Its stale
@@ -555,12 +565,14 @@ mod tests {
         src.display_name = "filectrl_missing.txt".to_string();
         let dest = PathInfo::try_from(std::env::temp_dir().as_path()).unwrap();
 
-        let failed = file_system.run_batch(std::iter::once(TaskCommand::Copy(src.clone(), dest)));
+        let (failed, commands) =
+            file_system.run_batch(std::iter::once(TaskCommand::Copy(src.clone(), dest)));
 
         assert_eq!(vec![src], failed);
         assert!(file_system.cancellables.is_empty());
-        // The failure surfaces as an alert on the channel.
-        assert!(matches!(rx.try_recv(), Ok(Command::AlertError(_))));
+        // The failure is returned for the caller to broadcast, not sent.
+        assert!(matches!(commands.as_slice(), [Command::AlertError(_)]));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -577,9 +589,11 @@ mod tests {
         let src = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
         let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
 
-        let failed = file_system.run_batch(std::iter::once(TaskCommand::Copy(src, dest)));
+        let (failed, commands) =
+            file_system.run_batch(std::iter::once(TaskCommand::Copy(src, dest)));
 
         assert!(failed.is_empty());
+        assert!(commands.is_empty());
         assert_eq!(1, file_system.cancellables.len());
         // Drain until the terminal progress so the worker has finished with
         // the fixture directory before it is removed.
@@ -612,7 +626,7 @@ mod tests {
         missing.display_name = "missing.txt".to_string();
         let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
 
-        let failed = file_system.run_batch(
+        let (failed, commands) = file_system.run_batch(
             [
                 TaskCommand::Copy(missing.clone(), dest.clone()),
                 TaskCommand::Copy(good, dest),
@@ -624,20 +638,18 @@ mod tests {
         // clipboard to exactly these so a retry carries only what was not
         // pasted.
         assert_eq!(vec![missing], failed);
+        // The failed task's alert is returned; the started one contributes none.
+        assert!(matches!(commands.as_slice(), [Command::AlertError(_)]));
         assert_eq!(1, file_system.cancellables.len());
         // Drain until the terminal progress so the worker has finished with
-        // the fixture directory before it is removed; the failed task must
-        // have surfaced an alert along the way.
-        let mut saw_alert = false;
+        // the fixture directory before it is removed.
         loop {
             match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Command::AlertError(_)) => saw_alert = true,
                 Ok(Command::Progress(task)) if task.is_terminal() => break,
                 Ok(_) => {}
                 Err(error) => panic!("task did not finish: {error}"),
             }
         }
-        assert!(saw_alert);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -665,13 +677,18 @@ mod tests {
             dest,
         });
 
-        // The clipboard entry keeps the operation and only the failed source,
-        // so a retry carries just what was not pasted.
-        let command = Command::try_from(result).expect("expected a derived command");
-        let Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths))) = command else {
-            panic!("expected SetClipboardEntry(Copy), got {command:?}");
+        // The failed source's alert rides the same broadcast as the clipboard
+        // follow-up, which keeps the operation and only the failed source, so
+        // a retry carries just what was not pasted.
+        let commands = result.into_commands();
+        let [
+            Command::AlertError(_),
+            Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths))),
+        ] = commands.as_slice()
+        else {
+            panic!("expected an alert and SetClipboardEntry(Copy), got {commands:?}");
         };
-        assert_eq!(vec![missing], paths);
+        assert_eq!(&vec![missing], paths);
         // Drain until the terminal progress so the worker has finished with
         // the fixture directory before it is removed.
         loop {
@@ -761,6 +778,31 @@ mod tests {
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
         drop(rx);
+    }
+
+    #[test]
+    fn search_with_an_empty_query_returns_the_started_exited_pair() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(tx);
+        file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
+
+        let result = file_system.search("");
+
+        // No walk is spawned; the pair unwinds the consumers' search state,
+        // and started must precede exited or the exit is ignored as stale.
+        let commands = result.into_commands();
+        let [
+            Command::SearchStarted {
+                generation: started,
+            },
+            Command::ExitedSearch { generation: exited },
+        ] = commands.as_slice()
+        else {
+            panic!("expected a SearchStarted/ExitedSearch pair, got {commands:?}");
+        };
+        assert_eq!(started, exited);
+        // Nothing goes out of band on the channel.
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
