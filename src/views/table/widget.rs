@@ -9,6 +9,7 @@ use ratatui::{
 
 use super::{
     columns::{SortColumn, SortDirection},
+    content::displayed_name,
     style::{clipboard_style, header_style, modified_date_style, name_style, size_style},
 };
 use crate::{
@@ -134,11 +135,7 @@ fn name_lines(
     is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> Vec<String> {
-    let display = if is_bookmarks {
-        item.display_name.clone()
-    } else {
-        display_name(item, search_root)
-    };
+    let display = displayed_name(item, is_bookmarks, search_root);
     split_with_ellipsis(&display, name_column_width as usize)
 }
 
@@ -152,21 +149,6 @@ pub(super) fn item_height(
     search_root: Option<&Path>,
 ) -> u16 {
     name_lines(name_column_width, item, is_bookmarks, search_root).len() as u16
-}
-
-fn display_name(path: &PathInfo, search_root: Option<&Path>) -> String {
-    match search_root {
-        Some(root) => {
-            let relative = path.path.strip_prefix(root).unwrap_or(&path.path);
-            let name = relative.to_string_lossy().to_string();
-            if path.is_directory() && !name.ends_with('/') {
-                format!("{name}/")
-            } else {
-                name
-            }
-        }
-        None => path.name().into_owned(),
-    }
 }
 
 #[cfg(test)]
