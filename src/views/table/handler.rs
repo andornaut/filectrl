@@ -174,6 +174,10 @@ impl CommandHandler for TableView {
                 self.clear_marks();
                 self.content.set_bookmarks(bookmarks.clone());
                 self.table_state.select(None);
+                // Must keep terminating in `sort`/`select`: its snapshot is the
+                // only `SelectionChanged { mark_count: 0 }` that resets the
+                // mark-count notice for a bookmarks reload, because the
+                // `RefreshedDirectory` branch above defers clearing to here.
                 self.sort(Reselect::Top)
             }
             // A bookmark delete runs as an async task; reload the list once it
