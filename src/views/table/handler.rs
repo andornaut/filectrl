@@ -244,8 +244,6 @@ impl CommandHandler for TableView {
             Some(Action::SortByModified) => self.sort_by(SortColumn::Modified),
             Some(Action::SortBySize) => self.sort_by(SortColumn::Size),
             Some(Action::ToggleShowHidden) => self.toggle_show_hidden(),
-            // Global
-            Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
     }
