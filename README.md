@@ -18,7 +18,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 ## Installation
 
-You can [download and install a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux or macOS:
+[Download a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux (`filectrl-linux`) or macOS (`filectrl-macos-arm64`, Apple Silicon only):
 
 ```bash
 curl -sL https://github.com/andornaut/filectrl/releases/latest/download/filectrl-linux -o filectrl
@@ -26,7 +26,9 @@ chmod +x filectrl
 sudo mv filectrl /usr/local/bin/
 ```
 
-On macOS, allow the _unsigned_ `filectrl` binary to be executed:
+Releases also include `filectrl_{system}_{arch}.tar.gz` archives (`linux_x86_64`, `darwin_arm64`) for provisioning tools.
+
+On macOS, allow the _unsigned_ binary to be executed:
 
 ```bash
 xattr -d com.apple.quarantine filectrl
@@ -77,11 +79,7 @@ the config file (e.g. `~/.config/filectrl/bookmarks/`).
 
 ### Copy / paste
 
-When you copy/cut a file or directory, FileCTRL puts `${operation} ${path}` into your clipboard buffer
-(where `operation` is "cp" or "mv").
-If you then paste into a second FileCTRL window, this second instance of FileCTRL will perform the equivalent of:
-`${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
-Under the hood, FileCTRL doesn't actually invoke `cp` or `mv`, but implements similar operations using the Rust standard library.
+Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 
 ### Multi-select
 
@@ -287,37 +285,23 @@ include_files = ["my-theme.toml"]
 - The value must be an array of strings; if it is any other type, or if any element is not a string, FileCTRL exits with an error
 - If a file doesn't exist or can't be parsed, FileCTRL exits with an error
 
-To get started with custom themes, export the built-in defaults as standalone files:
+Export the built-in defaults, then copy and edit:
 
 ```bash
-filectrl --write-default-themes
-# Creates:
-#   ~/.config/filectrl/theme.toml
-```
-
-Then copy, rename, and edit them:
-
-```bash
+filectrl --write-default-themes  # writes ~/.config/filectrl/theme.toml
 cp ~/.config/filectrl/theme.toml ~/.config/filectrl/solarized.toml
-vim ~/.config/filectrl/solarized.toml
 ```
 
-And include the new file in your config:
+Include it from your config:
 
 ```toml
 include_files = ["solarized.toml"]
 ```
 
-Alternatively, use the `--include` CLI flag to apply a theme without editing your config:
+Or apply themes without editing the config. `--include`/`-i` is repeatable and files merge in order, later ones taking precedence. Unlike `include_files`, relative paths here resolve against the current directory, not the config directory:
 
 ```bash
-filectrl --include ~/.config/filectrl/solarized.toml
-```
-
-The flag is repeatable and files are merged in order (later files take precedence):
-
-```bash
-filectrl -i base-theme.toml -i overrides.toml
+filectrl -i ~/.config/filectrl/solarized.toml -i overrides.toml
 ```
 
 #### Bundled themes
@@ -419,14 +403,11 @@ RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
 
 ### Releasing
 
-The project uses GitHub Actions to automate the release process. To release a new version:
+Push a semantic version tag from an up-to-date `main`. The [release workflow](.github/workflows/release.yml) builds the binaries and creates the GitHub Release.
 
-1. Ensure you are on the `main` branch and have pulled the latest changes.
-2. Create and push a new semantic version tag:
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
 
-   ```bash
-   git tag -a v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
-   ```
-
-3. The GitHub Actions [release workflow](.github/workflows/release.yml) will automatically trigger, build the binaries for Linux and macOS, and create a new GitHub Release with the artifacts.
+Pushes to `main` rebuild the rolling `dev` release. The workflow manages that tag; do not push it manually.
