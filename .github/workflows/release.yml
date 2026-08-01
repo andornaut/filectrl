@@ -45,8 +45,12 @@ jobs:
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
+  # Validates that every published target still compiles, and produces the
+  # binary the dev release ships. Skipped on tags, where `release` builds the
+  # same targets.
   build:
     needs: check
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -54,6 +58,12 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: filectrl-linux
+          # cross builds in a container that supplies the aarch64 glibc
+          # sysroot; the crate graph needs no other native libraries.
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: filectrl-linux-arm64
+            cross: true
           # macOS is Apple Silicon only.
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -67,14 +77,21 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install XCB dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && !matrix.cross
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
       - name: Add Rust target
+        if: ${{ !matrix.cross }}
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -82,10 +99,12 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: target/${{ matrix.target }}/release/filectrl
 
-  release:
+  # Rolling build of main. Ships the bare Linux binary, matching the sibling
+  # tools; the tarballs are reserved for versioned releases.
+  dev-release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
 
@@ -93,40 +112,69 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.0
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-
-      - name: Prepare release assets
-        run: |
-          mkdir release-assets
-          # {name}_{system}_{arch}.tar.gz of the bare binary, matching the sibling
-          # tools' GoReleaser assets. A tarball is the only published form: it is
-          # half the size and preserves the executable bit, which a bare asset
-          # cannot. Artifact upload/download drops that bit, so restore it first.
-          chmod +x artifacts/filectrl-linux/filectrl
-          chmod +x artifacts/filectrl-macos-arm64/filectrl
-          tar -czf release-assets/filectrl_linux_x86_64.tar.gz -C artifacts/filectrl-linux filectrl
-          tar -czf release-assets/filectrl_darwin_arm64.tar.gz -C artifacts/filectrl-macos-arm64 filectrl
-
       - name: Delete previous dev release
-        if: github.ref == 'refs/heads/main'
         run: |
           gh release delete dev --yes || true
           git push --delete origin refs/tags/dev || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create release
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: filectrl-linux
+          path: artifacts
+
+      - name: Create dev release
         uses: softprops/action-gh-release@v3.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref_name }}
-          name: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref_name }}
-          body: ${{ github.ref == 'refs/heads/main' && 'Latest build from main branch' || '' }}
-          make_latest: ${{ github.ref == 'refs/heads/main' && 'false' || 'true' }}
-          files: |
-            release-assets/filectrl_linux_x86_64.tar.gz
-            release-assets/filectrl_darwin_arm64.tar.gz
+          tag_name: dev
+          name: dev
+          body: Latest build from main branch
+          make_latest: "false"
+          files: artifacts/filectrl
+
+  # Versioned releases. The action builds, archives as
+  # {name}_{system}_{arch}.tar.gz, emits a sha256 per archive, and uploads.
+  # It selects and installs cross itself for non-host targets.
+  release:
+    needs: check
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: filectrl_linux_x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: filectrl_linux_arm64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: filectrl_darwin_arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install XCB dependencies
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build and upload release assets
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: filectrl
+          target: ${{ matrix.target }}
+          archive: ${{ matrix.archive }}
+          include: LICENSE,README.md
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
