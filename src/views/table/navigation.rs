@@ -437,6 +437,21 @@ mod tests {
     }
 
     #[test]
+    fn bookmarks_clears_the_marks_and_emits_the_mark_reset_snapshot() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        let result = table.handle_command(&Command::Bookmarks {
+            bookmarks: vec![fx.file("mark-a", 1)],
+        });
+
+        // Pins the invariant documented in the `Command::Bookmarks` arm.
+        assert!(!table.has_marks());
+        assert_mark_reset_snapshot(&result);
+    }
+
+    #[test]
     fn refreshed_directory_while_showing_bookmarks_reloads_them_and_keeps_the_marks() {
         ensure_config_initialized();
         let fx = Fixture::new();
