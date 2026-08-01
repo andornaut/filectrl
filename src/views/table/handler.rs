@@ -73,15 +73,30 @@ impl CommandHandler for TableView {
                 if self.content.is_showing_bookmarks() {
                     return Command::GetBookmarks.into();
                 }
-                // Same directory reloaded: keep filter and selection. The
-                // reload invalidates the index-based marks; begin_directory
-                // clears them silently, and the post-load snapshot reports
-                // mark_count: 0 once the new listing is known. Notifying here
-                // would assert a selection read from the listing being
-                // discarded (stale if the refresh was caused by its deletion).
+                // Same directory reloaded: keep the filter, and let
+                // begin_directory restore the selection once the stream
+                // completes.
                 self.stream_generation = *generation;
+                let had_marks = self.has_marks();
+                // Captured before begin_directory drops the selection.
+                let selected = self.selected_path().cloned();
                 self.begin_directory(directory.clone(), Reselect::Keep);
-                CommandResult::Handled
+                // The reload invalidates the index-based marks, so the notice
+                // must be reset in this same broadcast: the post-load snapshot
+                // never arrives if the load is cancelled first (by a search or
+                // the bookmarks view). The mark count is the only field that
+                // changes; `selection_snapshot` cannot be used here because it
+                // would read the selection `begin_directory` just dropped and
+                // clear StatusView's panel for the length of the reload.
+                if had_marks {
+                    Command::SelectionChanged {
+                        selected,
+                        mark_count: 0,
+                    }
+                    .into()
+                } else {
+                    CommandResult::Handled
+                }
             }
             Command::ListingBatch { items, generation } => {
                 // Only an in-flight load or search accepts batches; stale
@@ -103,7 +118,13 @@ impl CommandHandler for TableView {
                 }
             }
             Command::DirectoryListingComplete { generation } => {
-                if *generation != self.stream_generation {
+                // A cancelled load that had already drained the directory
+                // still sends its completion, and the bookmarks view does not
+                // bump the generation, so match the ListingBatch guard and
+                // require an in-flight load. Without this, a late completion
+                // re-sorts the bookmarks listing and moves the cursor off the
+                // bookmark the user selected.
+                if *generation != self.stream_generation || !self.content.is_loading() {
                     return CommandResult::Handled;
                 }
                 self.finish_directory()

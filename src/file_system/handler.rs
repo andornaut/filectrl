@@ -1,4 +1,4 @@
-use super::{FileSystem, path_info::PathInfo, tasks::TaskCommand};
+use super::{FileSystem, path_info::PathInfo, read_bookmarks, tasks::TaskCommand};
 use crate::{
     app::clipboard::ClipboardEntry,
     command::{Command, handler::CommandHandler, result::CommandResult},
@@ -15,16 +15,26 @@ impl CommandHandler for FileSystem {
                 CommandResult::NotHandled
             }
             Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
-            Command::GetBookmarks => {
+            Command::GetBookmarks => match read_bookmarks(&self.bookmarks_dir) {
                 // The bookmarks view replaces any in-flight search; cancel it
                 // so its walk stops and its final ExitedSearch clears the
                 // search notice. The in-flight directory load is cancelled
                 // too, so its batches cannot stream into the bookmarks
                 // listing. Both are no-ops when nothing is running.
-                self.cancel_search();
-                self.cancel_current_load();
-                self.get_bookmarks()
-            }
+                //
+                // Cancel only once the listing is known to replace them: a
+                // failed read broadcasts no Bookmarks command, so nothing
+                // would clear the table's loading flag, and a load cancelled
+                // mid-drain returns without sending DirectoryListingComplete
+                // to clear it instead. The table would be stranded on a
+                // truncated, unsorted listing.
+                Ok(bookmarks) => {
+                    self.cancel_search();
+                    self.cancel_current_load();
+                    Command::Bookmarks { bookmarks }.into()
+                }
+                Err(message) => Command::AlertError(message).into(),
+            },
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
