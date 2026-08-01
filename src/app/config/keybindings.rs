@@ -888,6 +888,36 @@ mod tests {
         );
     }
 
+    /// The hardcoded-only actions have no TOML field, so they reach the action
+    /// maps solely through the placeholder entries `to_bindings` seeds. Drop a
+    /// placeholder and its keys resolve to nothing: Esc would stop resetting
+    /// the view and stop cancelling a prompt, Tab would stop accepting a
+    /// suggestion, and Up/Down would stop cycling them.
+    #[test]
+    fn hardcoded_only_actions_resolve_through_the_action_maps() {
+        let kb = default_keybindings();
+        assert_eq!(
+            Some(Action::ResetView),
+            kb.normal_action(&KeyCode::Esc, &KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Some(Action::PromptCancel),
+            kb.prompt_action(&KeyCode::Esc, &KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Some(Action::PromptAcceptSuggestion),
+            kb.prompt_action(&KeyCode::Tab, &KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Some(Action::PromptNextSuggestion),
+            kb.prompt_action(&KeyCode::Down, &KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Some(Action::PromptPreviousSuggestion),
+            kb.prompt_action(&KeyCode::Up, &KeyModifiers::NONE)
+        );
+    }
+
     #[test]
     fn normal_mode_tab_resolves_to_goto() {
         // Tab is hardcoded only in prompt mode, so it must not shadow the
