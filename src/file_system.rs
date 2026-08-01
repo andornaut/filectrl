@@ -10,7 +10,7 @@ mod watch;
 use std::{
     fmt::Display,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, mpsc::Sender},
     thread,
     time::Duration,
@@ -43,6 +43,9 @@ enum Cancellable {
 }
 
 pub struct FileSystem {
+    /// Directory holding the bookmark symlinks, resolved from the config once
+    /// so bookmark reads do not depend on the process-global `Config`.
+    bookmarks_dir: PathBuf,
     buffer_max_bytes: u64,
     buffer_min_bytes: u64,
     cancellables: Vec<Cancellable>,
@@ -77,6 +80,7 @@ impl FileSystem {
             })
             .ok();
         Self {
+            bookmarks_dir: config.bookmarks_dir(),
             buffer_max_bytes: config.file_system.buffer_max_bytes,
             buffer_min_bytes: config.file_system.buffer_min_bytes,
             cancellables: Vec::new(),
@@ -358,41 +362,6 @@ impl FileSystem {
         }
     }
 
-    /// Read every entry in the bookmarks directory and return them as a single
-    /// `Bookmarks` command. Synchronous: one small directory of symlinks, no
-    /// streaming.
-    fn get_bookmarks(&self) -> CommandResult {
-        let dir = Config::global().bookmarks_dir();
-        if let Err(error) = fs::create_dir_all(&dir) {
-            return Command::AlertError(format!(
-                "Cannot create bookmarks directory {dir:?}: {error}"
-            ))
-            .into();
-        }
-        match fs::read_dir(&dir) {
-            Ok(entries) => Command::Bookmarks {
-                bookmarks: entries
-                    .flatten()
-                    .filter_map(|entry| {
-                        let path = entry.path();
-                        match PathInfo::try_from(&path) {
-                            Ok(info) => Some(info),
-                            Err(error) => {
-                                log::warn!("Skipping unreadable bookmark {path:?}: {error}");
-                                None
-                            }
-                        }
-                    })
-                    .collect(),
-            }
-            .into(),
-            Err(error) => {
-                Command::AlertError(format!("Cannot read bookmarks directory {dir:?}: {error}"))
-                    .into()
-            }
-        }
-    }
-
     fn create_directory(&mut self, name: &str) -> CommandResult {
         match operations::create_directory(self.current_directory(), name) {
             Err(error) => anyhow!("Failed to create directory {name:?}: {error}").into(),
@@ -503,6 +472,34 @@ impl FileSystem {
     }
 }
 
+/// Read every entry in the bookmarks directory, creating it if absent.
+/// Synchronous: one small directory of symlinks, no streaming. Returns the
+/// failure message rather than a command so the caller can tell success from
+/// failure before cancelling the listing the bookmarks would replace.
+/// Unreadable individual entries are skipped, not fatal.
+pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
+    if let Err(error) = fs::create_dir_all(dir) {
+        return Err(format!(
+            "Cannot create bookmarks directory {dir:?}: {error}"
+        ));
+    }
+    let entries = fs::read_dir(dir)
+        .map_err(|error| format!("Cannot read bookmarks directory {dir:?}: {error}"))?;
+    Ok(entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            match PathInfo::try_from(&path) {
+                Ok(info) => Some(info),
+                Err(error) => {
+                    warn!("Skipping unreadable bookmark {path:?}: {error}");
+                    None
+                }
+            }
+        })
+        .collect())
+}
+
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
 /// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
 fn parse_octal_mode(mode_str: &str) -> Option<u32> {
@@ -519,8 +516,19 @@ mod tests {
     use super::*;
     use crate::{app::clipboard::ClipboardEntry, command::handler::CommandHandler};
 
+    /// A unique, not-yet-created temp directory path. The per-process counter
+    /// keeps parallel tests from sharing a path and deleting each other's
+    /// fixtures.
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("filectrl_{label}_{}_{seq}", std::process::id()))
+    }
+
     fn test_file_system(command_tx: Sender<Command>) -> FileSystem {
         FileSystem {
+            // A temp path, so bookmark reads never touch the real config dir.
+            bookmarks_dir: unique_temp_dir("fs_bookmarks"),
             buffer_max_bytes: 64_000_000,
             buffer_min_bytes: 64_000,
             cancellables: Vec::new(),
@@ -677,20 +685,65 @@ mod tests {
     }
 
     #[test]
+    fn read_bookmarks_creates_the_directory_and_lists_its_entries() {
+        let base = unique_temp_dir("read_bookmarks_ok");
+        let dir = base.join("bookmarks");
+
+        // The directory does not exist yet; reading it creates it.
+        let bookmarks = read_bookmarks(&dir).expect("expected the bookmarks to be read");
+        assert!(dir.is_dir());
+        assert!(bookmarks.is_empty());
+
+        fs::write(dir.join("one"), b"").unwrap();
+        fs::write(dir.join("two"), b"").unwrap();
+        let mut names: Vec<String> = read_bookmarks(&dir)
+            .expect("expected the bookmarks to be read")
+            .iter()
+            .map(|info| info.display_name.clone())
+            .collect();
+        names.sort();
+        assert_eq!(vec!["one".to_string(), "two".to_string()], names);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn read_bookmarks_reports_an_uncreatable_directory() {
+        let base = unique_temp_dir("read_bookmarks_err");
+        fs::create_dir_all(&base).unwrap();
+        // A regular file cannot be a parent directory, so create_dir_all fails.
+        let file = base.join("not-a-dir");
+        fs::write(&file, b"").unwrap();
+
+        let error = read_bookmarks(&file.join("bookmarks"))
+            .expect_err("expected an error for an uncreatable directory");
+
+        assert!(
+            error.starts_with("Cannot create bookmarks directory"),
+            "unexpected message: {error}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn get_bookmarks_cancels_the_in_flight_directory_load() {
-        let config = Config::load(crate::app::config::RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(tx);
         let load_token = CancellationToken::new();
         file_system.current_load = Some(load_token.clone());
 
-        let _ = file_system.handle_command(&Command::GetBookmarks);
+        let result = file_system.handle_command(&Command::GetBookmarks);
 
-        // Load batches must not stream into the bookmarks listing.
+        // Load batches must not stream into the bookmarks listing. The cancel
+        // is paired with the Bookmarks broadcast that replaces it: only that
+        // command clears the table's loading flag, and a load cancelled
+        // mid-drain sends no DirectoryListingComplete to clear it instead.
+        let command = Command::try_from(result).expect("expected a derived command");
+        assert!(matches!(command, Command::Bookmarks { .. }));
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
         drop(rx);
+        let _ = fs::remove_dir_all(&file_system.bookmarks_dir);
     }
 
     #[test]

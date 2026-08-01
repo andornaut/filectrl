@@ -357,21 +357,82 @@ mod tests {
     }
 
     #[test]
-    fn refreshed_directory_clears_marks_silently() {
+    fn refreshed_directory_clears_marks_and_resets_the_mark_count_notice() {
         ensure_config_initialized();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
         // Simulates the watcher-triggered reload after files change on disk.
-        // No snapshot is emitted here: the selection is indeterminate until
-        // the stream completes, and the post-load snapshot carries the
-        // cleared mark count.
+        // The snapshot must ride this broadcast: if a search or the bookmarks
+        // view cancels the load, no post-load snapshot ever arrives and the
+        // notice would keep claiming marks that are already gone.
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,
         });
 
         assert!(!table.has_marks());
+        assert_mark_reset_snapshot(&result);
+        // The snapshot carries the pre-reload selection so StatusView keeps
+        // showing it instead of blanking until the stream completes.
+        let CommandResult::HandledWith(command) = &result else {
+            panic!("expected a snapshot, got {result:?}");
+        };
+        let Command::SelectionChanged { selected, .. } = &**command else {
+            panic!("expected SelectionChanged, got {command:?}");
+        };
+        assert_eq!(
+            selected.as_ref().map(|info| info.display_name.clone()),
+            Some("b".to_string())
+        );
+    }
+
+    #[test]
+    fn late_listing_completion_does_not_clobber_the_bookmarks_listing() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        // A load is in flight for the CWD when the bookmarks key is pressed.
+        table.begin_directory(fx.directory(), Reselect::Top);
+        table.stream_generation = 7;
+        table.handle_command(&Command::Bookmarks {
+            bookmarks: vec![fx.file("mark-a", 1), fx.file("mark-b", 1)],
+        });
+        table.select(1);
+        assert!(table.content.is_showing_bookmarks());
+
+        // The cancelled loader had already drained the directory, so it still
+        // sends its completion with the generation the table last recorded.
+        // Finalizing here would re-sort the bookmarks and move the cursor.
+        let result = table.handle_command(&Command::DirectoryListingComplete { generation: 7 });
+
+        assert_eq!(result, CommandResult::Handled);
+        assert!(table.content.is_showing_bookmarks());
+        assert_eq!(table.table_state.selected(), Some(1));
+        assert_eq!(selected_basename(&table).as_deref(), Some("mark-b"));
+    }
+
+    #[test]
+    fn refreshed_directory_while_searching_keeps_the_marks_and_the_notice() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+        // start_search is called directly, so the two marks carry into the
+        // search listing exactly as they would after marking results.
+        table.content.start_search();
+        assert_eq!(table.marks.len(), 2);
+
+        // A watcher event fires while search results are displayed. The
+        // listing belongs to a different root, so the refresh is ignored and
+        // the marks survive. Emitting a mark-reset snapshot here would blank
+        // the notice while the marks are still live and still operated on by
+        // a subsequent delete/copy/chmod.
+        let result = table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+
+        assert_eq!(table.marks.len(), 2);
         assert_eq!(result, CommandResult::Handled);
     }
 

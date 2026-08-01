@@ -275,6 +275,54 @@ mod tests {
     }
 
     #[test]
+    fn starting_a_search_clears_the_filter_notice() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.filter = "ap".to_string();
+        v.rebuild_notices();
+        assert_eq!(tags(&v.notices), vec!["filter"]);
+
+        // Search results are unfiltered, so a lingering "Filter: ap" notice
+        // would describe a filter that is no longer applied.
+        v.handle_command(&Command::StartSearch("q".to_string()));
+
+        assert_eq!(v.filter, "");
+        // A just-started search shows its own notices and no filter notice.
+        assert_eq!(tags(&v.notices), vec!["search_loading", "search"]);
+    }
+
+    #[test]
+    fn an_empty_search_query_keeps_the_filter_notice() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.filter = "ap".to_string();
+        v.rebuild_notices();
+
+        // The table rejects an empty query and keeps its filter applied, so
+        // clearing the notice here would hide a filter that is still active.
+        v.handle_command(&Command::StartSearch(String::new()));
+
+        assert_eq!(v.filter, "ap");
+        assert!(tags(&v.notices).contains(&"filter"));
+    }
+
+    #[test]
+    fn opening_bookmarks_clears_the_filter_notice() {
+        use crate::command::handler::CommandHandler;
+        let mut v = view();
+        v.filter = "ap".to_string();
+        v.rebuild_notices();
+        assert_eq!(tags(&v.notices), vec!["filter"]);
+
+        // The bookmarks listing is unfiltered, so a lingering "Filter: ap"
+        // notice would describe a filter that is no longer applied.
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+
+        assert_eq!(v.filter, "");
+        assert!(v.notices.is_empty());
+    }
+
+    #[test]
     fn unchanged_mark_count_keeps_the_clipboard_and_skips_the_rebuild() {
         use crate::command::handler::CommandHandler;
         let mut v = view();

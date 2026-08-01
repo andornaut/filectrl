@@ -38,6 +38,14 @@ impl CommandHandler for NoticesView {
                 self.search_query = Some(query.clone());
                 self.search_tick = 0;
                 self.search_cancelled = false;
+                // Search results are unfiltered (`start_search` clears the
+                // filter), so the notice has to clear with it. The table
+                // rejects an empty query and keeps its filter applied, so
+                // mirror that guard or the notice would vanish while the
+                // listing stays silently filtered.
+                if !query.is_empty() {
+                    self.filter.clear();
+                }
                 CommandResult::NotHandled
             }
             Command::CancelSearch => {
@@ -87,7 +95,12 @@ impl CommandHandler for NoticesView {
             // Opening bookmarks cancels any in-flight search; the transition
             // hook above clears the notice immediately (the walker's eventual
             // ExitedSearch can lag and is then a no-op).
-            Command::Bookmarks { .. } => CommandResult::NotHandled,
+            Command::Bookmarks { .. } => {
+                // The bookmarks listing is unfiltered (`set_bookmarks` clears
+                // the filter), so the notice has to clear with it.
+                self.filter.clear();
+                CommandResult::NotHandled
+            }
             Command::SelectionChanged { mark_count, .. } => {
                 // Every cursor move carries the (usually unchanged) mark
                 // count; skip the rebuild and the derivation below for those.
