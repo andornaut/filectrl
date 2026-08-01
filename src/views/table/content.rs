@@ -1,4 +1,5 @@
-use std::path::{Path, PathBuf};
+use std::borrow::Cow;
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
 use crate::app::config::Config;
@@ -119,6 +120,8 @@ impl DirectoryContent {
             // be dropped (neither mid-stream nor on a later re-sort).
             show_hidden: self.show_hidden() || self.is_searching(),
             filter_lowercase: self.filter.to_lowercase(),
+            is_bookmarks: self.is_showing_bookmarks(),
+            search_root: self.search_root.clone(),
         }
     }
 
@@ -242,33 +245,117 @@ impl DirectoryContent {
     }
 }
 
+/// The name the table shows for `item` in its name column: the entry's own
+/// name in a plain listing, the path relative to the search root while
+/// searching, and the bookmark name in the bookmarks view. Directories outside
+/// the bookmarks view carry a trailing separator.
+///
+/// Shared by the name column and the filter so the two cannot disagree about
+/// what a row is called. Borrowed wherever possible: rendering and filtering
+/// both run over every item.
+pub(super) fn displayed_name<'a>(
+    item: &'a PathInfo,
+    is_bookmarks: bool,
+    search_root: Option<&Path>,
+) -> Cow<'a, str> {
+    let stem = displayed_name_stem(item, is_bookmarks, search_root);
+    if displays_trailing_separator(item, is_bookmarks, &stem) {
+        Cow::Owned(format!("{stem}{MAIN_SEPARATOR}"))
+    } else {
+        stem
+    }
+}
+
+/// `displayed_name` without the trailing separator, which the filter matches
+/// by rule instead of by building the joined string for every directory entry.
+fn displayed_name_stem<'a>(
+    item: &'a PathInfo,
+    is_bookmarks: bool,
+    search_root: Option<&Path>,
+) -> Cow<'a, str> {
+    match search_root {
+        // Bookmarks win: that listing is the bookmarks directory, so a search
+        // root does not describe its entries.
+        Some(root) if !is_bookmarks => item
+            .path
+            .strip_prefix(root)
+            .unwrap_or(&item.path)
+            .to_string_lossy(),
+        _ => Cow::Borrowed(&item.display_name),
+    }
+}
+
+/// Whether `displayed_name` appends a separator to `stem`.
+fn displays_trailing_separator(item: &PathInfo, is_bookmarks: bool, stem: &str) -> bool {
+    !is_bookmarks && item.is_directory() && !stem.ends_with(MAIN_SEPARATOR)
+}
+
 /// Snapshot of the visibility predicate (see `DirectoryContent::visibility`).
 struct Visibility {
     show_hidden: bool,
     filter_lowercase: String,
+    /// The name column's inputs, so the filter matches the displayed name.
+    /// Owned rather than borrowed from `DirectoryContent`, which is mutated
+    /// while the predicate is live.
+    is_bookmarks: bool,
+    search_root: Option<PathBuf>,
 }
 
 impl Visibility {
     fn is_visible(&self, path: &PathInfo) -> bool {
-        (self.show_hidden || !path.is_hidden()) && self.matches_filter(&path.display_name)
+        (self.show_hidden || !path.is_hidden()) && self.matches_filter(path)
     }
 
-    /// Case-insensitive substring match on the display name. The common
-    /// all-ASCII case compares in place instead of allocating a lowercased
-    /// copy of every entry name.
-    fn matches_filter(&self, name: &str) -> bool {
+    /// Case-insensitive substring match on the displayed name (see
+    /// `displayed_name`), so the filter acts on what the row says: the
+    /// entry's own name in a plain listing, the search-root-relative path
+    /// while searching, the bookmark name in the bookmarks view.
+    ///
+    /// Matched against the stem plus a rule for the trailing separator rather
+    /// than the joined name, which would allocate for every directory entry
+    /// on every keystroke. A match that reaches the trailing separator has to
+    /// end there, so the separator is the filter's last character and the
+    /// rest of the filter is a suffix of the stem.
+    fn matches_filter(&self, path: &PathInfo) -> bool {
         if self.filter_lowercase.is_empty() {
             return true;
         }
-        if self.filter_lowercase.is_ascii() && name.is_ascii() {
-            let filter = self.filter_lowercase.as_bytes();
-            return name
-                .as_bytes()
-                .windows(filter.len())
-                .any(|window| window.eq_ignore_ascii_case(filter));
+        let stem = displayed_name_stem(path, self.is_bookmarks, self.search_root.as_deref());
+        if contains_ignore_case(&stem, &self.filter_lowercase) {
+            return true;
         }
-        name.to_lowercase().contains(&self.filter_lowercase)
+        let Some(prefix) = self.filter_lowercase.strip_suffix(MAIN_SEPARATOR) else {
+            return false;
+        };
+        displays_trailing_separator(path, self.is_bookmarks, &stem)
+            && ends_with_ignore_case(&stem, prefix)
     }
+}
+
+/// Case-insensitive `str::contains`. The common all-ASCII case compares in
+/// place instead of allocating a lowercased copy of every entry name.
+/// `needle_lowercase` must already be lowercased and non-empty.
+fn contains_ignore_case(haystack: &str, needle_lowercase: &str) -> bool {
+    if needle_lowercase.is_ascii() && haystack.is_ascii() {
+        let needle = needle_lowercase.as_bytes();
+        return haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle));
+    }
+    haystack.to_lowercase().contains(needle_lowercase)
+}
+
+/// Case-insensitive `str::ends_with`. `suffix_lowercase` must already be
+/// lowercased.
+fn ends_with_ignore_case(haystack: &str, suffix_lowercase: &str) -> bool {
+    if suffix_lowercase.is_ascii() && haystack.is_ascii() {
+        let suffix = suffix_lowercase.as_bytes();
+        let bytes = haystack.as_bytes();
+        return bytes.len() >= suffix.len()
+            && bytes[bytes.len() - suffix.len()..].eq_ignore_ascii_case(suffix);
+    }
+    haystack.to_lowercase().ends_with(suffix_lowercase)
 }
 
 #[cfg(test)]
@@ -308,6 +395,15 @@ mod tests {
         fn file_entry(&self, name: &str, size: usize) -> PathInfo {
             let path = self.dir.join(name);
             std::fs::write(&path, vec![b'x'; size]).unwrap();
+            PathInfo::try_from(&path).unwrap()
+        }
+
+        /// A file one level down, so a search rooted at the fixture renders it
+        /// with a separator in the middle of its name.
+        fn nested_file_entry(&self, dir: &str, name: &str) -> PathInfo {
+            let path = self.dir.join(dir).join(name);
+            std::fs::create_dir_all(self.dir.join(dir)).unwrap();
+            std::fs::write(&path, b"x").unwrap();
             PathInfo::try_from(&path).unwrap()
         }
 
@@ -595,5 +691,226 @@ mod tests {
         content.set_filter("équipe".to_string());
         content.sort(&SortColumn::Name, &SortDirection::Ascending);
         assert_eq!(names(&content), vec!["Équipe"]);
+    }
+
+    /// The filter runs against `PathInfo::name`, so a trailing separator
+    /// filters to directories.
+    #[test]
+    fn filter_matches_the_trailing_separator_on_directories() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.dir_entry("reports"),
+            fx.file_entry("report.txt", 1),
+            fx.file_entry("notes.txt", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+
+        content.set_filter("/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports"]);
+
+        // A name cannot contain the separator, so it only ever matches at the
+        // end.
+        content.set_filter("reports/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports"]);
+
+        content.set_filter("report/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert!(names(&content).is_empty());
+
+        content.set_filter("reports/x".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert!(names(&content).is_empty());
+    }
+
+    /// `matches_filter` avoids building the displayed name by special-casing
+    /// the trailing separator, so it must agree exactly with a plain substring
+    /// search of that name, in every listing mode.
+    #[test]
+    fn filter_agrees_with_a_substring_search_of_the_displayed_name() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let entries = [
+            fx.dir_entry("reports"),
+            fx.dir_entry("Équipe"),
+            fx.file_entry("report.txt", 1),
+            fx.file_entry("Équipe.txt", 1),
+            fx.file_entry("a", 1),
+            fx.nested_file_entry("reports", "inner.txt"),
+        ];
+        let filters = [
+            "",
+            "/",
+            "//",
+            "s/",
+            "report",
+            "reports",
+            "reports/",
+            "report/",
+            "reports/x",
+            "reports/inner.txt",
+            "orts/inn",
+            "inner",
+            "a/b",
+            "a//",
+            "REPORTS/",
+            "équipe",
+            "équipe/",
+            "ÉQUIPE/",
+            "z",
+        ];
+        // Normal, searching from the fixture root, and bookmarks.
+        let modes = [(false, None), (false, Some(fx.dir.clone())), (true, None)];
+
+        for (is_bookmarks, search_root) in modes {
+            for filter in filters {
+                let filter_lowercase = filter.to_lowercase();
+                let visibility = Visibility {
+                    show_hidden: true,
+                    filter_lowercase: filter_lowercase.clone(),
+                    is_bookmarks,
+                    search_root: search_root.clone(),
+                };
+                for entry in &entries {
+                    let displayed = displayed_name(entry, is_bookmarks, search_root.as_deref());
+                    let expected = filter_lowercase.is_empty()
+                        || displayed.to_lowercase().contains(&filter_lowercase);
+                    assert_eq!(
+                        expected,
+                        visibility.matches_filter(entry),
+                        "filter {filter:?} against {displayed:?} \
+                         (is_bookmarks={is_bookmarks}, search_root={search_root:?})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The name column and the filter both read `displayed_name`, so the
+    /// property test above cannot catch a wrong string on its own: pin the
+    /// three modes here.
+    #[test]
+    fn displayed_name_per_listing_mode() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let dir = fx.dir_entry("reports");
+        let nested = fx.nested_file_entry("reports", "inner.txt");
+
+        // Plain listing: the entry's own name, directories separator-suffixed.
+        assert_eq!("reports/", displayed_name(&dir, false, None));
+        assert_eq!("inner.txt", displayed_name(&nested, false, None));
+
+        // Searching: the path relative to the search root.
+        let root = Some(fx.dir.as_path());
+        assert_eq!("reports/", displayed_name(&dir, false, root));
+        assert_eq!("reports/inner.txt", displayed_name(&nested, false, root));
+
+        // Bookmarks: the bare name, with no separator appended.
+        assert_eq!("reports", displayed_name(&dir, true, None));
+        assert_eq!("inner.txt", displayed_name(&nested, true, None));
+    }
+
+    /// Search rows render the path relative to the search root, so the filter
+    /// has to reach the directory part, not just the basename.
+    #[test]
+    fn filter_matches_the_relative_path_of_search_results() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.dir_entry("reports"),
+            fx.nested_file_entry("reports", "inner.txt"),
+            fx.file_entry("other.txt", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), vec![]);
+        content.start_search();
+        content.append(&items);
+
+        // "reports/" reaches the directory itself through its trailing
+        // separator, and the nested file through its rendered path.
+        content.set_filter("reports/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports", "inner.txt"]);
+
+        // A fragment spanning the separator matches only the nested file.
+        content.set_filter("orts/inn".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["inner.txt"]);
+    }
+
+    /// Bookmark rows render bare names, so there is no trailing separator for
+    /// a filter to match.
+    #[test]
+    fn filter_finds_no_separator_in_bookmark_rows() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_bookmarks(vec![
+            fx.dir_entry("reports"),
+            fx.file_entry("report.txt", 1),
+        ]);
+
+        content.set_filter("/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert!(names(&content).is_empty());
+
+        content.set_filter("report".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports", "report.txt"]);
+    }
+
+    /// Non-ASCII names take the allocating branch, which must see the same
+    /// rendered name as the ASCII fast path.
+    #[test]
+    fn filter_matches_the_trailing_separator_on_non_ascii_directories() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![fx.dir_entry("Équipe"), fx.file_entry("Équipe.txt", 1)];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+
+        content.set_filter("équipe/".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["Équipe"]);
+    }
+
+    /// A batch filtered mid-stream must apply the same predicate as a re-sort,
+    /// so the trailing separator has to be visible to `append` too.
+    #[test]
+    fn appended_batches_match_the_trailing_separator_on_directories() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![fx.dir_entry("reports"), fx.file_entry("report.txt", 1)];
+        let mut content = DirectoryContent::default();
+        content.set_filter("/".to_string());
+        content.start_listing(fx.directory());
+
+        content.append(&items);
+        assert_eq!(names(&content), vec!["reports"]);
+
+        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports"]);
+    }
+
+    /// A filter that does not mention the separator must still match files,
+    /// which the trailing separator on directories must not disturb.
+    #[test]
+    fn filter_without_a_separator_matches_files_and_directories_alike() {
+        ensure_config_initialized();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.dir_entry("reports"),
+            fx.file_entry("report.txt", 1),
+            fx.file_entry("notes.txt", 1),
+        ];
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), items);
+
+        content.set_filter("report".to_string());
+        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["reports", "report.txt"]);
     }
 }

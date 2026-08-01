@@ -92,6 +92,10 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - <kbd>Esc</kbd> clears all marks and exits range mode
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
 
+### Filtering
+
+The filter (<kbd>f</kbd>/<kbd>\</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
+
 ### Default keybindings
 
 All keybindings can be [customized](#customizing-keybindings).
