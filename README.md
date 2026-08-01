@@ -18,15 +18,12 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 ## Installation
 
-[Download a pre-built binary](https://github.com/andornaut/filectrl/releases) for Linux (`filectrl-linux`) or macOS (`filectrl-macos-arm64`, Apple Silicon only):
+[Download a pre-built binary](https://github.com/andornaut/filectrl/releases). Releases publish `filectrl_{system}_{arch}.tar.gz` archives for `linux_x86_64` and `darwin_arm64` (macOS is Apple Silicon only):
 
 ```bash
-curl -sL https://github.com/andornaut/filectrl/releases/latest/download/filectrl-linux -o filectrl
-chmod +x filectrl
+curl -sL https://github.com/andornaut/filectrl/releases/latest/download/filectrl_linux_x86_64.tar.gz | tar -xz
 sudo mv filectrl /usr/local/bin/
 ```
-
-Releases also include `filectrl_{system}_{arch}.tar.gz` archives (`linux_x86_64`, `darwin_arm64`) for provisioning tools.
 
 On macOS, allow the _unsigned_ binary to be executed:
 
