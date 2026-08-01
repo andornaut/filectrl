@@ -1,12 +1,12 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::{App, clipboard::ClipboardEntry};
+use super::{Handlers, clipboard::ClipboardEntry};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
 };
 
-impl CommandHandler for App {
+impl CommandHandler for Handlers {
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
         visitor(&mut self.file_system);
         visitor(&mut self.root);

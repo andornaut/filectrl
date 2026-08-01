@@ -38,25 +38,36 @@ impl CommandHandler for FileSystem {
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => {
-                let failed = self.run_batch(
+                let (failed, mut commands) = self.run_batch(
                     srcs.iter()
                         .map(|src| TaskCommand::Copy(src.clone(), dest.clone())),
                 );
                 // The TableView clears its marks for these same commands, so
                 // the clipboard follow-up (see `clipboard_follow_up`) rides
                 // the same broadcast.
-                clipboard_follow_up(srcs.len(), ClipboardEntry::Copy, failed)
+                commands.extend(clipboard_follow_up(
+                    srcs.len(),
+                    ClipboardEntry::Copy,
+                    failed,
+                ));
+                commands.into()
             }
             Command::Move { srcs, dest } => {
-                let failed = self.run_batch(
+                let (failed, mut commands) = self.run_batch(
                     srcs.iter()
                         .map(|src| TaskCommand::Move(src.clone(), dest.clone())),
                 );
-                clipboard_follow_up(srcs.len(), ClipboardEntry::Move, failed)
+                commands.extend(clipboard_follow_up(
+                    srcs.len(),
+                    ClipboardEntry::Move,
+                    failed,
+                ));
+                commands.into()
             }
             Command::Delete(paths) => {
-                self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));
-                CommandResult::Handled
+                let (_, commands) =
+                    self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));
+                commands.into()
             }
             Command::Open(path) => self.open(path),
             Command::OpenCurrentDirectory => self.open_current_directory(),
@@ -84,12 +95,12 @@ fn clipboard_follow_up(
     source_count: usize,
     entry: fn(Vec<PathInfo>) -> ClipboardEntry,
     failed: Vec<PathInfo>,
-) -> CommandResult {
+) -> Option<Command> {
     if failed.is_empty() {
-        Command::SetClipboardEntry(None).into()
+        Some(Command::SetClipboardEntry(None))
     } else if failed.len() == source_count {
-        CommandResult::Handled
+        None
     } else {
-        Command::SetClipboardEntry(Some(entry(failed))).into()
+        Some(Command::SetClipboardEntry(Some(entry(failed))))
     }
 }

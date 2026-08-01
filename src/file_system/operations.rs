@@ -15,10 +15,7 @@ use super::{
     path_info::PathInfo,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
-use crate::{
-    app::config::Config,
-    command::{Command, progress::CancellationToken},
-};
+use crate::command::{Command, progress::CancellationToken};
 
 const CD_BATCH_SIZE: usize = 256;
 
@@ -137,7 +134,10 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn add_bookmark(target: &PathInfo, name: &str) -> Result<()> {
+/// Takes the bookmarks directory rather than reading it from the global
+/// `Config`, so writes resolve against the same directory `read_bookmarks`
+/// reads (`FileSystem::bookmarks_dir`).
+pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         return Err(anyhow!("Bookmark name cannot be empty"));
@@ -148,8 +148,7 @@ pub(super) fn add_bookmark(target: &PathInfo, name: &str) -> Result<()> {
             std::path::MAIN_SEPARATOR
         ));
     }
-    let dir = Config::global().bookmarks_dir();
-    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(dir)?;
     let link = dir.join(name);
     // Reject duplicates, including a pre-existing broken symlink.
     if link.symlink_metadata().is_ok() {
