@@ -174,6 +174,20 @@ modifiers = ["bold"]
 [theme.help.shortcuts]
 fg = "#f1f1f1"
 
+[theme.open_with]
+fg = "#687880"
+
+[theme.open_with.detail]
+fg = "#545860" # Dim steel gray
+
+[theme.open_with.selected]
+bg = "#4893c2"
+fg = "#282a2c"
+
+[theme.open_with.shortcut]
+fg = "#c2fe0b"
+modifiers = ["bold"]
+
 [theme.prompt.delete]
 bg = "#c4071c" # Rust
 fg = "#f1f1f1"
@@ -437,6 +451,20 @@ modifiers = ["bold"]
 
 [theme256.help.shortcuts]
 fg = "255" # #eeeeee
+
+[theme256.open_with]
+fg = "66" # #5f8787 - steel gray
+
+[theme256.open_with.detail]
+fg = "240" # #585858 - dim steel gray
+
+[theme256.open_with.selected]
+bg = "67" # #5f87af - steel blue
+fg = "235" # #262626
+
+[theme256.open_with.shortcut]
+fg = "190" # #d7ff00 - lime
+modifiers = ["bold"]
 
 [theme256.prompt.delete]
 bg = "160" # #d70000 - red

@@ -2,6 +2,7 @@ mod alerts;
 mod breadcrumbs;
 mod help;
 mod notices;
+mod open_with;
 mod prompt;
 pub mod root;
 mod scrollbar;
@@ -21,6 +22,28 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Widget},
 };
+
+/// Draw `lines`, starting at the one `scroll` lines down. Equivalent to an
+/// unwrapped, left-aligned `Paragraph` (see the equivalence test below), but
+/// takes the lines by reference: `Paragraph` owns its text, so handing it
+/// cached content would clone every span each frame.
+fn render_lines(lines: &[Line<'_>], area: Rect, buf: &mut Buffer, style: Style, scroll: u16) {
+    let area = area.intersection(buf.area);
+    buf.set_style(area, style);
+    for (row, line) in lines
+        .iter()
+        .skip(scroll as usize)
+        .take(area.height as usize)
+        .enumerate()
+    {
+        let line_area = Rect {
+            y: area.y + row as u16,
+            height: 1,
+            ..area
+        };
+        line.render(line_area, buf);
+    }
+}
 
 use crate::command::{Command, handler::CommandHandler};
 
@@ -94,10 +117,76 @@ fn right_hint_fits(
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        style::{Color, Style},
+        text::{Line, Span},
+        widgets::{Paragraph, Widget},
+    };
     use test_case::test_case;
 
-    use super::{ListingMode, right_hint_fits};
+    use super::{ListingMode, render_lines, right_hint_fits};
     use crate::{command::Command, file_system::path_info::PathInfo};
+
+    /// Shaped like real cached content: styled label/value spans, a blank
+    /// separator, and a line wider than the render area.
+    fn lines() -> Vec<Line<'static>> {
+        vec![
+            Line::from(vec![
+                Span::styled("Quit", Style::default().fg(Color::Blue)),
+                Span::raw(": "),
+                Span::styled("q", Style::default().fg(Color::Red)),
+            ]),
+            Line::raw(""),
+            Line::from(vec![Span::styled(
+                "Toggle help: a label wider than the area",
+                Style::default().fg(Color::Yellow),
+            )]),
+            Line::raw("last"),
+        ]
+    }
+
+    #[test_case(0 ; "unscrolled")]
+    #[test_case(1 ; "scrolled past the first line")]
+    #[test_case(3 ; "scrolled to the last line")]
+    #[test_case(9 ; "scrolled past the end")]
+    fn render_lines_paints_what_paragraph_painted(scroll: u16) {
+        // A non-zero origin inside a larger buffer, so a row-offset error
+        // would show up as a mismatch rather than being clipped away.
+        let buffer_area = Rect::new(0, 0, 20, 10);
+        let area = Rect::new(2, 3, 12, 3);
+        let style = Style::default().fg(Color::Green);
+
+        let mut expected = Buffer::empty(buffer_area);
+        Paragraph::new(lines())
+            .style(style)
+            .scroll((scroll, 0))
+            .render(area, &mut expected);
+
+        let mut actual = Buffer::empty(buffer_area);
+        render_lines(&lines(), area, &mut actual, style, scroll);
+
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn render_lines_clips_an_area_that_overflows_the_buffer() {
+        // The area runs past both the right and the bottom edge.
+        let buffer_area = Rect::new(0, 0, 8, 2);
+        let area = Rect::new(4, 1, 12, 4);
+        let style = Style::default().fg(Color::Green);
+
+        let mut expected = Buffer::empty(buffer_area);
+        Paragraph::new(lines())
+            .style(style)
+            .render(area, &mut expected);
+
+        let mut actual = Buffer::empty(buffer_area);
+        render_lines(&lines(), area, &mut actual, style, 0);
+
+        assert_eq!(expected, actual);
+    }
 
     #[test]
     fn listing_mode_transitions_cover_the_mode_changing_commands() {

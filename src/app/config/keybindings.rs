@@ -22,6 +22,7 @@ pub enum Action {
     Open,
     OpenCurrentDirectory,
     OpenNewWindow,
+    OpenWith,
     Refresh,
 
     // Selection
@@ -168,6 +169,7 @@ keybindings! {
         open => Open,
         open_current_directory => OpenCurrentDirectory,
         open_new_window => OpenNewWindow,
+        open_with => OpenWith,
         page_down => PageDown,
         page_up => PageUp,
         paste => Paste,

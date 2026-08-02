@@ -37,6 +37,10 @@ pub struct FileSystemConfig {
 #[derive(Debug, Deserialize)]
 pub struct Openers {
     pub open_current_directory: String,
+    /// Wraps a command that needs a terminal, so that a desktop entry marked
+    /// `Terminal=true` can be offered by the "open with" picker. Unlike the
+    /// other openers, `%s` is replaced by a command line rather than a path.
+    pub open_in_terminal: String,
     pub open_new_window: String,
     pub open_selected_file: String,
 }

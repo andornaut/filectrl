@@ -5,6 +5,8 @@ pub mod result;
 use anyhow::Error;
 #[cfg(test)]
 use anyhow::anyhow;
+use std::path::PathBuf;
+
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -85,11 +87,20 @@ pub enum Command {
     // External commands — handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
     OpenNewWindow,
+    // Intent: the "open with" picker resolved a chosen application into a
+    // concrete argv; FileSystem spawns it detached. `label` names the
+    // application in the failure alert. An empty `argv` is a no-op.
+    OpenWith {
+        argv: Vec<String>,
+        label: String,
+        working_dir: Option<PathBuf>,
+    },
 
     // Navigation
     GoToParentDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
     GoToPreviousDirectory, // Intent: resolved by FileSystem into NavigatedDirectory
     Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
+    OpenWithPrompt(PathInfo), // Intent: RootView shows the "open with" picker for this path
     NavigatedDirectory {
         // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem).
         // The entries are not included; they stream in afterward as ListingBatch.

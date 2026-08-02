@@ -148,6 +148,7 @@ pub(super) fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)
         kb_entry("Open", s(Action::Open)),
         kb_entry("Open current directory", s(Action::OpenCurrentDirectory)),
         kb_entry("Open new window", s(Action::OpenNewWindow)),
+        kb_entry("Open with...", s(Action::OpenWith)),
         // Marking
         kb_entry("Mark/unmark item", s(Action::ToggleMark)),
         kb_entry("Range mark", s(Action::RangeMark)),

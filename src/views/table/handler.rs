@@ -216,6 +216,7 @@ impl CommandHandler for TableView {
             Some(Action::Open) => self.open_selected(),
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
+            Some(Action::OpenWith) => self.open_with(),
             Some(Action::GoHome) => self.navigate_to_home_directory(),
             Some(Action::Goto) => self.open_goto_prompt(),
             // Selection

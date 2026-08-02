@@ -111,4 +111,13 @@ impl TableView {
             None => CommandResult::Handled,
         }
     }
+
+    /// The picker offers applications for one path, so this deliberately
+    /// ignores marks and uses the selection.
+    pub(super) fn open_with(&mut self) -> CommandResult {
+        match self.selected_path() {
+            Some(path) => Command::OpenWithPrompt(path.clone()).into(),
+            None => CommandResult::Handled,
+        }
+    }
 }
