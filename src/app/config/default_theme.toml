@@ -186,6 +186,20 @@ fg = "#24201A"
 bg = "#423f2e"
 fg = "#b05533"
 
+[theme.open_with]
+fg = "#9C9977"
+
+[theme.open_with.detail]
+fg = "#7c7755" # Muted olive
+
+[theme.open_with.selected]
+bg = "#9C9977"
+fg = "#24201A"
+
+[theme.open_with.shortcut]
+fg = "#DDDCCC"
+modifiers = ["bold"]
+
 [theme.prompt.cursor]
 bg = "#006B6B"
 fg = "#DDDCCC"
@@ -449,6 +463,20 @@ fg = "235" # #262626
 [theme256.notice.search_loading]
 bg = "237" # #3a3a3a (approx #423f2e base bg)
 fg = "130" # #af5f00 - rust (approx #b05533)
+
+[theme256.open_with]
+fg = "144" # #afaf87 - olive sage
+
+[theme256.open_with.detail]
+fg = "101" # #87875f - muted olive
+
+[theme256.open_with.selected]
+bg = "144" # #afaf87
+fg = "235" # #262626
+
+[theme256.open_with.shortcut]
+fg = "253" # #dadada
+modifiers = ["bold"]
 
 [theme256.prompt.cursor]
 bg = "23" # #005f5f

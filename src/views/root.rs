@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::{
     View, alerts::AlertsView, breadcrumbs::BreadcrumbsView, help::HelpView, notices::NoticesView,
-    prompt::PromptView, status::StatusView, table::TableView,
+    open_with::OpenWithView, prompt::PromptView, status::StatusView, table::TableView,
 };
 use crate::{
     app::config::{Config, keybindings::Action},
@@ -19,8 +19,9 @@ const MIN_WIDTH: u16 = 14;
 const MIN_HEIGHT: u16 = 5;
 const RESIZE_WINDOW: &str = "Resize window";
 
-/// Forwards broadcast commands to a view hidden behind the help screen while
-/// declining key and mouse dispatch, which must reach only the help view.
+/// Forwards broadcast commands to a view covered by an overlay (help or the
+/// "open with" picker) while declining key and mouse dispatch, which must
+/// reach only the overlay.
 struct CommandOnly<'a>(&'a mut dyn CommandHandler);
 
 impl CommandHandler for CommandOnly<'_> {
@@ -30,7 +31,7 @@ impl CommandHandler for CommandOnly<'_> {
 
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
         // Wrap children too, so a view that gains child handlers keeps
-        // receiving commands (but not input) while help is open.
+        // receiving commands (but not input) while an overlay is open.
         self.0
             .visit_command_handlers(&mut |child| visitor(&mut CommandOnly(child)));
     }
@@ -47,6 +48,7 @@ pub struct RootView {
     is_help_visible: bool,
     mode: InputMode,
     notices: NoticesView,
+    open_with: OpenWithView,
     prompt: PromptView,
     status: StatusView,
     table: TableView,
@@ -61,6 +63,7 @@ impl RootView {
             is_help_visible: false,
             mode: InputMode::default(),
             notices: NoticesView::new(),
+            open_with: OpenWithView::new(),
             prompt: PromptView::default(),
             status: StatusView::default(),
             table: TableView::default(),
@@ -74,20 +77,24 @@ impl RootView {
     fn views(&mut self) -> Vec<&mut dyn View> {
         // The order is significant for layout
         if self.is_help_visible {
-            vec![&mut self.help]
-        } else {
-            let mut views: Vec<&mut dyn View> = vec![
-                &mut self.alerts,
-                &mut self.breadcrumbs,
-                &mut self.table,
-                &mut self.notices,
-            ];
-            if matches!(self.mode, InputMode::Prompt) {
-                views.push(&mut self.prompt);
-            }
-            views.push(&mut self.status);
-            views
+            return vec![&mut self.help];
         }
+        // Read before the mutable borrows below.
+        let is_open_with_visible = self.open_with.is_visible();
+        let mut views: Vec<&mut dyn View> = vec![&mut self.alerts, &mut self.breadcrumbs];
+        // The picker takes the table's slot, and has the same constraint, so
+        // what is above and below it stays exactly where it was.
+        if is_open_with_visible {
+            views.push(&mut self.open_with);
+        } else {
+            views.push(&mut self.table);
+        }
+        views.push(&mut self.notices);
+        if matches!(self.mode, InputMode::Prompt) {
+            views.push(&mut self.prompt);
+        }
+        views.push(&mut self.status);
+        views
     }
 }
 
@@ -113,9 +120,16 @@ impl CommandHandler for RootView {
                 self.mode = InputMode::Prompt;
                 CommandResult::Handled
             }
+            Command::OpenWithPrompt(path) => {
+                // RootView owns the picker, so showing it is a direct call
+                // rather than a broadcast.
+                self.open_with.show(path);
+                CommandResult::Handled
+            }
             Command::ResetView => {
                 self.mode = InputMode::Normal;
                 self.is_help_visible = false;
+                self.open_with.hide();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
@@ -139,26 +153,31 @@ impl CommandHandler for RootView {
     }
 
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
-        if self.is_help_visible {
-            visitor(&mut self.help);
-            // Async commands (task progress, watcher refreshes, streamed
-            // listings) keep arriving while help is shown; the hidden views
-            // must still receive them, but keys and mouse stay routed to the
-            // help view only.
-            let hidden: [&mut dyn CommandHandler; 5] = [
-                &mut self.alerts,
-                &mut self.breadcrumbs,
-                &mut self.table,
-                &mut self.notices,
-                &mut self.status,
-            ];
-            for view in hidden {
-                visitor(&mut CommandOnly(view));
-            }
-        } else {
+        if !self.is_help_visible && !self.open_with.is_visible() {
             for view in self.views() {
                 visitor(view);
             }
+            return;
+        }
+        // An overlay is the only key and mouse handler while it is shown, but
+        // async commands (task progress, watcher refreshes, streamed listings)
+        // keep arriving, so every view it covers must still receive them.
+        let overlay: &mut dyn CommandHandler = if self.is_help_visible {
+            &mut self.help
+        } else {
+            &mut self.open_with
+        };
+        visitor(overlay);
+        let covered: [&mut dyn CommandHandler; 6] = [
+            &mut self.alerts,
+            &mut self.breadcrumbs,
+            &mut self.notices,
+            &mut self.prompt,
+            &mut self.status,
+            &mut self.table,
+        ];
+        for view in covered {
+            visitor(&mut CommandOnly(view));
         }
     }
 }
@@ -211,7 +230,7 @@ fn render_resize_message(buf: &mut Buffer, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::config::RuntimeEnv;
+    use crate::{app::config::RuntimeEnv, file_system::path_info::PathInfo};
 
     fn view() -> RootView {
         let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
@@ -248,5 +267,63 @@ mod tests {
             }
         });
         assert_eq!(1, key_handlers); // HelpView only
+    }
+
+    fn showing_open_with() -> RootView {
+        let mut root = view();
+        root.open_with.show(&PathInfo::try_from("/tmp").unwrap());
+        assert!(root.open_with.is_visible());
+        root
+    }
+
+    #[test]
+    fn commands_reach_hidden_views_while_open_with_is_visible() {
+        let mut root = showing_open_with();
+
+        // AlertError is only handled by the (hidden) AlertsView.
+        let mut handled = false;
+        root.visit_command_handlers(&mut |handler| {
+            if handler.handle_command(&Command::AlertError("boom".into()))
+                != CommandResult::NotHandled
+            {
+                handled = true;
+            }
+        });
+        assert!(handled);
+    }
+
+    #[test]
+    fn keys_reach_only_the_open_with_view_while_open_with_is_visible() {
+        let mut root = showing_open_with();
+
+        let mut key_handlers = 0;
+        root.visit_command_handlers(&mut |handler| {
+            if handler.should_handle_key(&InputMode::Normal) {
+                key_handlers += 1;
+            }
+        });
+        assert_eq!(1, key_handlers); // OpenWithView only
+    }
+
+    #[test]
+    fn open_with_replaces_the_table_slot_rather_than_adding_one() {
+        let mut root = view();
+        let without_picker = root.views().len();
+
+        root.open_with.show(&PathInfo::try_from("/tmp").unwrap());
+
+        assert_eq!(without_picker, root.views().len());
+    }
+
+    #[test]
+    fn reset_view_closes_the_open_with_picker() {
+        let mut root = showing_open_with();
+
+        assert_eq!(
+            CommandResult::Handled,
+            root.handle_command(&Command::ResetView)
+        );
+
+        assert!(!root.open_with.is_visible());
     }
 }

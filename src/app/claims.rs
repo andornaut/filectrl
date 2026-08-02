@@ -80,6 +80,7 @@ fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
     config.config_dir = fixture.root.clone();
     config.openers = Openers {
         open_current_directory: String::new(),
+        open_in_terminal: String::new(),
         open_new_window: String::new(),
         open_selected_file: String::new(),
     };
@@ -117,6 +118,17 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
     vec![
         Command::OpenCurrentDirectory,
         Command::OpenNewWindow,
+        // Claimed by RootView, which enumerates the applications that can open
+        // the path. That reads the host's MIME and desktop entry databases, but
+        // it is read-only, bounded, and spawns nothing, so host variance cannot
+        // affect whether the command is claimed.
+        Command::OpenWithPrompt(fixture.file()),
+        // The empty-argv backstop, so no process is spawned.
+        Command::OpenWith {
+            argv: Vec::new(),
+            label: "app".to_string(),
+            working_dir: None,
+        },
         Command::GoToPreviousDirectory,
         Command::Open(fixture.directory()),
         Command::NavigatedDirectory {
@@ -202,6 +214,8 @@ fn every_variant_is_accounted_for(command: &Command) {
         // Must be claimed.
         Command::OpenCurrentDirectory
         | Command::OpenNewWindow
+        | Command::OpenWith { .. }
+        | Command::OpenWithPrompt(_)
         | Command::GoToParentDirectory
         | Command::GoToPreviousDirectory
         | Command::Open(_)

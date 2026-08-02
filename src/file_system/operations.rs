@@ -95,12 +95,40 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
         return Ok(());
     }
     let command = template.replace("%s", &shell_words::quote(&path.path.to_string_lossy()));
-    let mut child = spawn_detached("sh", ["-c", &command])
+    let child = spawn_detached("sh", ["-c", &command])
         .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))?;
+    watch_for_immediate_failure(child, format!("Command \"{command}\""), command_tx);
+    Ok(())
+}
 
-    // Catch commands that fail immediately (e.g. binary not found) without
-    // blocking the TUI. Long-lived processes (e.g. a terminal window) will
-    // still be running after 250ms and are silently ignored.
+/// Launch `argv` directly, without a shell, so that nothing in a file name can
+/// be reinterpreted. An empty `argv` is a no-op, mirroring `open_in`'s empty
+/// template guard.
+pub(super) fn spawn_argv(
+    working_dir: Option<&Path>,
+    label: &str,
+    argv: &[String],
+    command_tx: Sender<Command>,
+) -> Result<()> {
+    info!("Opening {label:?} using: {argv:?}");
+    let Some((program, args)) = argv.split_first() else {
+        return Ok(());
+    };
+    let mut command = detached_command(program, args);
+    if let Some(working_dir) = working_dir {
+        command.current_dir(working_dir);
+    }
+    let child = command
+        .spawn()
+        .map_err(|error| anyhow!("Failed to run {label:?}: {error}"))?;
+    watch_for_immediate_failure(child, format!("{label:?}"), command_tx);
+    Ok(())
+}
+
+/// Catch commands that fail immediately (e.g. binary not found) without
+/// blocking the TUI. Long-lived processes (e.g. a terminal window) will still
+/// be running after 250ms and are silently ignored.
+fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Sender<Command>) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
         match child.try_wait() {
@@ -110,7 +138,7 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
                         .code()
                         .map_or("unknown".to_string(), |c| c.to_string());
                     let _ = command_tx.send(Command::AlertError(format!(
-                        "Command \"{command}\" failed (exit code {code})"
+                        "{label} failed (exit code {code})"
                     )));
                 }
             }
@@ -121,8 +149,6 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
             }
         }
     });
-
-    Ok(())
 }
 
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
@@ -229,18 +255,28 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The single place the detach strategy is defined, so that both spawn paths
+/// stay in step.
+fn detached_command<I, S>(program: &str, args: I) -> std::process::Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut command = std::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
 fn spawn_detached<I, S>(program: &str, args: I) -> Result<Child>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    std::process::Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(Into::into)
+    detached_command(program, args).spawn().map_err(Into::into)
 }
 
 fn join_parent(left: &Path, right: &str) -> PathBuf {

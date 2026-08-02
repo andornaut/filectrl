@@ -113,8 +113,9 @@ Go to previous dir | <kbd>-</kbd>
 Go to home dir | <kbd>~</kbd>
 Go to path | <kbd>:</kbd>/<kbd>Tab</kbd>
 Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
-Open current directory | <kbd>o</kbd>/<kbd>t</kbd>
+Open current directory | <kbd>t</kbd>
 Open new window | <kbd>w</kbd>
+Open with... | <kbd>o</kbd>
 Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
 Range mark | <kbd>V</kbd> (Uppercase)
 Copy, Cut, Paste | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
@@ -191,8 +192,9 @@ The configuration is validated strictly: an unrecognized key (for example a miss
 Keyboard key | Description
 --- | ---
 <kbd>l</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
-<kbd>o</kbd>/<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
+<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
 <kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
+<kbd>o</kbd> | Choose from the applications that can open the selected file or directory
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -203,12 +205,41 @@ open_current_directory = "alacritty --working-directory %s"
 open_new_window = "alacritty --command filectrl %s"
 # %s will be replaced by the path to the selected file or directory:
 open_selected_file = "pcmanfm %s"
+# %s will be replaced by a command line, not a path (see "Open with..." below):
+open_in_terminal = "alacritty --command %s"
 
 [openers.macos]
 open_current_directory = "open %s"
 open_new_window = "open -a Terminal %s"
 open_selected_file = "open %s"
+# open_in_terminal is Linux only and is ignored here
+open_in_terminal = ""
 ```
+
+#### Open with...
+
+Pressing <kbd>o</kbd> replaces the file table with a list of the applications that can open the selected file or directory, leaving the breadcrumbs and status bar visible. The default application is listed first and marked `(default)`.
+
+Keyboard key | Description
+--- | ---
+<kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd> | Move between applications
+<kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd> | Open with the selected application
+<kbd>1</kbd> to <kbd>9</kbd> | Open with that numbered application
+<kbd>o</kbd> | Close the picker
+<kbd>Esc</kbd> | Close the picker and reset the view (clears the clipboard, filter and marks, and leaves search or bookmarks)
+
+Only the first nine rows have a number; scroll to reach the rest. Applications that share a name are collapsed to the best ranked one.
+
+The list is built per platform:
+
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types (a `.rs` file also offers plain text editors), then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/).
+- **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
+
+On Linux the application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
+
+Applications that need a terminal (`Terminal=true`) run inside `openers.open_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
+
+`openers.open_selected_file` (or `openers.open_current_directory` for a directory) is offered last when it is set, under that setting's name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
 
 ### Theming
 
@@ -259,6 +290,7 @@ Section | Description
 `file_type` | Row colors by file type (`directory`, `executable`, `symlink`, `regular_file`, etc.)
 `help` | Help panel (`base`, `header`, `actions`, `shortcuts`)
 `notice` | Notice bar (`filter`, `progress`)
+`open_with` | Open with... picker (`base`, `detail`, `selected`, `shortcut`)
 `prompt` | Input prompt (`cursor`, `input`, `label`, `selected`)
 `scrollbar` | Scrollbar (`ends`, `thumb`, `track`, plus `show_ends` boolean)
 `status` | Status bar (`detail`, `label`)
@@ -323,6 +355,8 @@ filectrl --include themes/42km.toml
 ### Customizing keybindings
 
 Keybindings are configured in the `[keybindings]` section of `config.toml`. Edit the values to change any binding. Values can be a single key string or an array of key strings.
+
+Binding one key to two actions is a configuration error that prevents startup. This includes a collision between a key you configured and a default you did not override.
 
 Some keys are hardcoded and always work in addition to any configured keys. In normal mode: arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, and <kbd>Esc</kbd>. In prompt mode: <kbd>Esc</kbd> (cancel), <kbd>Tab</kbd> (accept suggestion), and <kbd>↓</kbd>/<kbd>↑</kbd> (cycle suggestions). Hardcoded keys are scoped to their mode, so <kbd>Tab</kbd> is configurable in normal mode (the default `goto` binding uses it). Binding a hardcoded key to a different action in the same mode is a configuration error that prevents startup; binding a hardcoded key to its own action is allowed.
 

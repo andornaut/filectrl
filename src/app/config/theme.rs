@@ -312,6 +312,13 @@ style_struct!(Help {
     shortcuts,
 });
 
+style_struct!(OpenWith {
+    base,
+    detail,
+    selected,
+    shortcut,
+});
+
 #[derive(Deserialize)]
 pub struct Theme {
     #[serde(flatten)]
@@ -325,6 +332,7 @@ pub struct Theme {
     pub file_type: FileType,
     pub help: Help,
     pub notice: Notice,
+    pub open_with: OpenWith,
     pub prompt: Prompt,
     pub scrollbar: ScrollbarConfig,
     pub status: Status,

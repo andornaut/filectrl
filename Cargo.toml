@@ -37,6 +37,20 @@ unicode-segmentation = "1.13.3"
 unix_mode = "0.1.4"
 shell-words = "1.1.1"
 
+# "Open with" application discovery. Both use default-features = false:
+# freedesktop-desktop-entry's default "gettext" feature pulls in gettext-sys,
+# a C build dependency.
+[target.'cfg(target_os = "linux")'.dependencies]
+freedesktop-desktop-entry = {version = "0.8.1", default-features = false}
+mime = "0.3.17" # xdg-mime's MIME type, which it does not re-export
+xdg-mime = "0.4.0"
+
+# NSWorkspace application lookup. default-features = false keeps this to five
+# crates; the defaults pull in most of the AppKit/CoreGraphics surface.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = {version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"]}
+objc2-foundation = {version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSFileManager", "NSProcessInfo", "NSString", "NSURL"]}
+
 [dev-dependencies]
 cargo-husky = {version = "1.5.0", default-features = false, features = ["user-hooks"]}
 test-case = "3.3.1"

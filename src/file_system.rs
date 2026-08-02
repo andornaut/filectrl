@@ -1,5 +1,6 @@
 mod debounce;
 mod handler;
+pub mod open_with;
 mod operations;
 pub mod path_info;
 mod search;
@@ -20,7 +21,7 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
-    operations::open_in,
+    operations::{open_in, spawn_argv},
     path_info::PathInfo,
     tasks::{CancelInfo, TaskCommand},
     watch::DirectoryWatcher,
@@ -339,6 +340,12 @@ impl FileSystem {
             self.command_tx.clone(),
         )
         .into()
+    }
+
+    /// Launch an application the "open with" picker already resolved into an
+    /// argv, so no template substitution or shell is involved here.
+    fn open_with(&self, working_dir: Option<&Path>, label: &str, argv: &[String]) -> CommandResult {
+        spawn_argv(working_dir, label, argv, self.command_tx.clone()).into()
     }
 
     fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {
