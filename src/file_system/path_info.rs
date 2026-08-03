@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
-    path::{MAIN_SEPARATOR, Path, PathBuf},
+    path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf},
     time::SystemTime,
 };
 
@@ -18,6 +18,67 @@ const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 fn display_name(path: &Path) -> String {
     path.file_name()
         .map_or(String::new(), |n| n.to_string_lossy().into_owned())
+}
+
+/// Trailing components a compacted path always keeps: the parent and the entry
+/// itself, which together are what identifies it.
+const KEPT_TAIL_COMPONENTS: usize = 2;
+/// Component count above which the middle is elided. At or below it, the
+/// ellipsis would replace no more than it costs.
+const MAX_PATH_COMPONENTS: usize = 4;
+
+/// A path rendered for a user-facing message: quoted, with the home directory
+/// as `~`, and a long middle elided down to the first component and the last
+/// two.
+///
+/// Messages naming two paths are otherwise long enough to wrap across several
+/// rows of the alerts view, which pushes everything else off screen; the middle
+/// of a path is the part that costs the most and says the least.
+pub struct Compact<'a>(&'a Path);
+
+pub fn compact(path: &Path) -> Compact<'_> {
+    Compact(path)
+}
+
+impl Display for Compact<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", compact_str(self.0))
+    }
+}
+
+/// The home directory, looked up once: `compact` runs per message and the
+/// lookup reads the environment and the password database.
+fn home_dir() -> Option<&'static Path> {
+    static HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+        .as_deref()
+}
+
+fn compact_str(path: &Path) -> String {
+    let text = match home_dir().and_then(|home| path.strip_prefix(home).ok()) {
+        // The home directory itself strips to an empty path.
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        None => path.display().to_string(),
+    };
+
+    // Split on the separator rather than walking `Path::components`, so the
+    // leading `/` of an absolute path and a `~` root are handled alike.
+    let parts: Vec<&str> = text.split(MAIN_SEPARATOR).collect();
+    let named = parts.iter().filter(|part| !part.is_empty()).count();
+    if named <= MAX_PATH_COMPONENTS {
+        return text;
+    }
+    let is_absolute = parts.first().is_some_and(|first| first.is_empty());
+    let named_parts: Vec<&str> = parts.into_iter().filter(|part| !part.is_empty()).collect();
+    let head = named_parts[0];
+    let tail = named_parts[named - KEPT_TAIL_COMPONENTS..].join(MAIN_SEPARATOR_STR);
+    let root = if is_absolute {
+        MAIN_SEPARATOR.to_string()
+    } else {
+        String::new()
+    };
+    format!("{root}{head}{MAIN_SEPARATOR}…{MAIN_SEPARATOR}{tail}")
 }
 
 fn breadcrumbs(path: &Path) -> Vec<String> {
@@ -452,6 +513,35 @@ mod tests {
     #[test_case(365 * 24 * 3600,          DateTimeAge::GreaterThanYear ; "365 days crosses into greater than year")]
     fn datetime_age_boundary(seconds_ago: i64, expected: DateTimeAge) {
         assert_eq!(expected, age(seconds_ago));
+    }
+
+    // compact: home as `~`, long middles elided to first + last two
+
+    #[test_case("/tmp/a.txt" => "\"/tmp/a.txt\"" ; "short absolute path is unchanged")]
+    #[test_case("/tmp/one/two/a.txt" => "\"/tmp/one/two/a.txt\"" ; "at the component limit is unchanged")]
+    #[test_case("/tmp/one/two/three/a.txt" => "\"/tmp/…/three/a.txt\"" ; "past the limit keeps the first and last two")]
+    #[test_case("/a/b/c/d/e/f/g/h.txt" => "\"/a/…/g/h.txt\"" ; "a deep path collapses to four parts")]
+    #[test_case("relative/one/two/three/a.txt" => "\"relative/…/three/a.txt\"" ; "a relative path keeps no leading separator")]
+    #[test_case("/" => "\"/\"" ; "the root is unchanged")]
+    #[test_case("a.txt" => "\"a.txt\"" ; "a bare name is unchanged")]
+    fn compact_is_correct(path: &str) -> String {
+        compact(Path::new(path)).to_string()
+    }
+
+    #[test]
+    fn compact_renders_the_home_directory_as_a_tilde() {
+        let home = directories::UserDirs::new()
+            .unwrap()
+            .home_dir()
+            .to_path_buf();
+
+        assert_eq!("\"~\"", compact(&home).to_string());
+        assert_eq!("\"~/a.txt\"", compact(&home.join("a.txt")).to_string());
+        // Still elided past the limit, counting `~` as the first component.
+        assert_eq!(
+            "\"~/…/three/a.txt\"",
+            compact(&home.join("one/two/three/a.txt")).to_string()
+        );
     }
 
     // name_comparator: strips all leading dots, then lowercases

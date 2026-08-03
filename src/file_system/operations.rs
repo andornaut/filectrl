@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::{
-    path_info::PathInfo,
+    path_info::{PathInfo, compact},
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
 use crate::command::{Command, progress::CancellationToken};
@@ -37,8 +37,8 @@ pub(super) fn stream_cd(
             Ok(entries) => entries,
             Err(error) => {
                 let _ = tx.send(Command::AlertWarn(format!(
-                    "Failed to read directory {:?}: {error}",
-                    directory.path
+                    "Failed to read directory {}: {error}",
+                    compact(&directory.path)
                 )));
                 let _ = tx.send(Command::DirectoryListingComplete { generation });
                 return;
@@ -81,8 +81,8 @@ pub(super) fn stream_cd(
         }
         if error_count > 0 {
             let _ = tx.send(Command::AlertWarn(format!(
-                "{error_count} entries in {:?} could not be read",
-                directory.path
+                "{error_count} entries in {} could not be read",
+                compact(&directory.path)
             )));
         }
         let _ = tx.send(Command::DirectoryListingComplete { generation });
@@ -217,16 +217,16 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
         // claim the file is gone.
         if let Err(error) = old_path.symlink_metadata() {
             return Err(if error.kind() == std::io::ErrorKind::NotFound {
-                anyhow!("{old_path:?} no longer exists")
+                anyhow!("{} no longer exists", compact(old_path))
             } else {
-                anyhow!("Cannot rename {old_path:?}: {error}")
+                anyhow!("Cannot rename {}: {error}", compact(old_path))
             });
         }
         // Refuse to overwrite: `fs::rename` would silently replace an
         // existing destination.
         if new_path.symlink_metadata().is_ok() {
             if !is_same_file(old_path, &new_path) {
-                return Err(anyhow!("{new_path:?} already exists"));
+                return Err(anyhow!("{} already exists", compact(&new_path)));
             }
             // Same underlying file. A case-only change of the name is a real
             // rename on a case-insensitive filesystem (where the destination
@@ -234,7 +234,11 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
             // Renaming onto another hard link of the same inode is a POSIX
             // no-op that would silently change nothing, so report it instead.
             if !is_case_only_change(old_path, &new_path) {
-                return Err(anyhow!("{old_path:?} and {new_path:?} are the same file"));
+                return Err(anyhow!(
+                    "{} and {} are the same file",
+                    compact(old_path),
+                    compact(&new_path)
+                ));
             }
         }
         fs::rename(old_path, new_path)?;
