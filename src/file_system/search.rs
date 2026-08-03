@@ -16,43 +16,28 @@ use crate::command::{Command, progress::CancellationToken};
 
 const SEARCH_BATCH_SIZE: usize = 128;
 
-/// Bounds on a single traversal. Injected rather than read from constants so
-/// that the limit behaviour can be exercised without building a tree of
-/// `max_results` entries.
-struct Limits {
-    max_depth: u32,
-    max_results: u32,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            max_depth: 20,
-            max_results: 10_000,
-        }
-    }
+/// Bounds on a single traversal, configured under `[file_system]`. Injected
+/// rather than read from constants so that the limit behaviour can be exercised
+/// without building a tree of `max_results` entries.
+pub(super) struct Limits {
+    pub(super) max_depth: u32,
+    pub(super) max_results: u32,
 }
 
 /// Spawns a background thread that performs a breadth-first, case-insensitive
 /// name search starting from `root`. Matching entries are sent in batches as
 /// `Command::ListingBatch` through the channel. A `Command::ExitedSearch`
 /// is sent when the traversal finishes (or is cancelled).
-pub fn run_search(
+pub(super) fn run_search(
+    limits: Limits,
+    tx: Sender<Command>,
+    cancel: CancellationToken,
     root: PathInfo,
     query: String,
     generation: u64,
-    tx: Sender<Command>,
-    cancel: CancellationToken,
 ) {
     thread::spawn(move || {
-        search(
-            &Limits::default(),
-            &tx,
-            &cancel,
-            &root.path,
-            &query,
-            generation,
-        );
+        search(&limits, &tx, &cancel, &root.path, &query, generation);
     });
 }
 
@@ -190,6 +175,14 @@ mod tests {
 
     const GENERATION: u64 = 7;
 
+    /// The shipped limits, from `default_config.toml`.
+    fn default_limits() -> Limits {
+        Limits {
+            max_depth: 20,
+            max_results: 10_000,
+        }
+    }
+
     /// Runs a search to completion on this thread and returns everything it
     /// sent, so each test can assert on the whole conversation.
     fn run(limits: &Limits, root: &TempDir, query: &str) -> (Vec<Command>, CancellationToken) {
@@ -250,7 +243,7 @@ mod tests {
         std::fs::write(root.join("README.md"), b"").unwrap();
         std::fs::write(root.join("notes.txt"), b"").unwrap();
 
-        let (commands, _) = run(&Limits::default(), &root, "eadm");
+        let (commands, _) = run(&default_limits(), &root, "eadm");
 
         assert_eq!(vec!["README.md".to_string()], matched_names(&commands));
     }
@@ -260,7 +253,7 @@ mod tests {
         let root = TempDir::new("search_exit");
         std::fs::write(root.join("a"), b"").unwrap();
 
-        let (commands, cancel) = run(&Limits::default(), &root, "a");
+        let (commands, cancel) = run(&default_limits(), &root, "a");
 
         assert_eq!(1, exits(&commands));
         // The exit self-cancels so that a cancel keypress racing it finds
@@ -275,7 +268,7 @@ mod tests {
         let root = nested_tree("search_depth_ok", 3);
         let limits = Limits {
             max_depth: 3,
-            ..Default::default()
+            ..default_limits()
         };
 
         let (commands, _) = run(&limits, &root, "hit");
@@ -289,7 +282,7 @@ mod tests {
         let root = nested_tree("search_depth_hit", 4);
         let limits = Limits {
             max_depth: 2,
-            ..Default::default()
+            ..default_limits()
         };
 
         let (commands, _) = run(&limits, &root, "hit");
@@ -311,7 +304,7 @@ mod tests {
         }
         let limits = Limits {
             max_results: 2,
-            ..Default::default()
+            ..default_limits()
         };
 
         let (commands, _) = run(&limits, &root, "hit");
@@ -334,7 +327,7 @@ mod tests {
         cancel.cancel();
 
         search(
-            &Limits::default(),
+            &default_limits(),
             &tx,
             &cancel,
             root.path(),
@@ -381,7 +374,7 @@ mod tests {
         // an ancestor, never terminate.
         std::os::unix::fs::symlink(&real, root.join("link")).unwrap();
 
-        let (commands, _) = run(&Limits::default(), &root, "hit");
+        let (commands, _) = run(&default_limits(), &root, "hit");
 
         assert_eq!(vec!["hit".to_string()], matched_names(&commands));
     }
