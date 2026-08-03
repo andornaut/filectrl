@@ -1,3 +1,4 @@
+mod conflicts;
 mod debounce;
 mod handler;
 pub mod open_with;
@@ -24,6 +25,7 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
+    conflicts::Conflicts,
     operations::{open_in, spawn_argv},
     path_info::{PathInfo, compact},
     search::Limits,
@@ -64,9 +66,9 @@ struct PendingPaste {
     /// How many tasks actually started, which decides whether the clipboard is
     /// cleared, reduced, or left alone.
     started: usize,
-    /// Set by an `*All` answer, which then resolves every later collision
-    /// without prompting again.
-    apply_to_all: Option<ConflictChoice>,
+    /// The paste's conflict decisions, shared with the workers so a collision
+    /// found inside a merged directory is answered the same way as one here.
+    conflicts: Conflicts,
     /// Destination names already spoken for by sources queued earlier in this
     /// paste. Their work is queued but may not have run, so the filesystem does
     /// not show them yet; without this, two marked sources sharing a basename
@@ -78,8 +80,8 @@ struct PendingPaste {
 /// What already holds a source's name in the destination directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Occupant {
-    /// A directory, which is never replaced: removing it would take its
-    /// contents with it, and merging into it is not supported.
+    /// A directory. Never replaced, because removing it would take its
+    /// contents with it; a directory source merges into it instead.
     Directory,
     /// A file, symlink, or other non-directory, which the user may replace.
     Replaceable,
@@ -94,6 +96,8 @@ enum PasteStep {
     /// Drop the source without running anything.
     Skip,
     /// Run the source, replacing what is at its destination when `overwrite`.
+    /// A directory whose destination is an existing directory runs with
+    /// `overwrite: false` and merges into it.
     Run { overwrite: bool },
 }
 
@@ -120,36 +124,21 @@ impl PendingPaste {
     /// What to do with the source at the front of the queue, given what is
     /// already at its destination. Pure, so the whole answer matrix can be
     /// exercised without a filesystem or a worker.
-    fn step(&self, occupant: Option<Occupant>) -> PasteStep {
-        let Some(occupant) = occupant else {
-            return PasteStep::Run { overwrite: false };
-        };
-        let can_overwrite = occupant == Occupant::Replaceable;
-        match self.apply_to_all {
-            Some(ConflictChoice::SkipAll) => PasteStep::Skip,
-            // "Overwrite all" cannot answer for a directory, so that collision
-            // is still asked about.
-            Some(ConflictChoice::OverwriteAll) if can_overwrite => {
-                PasteStep::Run { overwrite: true }
-            }
-            _ => PasteStep::Ask { can_overwrite },
-        }
+    fn step(&self, src: &PathInfo, occupant: Option<Occupant>) -> PasteStep {
+        // Only a copy can merge into an existing directory; a move would have
+        // to rename over a non-empty one.
+        step(
+            self.conflicts.standing(),
+            src.is_directory() && !self.is_move,
+            occupant,
+        )
     }
 
-    /// Records the answer to the collision in front of the user. An `*All`
-    /// answer becomes the standing answer for every later collision. Returns
+    /// Records the answer to the collision in front of the user. Returns
     /// whether the answered source runs, replacing its destination.
     fn answer(&mut self, choice: ConflictChoice) -> bool {
-        if matches!(
-            choice,
-            ConflictChoice::OverwriteAll | ConflictChoice::SkipAll
-        ) {
-            self.apply_to_all = Some(choice);
-        }
-        matches!(
-            choice,
-            ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
-        )
+        self.conflicts.answer(choice);
+        conflicts::replaces(choice)
     }
 
     /// The clipboard follow-up once the paste is finished or abandoned. Nothing
@@ -170,6 +159,36 @@ impl PendingPaste {
             ClipboardEntry::Copy(self.failed)
         };
         Some(Command::SetClipboardEntry(Some(entry)))
+    }
+}
+
+/// What to do with a source, given the paste's standing answer, whether the
+/// source is a directory, and what already holds its destination name. Pure, so
+/// the whole answer matrix can be exercised without a filesystem or a worker.
+fn step(
+    standing: Option<ConflictChoice>,
+    can_merge: bool,
+    occupant: Option<Occupant>,
+) -> PasteStep {
+    let Some(occupant) = occupant else {
+        return PasteStep::Run { overwrite: false };
+    };
+    // A directory pasted onto a directory merges, which only adds to what is
+    // there; each name that actually collides inside it is asked about as the
+    // copy reaches it. Nothing is lost, so there is nothing to ask here.
+    if occupant == Occupant::Directory && can_merge {
+        return match standing {
+            Some(ConflictChoice::SkipAll) => PasteStep::Skip,
+            _ => PasteStep::Run { overwrite: false },
+        };
+    }
+    let can_overwrite = occupant == Occupant::Replaceable;
+    match standing {
+        Some(ConflictChoice::SkipAll) => PasteStep::Skip,
+        // "Overwrite all" cannot answer for a directory, so that collision is
+        // still asked about.
+        Some(ConflictChoice::OverwriteAll) if can_overwrite => PasteStep::Run { overwrite: true },
+        _ => PasteStep::Ask { can_overwrite },
     }
 }
 
@@ -202,8 +221,13 @@ pub struct FileSystem {
     open_file_template: String,
     open_filectrl_window_template: String,
     /// The paste awaiting a conflict answer, if any. `Some` only while the
-    /// conflict prompt is open.
+    /// queue itself is waiting on one.
     pending_paste: Option<PendingPaste>,
+    /// The most recent paste's conflict decisions. Outlives `pending_paste`,
+    /// which is dropped as soon as the queue has handed out every source: a
+    /// worker merging a directory keeps finding collisions long after that, and
+    /// its answer has to reach it.
+    active_conflicts: Option<Conflicts>,
     search_max_depth: u32,
     search_max_results: u32,
     watcher: Option<DirectoryWatcher>,
@@ -235,6 +259,7 @@ impl FileSystem {
             open_file_template: config.openers.open_file.clone(),
             open_filectrl_window_template: config.openers.open_filectrl_window.clone(),
             pending_paste: None,
+            active_conflicts: None,
             search_max_depth: config.file_system.search_max_depth,
             search_max_results: config.file_system.search_max_results,
             watcher,
@@ -598,9 +623,14 @@ impl FileSystem {
     /// whether it started, together with the alerts it produced (a task that
     /// fails validation produces one and starts nothing). Started tasks send
     /// their initial progress snapshot themselves, before queueing their work.
-    fn run_task(&mut self, task: TaskCommand) -> (bool, Vec<Command>) {
+    fn run_task(
+        &mut self,
+        task: TaskCommand,
+        conflicts: Option<&Conflicts>,
+    ) -> (bool, Vec<Command>) {
         let result = task.run(
             self.command_tx.clone(),
+            conflicts,
             self.buffer_min_bytes,
             self.buffer_max_bytes,
         );
@@ -614,13 +644,15 @@ impl FileSystem {
     /// Starts a paste. Sources run one at a time so that a name already taken
     /// in the destination can be answered for before the next source starts.
     fn start_paste(&mut self, is_move: bool, srcs: &[PathInfo], dest: &PathInfo) -> CommandResult {
+        let conflicts = Conflicts::new(self.command_tx.clone());
+        self.active_conflicts = Some(conflicts.clone());
         self.pending_paste = Some(PendingPaste {
             is_move,
             dest: dest.clone(),
             remaining: srcs.iter().cloned().collect(),
             failed: Vec::new(),
             started: 0,
-            apply_to_all: None,
+            conflicts,
             claimed: HashSet::new(),
         });
         self.advance_paste()
@@ -636,7 +668,7 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         while let Some(src) = pending.remaining.front().cloned() {
-            match pending.step(pending.occupant(&src)) {
+            match pending.step(&src, pending.occupant(&src)) {
                 PasteStep::Ask { can_overwrite } => {
                     commands.push(Command::OpenPrompt(PromptAction::Conflict {
                         name: src.display_name.clone(),
@@ -664,6 +696,15 @@ impl FileSystem {
     /// Applies a conflict answer to the source at the front of the queue, then
     /// keeps going.
     fn resolve_conflict(&mut self, choice: ConflictChoice) -> CommandResult {
+        // A worker blocked on a collision it found inside a directory it is
+        // merging into takes the answer directly: the queue is not waiting on
+        // that one and has nothing to advance. Checked against the paste's
+        // decisions rather than the queue, which is long gone by then.
+        if let Some(conflicts) = &self.active_conflicts
+            && conflicts.answer(choice)
+        {
+            return CommandResult::Handled;
+        }
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::Handled;
         };
@@ -685,9 +726,23 @@ impl FileSystem {
     /// what was not pasted. Deliberately skipped sources are not among them:
     /// skipping was a choice, not a failure.
     fn cancel_paste(&mut self) -> CommandResult {
+        // Releases a worker blocked on a collision, and skips the rest of the
+        // tree it was copying rather than reopening the prompt just dismissed.
+        // Done before the queue check: a worker can still be asking after the
+        // queue has finished.
+        let had_worker = self
+            .active_conflicts
+            .take()
+            .map(|conflicts| conflicts.abandon())
+            .unwrap_or(false);
         let Some(mut pending) = self.pending_paste.take() else {
-            return CommandResult::NotHandled;
+            return if had_worker {
+                CommandResult::Handled
+            } else {
+                CommandResult::NotHandled
+            };
         };
+
         let remaining: Vec<PathInfo> = pending.remaining.drain(..).collect();
         pending.failed.extend(remaining);
         pending
@@ -708,7 +763,7 @@ impl FileSystem {
         } else {
             TaskCommand::Copy(src.clone(), pending.dest.clone(), overwrite)
         };
-        let (started, commands) = self.run_task(task);
+        let (started, commands) = self.run_task(task, Some(&pending.conflicts.clone()));
         if started {
             pending.started += 1;
         } else {
@@ -889,6 +944,7 @@ mod tests {
             open_file_template: String::new(),
             open_filectrl_window_template: String::new(),
             pending_paste: None,
+            active_conflicts: None,
             search_max_depth: 20,
             search_max_results: 10_000,
             watcher: None,
@@ -1072,14 +1128,20 @@ mod tests {
 
     // ── the paste decision, with no filesystem and no worker ─────────────────
 
-    fn pending(apply_to_all: Option<ConflictChoice>) -> PendingPaste {
+    fn pending(standing: Option<ConflictChoice>) -> PendingPaste {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::mem::forget(rx);
+        let conflicts = Conflicts::new(tx);
+        if let Some(standing) = standing {
+            conflicts.answer(standing);
+        }
         PendingPaste {
             is_move: false,
             dest: PathInfo::try_from(Path::new("/")).unwrap(),
             remaining: VecDeque::new(),
             failed: Vec::new(),
             started: 0,
-            apply_to_all,
+            conflicts,
             claimed: HashSet::new(),
         }
     }
@@ -1094,10 +1156,21 @@ mod tests {
     #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Replaceable) => PasteStep::Run { overwrite: true } ; "overwrite all replaces a file")]
     #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Directory) => PasteStep::Ask { can_overwrite: false } ; "overwrite all still asks about a directory")]
     fn the_paste_step_matrix(
-        apply_to_all: Option<ConflictChoice>,
+        standing: Option<ConflictChoice>,
         occupant: Option<Occupant>,
     ) -> PasteStep {
-        pending(apply_to_all).step(occupant)
+        // A non-directory source, so the merge case is exercised separately.
+        step(standing, false, occupant)
+    }
+
+    #[test_case(None => PasteStep::Run { overwrite: false } ; "merges without asking")]
+    #[test_case(Some(ConflictChoice::SkipAll) => PasteStep::Skip ; "skip all still skips it")]
+    #[test_case(Some(ConflictChoice::OverwriteAll) => PasteStep::Run { overwrite: false } ; "overwrite all still merges rather than replacing")]
+    fn a_directory_onto_a_directory(standing: Option<ConflictChoice>) -> PasteStep {
+        // Merging only adds to what is there, and each name that actually
+        // collides inside is asked about as the copy reaches it, so there is
+        // nothing to ask here.
+        step(standing, true, Some(Occupant::Directory))
     }
 
     #[test]
@@ -1136,9 +1209,9 @@ mod tests {
         // way this comes up, since it reopens the prompt with only the skip
         // choices; answering it with the single-entry `s` leaves the standing
         // answer alone.
-        assert_eq!(Some(ConflictChoice::SkipAll), pending.apply_to_all);
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
         pending.answer(ConflictChoice::Skip);
-        assert_eq!(Some(ConflictChoice::SkipAll), pending.apply_to_all);
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
     }
 
     #[test_case(ConflictChoice::Skip => (false, None) ; "skip runs nothing and does not stand")]
@@ -1150,7 +1223,7 @@ mod tests {
     ) -> (bool, Option<ConflictChoice>) {
         let mut pending = pending(None);
         let runs = pending.answer(choice);
-        (runs, pending.apply_to_all)
+        (runs, pending.conflicts.standing())
     }
 
     /// A paste with `started` tasks started and `failed` sources that could not.
@@ -1161,7 +1234,7 @@ mod tests {
             remaining: VecDeque::new(),
             failed,
             started,
-            apply_to_all: None,
+            conflicts: Conflicts::new(std::sync::mpsc::channel().0),
             claimed: HashSet::new(),
         }
         .clipboard_follow_up()

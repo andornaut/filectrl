@@ -92,9 +92,9 @@ Key | Action
 
 An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
 
-Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those, and entries you skip deliberately are not added to it. If nothing was pasted at all, the clipboard is left exactly as it was so the paste can be retried unchanged.
+**Copying a directory onto a directory of the same name merges into it.** Merging only adds: entries that exist only in the destination are left alone, and every name that actually collides inside is asked about as the copy reaches it, at any depth. An <kbd>S</kbd> or <kbd>O</kbd> answer applies to the rest of the tree as well as the rest of the paste. Cutting a directory onto an existing directory is refused rather than merged, matching `mv`, which cannot rename over a directory that is not empty.
 
-A name that collides *inside* a directory being copied is reported as an error rather than prompting; only the entry you pasted is asked about.
+Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those, and entries you skip deliberately are not added to it. If nothing was pasted at all, the clipboard is left exactly as it was so the paste can be retried unchanged.
 
 ### Multi-select
 
