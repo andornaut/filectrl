@@ -85,9 +85,9 @@ fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
 fn configured_opener(path: &Path) -> Option<AppCandidate> {
     let openers = &Config::global().openers;
     let (key, template) = if path.is_dir() {
-        ("open_current_directory", &openers.open_current_directory)
+        ("open_directory", &openers.open_directory)
     } else {
-        ("open_selected_file", &openers.open_selected_file)
+        ("open_file", &openers.open_file)
     };
     if template.is_empty() {
         debug!("No configured opener for {path:?}");
