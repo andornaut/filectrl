@@ -183,9 +183,13 @@ pub struct FileSystem {
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     previous_directory: Option<PathInfo>,
-    /// Cancellation token for the in-flight streamed directory load, if any.
-    /// Cancelled when a new load starts so stale batches don't bleed across.
-    current_load: Option<CancellationToken>,
+    /// The in-flight streamed directory load: its generation, and the token
+    /// that stops it. Cancelled when a new load starts so stale batches don't
+    /// bleed across, and cleared when the load reports itself complete.
+    current_load: Option<(u64, CancellationToken)>,
+    /// Set when a refresh arrives while a load is already streaming, so the
+    /// load runs to completion and the refresh is re-issued afterwards.
+    reload_pending: bool,
     /// The latest search's generation. `ExitedSearch` carries it, so every
     /// consumer can ignore messages from a superseded search instead of
     /// tearing down its replacement.
@@ -224,6 +228,7 @@ impl FileSystem {
             directory: None,
             previous_directory: None,
             current_load: None,
+            reload_pending: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: config.openers.open_directory.clone(),
@@ -327,7 +332,7 @@ impl FileSystem {
         self.cancel_current_load();
         let generation = self.bump_generation();
         let token = CancellationToken::new();
-        self.current_load = Some(token.clone());
+        self.current_load = Some((generation, token.clone()));
         operations::stream_cd(
             directory.clone(),
             generation,
@@ -359,9 +364,29 @@ impl FileSystem {
     /// Cancels the in-flight streamed directory load, if any. No-op when
     /// nothing is streaming.
     fn cancel_current_load(&mut self) {
-        if let Some(token) = self.current_load.take() {
+        // Whatever the pending refresh was going to re-read has been replaced,
+        // so it goes with the load.
+        self.reload_pending = false;
+        if let Some((_, token)) = self.current_load.take() {
             token.cancel();
         }
+    }
+
+    /// Handles a streamed load reporting itself complete. Clears the in-flight
+    /// load and re-issues a refresh that arrived while it was running.
+    fn on_listing_complete(&mut self, generation: u64) -> CommandResult {
+        if self
+            .current_load
+            .as_ref()
+            .is_none_or(|(current, _)| *current != generation)
+        {
+            return CommandResult::NotHandled;
+        }
+        self.current_load = None;
+        if std::mem::take(&mut self.reload_pending) {
+            return self.refresh();
+        }
+        CommandResult::NotHandled
     }
 
     /// Full search teardown (Esc / `ResetView`): cancel and drop every search
@@ -556,6 +581,16 @@ impl FileSystem {
     }
 
     fn refresh(&mut self) -> CommandResult {
+        // A load for this directory is already streaming and will pick the
+        // change up. Restarting it would cancel it before it can finalize, and
+        // under sustained churn (a build writing into the directory being
+        // viewed) it would never finalize at all: both the sort and the end of
+        // the loading state hang off the completion. The refresh is re-issued
+        // when the load reports in.
+        if self.current_load.is_some() {
+            self.reload_pending = true;
+            return CommandResult::Handled;
+        }
         self.cd(self.current_directory().clone(), false)
     }
 
@@ -847,6 +882,7 @@ mod tests {
             directory: None,
             previous_directory: None,
             current_load: None,
+            reload_pending: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: String::new(),
@@ -1456,7 +1492,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         let load_token = CancellationToken::new();
-        file_system.current_load = Some(load_token.clone());
+        file_system.current_load = Some((1, load_token.clone()));
 
         let result = file_system.handle_command(&Command::GetBookmarks);
 
@@ -1472,6 +1508,67 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_during_a_load_waits_for_it_instead_of_restarting_it() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_reload");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        let load_token = CancellationToken::new();
+        file_system.current_load = Some((7, load_token.clone()));
+
+        let result = file_system.handle_command(&Command::RefreshDirectory);
+
+        // Restarting would cancel the load before it can finalize, and the
+        // sort and the end of the loading state both hang off that completion.
+        assert!(matches!(result, CommandResult::Handled));
+        assert!(!load_token.is_cancelled());
+        assert!(file_system.reload_pending);
+        drop(rx);
+    }
+
+    #[test]
+    fn the_deferred_refresh_runs_once_the_load_reports_in() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_reload_complete");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.current_load = Some((7, CancellationToken::new()));
+        file_system.handle_command(&Command::RefreshDirectory);
+
+        let result =
+            file_system.handle_command(&Command::DirectoryListingComplete { generation: 7 });
+
+        // The change that triggered the refresh may have landed after the load
+        // opened the directory, so it still has to be re-read; deferring it is
+        // not dropping it.
+        let command = Command::try_from(result).expect("expected a derived command");
+        assert!(matches!(command, Command::RefreshedDirectory { .. }));
+        assert!(!file_system.reload_pending);
+        drop(rx);
+    }
+
+    #[test]
+    fn a_completion_from_a_superseded_load_is_ignored() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.current_load = Some((9, CancellationToken::new()));
+        file_system.reload_pending = true;
+
+        let result =
+            file_system.handle_command(&Command::DirectoryListingComplete { generation: 7 });
+
+        // An older load finishing must not clear the current one or consume
+        // the refresh waiting on it.
+        assert!(matches!(result, CommandResult::NotHandled));
+        assert!(file_system.current_load.is_some());
+        assert!(file_system.reload_pending);
+        drop(rx);
+    }
+
+    #[test]
     fn search_cancels_the_in_flight_directory_load() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1482,7 +1579,7 @@ mod tests {
         let root = TempDir::new("fs_search_root");
         file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
         let load_token = CancellationToken::new();
-        file_system.current_load = Some(load_token.clone());
+        file_system.current_load = Some((1, load_token.clone()));
 
         let _ = file_system.search("query");
 
