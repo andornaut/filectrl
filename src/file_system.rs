@@ -67,6 +67,85 @@ struct PendingPaste {
     apply_to_all: Option<ConflictChoice>,
 }
 
+/// What already holds a source's name in the destination directory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Occupant {
+    /// A directory, which is never replaced: removing it would take its
+    /// contents with it, and merging into it is not supported.
+    Directory,
+    /// A file, symlink, or other non-directory, which the user may replace.
+    Replaceable,
+}
+
+/// What a paste should do with the source at the front of its queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PasteStep {
+    /// Stop and ask. `can_overwrite` is false for a directory, whose
+    /// replacement is never offered.
+    Ask { can_overwrite: bool },
+    /// Drop the source without running anything.
+    Skip,
+    /// Run the source, replacing what is at its destination when `overwrite`.
+    Run { overwrite: bool },
+}
+
+impl PendingPaste {
+    /// What to do with the source at the front of the queue, given what is
+    /// already at its destination. Pure, so the whole answer matrix can be
+    /// exercised without a filesystem or a worker.
+    fn step(&self, occupant: Option<Occupant>) -> PasteStep {
+        let Some(occupant) = occupant else {
+            return PasteStep::Run { overwrite: false };
+        };
+        let can_overwrite = occupant == Occupant::Replaceable;
+        match self.apply_to_all {
+            Some(ConflictChoice::SkipAll) => PasteStep::Skip,
+            // "Overwrite all" cannot answer for a directory, so that collision
+            // is still asked about.
+            Some(ConflictChoice::OverwriteAll) if can_overwrite => {
+                PasteStep::Run { overwrite: true }
+            }
+            _ => PasteStep::Ask { can_overwrite },
+        }
+    }
+
+    /// Records the answer to the collision in front of the user. An `*All`
+    /// answer becomes the standing answer for every later collision. Returns
+    /// whether the answered source runs, replacing its destination.
+    fn answer(&mut self, choice: ConflictChoice) -> bool {
+        if matches!(
+            choice,
+            ConflictChoice::OverwriteAll | ConflictChoice::SkipAll
+        ) {
+            self.apply_to_all = Some(choice);
+        }
+        matches!(
+            choice,
+            ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
+        )
+    }
+
+    /// The clipboard follow-up once the paste is finished or abandoned. Nothing
+    /// started leaves the clipboard untouched so the paste can be retried
+    /// as-is; a clean run clears it; a partial run reduces it to what was not
+    /// pasted, because a full retry would collide with the destinations just
+    /// created.
+    fn clipboard_follow_up(self) -> Option<Command> {
+        if self.started == 0 {
+            return None;
+        }
+        if self.failed.is_empty() {
+            return Some(Command::SetClipboardEntry(None));
+        }
+        let entry = if self.is_move {
+            ClipboardEntry::Move(self.failed)
+        } else {
+            ClipboardEntry::Copy(self.failed)
+        };
+        Some(Command::SetClipboardEntry(Some(entry)))
+    }
+}
+
 pub struct FileSystem {
     /// Directory holding the bookmark symlinks, resolved from the config once
     /// so bookmark reads do not depend on the process-global `Config`.
@@ -460,32 +539,27 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         while let Some(src) = pending.remaining.front().cloned() {
-            let overwrite = match existing_destination(&pending.dest, &src) {
-                None => false,
-                Some(is_directory) => match pending.apply_to_all {
-                    Some(ConflictChoice::SkipAll) => {
-                        pending.remaining.pop_front();
-                        continue;
-                    }
-                    // "Overwrite all" cannot answer for a directory, which is
-                    // never replaced, so that collision is still asked about.
-                    Some(ConflictChoice::OverwriteAll) if !is_directory => true,
-                    _ => {
-                        commands.push(Command::OpenPrompt(PromptAction::Conflict {
-                            name: src.display_name.clone(),
-                            can_overwrite: !is_directory,
-                        }));
-                        // The source stays at the front of the queue: the
-                        // answer is what pops it.
-                        self.pending_paste = Some(pending);
-                        return commands.into();
-                    }
-                },
-            };
-            pending.remaining.pop_front();
-            commands.extend(self.run_paste_task(&mut pending, src, overwrite));
+            match pending.step(existing_destination(&pending.dest, &src)) {
+                PasteStep::Ask { can_overwrite } => {
+                    commands.push(Command::OpenPrompt(PromptAction::Conflict {
+                        name: src.display_name.clone(),
+                        can_overwrite,
+                    }));
+                    // The source stays at the front of the queue: the answer is
+                    // what pops it.
+                    self.pending_paste = Some(pending);
+                    return commands.into();
+                }
+                PasteStep::Skip => {
+                    pending.remaining.pop_front();
+                }
+                PasteStep::Run { overwrite } => {
+                    pending.remaining.pop_front();
+                    commands.extend(self.run_paste_task(&mut pending, src, overwrite));
+                }
+            }
         }
-        commands.extend(finish_paste(pending));
+        commands.extend(pending.clipboard_follow_up());
         commands.into()
     }
 
@@ -498,17 +572,8 @@ impl FileSystem {
         let Some(src) = pending.remaining.pop_front() else {
             return CommandResult::Handled;
         };
-        if matches!(
-            choice,
-            ConflictChoice::OverwriteAll | ConflictChoice::SkipAll
-        ) {
-            pending.apply_to_all = Some(choice);
-        }
         let mut commands = Vec::new();
-        if matches!(
-            choice,
-            ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
-        ) {
+        if pending.answer(choice) {
             commands.extend(self.run_paste_task(&mut pending, src, true));
         }
         self.pending_paste = Some(pending);
@@ -526,7 +591,9 @@ impl FileSystem {
         };
         let remaining: Vec<PathInfo> = pending.remaining.drain(..).collect();
         pending.failed.extend(remaining);
-        finish_paste(pending).map_or(CommandResult::NotHandled, Into::into)
+        pending
+            .clipboard_follow_up()
+            .map_or(CommandResult::NotHandled, Into::into)
     }
 
     /// Runs one source of a paste, recording whether it started so the
@@ -652,36 +719,22 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
         .collect())
 }
 
-/// Whether `src`'s name is already taken in `dest`, and if so whether the entry
-/// holding it is a directory. A directory is never replaced, so the prompt
-/// withholds the overwrite choices for one. Links are not followed, so a symlink
-/// to a directory reports `Some(false)` and is replaced as a link.
-fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<bool> {
+/// What already holds `src`'s name in `dest`, or `None` when the name is free.
+/// Links are not followed, so a symlink to a directory reports `Replaceable`
+/// and is replaced as a link rather than treated as the directory it points at.
+fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
     dest.path
         .join(name)
         .symlink_metadata()
         .ok()
-        .map(|metadata| metadata.is_dir())
-}
-
-/// The clipboard follow-up for a finished or abandoned paste. Nothing started
-/// leaves the clipboard untouched so the paste can be retried as-is; a clean run
-/// clears it; a partial run reduces it to what was not pasted, because a full
-/// retry would collide with the destinations just created.
-fn finish_paste(pending: PendingPaste) -> Option<Command> {
-    if pending.started == 0 {
-        return None;
-    }
-    if pending.failed.is_empty() {
-        return Some(Command::SetClipboardEntry(None));
-    }
-    let entry = if pending.is_move {
-        ClipboardEntry::Move(pending.failed)
-    } else {
-        ClipboardEntry::Copy(pending.failed)
-    };
-    Some(Command::SetClipboardEntry(Some(entry)))
+        .map(|metadata| {
+            if metadata.is_dir() {
+                Occupant::Directory
+            } else {
+                Occupant::Replaceable
+            }
+        })
 }
 
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
@@ -697,10 +750,10 @@ fn parse_octal_mode(mode_str: &str) -> Option<u32> {
 mod tests {
     use std::path::Path;
 
+    use test_case::test_case;
+
     use super::*;
-    use crate::{
-        app::clipboard::ClipboardEntry, command::handler::CommandHandler, test_support::TempDir,
-    };
+    use crate::{command::handler::CommandHandler, test_support::TempDir};
 
     fn test_file_system(bookmarks: &TempDir, command_tx: Sender<Command>) -> FileSystem {
         FileSystem {
@@ -900,25 +953,129 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn a_directory_in_the_way_withholds_the_overwrite_choices() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_conflict_directory");
-        fx.occupy_with_directory("a.txt");
+    // ── the paste decision, with no filesystem and no worker ─────────────────
 
-        let commands = file_system
-            .handle_command(&Command::Copy {
-                srcs: vec![fx.src.clone()],
-                dest: fx.dest.clone(),
-            })
-            .into_commands();
-
-        // Replacing a directory would take its contents with it, so the prompt
-        // must not offer it.
-        assert_eq!(("a.txt", false), conflict_prompt(&commands));
+    fn pending(apply_to_all: Option<ConflictChoice>) -> PendingPaste {
+        PendingPaste {
+            is_move: false,
+            dest: PathInfo::try_from(Path::new("/")).unwrap(),
+            remaining: VecDeque::new(),
+            failed: Vec::new(),
+            started: 0,
+            apply_to_all,
+        }
     }
+
+    #[test_case(None, None => PasteStep::Run { overwrite: false } ; "a free name just runs")]
+    #[test_case(None, Some(Occupant::Replaceable) => PasteStep::Ask { can_overwrite: true } ; "a file asks, offering overwrite")]
+    #[test_case(None, Some(Occupant::Directory) => PasteStep::Ask { can_overwrite: false } ; "a directory asks, withholding overwrite")]
+    #[test_case(Some(ConflictChoice::SkipAll), None => PasteStep::Run { overwrite: false } ; "skip all does not skip a free name")]
+    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Replaceable) => PasteStep::Skip ; "skip all skips a file")]
+    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Directory) => PasteStep::Skip ; "skip all skips a directory")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), None => PasteStep::Run { overwrite: false } ; "overwrite all does not force a free name")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Replaceable) => PasteStep::Run { overwrite: true } ; "overwrite all replaces a file")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Directory) => PasteStep::Ask { can_overwrite: false } ; "overwrite all still asks about a directory")]
+    fn the_paste_step_matrix(
+        apply_to_all: Option<ConflictChoice>,
+        occupant: Option<Occupant>,
+    ) -> PasteStep {
+        pending(apply_to_all).step(occupant)
+    }
+
+    #[test_case(ConflictChoice::Skip => (false, None) ; "skip runs nothing and does not stand")]
+    #[test_case(ConflictChoice::Overwrite => (true, None) ; "overwrite runs and does not stand")]
+    #[test_case(ConflictChoice::SkipAll => (false, Some(ConflictChoice::SkipAll)) ; "skip all runs nothing and stands")]
+    #[test_case(ConflictChoice::OverwriteAll => (true, Some(ConflictChoice::OverwriteAll)) ; "overwrite all runs and stands")]
+    fn an_answer_decides_the_source_and_whether_it_stands(
+        choice: ConflictChoice,
+    ) -> (bool, Option<ConflictChoice>) {
+        let mut pending = pending(None);
+        let runs = pending.answer(choice);
+        (runs, pending.apply_to_all)
+    }
+
+    /// A paste with `started` tasks started and `failed` sources that could not.
+    fn finished(is_move: bool, started: usize, failed: Vec<PathInfo>) -> Option<Command> {
+        PendingPaste {
+            is_move,
+            dest: PathInfo::try_from(Path::new("/")).unwrap(),
+            remaining: VecDeque::new(),
+            failed,
+            started,
+            apply_to_all: None,
+        }
+        .clipboard_follow_up()
+    }
+
+    #[test]
+    fn nothing_started_leaves_the_clipboard_alone() {
+        let src = PathInfo::try_from(Path::new("/")).unwrap();
+        // The paste is retried as-is, so the clipboard must not be touched.
+        assert_eq!(None, finished(false, 0, Vec::new()));
+        assert_eq!(None, finished(false, 0, vec![src]));
+    }
+
+    #[test]
+    fn a_clean_run_clears_the_clipboard() {
+        assert_eq!(
+            Some(Command::SetClipboardEntry(None)),
+            finished(false, 2, Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_partial_run_reduces_the_clipboard_to_what_was_not_pasted() {
+        let src = PathInfo::try_from(Path::new("/")).unwrap();
+        // A full retry would collide with the destinations just created, so
+        // only what was not pasted is kept, under the original operation.
+        assert_eq!(
+            Some(Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+                vec![src.clone()]
+            )))),
+            finished(false, 1, vec![src.clone()])
+        );
+        assert_eq!(
+            Some(Command::SetClipboardEntry(Some(ClipboardEntry::Move(
+                vec![src.clone()]
+            )))),
+            finished(true, 1, vec![src])
+        );
+    }
+
+    #[test]
+    fn a_destination_is_classified_by_what_holds_the_name() {
+        let fx = CopyFixture::new("fs_occupant");
+        assert_eq!(None, existing_destination(&fx.dest, &fx.src));
+
+        fx.occupy("a.txt");
+        assert_eq!(
+            Some(Occupant::Replaceable),
+            existing_destination(&fx.dest, &fx.src)
+        );
+
+        fx.occupy_with_directory("b.txt");
+        assert_eq!(
+            Some(Occupant::Directory),
+            existing_destination(&fx.dest, &fx.other)
+        );
+    }
+
+    #[test]
+    fn a_symlinked_directory_in_the_way_is_replaceable() {
+        let fx = CopyFixture::new("fs_occupant_symlink");
+        fx.occupy_with_directory("target");
+        std::os::unix::fs::symlink(fx.dest.path.join("target"), fx.dest.path.join("a.txt"))
+            .unwrap();
+
+        // Replacing it unlinks the link, which does not touch the directory it
+        // points at, so the overwrite choices stay available.
+        assert_eq!(
+            Some(Occupant::Replaceable),
+            existing_destination(&fx.dest, &fx.src)
+        );
+    }
+
+    // ── the paste loop, which drives the decisions above ─────────────────────
 
     #[test]
     fn overwrite_replaces_the_existing_destination() {
@@ -995,34 +1152,6 @@ mod tests {
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
         assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn overwrite_all_answers_every_later_collision_without_prompting_again() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_conflict_overwrite_all");
-        fx.occupy("a.txt");
-        fx.occupy("b.txt");
-        file_system.handle_command(&Command::Copy {
-            srcs: vec![fx.src.clone(), fx.other.clone()],
-            dest: fx.dest.clone(),
-        });
-
-        let commands = file_system
-            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
-            .into_commands();
-
-        assert!(
-            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
-            "{commands:?}"
-        );
-        assert!(file_system.pending_paste.is_none());
-        await_terminal_task(&rx);
-        await_terminal_task(&rx);
-        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
-        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
     }
 
     #[test]
