@@ -12,6 +12,10 @@ buffer_max_bytes = 64000000 # 64 MB
 buffer_min_bytes = 64000 # 64 KB
 # Minimum time between filesystem updates to avoid excessive refreshes
 refresh_debounce_milliseconds = 100
+# Bounds on a recursive search: how many directory levels below the search root
+# are visited, and how many matches are collected before the walk stops
+search_max_depth = 20
+search_max_results = 10000
 
 # Programs to use to open files or directories:
 # %s will be replaced by the relevant path

@@ -165,15 +165,7 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
 /// reads (`FileSystem::bookmarks_dir`).
 pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<()> {
     let name = name.trim();
-    if name.is_empty() {
-        return Err(anyhow!("Bookmark name cannot be empty"));
-    }
-    if name.contains(std::path::MAIN_SEPARATOR) {
-        return Err(anyhow!(
-            "Bookmark name cannot contain {:?}",
-            std::path::MAIN_SEPARATOR
-        ));
-    }
+    validate_basename("Bookmark name", name)?;
     fs::create_dir_all(dir)?;
     let link = dir.join(name);
     // Reject duplicates, including a pre-existing broken symlink.
@@ -186,19 +178,35 @@ pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<
 }
 
 pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
+    validate_basename("Directory name", name)?;
     let path = parent.as_path().join(name);
     info!("Creating directory {path:?}");
     fs::create_dir(&path)?;
     Ok(())
 }
 
-pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
-    if new_basename.contains(std::path::MAIN_SEPARATOR) {
+/// Rejects a name that cannot denote a new entry inside the directory it is
+/// joined to. `Path::join` discards the base when handed an absolute path, so
+/// without this a prompt value can create or rename an entry anywhere on the
+/// filesystem rather than in the directory the user is looking at.
+fn validate_basename(kind: &str, name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(anyhow!("{kind} cannot be empty"));
+    }
+    if name == "." || name == ".." {
+        return Err(anyhow!("{kind} cannot be {name:?}"));
+    }
+    if name.contains(std::path::MAIN_SEPARATOR) {
         return Err(anyhow!(
-            "New name cannot contain {:?}",
+            "{kind} cannot contain {:?}",
             std::path::MAIN_SEPARATOR
         ));
     }
+    Ok(())
+}
+
+pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
+    validate_basename("New name", new_basename)?;
     let old_path = path.as_path();
     let new_path = join_parent(old_path, new_basename);
     info!("Renaming {old_path:?} to {new_path:?}");
@@ -304,6 +312,21 @@ mod tests {
         let result = join_parent(old_path, right);
 
         assert_eq!(expected, result.to_string_lossy());
+    }
+
+    #[test_case("" ; "empty")]
+    #[test_case("." ; "current directory")]
+    #[test_case(".." ; "parent directory")]
+    #[test_case("nested/name" ; "relative path")]
+    #[test_case("/tmp/absolute" ; "absolute path")]
+    fn create_directory_rejects_a_name_that_is_not_a_basename(name: &str) {
+        let dir = TempDir::new("ops_create");
+        let parent = PathInfo::try_from(dir.path()).unwrap();
+
+        // `Path::join` would drop the parent entirely for an absolute name, so
+        // an unvalidated name creates a directory outside the one on screen.
+        assert!(create_directory(&parent, name).is_err());
+        assert!(!Path::new("/tmp/absolute").exists());
     }
 
     #[test]

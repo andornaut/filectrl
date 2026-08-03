@@ -32,6 +32,8 @@ pub struct FileSystemConfig {
     pub buffer_max_bytes: u64,
     pub buffer_min_bytes: u64,
     pub refresh_debounce_milliseconds: u64,
+    pub search_max_depth: u32,
+    pub search_max_results: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +431,16 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
             "file_system.buffer_min_bytes ({}) must not exceed buffer_max_bytes ({})",
             fs.buffer_min_bytes,
             fs.buffer_max_bytes
+        ));
+    }
+    if fs.search_max_depth == 0 {
+        return Err(anyhow!(
+            "file_system.search_max_depth must be greater than 0"
+        ));
+    }
+    if fs.search_max_results == 0 {
+        return Err(anyhow!(
+            "file_system.search_max_results must be greater than 0"
         ));
     }
     Ok(())

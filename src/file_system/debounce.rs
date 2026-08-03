@@ -1,32 +1,33 @@
 use std::time::{Duration, Instant};
 
-/// Debounces progress updates based on bytes processed
+/// Debounces progress updates based on units processed, where a unit is
+/// whatever the caller counts: bytes copied, or entries removed.
 ///
-/// This debouncer ensures we get at least one progress update for any file size by using the `has_triggered` flag.
-/// For 0KB files, the threshold will be 0, and for non-zero files, updates are sent when:
-/// 1. The first chunk of data is processed (thanks to `has_triggered`)
+/// This debouncer ensures we get at least one progress update for any total by using the `has_triggered` flag.
+/// For an empty total, the threshold will be 0, and for non-zero totals, updates are sent when:
+/// 1. The first chunk of work is processed (thanks to `has_triggered`)
 /// 2. Subsequent chunks that exceed the percentage-based threshold
-pub struct BytesDebouncer {
-    current_bytes: u64,
+pub struct CountDebouncer {
+    current_count: u64,
     has_triggered: bool,
     threshold: u64,
 }
 
-impl BytesDebouncer {
-    pub fn new(debounce_threshold_percentage: u64, total_size: u64) -> Self {
+impl CountDebouncer {
+    pub fn new(debounce_threshold_percentage: u64, total: u64) -> Self {
         Self {
-            current_bytes: 0,
+            current_count: 0,
             has_triggered: false,
-            // saturating_mul guards against overflow for very large files;
+            // saturating_mul guards against overflow for very large totals;
             // the product is divided down to the percentage threshold.
-            threshold: total_size.saturating_mul(debounce_threshold_percentage) / 100,
+            threshold: total.saturating_mul(debounce_threshold_percentage) / 100,
         }
     }
 
-    pub fn should_trigger(&mut self, additional_bytes: u64) -> bool {
-        self.current_bytes += additional_bytes;
-        if !self.has_triggered || self.current_bytes >= self.threshold {
-            self.current_bytes = 0; // Reset for next threshold
+    pub fn should_trigger(&mut self, additional: u64) -> bool {
+        self.current_count += additional;
+        if !self.has_triggered || self.current_count >= self.threshold {
+            self.current_count = 0; // Reset for next threshold
             self.has_triggered = true;
             true
         } else {
@@ -93,42 +94,42 @@ impl TimeDebouncer {
 mod tests {
     use super::*;
 
-    mod bytes_debouncer {
+    mod count_debouncer {
         use super::*;
 
         #[test]
         fn first_call_always_triggers() {
-            let mut d = BytesDebouncer::new(5, 1_000_000);
+            let mut d = CountDebouncer::new(5, 1_000_000);
             assert!(d.should_trigger(1));
         }
 
         #[test]
         fn second_call_below_threshold_does_not_trigger() {
-            let mut d = BytesDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
+            let mut d = CountDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
             d.should_trigger(1); // first call always triggers
             assert!(!d.should_trigger(1_000)); // well below threshold
         }
 
         #[test]
         fn call_at_threshold_triggers() {
-            let mut d = BytesDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
+            let mut d = CountDebouncer::new(5, 1_000_000); // threshold = 50_000 bytes
             d.should_trigger(1); // first call
             assert!(d.should_trigger(50_000));
         }
 
         #[test]
-        fn zero_byte_file_always_triggers() {
+        fn zero_total_always_triggers() {
             // threshold = 0, so every call should trigger
-            let mut d = BytesDebouncer::new(5, 0);
+            let mut d = CountDebouncer::new(5, 0);
             assert!(d.should_trigger(0));
             assert!(d.should_trigger(0));
         }
 
         #[test]
-        fn very_large_total_size_does_not_overflow() {
+        fn very_large_total_does_not_overflow() {
             // total_size * percentage would overflow u64; saturating_mul keeps
             // the threshold finite instead of panicking (debug) or wrapping.
-            let mut d = BytesDebouncer::new(50, u64::MAX);
+            let mut d = CountDebouncer::new(50, u64::MAX);
             assert!(d.should_trigger(1)); // first call always triggers
             assert!(!d.should_trigger(1)); // below the (huge) threshold
         }

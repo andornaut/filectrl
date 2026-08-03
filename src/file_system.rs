@@ -23,6 +23,7 @@ use log::warn;
 use self::{
     operations::{open_in, spawn_argv},
     path_info::PathInfo,
+    search::Limits,
     tasks::{CancelInfo, TaskCommand},
     watch::DirectoryWatcher,
 };
@@ -67,6 +68,8 @@ pub struct FileSystem {
     open_directory_template: String,
     open_file_template: String,
     open_filectrl_window_template: String,
+    search_max_depth: u32,
+    search_max_results: u32,
     watcher: Option<DirectoryWatcher>,
 }
 
@@ -94,6 +97,8 @@ impl FileSystem {
             open_directory_template: config.openers.open_directory.clone(),
             open_file_template: config.openers.open_file.clone(),
             open_filectrl_window_template: config.openers.open_filectrl_window.clone(),
+            search_max_depth: config.file_system.search_max_depth,
+            search_max_results: config.file_system.search_max_results,
             watcher,
         }
     }
@@ -465,11 +470,15 @@ impl FileSystem {
         });
 
         search::run_search(
+            Limits {
+                max_depth: self.search_max_depth,
+                max_results: self.search_max_results,
+            },
+            self.command_tx.clone(),
+            token,
             self.current_directory().clone(),
             query.to_string(),
             generation,
-            self.command_tx.clone(),
-            token,
         );
 
         // Tell consumers which generation is now current, so they can ignore
@@ -546,6 +555,8 @@ mod tests {
             open_directory_template: String::new(),
             open_file_template: String::new(),
             open_filectrl_window_template: String::new(),
+            search_max_depth: 20,
+            search_max_results: 10_000,
             watcher: None,
         }
     }

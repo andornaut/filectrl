@@ -3,7 +3,11 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool, mpsc::Sender},
+    sync::{
+        Arc, OnceLock,
+        atomic::AtomicBool,
+        mpsc::{self, Sender},
+    },
     thread,
 };
 
@@ -29,6 +33,33 @@ const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 /// `Ok(0)` immediately and write an empty destination. 8 KiB matches std's
 /// default I/O buffer size.
 const MIN_COPY_BUFFER_BYTES: usize = 8 * 1024;
+
+type Job = Box<dyn FnOnce() + Send>;
+
+/// Queues file-operation work on a single background thread, so that pasting or
+/// deleting N marked entries runs one operation at a time rather than spawning N
+/// threads that compete for the same disk. Jobs run in the order they were
+/// queued. The thread is started on first use and lives for the rest of the
+/// process.
+///
+/// Only the worker side is queued: each task still validates and registers
+/// itself on the calling thread, so a batch reports which sources failed before
+/// any of them starts.
+fn queue_operation(job: impl FnOnce() + Send + 'static) {
+    static QUEUE: OnceLock<Sender<Job>> = OnceLock::new();
+
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Job>();
+        thread::spawn(move || {
+            for job in rx {
+                job();
+            }
+        });
+        tx
+    });
+    // The receiver outlives the process, so the send cannot fail.
+    let _ = queue.send(Box::new(job));
+}
 
 pub struct CancelInfo {
     pub id: usize,
@@ -111,12 +142,14 @@ fn run_copy_task(
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
-    let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
-        Ok(paths) => paths,
+    // Re-stat first: `validate_paths` decides whether the subtree check applies
+    // from the source's type, so it must not read selection-time metadata.
+    let path = match restat_source("copy", &path.path) {
+        Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let path = match restat_source("copy", &old_path) {
-        Ok(fresh) => fresh,
+    let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
+        Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
 
@@ -152,7 +185,7 @@ fn run_copy_task(
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
-    thread::spawn(move || {
+    queue_operation(move || {
         if let Some((active, errors)) = copy_with_progress(
             &old_path,
             &new_path,
@@ -177,12 +210,14 @@ fn run_move_task(
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
-    let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
-        Ok(paths) => paths,
+    // Re-stat first: `validate_paths` decides whether the subtree check applies
+    // from the source's type, so it must not read selection-time metadata.
+    let path = match restat_source("move", &path.path) {
+        Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let path = match restat_source("move", &old_path) {
-        Ok(fresh) => fresh,
+    let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
+        Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
 
@@ -200,7 +235,7 @@ fn run_move_task(
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
-    thread::spawn(move || {
+    queue_operation(move || {
         // Narrow the cancel-vs-rename window: a keypress that lands before
         // the worker starts is honored instead of racing the rename.
         if active.is_cancelled() {
@@ -273,7 +308,12 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     let kind = TaskKind::Delete {
         path: display_path(&path.path),
     };
-    let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
+    // Delete progress counts entries, not bytes: a directory's own size says
+    // nothing about how much work removing it is. Seed with the single entry a
+    // non-directory delete removes; a directory's real total is scanned in the
+    // worker (the scan can be slow and must not block the UI event loop) and
+    // applied via `active.set_total`.
+    let (mut active, initial, token) = ActiveTask::new(tx, kind, 1);
     let is_directory = path.is_directory();
     let path = path.path.clone();
     info!("Deleting {path:?}");
@@ -282,7 +322,14 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
-    thread::spawn(move || {
+    queue_operation(move || {
+        if is_directory {
+            let Some(total) = dir_total_entries(&active, &path) else {
+                active.cancelled();
+                return;
+            };
+            active.set_total(total);
+        }
         if let Some(active) = remove_path(&path, is_directory, active) {
             active.done();
         }
@@ -337,20 +384,26 @@ fn copy_with_progress(
     buffer_max_bytes: u64,
 ) -> Option<(ActiveTask, Vec<String>)> {
     let total_size = if is_directory {
-        let size = dir_total_size(old_path);
+        let Some(size) = dir_total_size(&active, old_path) else {
+            active.cancelled();
+            return None;
+        };
         active.set_total(size);
         size
     } else {
         entry_size
     };
-    let buffer_size = copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes);
+    // One buffer for the whole tree. It is sized from the tree's total, so
+    // allocating it per file would hand every small file in a large directory
+    // its own multi-megabyte allocation.
+    let mut buffer = vec![0; copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes)];
     let mut errors = Vec::new();
     if !copy_path(
         old_path,
         new_path,
         &mut active,
         &mut errors,
-        buffer_size,
+        &mut buffer,
         is_directory,
         source_mode,
     ) {
@@ -362,14 +415,25 @@ fn copy_with_progress(
 
 /// Best-effort recursive size for the progress total. Entries that cannot be
 /// read are skipped here; the copy itself reports them as errors.
-fn dir_total_size(root: &Path) -> u64 {
+///
+/// Returns `None` when the task was cancelled. The scan runs for as long as the
+/// tree is large, and it runs before any bytes are copied, so it has to observe
+/// the token itself: otherwise a cancel keypress is acknowledged in the UI while
+/// the walk keeps running to completion.
+fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
     let mut total = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
+        if active.is_cancelled() {
+            return None;
+        }
         let Ok(entries) = fs::read_dir(&path) else {
             continue;
         };
         for entry in entries.flatten() {
+            if active.is_cancelled() {
+                return None;
+            }
             // `DirEntry::metadata` does not follow symlinks and avoids a
             // second path lookup per entry.
             let Ok(metadata) = entry.metadata() else {
@@ -382,7 +446,36 @@ fn dir_total_size(root: &Path) -> u64 {
             }
         }
     }
-    total
+    Some(total)
+}
+
+/// Best-effort recursive entry count for the delete progress total, including
+/// `root` itself. Reads directories only, with no per-entry stat, so it is
+/// cheaper than `dir_total_size`; a directory that cannot be listed counts as
+/// the single entry it is. Returns `None` when the task was cancelled.
+fn dir_total_entries(active: &ActiveTask, root: &Path) -> Option<u64> {
+    let mut total = 1; // `root` itself, which appears in no listing.
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        if active.is_cancelled() {
+            return None;
+        }
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if active.is_cancelled() {
+                return None;
+            }
+            total += 1;
+            // `file_type` does not follow symlinks, matching the delete walk:
+            // a link to a directory is unlinked rather than descended into.
+            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    Some(total)
 }
 
 /// Unwraps a `Result`, or finalizes `$active` with `"{$ctx}: {error}"` and
@@ -464,7 +557,7 @@ fn copy_directory(
     new_path: &Path,
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
-    buffer_size: usize,
+    buffer: &mut [u8],
 ) -> bool {
     if let Err(error) = fs::create_dir(new_path) {
         // The subtree cannot be copied at all; skip it and continue with
@@ -530,7 +623,7 @@ fn copy_directory(
             &dst,
             active,
             errors,
-            buffer_size,
+            buffer,
             metadata.is_dir(),
             metadata.permissions().mode(),
         ) {
@@ -566,7 +659,7 @@ fn copy_file(
     new_path: &Path,
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
-    buffer_size: usize,
+    buffer: &mut [u8],
     source_mode: u32,
 ) -> bool {
     let total_size = active.total_size();
@@ -580,8 +673,7 @@ fn copy_file(
         }
     };
 
-    let mut buffer = vec![0; buffer_size];
-    let mut debouncer = debounce::BytesDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
+    let mut debouncer = debounce::CountDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
 
     loop {
         if active.is_cancelled() {
@@ -590,7 +682,7 @@ fn copy_file(
             return false;
         }
 
-        match old_file.read(&mut buffer) {
+        match old_file.read(buffer) {
             Ok(0) => {
                 apply_permissions(source_mode, new_path);
                 return true;
@@ -623,7 +715,7 @@ fn copy_path(
     new_path: &Path,
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
-    buffer_size: usize,
+    buffer: &mut [u8],
     is_directory: bool,
     source_mode: u32,
 ) -> bool {
@@ -634,9 +726,9 @@ fn copy_path(
         copy_symlink(old_path, new_path, errors);
         true
     } else if is_directory {
-        copy_directory(old_path, new_path, active, errors, buffer_size)
+        copy_directory(old_path, new_path, active, errors, buffer)
     } else if unix_mode::is_file(source_mode) {
-        copy_file(old_path, new_path, active, errors, buffer_size, source_mode)
+        copy_file(old_path, new_path, active, errors, buffer, source_mode)
     } else {
         copy_special(old_path, new_path, errors, source_mode);
         true
@@ -693,7 +785,7 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
 /// Returns `Some(active)` on success, leaving finalization to the caller.
 /// Returns `None` when cancelled or on error, in which case the task has
 /// already been finalized via `active.cancelled()` / `active.error()`.
-fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<ActiveTask> {
+fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Option<ActiveTask> {
     if active.is_cancelled() {
         active.cancelled();
         return None;
@@ -706,6 +798,7 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
             fs::remove_file(path),
             format!("Failed to delete {path:?}")
         );
+        active.increment(1);
         return Some(active);
     }
 
@@ -722,6 +815,11 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
     let root = path.to_path_buf();
     let entries = list_or_abort!(active, &root);
     let mut stack = vec![(root, entries.into_iter())];
+    // One unit of progress per entry removed, against the total counted by
+    // `dir_total_entries` before the walk. Debounced so a wide tree does not
+    // put one progress command per entry ahead of terminal input.
+    let mut debouncer =
+        debounce::CountDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, active.total_size());
     while let Some(top) = stack.last_mut() {
         if active.is_cancelled() {
             active.cancelled();
@@ -740,6 +838,8 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
             Some((entry_path, true)) => {
                 let entries = list_or_abort!(active, &entry_path);
                 stack.push((entry_path, entries.into_iter()));
+                // Descending is not a removal, so it advances no progress.
+                continue;
             }
             Some((entry_path, false)) => {
                 try_or_abort!(
@@ -748,6 +848,10 @@ fn remove_path(path: &Path, is_directory: bool, active: ActiveTask) -> Option<Ac
                     format!("Failed to delete {entry_path:?}")
                 );
             }
+        }
+        active.increment(1);
+        if debouncer.should_trigger(1) {
+            active.send_progress();
         }
     }
     Some(active)
@@ -843,6 +947,15 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
+/// The path with symlinks and `..` components resolved. Falls back to a lexical
+/// absolutize-and-normalize when the path cannot be resolved, which is the
+/// normal case for a destination that does not exist yet.
+fn resolve(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        lexical_normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
+    })
+}
+
 /// Collapses `.` and `..` components purely lexically (no filesystem access,
 /// so it works for destinations that do not exist yet). `..` pops the previous
 /// component; at the root it is a no-op.
@@ -881,18 +994,27 @@ fn validate_paths(
 
     // Reject copying/moving a directory into its own subtree. Without this, a
     // copy creates the destination under the source and then recurses into it
-    // forever, filling the disk. Compare lexically-absolute, `..`-collapsed
-    // paths so the component-wise prefix check is not fooled by relative paths
-    // or parent-dir segments (e.g. `/a/c/../b`).
-    let abs_old =
-        lexical_normalize(&std::path::absolute(&old_path).unwrap_or_else(|_| old_path.clone()));
-    let abs_new =
-        lexical_normalize(&std::path::absolute(&new_path).unwrap_or_else(|_| new_path.clone()));
-    if abs_new.starts_with(&abs_old) {
-        return Err(anyhow!(
-            "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
-        )
-        .into());
+    // forever, filling the disk.
+    //
+    // Only a real directory can recurse: `copy_path` recreates a symlink as a
+    // link and copies a file as bytes, so neither descends into what it is
+    // creating. Restricting the check to directories also keeps it from
+    // refusing a copy of a symlink into the directory that symlink points at.
+    //
+    // Compare resolved paths so that neither a parent-dir segment (e.g.
+    // `/a/c/../b`) nor a destination directory that is a symlink back into the
+    // source can slip past the component-wise prefix check. The destination's
+    // own name does not exist yet, so its parent is resolved and the name
+    // rejoined.
+    if source.is_directory() {
+        let abs_old = resolve(&old_path);
+        let abs_new = resolve(&destination_directory.path).join(file_name);
+        if abs_new.starts_with(&abs_old) {
+            return Err(anyhow!(
+                "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
+            )
+            .into());
+        }
     }
 
     // Refuse to overwrite an existing destination. `File::create`/`fs::rename`
@@ -913,7 +1035,7 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::{command::progress::Progress, test_support::TempDir};
 
     // (len, min, max) -> expected buffer size. With BUFFER_SIZE_DIVISOR == 20.
     #[test_case(0, 10, 100 => 0 ; "zero length")]
@@ -983,6 +1105,38 @@ mod tests {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/c/..", "c");
         assert!(validate_paths(&src, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_a_destination_that_symlinks_into_the_source() {
+        let fx = TempDir::new("tasks");
+        let src = fx.join("src");
+        std::fs::create_dir_all(src.join("inner")).unwrap();
+        // A lexical prefix check cannot see that `link` resolves inside `src`.
+        // Copying through it would create the destination under the source and
+        // then recurse into what it is creating, filling the disk.
+        let link = fx.join("link");
+        std::os::unix::fs::symlink(src.join("inner"), &link).unwrap();
+
+        let source = path_info(src.to_str().unwrap(), "src");
+        let dest = path_info(link.to_str().unwrap(), "link");
+        assert!(validate_paths(&source, &dest, "copy").is_err());
+    }
+
+    #[test]
+    fn validate_paths_allows_a_symlink_copied_into_the_directory_it_points_at() {
+        let fx = TempDir::new("tasks");
+        let target = fx.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = fx.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        // The source resolves to the destination, but copying a symlink
+        // recreates a link rather than descending into anything, so there is
+        // no subtree to recurse into and nothing to reject.
+        let source = PathInfo::try_from(link.as_path()).unwrap();
+        let dest = PathInfo::try_from(target.as_path()).unwrap();
+        assert!(validate_paths(&source, &dest, "copy").is_ok());
     }
 
     #[test]
@@ -1072,7 +1226,7 @@ mod tests {
             &dst,
             &mut active,
             &mut errors,
-            64,
+            &mut [0u8; 64],
             false,
             mode
         ));
@@ -1105,7 +1259,7 @@ mod tests {
             &dst,
             &mut active,
             &mut errors,
-            64,
+            &mut [0u8; 64],
             false,
             mode
         ));
@@ -1150,7 +1304,7 @@ mod tests {
             &dst,
             &mut active,
             &mut errors,
-            64,
+            &mut [0u8; 64],
             true,
             mode
         ));
@@ -1176,6 +1330,46 @@ mod tests {
     /// as root, so pin the error-recording path with a failure that the kernel
     /// enforces for every user.
     #[test]
+    fn copy_path_reuses_one_buffer_without_leaking_bytes_between_files() {
+        let fx = TempDir::new("tasks");
+        let src = fx.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a_long.txt"), b"aaaaaaaaaaaaaaaa").unwrap();
+        std::fs::write(src.join("b_short.txt"), b"b").unwrap();
+        let dst = fx.join("dst");
+        let mode = std::fs::symlink_metadata(&src)
+            .unwrap()
+            .permissions()
+            .mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        // One buffer serves the whole tree, so a short file copied after a
+        // longer one must not pick up the previous file's trailing bytes.
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            &mut [0u8; 64],
+            true,
+            mode
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        active.done();
+
+        assert_eq!(
+            b"aaaaaaaaaaaaaaaa".to_vec(),
+            std::fs::read(dst.join("a_long.txt")).unwrap()
+        );
+        assert_eq!(
+            b"b".to_vec(),
+            std::fs::read(dst.join("b_short.txt")).unwrap()
+        );
+    }
+
+    #[test]
     fn copy_path_records_a_directory_it_cannot_create() {
         let fx = TempDir::new("tasks");
         let src = fx.join("src");
@@ -1200,7 +1394,7 @@ mod tests {
             &dst,
             &mut active,
             &mut errors,
-            64,
+            &mut [0u8; 64],
             true,
             mode
         ));
@@ -1266,6 +1460,76 @@ mod tests {
 
         assert!(remove_path(&root, true, active).is_some());
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn dir_total_entries_counts_the_root_and_every_descendant() {
+        let fx = TempDir::new("tasks");
+        let root = fx.join("tree");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.txt"), b"x").unwrap();
+        std::fs::write(root.join("sub").join("b.txt"), b"x").unwrap();
+        let active = new_active_task();
+
+        // root, a.txt, sub, sub/b.txt: one unit per removal the delete walk
+        // makes, so the bar reaches exactly 100% when the tree is gone.
+        assert_eq!(Some(4), dir_total_entries(&active, &root));
+        active.done();
+    }
+
+    #[test]
+    fn the_pre_scans_stop_when_the_task_is_cancelled() {
+        let fx = TempDir::new("tasks");
+        std::fs::write(fx.join("a.txt"), b"x").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let (active, _, token) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        token.cancel();
+
+        // Both scans run before any file is touched and take as long as the
+        // tree is large, so a cancel must not have to wait one out.
+        assert_eq!(None, dir_total_size(&active, fx.path()));
+        assert_eq!(None, dir_total_entries(&active, fx.path()));
+        active.done();
+    }
+
+    #[test]
+    fn remove_path_advances_progress_once_per_removed_entry() {
+        let fx = TempDir::new("tasks");
+        let root = fx.join("doomed");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        // The total `dir_total_entries` would report: root, sub, sub/f.txt.
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            3,
+        );
+
+        let active = remove_path(&root, true, active).expect("the tree should be removed");
+        let completed: Vec<u64> = rx
+            .try_iter()
+            .filter_map(|command| match command {
+                Command::Progress(task) => {
+                    Some(task.combine_progress(&Progress::default()).completed)
+                }
+                _ => None,
+            })
+            .collect();
+        active.done();
+
+        // The bar must reach the total from the removals themselves rather
+        // than from `done` filling it in at the end, so a long delete shows
+        // motion instead of sitting at 0%.
+        assert_eq!(vec![1, 2, 3], completed);
     }
 
     #[test]
@@ -1343,7 +1607,7 @@ mod tests {
             &dst,
             &mut active,
             &mut errors,
-            1024,
+            &mut [0u8; 1024],
             false,
             source_mode
         ));
