@@ -24,7 +24,7 @@ use log::warn;
 
 use self::{
     operations::{open_in, spawn_argv},
-    path_info::PathInfo,
+    path_info::{PathInfo, compact},
     search::Limits,
     tasks::{CancelInfo, TaskCommand},
     watch::DirectoryWatcher,
@@ -259,7 +259,8 @@ impl FileSystem {
         // opened either, exit rather than run in a broken state.
         if let Err(error) = fs::read_dir(&directory.path) {
             let _ = self.command_tx.send(Command::AlertError(format!(
-                "Failed to change to directory {directory:?}: {error}"
+                "Failed to change to directory {}: {error}",
+                compact(&directory.path)
             )));
             let home = directories::UserDirs::new()
                 .map(|dirs| dirs.home_dir().to_path_buf())
@@ -298,7 +299,11 @@ impl FileSystem {
         // cannot open (e.g. permission denied). The full per-entry read happens
         // asynchronously in `stream_cd` below.
         if let Err(error) = fs::read_dir(&directory.path) {
-            return anyhow!("Failed to change to directory {directory:?}: {error}").into();
+            return anyhow!(
+                "Failed to change to directory {}: {error}",
+                compact(&directory.path)
+            )
+            .into();
         }
 
         // Track the directory we're leaving so "-" can toggle back to it.
@@ -506,9 +511,13 @@ impl FileSystem {
         let mut commands: Vec<Command> = paths
             .iter()
             .filter_map(|path| {
-                operations::chmod(path, mode)
-                    .err()
-                    .map(|error| anyhow!("Failed to chmod {path:?} to {mode_str}: {error}").into())
+                operations::chmod(path, mode).err().map(|error| {
+                    anyhow!(
+                        "Failed to chmod {} to {mode_str}: {error}",
+                        compact(&path.path)
+                    )
+                    .into()
+                })
             })
             .collect();
         commands.extend(self.refresh().into_commands());
@@ -531,7 +540,11 @@ impl FileSystem {
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
         match operations::rename(path, new_basename) {
-            Err(error) => anyhow!("Failed to rename {path:?} to {new_basename:?}: {error}").into(),
+            Err(error) => anyhow!(
+                "Failed to rename {} to {new_basename:?}: {error}",
+                compact(&path.path)
+            )
+            .into(),
             Ok(_) => self.refresh(),
         }
     }
@@ -729,9 +742,10 @@ impl FileSystem {
         Command::SearchStarted { generation }.into()
     }
 
-    fn send_directory_error(&self, dir: &PathBuf, error: impl Display) {
+    fn send_directory_error(&self, dir: &Path, error: impl Display) {
         let _ = self.command_tx.send(Command::AlertWarn(format!(
-            "Failed to read directory {dir:?}: {error}"
+            "Failed to read directory {}: {error}",
+            compact(dir)
         )));
     }
 }
@@ -744,11 +758,12 @@ impl FileSystem {
 pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
     if let Err(error) = fs::create_dir_all(dir) {
         return Err(format!(
-            "Cannot create bookmarks directory {dir:?}: {error}"
+            "Cannot create bookmarks directory {}: {error}",
+            compact(dir)
         ));
     }
     let entries = fs::read_dir(dir)
-        .map_err(|error| format!("Cannot read bookmarks directory {dir:?}: {error}"))?;
+        .map_err(|error| format!("Cannot read bookmarks directory {}: {error}", compact(dir)))?;
     Ok(entries
         .flatten()
         .filter_map(|entry| {

@@ -14,7 +14,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use log::{error, info, warn};
 
-use super::path_info::PathInfo;
+use super::path_info::{PathInfo, compact};
 use crate::{
     command::{
         Command,
@@ -174,7 +174,11 @@ fn run_copy_task(
     // followed.
     if is_directory && let Err(error) = fs::read_dir(&old_path) {
         return TaskRunResult::failed(
-            Command::AlertError(format!("Failed to read directory {old_path:?}: {error}")).into(),
+            Command::AlertError(format!(
+                "Failed to read directory {}: {error}",
+                compact(&old_path)
+            ))
+            .into(),
         );
     }
 
@@ -297,12 +301,15 @@ fn run_move_task(
                     match removed {
                         Ok(_) => active.done(),
                         Err(error) => active.error(format!(
-                            "Copy succeeded, but failed to delete original {old_path:?}: {error}"
+                            "Copy succeeded, but failed to delete original {}: {error}",
+                            compact(&old_path)
                         )),
                     }
                 }
                 _ => active.error(format!(
-                    "Failed to move {old_path:?} to {new_path:?}: {error}"
+                    "Failed to move {} to {}: {error}",
+                    compact(&old_path),
+                    compact(&new_path)
                 )),
             },
         }
@@ -520,7 +527,10 @@ macro_rules! list_or_abort {
                 return None;
             }
             Err(error) => {
-                $active.error(format!("Failed to read directory {dir:?}: {error}"));
+                $active.error(format!(
+                    "Failed to read directory {}: {error}",
+                    compact(dir)
+                ));
                 return None;
             }
         }
@@ -533,7 +543,7 @@ macro_rules! list_or_abort {
 /// delete must unlink rather than follow).
 fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandResult> {
     PathInfo::try_from(old_path)
-        .map_err(|error| anyhow!("Cannot {operation} {old_path:?}: {error}").into())
+        .map_err(|error| anyhow!("Cannot {operation} {}: {error}", compact(old_path)).into())
 }
 
 /// Finalizes a copy/move task following coreutils semantics: success when no
@@ -576,7 +586,10 @@ fn copy_directory(
     if let Err(error) = fs::create_dir(new_path) {
         // The subtree cannot be copied at all; skip it and continue with
         // the siblings.
-        errors.push(format!("Failed to create directory {new_path:?}: {error}"));
+        errors.push(format!(
+            "Failed to create directory {}: {error}",
+            compact(new_path)
+        ));
         return true;
     }
 
@@ -598,7 +611,10 @@ fn copy_directory(
     let entries = match fs::read_dir(old_path) {
         Ok(entries) => entries,
         Err(error) => {
-            errors.push(format!("Failed to read directory {old_path:?}: {error}"));
+            errors.push(format!(
+                "Failed to read directory {}: {error}",
+                compact(old_path)
+            ));
             apply_source_mode();
             return true;
         }
@@ -614,7 +630,10 @@ fn copy_directory(
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
-                errors.push(format!("Failed to read entry in {old_path:?}: {error}"));
+                errors.push(format!(
+                    "Failed to read entry in {}: {error}",
+                    compact(old_path)
+                ));
                 continue;
             }
         };
@@ -624,7 +643,10 @@ fn copy_directory(
         let metadata = match fs::symlink_metadata(&src) {
             Ok(metadata) => metadata,
             Err(error) => {
-                errors.push(format!("Failed to read metadata for {src:?}: {error}"));
+                errors.push(format!(
+                    "Failed to read metadata for {}: {error}",
+                    compact(&src)
+                ));
                 continue;
             }
         };
@@ -658,10 +680,16 @@ fn copy_symlink(old_path: &Path, new_path: &Path, errors: &mut Vec<String>) {
     match fs::read_link(old_path) {
         Ok(target) => {
             if let Err(error) = std::os::unix::fs::symlink(&target, new_path) {
-                errors.push(format!("Failed to create symlink {new_path:?}: {error}"));
+                errors.push(format!(
+                    "Failed to create symlink {}: {error}",
+                    compact(new_path)
+                ));
             }
         }
-        Err(error) => errors.push(format!("Failed to read symlink {old_path:?}: {error}")),
+        Err(error) => errors.push(format!(
+            "Failed to read symlink {}: {error}",
+            compact(old_path)
+        )),
     }
 }
 
@@ -681,7 +709,9 @@ fn copy_file(
         Ok(files) => files,
         Err(error) => {
             errors.push(format!(
-                "Failed to copy {old_path:?} to {new_path:?}: {error}"
+                "Failed to copy {} to {}: {error}",
+                compact(old_path),
+                compact(new_path)
             ));
             return true;
         }
@@ -709,12 +739,12 @@ fn copy_file(
                     }
                 }
                 Err(error) => {
-                    errors.push(format!("Failed to write {new_path:?}: {error}"));
+                    errors.push(format!("Failed to write {}: {error}", compact(new_path)));
                     return true;
                 }
             },
             Err(error) => {
-                errors.push(format!("Failed to read {old_path:?}: {error}"));
+                errors.push(format!("Failed to read {}: {error}", compact(old_path)));
                 return true;
             }
         }
@@ -766,7 +796,10 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
     } else if unix_mode::is_char_device(source_mode) {
         SFlag::S_IFCHR
     } else {
-        errors.push(format!("Cannot copy {old_path:?}: unsupported file type"));
+        errors.push(format!(
+            "Cannot copy {}: unsupported file type",
+            compact(old_path)
+        ));
         return;
     };
 
@@ -776,7 +809,10 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
         match fs::symlink_metadata(old_path) {
             Ok(metadata) => metadata.rdev() as nix::libc::dev_t,
             Err(error) => {
-                errors.push(format!("Failed to read metadata for {old_path:?}: {error}"));
+                errors.push(format!(
+                    "Failed to read metadata for {}: {error}",
+                    compact(old_path)
+                ));
                 return;
             }
         }
@@ -787,7 +823,10 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
     // `mode_t` is u32 on Linux but u16 on macOS, so cast rather than assume.
     let permissions = Mode::from_bits_truncate(source_mode as nix::libc::mode_t);
     if let Err(error) = mknod(new_path, kind, permissions, rdev) {
-        errors.push(format!("Cannot create special file {new_path:?}: {error}"));
+        errors.push(format!(
+            "Cannot create special file {}: {error}",
+            compact(new_path)
+        ));
     }
 }
 
@@ -810,7 +849,7 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
         try_or_abort!(
             active,
             fs::remove_file(path),
-            format!("Failed to delete {path:?}")
+            format!("Failed to delete {}", compact(path))
         );
         active.increment(1);
         return Some(active);
@@ -846,7 +885,7 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
                 try_or_abort!(
                     active,
                     fs::remove_dir(&directory),
-                    format!("Failed to delete {directory:?}")
+                    format!("Failed to delete {}", compact(&directory))
                 );
             }
             Some((entry_path, true)) => {
@@ -859,7 +898,7 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
                 try_or_abort!(
                     active,
                     fs::remove_file(&entry_path),
-                    format!("Failed to delete {entry_path:?}")
+                    format!("Failed to delete {}", compact(&entry_path))
                 );
             }
         }
@@ -999,7 +1038,11 @@ fn validate_paths(
     // the display name is lossy UTF-8, which would silently mangle a non-UTF8
     // name at the destination.
     let Some(file_name) = source.path.file_name() else {
-        return Err(anyhow!("Cannot {operation} {old_path:?}: path has no file name").into());
+        return Err(anyhow!(
+            "Cannot {operation} {}: path has no file name",
+            compact(&old_path)
+        )
+        .into());
     };
     let new_path = destination_directory.path.join(file_name);
 
@@ -1016,7 +1059,13 @@ fn validate_paths(
     // copying, so letting an aliased path through would unlink the source and
     // leave nothing to copy.
     if abs_old == abs_new {
-        return Err(anyhow!("Cannot {operation} {old_path:?} to {new_path:?}: Source and destination paths must be different").into());
+        // Equal resolved paths mean the destination directory *is* the
+        // source's own directory, so naming the entry once says all of it.
+        return Err(anyhow!(
+            "Cannot {operation} {} into its own directory",
+            compact(&old_path)
+        )
+        .into());
     }
 
     // Reject copying/moving a directory into its own subtree. Without this, a
@@ -1029,7 +1078,9 @@ fn validate_paths(
     // refusing a copy of a symlink into the directory that symlink points at.
     if source.is_directory() && abs_new.starts_with(&abs_old) {
         return Err(anyhow!(
-            "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
+            "Cannot {operation} {} into its own subdirectory {}",
+            compact(&old_path),
+            compact(&new_path)
         )
         .into());
     }
@@ -1039,12 +1090,19 @@ fn validate_paths(
     // directory is never replaced whatever was asked, because removing it would
     // take its contents with it and merging into it is not supported.
     match new_path.symlink_metadata() {
+        // Both messages name the destination directory rather than the full
+        // destination path: it differs from the source only in its directory,
+        // so repeating the file name says nothing.
         Ok(metadata) if metadata.is_dir() => Err(anyhow!(
-            "Cannot {operation} {old_path:?} to {new_path:?}: a directory already exists there"
+            "Cannot {operation} {} into {}: a directory of that name is already there",
+            compact(&old_path),
+            compact(&destination_directory.path)
         )
         .into()),
         Ok(_) if !overwrite => Err(anyhow!(
-            "Cannot {operation} {old_path:?} to {new_path:?}: destination already exists"
+            "Cannot {operation} {} into {}: it already exists there",
+            compact(&old_path),
+            compact(&destination_directory.path)
         )
         .into()),
         _ => Ok((old_path, new_path)),
@@ -1096,12 +1154,14 @@ fn clear_destination(
     }
     if let Err(error) = old_path.symlink_metadata() {
         active.error(format!(
-            "Cannot replace {new_path:?}: cannot read {old_path:?}: {error}"
+            "Cannot replace {}: cannot read {}: {error}",
+            compact(new_path),
+            compact(old_path)
         ));
         return None;
     }
     if let Err(error) = remove_existing(new_path) {
-        active.error(format!("Failed to replace {new_path:?}: {error}"));
+        active.error(format!("Failed to replace {}: {error}", compact(new_path)));
         return None;
     }
     Some(active)
