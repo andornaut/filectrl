@@ -288,9 +288,10 @@ fn join_parent(left: &Path, right: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
     use crate::test_support::TempDir;
-    use test_case::test_case;
 
     #[test_case("/b", "/a", "b"; "/a to b relative")]
     #[test_case("/b", "/a", "/b"; "/a to /b absolute")]

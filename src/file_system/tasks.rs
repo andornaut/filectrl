@@ -910,9 +910,10 @@ fn validate_paths(
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
     use crate::test_support::TempDir;
-    use test_case::test_case;
 
     // (len, min, max) -> expected buffer size. With BUFFER_SIZE_DIVISOR == 20.
     #[test_case(0, 10, 100 => 0 ; "zero length")]

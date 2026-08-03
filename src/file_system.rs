@@ -754,7 +754,11 @@ mod tests {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
-        file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
+        // A fixture rather than the real temp directory: `search` spawns a
+        // detached walk, and rooting it at /tmp would traverse every other
+        // test's fixtures to the full production depth.
+        let root = TempDir::new("fs_search_root");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
         let load_token = CancellationToken::new();
         file_system.current_load = Some(load_token.clone());
 
@@ -764,6 +768,9 @@ mod tests {
         // that are already stale (the search generation supersedes theirs).
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
+        // Nothing cancels the spawned walk on drop, and an empty batch never
+        // notices the closed channel, so stop it before the fixture goes away.
+        file_system.cancel_search();
         drop(rx);
     }
 
