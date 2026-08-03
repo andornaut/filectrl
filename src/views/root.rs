@@ -98,6 +98,23 @@ impl RootView {
     }
 }
 
+impl RootView {
+    /// Returns to Normal mode, yielding `CancelPrompt` when that closed a
+    /// prompt which was still open.
+    ///
+    /// Mouse events are not mode-gated, so a click on the breadcrumbs or a
+    /// notice reaches the view under the prompt and closes it from beneath
+    /// whoever is holding state for it. `CancelPrompt` is how they are told to
+    /// drop it: without it a paste waiting on a conflict answer would stall
+    /// with no clipboard follow-up, and its stale answer would arrive at
+    /// whatever prompt the user opened next.
+    fn close_prompt(&mut self) -> Option<Command> {
+        let was_open = matches!(self.mode, InputMode::Prompt);
+        self.mode = InputMode::Normal;
+        was_open.then_some(Command::CancelPrompt)
+    }
+}
+
 impl CommandHandler for RootView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
@@ -108,8 +125,13 @@ impl CommandHandler for RootView {
             | Command::Open(_)
             | Command::Rename { .. }
             | Command::FilterChanged(_)
-            | Command::ResolveConflict(_)
-            | Command::StartSearch(_) => {
+            | Command::StartSearch(_) => self
+                .close_prompt()
+                .map_or(CommandResult::NotHandled, Into::into),
+            // The conflict prompt's own answer. The paste is waiting on it and
+            // may reopen the prompt for the next collision, so this must not be
+            // announced as the prompt being abandoned.
+            Command::ResolveConflict(_) => {
                 self.mode = InputMode::Normal;
                 CommandResult::NotHandled
             }
@@ -128,10 +150,10 @@ impl CommandHandler for RootView {
                 CommandResult::Handled
             }
             Command::ResetView => {
-                self.mode = InputMode::Normal;
                 self.is_help_visible = false;
                 self.open_with.hide();
-                CommandResult::Handled
+                self.close_prompt()
+                    .map_or(CommandResult::Handled, Into::into)
             }
             _ => CommandResult::NotHandled,
         }
@@ -282,6 +304,44 @@ mod tests {
         root.handle_command(&command);
 
         assert_eq!(expected, root.mode());
+    }
+
+    /// Mouse events are not mode-gated, so a click on the breadcrumbs or a
+    /// notice reaches the view under an open prompt and closes it. Whoever is
+    /// holding state for that prompt has to be told: a paste waiting on a
+    /// conflict answer would otherwise stall with no clipboard follow-up, and
+    /// its stale answer would land on whatever prompt was opened next.
+    #[test_case(Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
+    #[test_case(Command::ResetView ; "a notice click")]
+    fn closing_an_open_prompt_from_underneath_announces_it(command: Command) {
+        let mut root = view();
+        root.mode = InputMode::Prompt;
+
+        let result = root.handle_command(&command);
+
+        assert_eq!(Some(Command::CancelPrompt), Command::try_from(result).ok());
+        assert_eq!(InputMode::Normal, root.mode());
+    }
+
+    #[test_case(Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "no prompt was open")]
+    #[test_case(Command::ResetView ; "no prompt was open either")]
+    fn closing_nothing_announces_nothing(command: Command) {
+        let mut root = view();
+
+        assert_eq!(None, Command::try_from(root.handle_command(&command)).ok());
+    }
+
+    #[test]
+    fn answering_the_conflict_prompt_is_not_a_dismissal() {
+        let mut root = view();
+        root.mode = InputMode::Prompt;
+
+        // The paste is waiting on this answer and may reopen the prompt for the
+        // next collision. Announcing a dismissal would cancel the very paste
+        // being answered.
+        let result = root.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
+
+        assert_eq!(None, Command::try_from(result).ok());
     }
 
     #[test]

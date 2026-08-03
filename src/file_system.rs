@@ -38,9 +38,9 @@ use crate::{
     },
 };
 
-/// A cancellable in-flight action. Tracked in a single LIFO stack so that
-/// `cancel_task` cancels whichever action (file operation or search) was
-/// started most recently.
+/// A cancellable in-flight action. File operations and searches share one list,
+/// in registration order; `cancel_target` decides which entry a cancel keypress
+/// aims at.
 enum Cancellable {
     Task(CancelInfo),
     Search(CancellationToken),
@@ -383,14 +383,30 @@ impl FileSystem {
         }
     }
 
+    /// The entry a cancel keypress targets, so it always aims at work that is
+    /// actually running rather than at whatever was registered last.
+    ///
+    /// A search runs alongside everything else, so when one is the most recent
+    /// thing started it is what the keypress means. File operations share a
+    /// single worker and run in the order they were queued, so the *oldest*
+    /// registered one is the one running: a batch registers every source at
+    /// once, and cancelling the newest would stop work that has not started
+    /// while the copy the user is watching carries on.
+    fn cancel_target(&self) -> Option<usize> {
+        match self.cancellables.last()? {
+            Cancellable::Search(_) => Some(self.cancellables.len() - 1),
+            Cancellable::Task(_) => self
+                .cancellables
+                .iter()
+                .position(|cancellable| matches!(cancellable, Cancellable::Task(_))),
+        }
+    }
+
     fn cancel_most_recent_task(&mut self) -> CommandResult {
-        // LIFO across file operations and search: the keypress always targets
-        // the most recent entry and never falls through to an older one,
-        // which could cancel work the user did not aim at.
-        let Some(cancellable) = self.cancellables.pop() else {
+        let Some(index) = self.cancel_target() else {
             return Command::AlertWarn("No active task to cancel".into()).into();
         };
-        match cancellable {
+        match self.cancellables.remove(index) {
             Cancellable::Task(info) => {
                 // A task that can no longer be cancelled stays on the stack
                 // until its terminal Progress prunes it, and the user is told
@@ -401,7 +417,7 @@ impl FileSystem {
                 // (a sub-frame race) it is momentarily imprecise.
                 if info.uncancellable.load(Ordering::Relaxed) {
                     let message = format!("Cannot cancel: {}", info.kind.message());
-                    self.cancellables.push(Cancellable::Task(info));
+                    self.cancellables.insert(index, Cancellable::Task(info));
                     return Command::AlertInfo(message).into();
                 }
                 info.token.cancel();
@@ -413,7 +429,7 @@ impl FileSystem {
                 // ExitedSearch drops it) and stay silent: the notice
                 // resolves momentarily, unlike a seconds-long task stage.
                 if token.is_cancelled() {
-                    self.cancellables.push(Cancellable::Search(token));
+                    self.cancellables.insert(index, Cancellable::Search(token));
                     return CommandResult::Handled;
                 }
                 token.cancel();
@@ -753,17 +769,32 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
 /// and is replaced as a link rather than treated as the directory it points at.
 fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
-    dest.path
-        .join(name)
-        .symlink_metadata()
-        .ok()
-        .map(|metadata| {
-            if metadata.is_dir() {
-                Occupant::Directory
-            } else {
-                Occupant::Replaceable
-            }
-        })
+    let destination = dest.path.join(name);
+    let metadata = destination.symlink_metadata().ok()?;
+    // Pasting into the source's own directory finds the source itself. That is
+    // not a collision to ask about: the operation is refused outright, so
+    // offering to replace it would promise something that cannot happen and
+    // would let an "overwrite all" answer stand on a collision that was never
+    // real. Compared canonically, since either path may reach the entry
+    // through a symlinked parent.
+    if is_same_entry(&destination, &src.path) {
+        return None;
+    }
+    Some(if metadata.is_dir() {
+        Occupant::Directory
+    } else {
+        Occupant::Replaceable
+    })
+}
+
+/// Whether both paths name the same directory entry once symlinks are resolved.
+/// False when either cannot be resolved, which for an existing path means only
+/// a dangling link or an unreadable parent.
+fn is_same_entry(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
@@ -1133,6 +1164,30 @@ mod tests {
     }
 
     #[test]
+    fn pasting_into_the_source_directory_is_not_a_collision() {
+        let fx = CopyFixture::new("fs_occupant_self");
+        let src_dir = PathInfo::try_from(fx.src.path.parent().unwrap()).unwrap();
+
+        // The destination name resolves to the source itself, which the
+        // operation refuses outright. Reporting a collision would offer to
+        // replace the very file being pasted, and an "overwrite all" answer
+        // would then stand for the rest of the batch on the strength of it.
+        assert_eq!(None, existing_destination(&src_dir, &fx.src));
+    }
+
+    #[test]
+    fn pasting_into_a_symlink_to_the_source_directory_is_not_a_collision() {
+        let fx = CopyFixture::new("fs_occupant_self_link");
+        let src_dir = fx.src.path.parent().unwrap();
+        let link = fx.dest.path.parent().unwrap().join("link");
+        std::os::unix::fs::symlink(src_dir, &link).unwrap();
+        let aliased = PathInfo::try_from(link.as_path()).unwrap();
+
+        // Same entry, reached through a symlinked parent.
+        assert_eq!(None, existing_destination(&aliased, &fx.src));
+    }
+
+    #[test]
     fn a_symlinked_directory_in_the_way_is_replaceable() {
         let fx = CopyFixture::new("fs_occupant_symlink");
         fx.occupy_with_directory("target");
@@ -1284,6 +1339,44 @@ mod tests {
         assert_eq!(&vec![fx.other.clone()], paths);
         await_terminal_task(&rx);
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
+    }
+
+    /// Builds a cancel stack from a compact description: `t` is a file
+    /// operation, `s` a search, in registration order.
+    fn cancellables(kinds: &str) -> Vec<Cancellable> {
+        kinds
+            .chars()
+            .map(|kind| match kind {
+                't' => Cancellable::Task(CancelInfo {
+                    id: 0,
+                    token: CancellationToken::new(),
+                    kind: crate::command::progress::TaskKind::Delete {
+                        path: String::new(),
+                    },
+                    uncancellable: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                }),
+                _ => Cancellable::Search(CancellationToken::new()),
+            })
+            .collect()
+    }
+
+    #[test_case("" => None ; "nothing running")]
+    #[test_case("t" => Some(0) ; "the only task")]
+    #[test_case("ttt" => Some(0) ; "the oldest of several queued tasks")]
+    #[test_case("s" => Some(0) ; "the only search")]
+    #[test_case("ts" => Some(1) ; "a search started after a task")]
+    #[test_case("st" => Some(1) ; "the task, not the search beneath it")]
+    #[test_case("stt" => Some(1) ; "the oldest task queued after a search")]
+    fn the_cancel_key_targets(kinds: &str) -> Option<usize> {
+        // File operations share one worker and run in queue order, so the
+        // oldest is the one actually running. Cancelling the newest would stop
+        // work that has not started while the copy on screen carries on.
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables(kinds);
+
+        file_system.cancel_target()
     }
 
     #[test]

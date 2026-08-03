@@ -191,7 +191,7 @@ fn run_copy_task(
 
     queue_operation(move || {
         let Some(active) = check_cancelled(active)
-            .and_then(|active| clear_destination(active, &new_path, overwrite))
+            .and_then(|active| clear_destination(active, &old_path, &new_path, overwrite))
         else {
             return;
         };
@@ -260,7 +260,8 @@ fn run_move_task(
                     // There is no rename to replace the destination here, and
                     // the copy below opens it with `create_new`, so a granted
                     // overwrite has to clear it first.
-                    let Some(active) = clear_destination(active, &new_path, overwrite) else {
+                    let Some(active) = clear_destination(active, &old_path, &new_path, overwrite)
+                    else {
                         return;
                     };
                     let Some((active, errors)) = copy_with_progress(
@@ -1078,8 +1079,28 @@ fn check_cancelled(active: ActiveTask) -> Option<ActiveTask> {
 /// is about to write. The caller queues every source of an "overwrite all"
 /// paste in one pass, so clearing there would delete every destination up front
 /// and leave a hole wherever a later task is cancelled or fails.
-fn clear_destination(active: ActiveTask, new_path: &Path, overwrite: bool) -> Option<ActiveTask> {
-    if overwrite && let Err(error) = remove_existing(new_path) {
+///
+/// The source is re-checked first for the same reason: a task can wait behind a
+/// long operation, and removing the destination for a copy that then finds
+/// nothing to read would leave the user with neither entry. That narrows the
+/// window rather than closing it, since the source can still vanish between
+/// this check and the read.
+fn clear_destination(
+    active: ActiveTask,
+    old_path: &Path,
+    new_path: &Path,
+    overwrite: bool,
+) -> Option<ActiveTask> {
+    if !overwrite {
+        return Some(active);
+    }
+    if let Err(error) = old_path.symlink_metadata() {
+        active.error(format!(
+            "Cannot replace {new_path:?}: cannot read {old_path:?}: {error}"
+        ));
+        return None;
+    }
+    if let Err(error) = remove_existing(new_path) {
         active.error(format!("Failed to replace {new_path:?}: {error}"));
         return None;
     }
@@ -1510,11 +1531,13 @@ mod tests {
 
     // ── prepare_destination: the ordering every queued operation depends on ──
 
-    /// A destination file holding "dest", and an `ActiveTask` for the operation
-    /// that would replace it.
-    fn destination(label: &str) -> (TempDir, PathBuf, ActiveTask, CancellationToken) {
+    /// A source file holding "src", a destination file holding "dest", and an
+    /// `ActiveTask` for the operation that would replace one with the other.
+    fn destination(label: &str) -> (TempDir, PathBuf, PathBuf, ActiveTask, CancellationToken) {
         let fx = TempDir::new(label);
+        let src = fx.join("src.txt");
         let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dest").unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         std::mem::forget(rx);
@@ -1526,12 +1549,12 @@ mod tests {
             }),
             1,
         );
-        (fx, dst, active, token)
+        (fx, src, dst, active, token)
     }
 
     #[test]
     fn a_cancel_that_lands_while_queued_stops_the_task() {
-        let (_fx, dst, active, token) = destination("tasks_prepare_cancelled");
+        let (_fx, _src, dst, active, token) = destination("tasks_prepare_cancelled");
         token.cancel();
 
         // The queue can hold a task for as long as the operations ahead of it
@@ -1543,9 +1566,9 @@ mod tests {
 
     #[test]
     fn a_granted_overwrite_clears_the_destination() {
-        let (_fx, dst, active, _token) = destination("tasks_prepare_overwrite");
+        let (_fx, src, dst, active, _token) = destination("tasks_prepare_overwrite");
 
-        let active = clear_destination(active, &dst, true).expect("the task should continue");
+        let active = clear_destination(active, &src, &dst, true).expect("the task should continue");
 
         assert!(!dst.exists());
         active.done();
@@ -1553,9 +1576,10 @@ mod tests {
 
     #[test]
     fn a_destination_survives_when_overwrite_was_not_granted() {
-        let (_fx, dst, active, _token) = destination("tasks_prepare_no_overwrite");
+        let (_fx, src, dst, active, _token) = destination("tasks_prepare_no_overwrite");
 
-        let active = clear_destination(active, &dst, false).expect("the task should continue");
+        let active =
+            clear_destination(active, &src, &dst, false).expect("the task should continue");
 
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
         active.done();
@@ -1563,21 +1587,19 @@ mod tests {
 
     #[test]
     fn a_destination_that_already_vanished_is_not_an_error() {
-        let (_fx, dst, active, _token) = destination("tasks_prepare_vanished");
+        let (_fx, src, dst, active, _token) = destination("tasks_prepare_vanished");
         std::fs::remove_file(&dst).unwrap();
 
         // Something else removed it between the prompt and the worker, which
         // is the outcome the user asked for anyway.
-        assert!(clear_destination(active, &dst, true).is_some());
+        assert!(clear_destination(active, &src, &dst, true).is_some());
     }
 
     #[test]
     fn a_cleared_destination_can_be_opened_by_the_cross_device_move_fallback() {
-        let (fx, dst, active, _token) = destination("tasks_prepare_reopen");
-        let src = fx.join("src.txt");
-        std::fs::write(&src, b"src").unwrap();
+        let (_fx, src, dst, active, _token) = destination("tasks_prepare_reopen");
 
-        let active = clear_destination(active, &dst, true).expect("the task should continue");
+        let active = clear_destination(active, &src, &dst, true).expect("the task should continue");
 
         // A move across filesystems cannot rename, so it falls back to a byte
         // copy that opens the destination with `create_new`. That open fails
@@ -1585,6 +1607,19 @@ mod tests {
         // not skippable just because a rename would have replaced it.
         assert!(open_files(&src, &dst).is_ok());
         active.done();
+    }
+
+    #[test]
+    fn a_vanished_source_leaves_the_destination_it_would_have_replaced() {
+        let (_fx, src, dst, active, _token) = destination("tasks_prepare_source_gone");
+        std::fs::remove_file(&src).unwrap();
+
+        // A task can wait behind a long operation on the shared worker, so the
+        // source it was going to copy may be gone by the time it runs. Clearing
+        // the destination for a copy that can no longer happen would leave the
+        // user with neither entry.
+        assert!(clear_destination(active, &src, &dst, true).is_none());
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
     }
 
     #[test]
