@@ -1,8 +1,5 @@
-use super::{FileSystem, path_info::PathInfo, read_bookmarks, tasks::TaskCommand};
-use crate::{
-    app::clipboard::ClipboardEntry,
-    command::{Command, handler::CommandHandler, result::CommandResult},
-};
+use super::{FileSystem, read_bookmarks, tasks::TaskCommand};
+use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
 impl CommandHandler for FileSystem {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -37,36 +34,18 @@ impl CommandHandler for FileSystem {
             },
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
-            Command::Copy { srcs, dest } => {
-                let (failed, mut commands) = self.run_batch(
-                    srcs.iter()
-                        .map(|src| TaskCommand::Copy(src.clone(), dest.clone())),
-                );
-                // The TableView clears its marks for these same commands, so
-                // the clipboard follow-up (see `clipboard_follow_up`) rides
-                // the same broadcast.
-                commands.extend(clipboard_follow_up(
-                    srcs.len(),
-                    ClipboardEntry::Copy,
-                    failed,
-                ));
-                commands.into()
-            }
-            Command::Move { srcs, dest } => {
-                let (failed, mut commands) = self.run_batch(
-                    srcs.iter()
-                        .map(|src| TaskCommand::Move(src.clone(), dest.clone())),
-                );
-                commands.extend(clipboard_follow_up(
-                    srcs.len(),
-                    ClipboardEntry::Move,
-                    failed,
-                ));
-                commands.into()
-            }
+            Command::Copy { srcs, dest } => self.start_paste(false, srcs, dest),
+            Command::Move { srcs, dest } => self.start_paste(true, srcs, dest),
+            Command::ResolveConflict(choice) => self.resolve_conflict(*choice),
+            // Dismissing the conflict prompt abandons the rest of the paste.
+            // A no-op for every other prompt, which leaves nothing pending.
+            Command::CancelPrompt => self.cancel_paste(),
             Command::Delete(paths) => {
-                let (_, commands) =
-                    self.run_batch(paths.iter().map(|path| TaskCommand::Delete(path.clone())));
+                let mut commands = Vec::new();
+                for path in paths {
+                    let (_, task_commands) = self.run_task(TaskCommand::Delete(path.clone()));
+                    commands.extend(task_commands);
+                }
                 commands.into()
             }
             Command::Open(path) => self.open(path),
@@ -87,25 +66,5 @@ impl CommandHandler for FileSystem {
             Command::StartSearch(query) => self.search(query),
             _ => CommandResult::NotHandled,
         }
-    }
-}
-
-/// The clipboard follow-up for a paste batch. When every source started, the
-/// clipboard is cleared; when none started, it is kept untouched so the paste
-/// can be retried as-is; when only some started, it is reduced to the failed
-/// sources with the same operation, because a full retry would fail on the
-/// already-pasted sources (their destinations now exist). `SetClipboardEntry`
-/// updates the system clipboard text and the clipboard notice.
-fn clipboard_follow_up(
-    source_count: usize,
-    entry: fn(Vec<PathInfo>) -> ClipboardEntry,
-    failed: Vec<PathInfo>,
-) -> Option<Command> {
-    if failed.is_empty() {
-        Some(Command::SetClipboardEntry(None))
-    } else if failed.len() == source_count {
-        None
-    } else {
-        Some(Command::SetClipboardEntry(Some(entry(failed))))
     }
 }

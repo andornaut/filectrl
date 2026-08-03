@@ -50,15 +50,24 @@ impl PromptView {
             PromptAction::Goto { .. } => " Go to ".to_string(),
             PromptAction::Rename { .. } => " Rename ".to_string(),
             PromptAction::Search(_) => " Search ".to_string(),
+            PromptAction::Conflict {
+                name,
+                can_overwrite: true,
+            } => format!(" {name:?} exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all "),
+            PromptAction::Conflict {
+                name,
+                can_overwrite: false,
+            } => format!(" {name:?} exists as a directory: [s]kip, [S]kip all "),
         }
     }
 
     fn open(&mut self, kind: &PromptAction) -> CommandResult {
         let text = match kind {
             PromptAction::Chmod { mode, .. } => mode.clone(),
-            PromptAction::CreateDirectory | PromptAction::Delete(_) | PromptAction::Goto { .. } => {
-                String::new()
-            }
+            PromptAction::Conflict { .. }
+            | PromptAction::CreateDirectory
+            | PromptAction::Delete(_)
+            | PromptAction::Goto { .. } => String::new(),
             PromptAction::AddBookmark { name: text, .. }
             | PromptAction::Filter(text)
             | PromptAction::Rename { name: text, .. }
@@ -128,6 +137,10 @@ impl PromptView {
                 name: value,
             },
             PromptAction::CreateDirectory => Command::CreateDirectory(value),
+            // The confirmation prompts resolve in `handle_key` on a single
+            // keypress, so submit never reaches them; treat it as a cancel
+            // rather than guessing an answer on the user's behalf.
+            PromptAction::Conflict { .. } => Command::CancelPrompt,
             PromptAction::Delete(_) => Command::ConfirmDelete,
             PromptAction::Filter(_) => Command::FilterChanged(value),
             PromptAction::Goto { .. } => {
@@ -320,7 +333,7 @@ mod tests {
     use super::*;
     use crate::{
         app::config::Config,
-        command::{Command, PromptAction, handler::CommandHandler},
+        command::{Command, ConflictChoice, PromptAction, handler::CommandHandler},
         file_system::path_info::PathInfo,
         test_support::TempDir,
     };
@@ -334,6 +347,47 @@ mod tests {
         let mut view = PromptView::default();
         view.handle_command(&Command::OpenPrompt(kind));
         view
+    }
+
+    // ── conflict prompt ──────────────────────────────────────────────────────
+
+    fn conflict_key(can_overwrite: bool, key: char) -> Option<Command> {
+        let mut view = prompt_with_action(PromptAction::Conflict {
+            name: "a.txt".to_string(),
+            can_overwrite,
+        });
+        Command::try_from(view.handle_key(&KeyCode::Char(key), &KeyModifiers::NONE)).ok()
+    }
+
+    #[test_case('s' => Some(Command::ResolveConflict(ConflictChoice::Skip))         ; "s skips")]
+    #[test_case('S' => Some(Command::ResolveConflict(ConflictChoice::SkipAll))      ; "S skips all")]
+    #[test_case('o' => Some(Command::ResolveConflict(ConflictChoice::Overwrite))    ; "o overwrites")]
+    #[test_case('O' => Some(Command::ResolveConflict(ConflictChoice::OverwriteAll)) ; "O overwrites all")]
+    #[test_case('q' => Some(Command::CancelPrompt) ; "an unoffered key abandons the paste")]
+    fn a_conflict_resolves_on_one_keypress(key: char) -> Option<Command> {
+        conflict_key(true, key)
+    }
+
+    #[test_case('o' ; "overwrite")]
+    #[test_case('O' ; "overwrite all")]
+    fn a_directory_collision_does_not_bind_the_overwrite_keys(key: char) {
+        // The prompt does not offer replacing a directory, so its keys must
+        // not quietly do it anyway.
+        assert_eq!(Some(Command::CancelPrompt), conflict_key(false, key));
+    }
+
+    #[test]
+    fn a_conflict_prompt_renders_as_a_confirmation() {
+        // No text is collected, so it takes the full-width label path rather
+        // than reserving an input area next to the label.
+        assert!(
+            PromptAction::Conflict {
+                name: "a.txt".to_string(),
+                can_overwrite: true,
+            }
+            .is_confirmation()
+        );
+        assert!(!PromptAction::CreateDirectory.is_confirmation());
     }
 
     // ── next_scroll_top ──────────────────────────────────────────────────────

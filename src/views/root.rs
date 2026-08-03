@@ -108,6 +108,7 @@ impl CommandHandler for RootView {
             | Command::Open(_)
             | Command::Rename { .. }
             | Command::FilterChanged(_)
+            | Command::ResolveConflict(_)
             | Command::StartSearch(_) => {
                 self.mode = InputMode::Normal;
                 CommandResult::NotHandled

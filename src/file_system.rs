@@ -9,6 +9,7 @@ mod tasks;
 mod watch;
 
 use std::{
+    collections::VecDeque,
     fmt::Display,
     fs,
     path::{Path, PathBuf},
@@ -28,9 +29,9 @@ use self::{
     watch::DirectoryWatcher,
 };
 use crate::{
-    app::config::Config,
+    app::{clipboard::ClipboardEntry, config::Config},
     command::{
-        Command,
+        Command, ConflictChoice, PromptAction,
         progress::{CancellationToken, Task},
         result::CommandResult,
     },
@@ -42,6 +43,28 @@ use crate::{
 enum Cancellable {
     Task(CancelInfo),
     Search(CancellationToken),
+}
+
+/// A paste running one source at a time, so a name that is already taken in the
+/// destination can be answered for before the next source starts. Held only
+/// while the conflict prompt is open: `advance_paste` takes it, and puts it back
+/// only when it needs an answer.
+struct PendingPaste {
+    /// `Move` when true, `Copy` when false. Decides both the task kind and
+    /// which clipboard entry an unfinished paste leaves behind.
+    is_move: bool,
+    dest: PathInfo,
+    /// Sources not yet processed. The one being asked about stays at the front
+    /// until the answer pops it.
+    remaining: VecDeque<PathInfo>,
+    /// Sources that could not be started, kept so a retry carries only them.
+    failed: Vec<PathInfo>,
+    /// How many tasks actually started, which decides whether the clipboard is
+    /// cleared, reduced, or left alone.
+    started: usize,
+    /// Set by an `*All` answer, which then resolves every later collision
+    /// without prompting again.
+    apply_to_all: Option<ConflictChoice>,
 }
 
 pub struct FileSystem {
@@ -68,6 +91,9 @@ pub struct FileSystem {
     open_directory_template: String,
     open_file_template: String,
     open_filectrl_window_template: String,
+    /// The paste awaiting a conflict answer, if any. `Some` only while the
+    /// conflict prompt is open.
+    pending_paste: Option<PendingPaste>,
     search_max_depth: u32,
     search_max_results: u32,
     watcher: Option<DirectoryWatcher>,
@@ -97,6 +123,7 @@ impl FileSystem {
             open_directory_template: config.openers.open_directory.clone(),
             open_file_template: config.openers.open_file.clone(),
             open_filectrl_window_template: config.openers.open_filectrl_window.clone(),
+            pending_paste: None,
             search_max_depth: config.file_system.search_max_depth,
             search_max_results: config.file_system.search_max_results,
             watcher,
@@ -392,32 +419,136 @@ impl FileSystem {
         self.cd(self.current_directory().clone(), false)
     }
 
-    /// Runs each task, registering started tasks on the cancel stack. Returns
-    /// the sources of the tasks that failed validation, in batch order (an
-    /// empty result means every task started), together with the alerts those
-    /// failures produced (e.g. destination exists). The caller broadcasts the
-    /// alerts alongside its own follow-up. Started tasks send their initial
-    /// progress snapshot themselves, before spawning their worker thread.
-    fn run_batch(
-        &mut self,
-        tasks: impl Iterator<Item = TaskCommand>,
-    ) -> (Vec<PathInfo>, Vec<Command>) {
-        let mut failed = Vec::new();
-        let mut commands = Vec::new();
-        for task in tasks {
-            let source = task.source().clone();
-            let result = task.run(
-                self.command_tx.clone(),
-                self.buffer_min_bytes,
-                self.buffer_max_bytes,
-            );
-            match result.cancel_info {
-                Some(cancel_info) => self.cancellables.push(Cancellable::Task(cancel_info)),
-                None => failed.push(source),
-            }
-            commands.extend(result.command_result.into_commands());
+    /// Runs a task, registering it on the cancel stack when it starts. Returns
+    /// whether it started, together with the alerts it produced (a task that
+    /// fails validation produces one and starts nothing). Started tasks send
+    /// their initial progress snapshot themselves, before queueing their work.
+    fn run_task(&mut self, task: TaskCommand) -> (bool, Vec<Command>) {
+        let result = task.run(
+            self.command_tx.clone(),
+            self.buffer_min_bytes,
+            self.buffer_max_bytes,
+        );
+        let started = result.cancel_info.is_some();
+        if let Some(cancel_info) = result.cancel_info {
+            self.cancellables.push(Cancellable::Task(cancel_info));
         }
-        (failed, commands)
+        (started, result.command_result.into_commands())
+    }
+
+    /// Starts a paste. Sources run one at a time so that a name already taken
+    /// in the destination can be answered for before the next source starts.
+    fn start_paste(&mut self, is_move: bool, srcs: &[PathInfo], dest: &PathInfo) -> CommandResult {
+        self.pending_paste = Some(PendingPaste {
+            is_move,
+            dest: dest.clone(),
+            remaining: srcs.iter().cloned().collect(),
+            failed: Vec::new(),
+            started: 0,
+            apply_to_all: None,
+        });
+        self.advance_paste()
+    }
+
+    /// Runs queued sources until one collides with a destination that has not
+    /// been answered for, or until the batch is done. Returns the alerts the
+    /// tasks produced, plus either the conflict prompt or the clipboard
+    /// follow-up.
+    fn advance_paste(&mut self) -> CommandResult {
+        let Some(mut pending) = self.pending_paste.take() else {
+            return CommandResult::Handled;
+        };
+        let mut commands = Vec::new();
+        while let Some(src) = pending.remaining.front().cloned() {
+            let overwrite = match existing_destination(&pending.dest, &src) {
+                None => false,
+                Some(is_directory) => match pending.apply_to_all {
+                    Some(ConflictChoice::SkipAll) => {
+                        pending.remaining.pop_front();
+                        continue;
+                    }
+                    // "Overwrite all" cannot answer for a directory, which is
+                    // never replaced, so that collision is still asked about.
+                    Some(ConflictChoice::OverwriteAll) if !is_directory => true,
+                    _ => {
+                        commands.push(Command::OpenPrompt(PromptAction::Conflict {
+                            name: src.display_name.clone(),
+                            can_overwrite: !is_directory,
+                        }));
+                        // The source stays at the front of the queue: the
+                        // answer is what pops it.
+                        self.pending_paste = Some(pending);
+                        return commands.into();
+                    }
+                },
+            };
+            pending.remaining.pop_front();
+            commands.extend(self.run_paste_task(&mut pending, src, overwrite));
+        }
+        commands.extend(finish_paste(pending));
+        commands.into()
+    }
+
+    /// Applies a conflict answer to the source at the front of the queue, then
+    /// keeps going.
+    fn resolve_conflict(&mut self, choice: ConflictChoice) -> CommandResult {
+        let Some(mut pending) = self.pending_paste.take() else {
+            return CommandResult::Handled;
+        };
+        let Some(src) = pending.remaining.pop_front() else {
+            return CommandResult::Handled;
+        };
+        if matches!(
+            choice,
+            ConflictChoice::OverwriteAll | ConflictChoice::SkipAll
+        ) {
+            pending.apply_to_all = Some(choice);
+        }
+        let mut commands = Vec::new();
+        if matches!(
+            choice,
+            ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
+        ) {
+            commands.extend(self.run_paste_task(&mut pending, src, true));
+        }
+        self.pending_paste = Some(pending);
+        commands.extend(self.advance_paste().into_commands());
+        commands.into()
+    }
+
+    /// Abandons a paste whose conflict prompt was dismissed. Sources never
+    /// reached rejoin the failures in the clipboard, so a retry carries exactly
+    /// what was not pasted. Deliberately skipped sources are not among them:
+    /// skipping was a choice, not a failure.
+    fn cancel_paste(&mut self) -> CommandResult {
+        let Some(mut pending) = self.pending_paste.take() else {
+            return CommandResult::NotHandled;
+        };
+        let remaining: Vec<PathInfo> = pending.remaining.drain(..).collect();
+        pending.failed.extend(remaining);
+        finish_paste(pending).map_or(CommandResult::NotHandled, Into::into)
+    }
+
+    /// Runs one source of a paste, recording whether it started so the
+    /// clipboard follow-up can tell a clean run from a partial one.
+    fn run_paste_task(
+        &mut self,
+        pending: &mut PendingPaste,
+        src: PathInfo,
+        overwrite: bool,
+    ) -> Vec<Command> {
+        let task = if pending.is_move {
+            TaskCommand::Move(src.clone(), pending.dest.clone(), overwrite)
+        } else {
+            TaskCommand::Copy(src.clone(), pending.dest.clone(), overwrite)
+        };
+        let (started, commands) = self.run_task(task);
+        if started {
+            pending.started += 1;
+        } else {
+            pending.failed.push(src);
+        }
+        commands
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
@@ -521,6 +652,38 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
         .collect())
 }
 
+/// Whether `src`'s name is already taken in `dest`, and if so whether the entry
+/// holding it is a directory. A directory is never replaced, so the prompt
+/// withholds the overwrite choices for one. Links are not followed, so a symlink
+/// to a directory reports `Some(false)` and is replaced as a link.
+fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<bool> {
+    let name = src.path.file_name()?;
+    dest.path
+        .join(name)
+        .symlink_metadata()
+        .ok()
+        .map(|metadata| metadata.is_dir())
+}
+
+/// The clipboard follow-up for a finished or abandoned paste. Nothing started
+/// leaves the clipboard untouched so the paste can be retried as-is; a clean run
+/// clears it; a partial run reduces it to what was not pasted, because a full
+/// retry would collide with the destinations just created.
+fn finish_paste(pending: PendingPaste) -> Option<Command> {
+    if pending.started == 0 {
+        return None;
+    }
+    if pending.failed.is_empty() {
+        return Some(Command::SetClipboardEntry(None));
+    }
+    let entry = if pending.is_move {
+        ClipboardEntry::Move(pending.failed)
+    } else {
+        ClipboardEntry::Copy(pending.failed)
+    };
+    Some(Command::SetClipboardEntry(Some(entry)))
+}
+
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
 /// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
 fn parse_octal_mode(mode_str: &str) -> Option<u32> {
@@ -555,38 +718,19 @@ mod tests {
             open_directory_template: String::new(),
             open_file_template: String::new(),
             open_filectrl_window_template: String::new(),
+            pending_paste: None,
             search_max_depth: 20,
             search_max_results: 10_000,
             watcher: None,
         }
     }
 
-    #[test]
-    fn run_batch_reports_every_source_when_every_task_fails_validation() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        // A vanished source fails the pre-flight re-stat, so no task starts.
-        let mut src = PathInfo::try_from(Path::new("/")).unwrap();
-        src.path = PathBuf::from("/nonexistent/filectrl_missing.txt");
-        src.display_name = "filectrl_missing.txt".to_string();
-        let dest = PathInfo::try_from(std::env::temp_dir().as_path()).unwrap();
-
-        let (failed, commands) =
-            file_system.run_batch(std::iter::once(TaskCommand::Copy(src.clone(), dest)));
-
-        assert_eq!(vec![src], failed);
-        assert!(file_system.cancellables.is_empty());
-        // The failure is returned for the caller to broadcast, not sent.
-        assert!(matches!(commands.as_slice(), [Command::AlertError(_)]));
-        assert!(rx.try_recv().is_err());
-    }
-
-    /// A populated source directory and an empty destination directory, both
-    /// inside one self-removing temp directory.
+    /// A source directory holding `a.txt` and `b.txt`, and an empty destination
+    /// directory, both inside one self-removing temp directory.
     struct CopyFixture {
         _dir: TempDir,
         src: PathInfo,
+        other: PathInfo,
         dest: PathInfo,
         missing: PathInfo,
     }
@@ -598,7 +742,8 @@ mod tests {
             let dest_dir = dir.join("dest");
             fs::create_dir_all(&src_dir).unwrap();
             fs::create_dir_all(&dest_dir).unwrap();
-            fs::write(src_dir.join("a.txt"), b"x").unwrap();
+            fs::write(src_dir.join("a.txt"), b"src").unwrap();
+            fs::write(src_dir.join("b.txt"), b"src").unwrap();
 
             // A vanished source fails the pre-flight re-stat, so its task
             // never starts.
@@ -608,10 +753,27 @@ mod tests {
 
             Self {
                 src: PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap(),
+                other: PathInfo::try_from(src_dir.join("b.txt").as_path()).unwrap(),
                 dest: PathInfo::try_from(dest_dir.as_path()).unwrap(),
                 missing,
                 _dir: dir,
             }
+        }
+
+        /// Puts a file at `name` in the destination, so pasting the matching
+        /// source collides with it.
+        fn occupy(&self, name: &str) {
+            fs::write(self.dest.path.join(name), b"dest").unwrap();
+        }
+
+        /// Puts a directory at `name` in the destination: a collision that is
+        /// never replaced, whatever the user answers.
+        fn occupy_with_directory(&self, name: &str) {
+            fs::create_dir_all(self.dest.path.join(name)).unwrap();
+        }
+
+        fn pasted(&self, name: &str) -> Vec<u8> {
+            fs::read(self.dest.path.join(name)).unwrap()
         }
     }
 
@@ -627,65 +789,83 @@ mod tests {
         }
     }
 
-    #[test]
-    fn run_batch_reports_no_failed_sources_when_every_task_starts() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_run_batch");
-
-        let (failed, commands) = file_system.run_batch(std::iter::once(TaskCommand::Copy(
-            fx.src.clone(),
-            fx.dest.clone(),
-        )));
-
-        assert!(failed.is_empty());
-        assert!(commands.is_empty());
-        assert_eq!(1, file_system.cancellables.len());
-        await_terminal_task(&rx);
+    /// The conflict prompt in `commands`, or a panic naming what was found.
+    fn conflict_prompt(commands: &[Command]) -> (&str, bool) {
+        commands
+            .iter()
+            .find_map(|command| match command {
+                Command::OpenPrompt(PromptAction::Conflict {
+                    name,
+                    can_overwrite,
+                }) => Some((name.as_str(), *can_overwrite)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a conflict prompt, got {commands:?}"))
     }
 
     #[test]
-    fn run_batch_reports_only_the_failed_sources_on_partial_failure() {
+    fn a_paste_where_nothing_starts_leaves_the_clipboard_alone() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_run_batch_mixed");
+        let fx = CopyFixture::new("fs_paste_all_failed");
 
-        let (failed, commands) = file_system.run_batch(
-            [
-                TaskCommand::Copy(fx.missing.clone(), fx.dest.clone()),
-                TaskCommand::Copy(fx.src.clone(), fx.dest.clone()),
-            ]
-            .into_iter(),
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.missing.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+
+        // Nothing was pasted, so the clipboard must survive untouched for the
+        // paste to be retried as-is.
+        assert!(
+            matches!(commands.as_slice(), [Command::AlertError(_)]),
+            "{commands:?}"
         );
+        assert!(file_system.cancellables.is_empty());
+        assert!(rx.try_recv().is_err());
+    }
 
-        // Only the failed source is reported: the handler reduces the
-        // clipboard to exactly these so a retry carries only what was not
-        // pasted.
-        assert_eq!(vec![fx.missing.clone()], failed);
-        // The failed task's alert is returned; the started one contributes none.
-        assert!(matches!(commands.as_slice(), [Command::AlertError(_)]));
+    #[test]
+    fn a_clean_paste_clears_the_clipboard() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_paste_clean");
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+
+        assert!(
+            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
+            "{commands:?}"
+        );
         assert_eq!(1, file_system.cancellables.len());
         await_terminal_task(&rx);
     }
 
     #[test]
-    fn copy_with_partial_failure_reduces_the_clipboard_to_the_failed_sources() {
+    fn a_partial_paste_reduces_the_clipboard_to_what_was_not_pasted() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_partial_clipboard");
 
-        let result = file_system.handle_command(&Command::Copy {
-            srcs: vec![fx.missing.clone(), fx.src.clone()],
-            dest: fx.dest.clone(),
-        });
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.missing.clone(), fx.src.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
 
         // The failed source's alert rides the same broadcast as the clipboard
         // follow-up, which keeps the operation and only the failed source, so
         // a retry carries just what was not pasted.
-        let commands = result.into_commands();
         let [
             Command::AlertError(_),
             Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths))),
@@ -695,6 +875,196 @@ mod tests {
         };
         assert_eq!(&vec![fx.missing.clone()], paths);
         await_terminal_task(&rx);
+    }
+
+    #[test]
+    fn a_taken_name_opens_the_conflict_prompt_before_anything_runs() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_prompt");
+        fx.occupy("a.txt");
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+
+        assert_eq!(("a.txt", true), conflict_prompt(&commands));
+        // Nothing may run until the collision is answered, and the existing
+        // file must still be intact.
+        assert!(file_system.cancellables.is_empty());
+        assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_directory_in_the_way_withholds_the_overwrite_choices() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_directory");
+        fx.occupy_with_directory("a.txt");
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+
+        // Replacing a directory would take its contents with it, so the prompt
+        // must not offer it.
+        assert_eq!(("a.txt", false), conflict_prompt(&commands));
+    }
+
+    #[test]
+    fn overwrite_replaces_the_existing_destination() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_overwrite");
+        fx.occupy("a.txt");
+        file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.src.clone()],
+            dest: fx.dest.clone(),
+        });
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite))
+            .into_commands();
+
+        assert!(
+            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
+            "{commands:?}"
+        );
+        await_terminal_task(&rx);
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+    }
+
+    #[test]
+    fn skip_leaves_the_existing_destination_and_moves_on() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_skip");
+        fx.occupy("a.txt");
+        file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.src.clone(), fx.other.clone()],
+            dest: fx.dest.clone(),
+        });
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::Skip))
+            .into_commands();
+
+        // The skipped source is not a failure, so the clipboard is cleared
+        // rather than reduced to it; the non-colliding source still pasted.
+        assert!(
+            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
+            "{commands:?}"
+        );
+        await_terminal_task(&rx);
+        assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
+    }
+
+    #[test]
+    fn skip_all_answers_every_later_collision_without_prompting_again() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_skip_all");
+        fx.occupy("a.txt");
+        fx.occupy("b.txt");
+        file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.src.clone(), fx.other.clone()],
+            dest: fx.dest.clone(),
+        });
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll))
+            .into_commands();
+
+        // The second collision must not prompt, and nothing started, so the
+        // clipboard is left alone.
+        assert!(commands.is_empty(), "{commands:?}");
+        assert!(file_system.pending_paste.is_none());
+        assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn overwrite_all_answers_every_later_collision_without_prompting_again() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_overwrite_all");
+        fx.occupy("a.txt");
+        fx.occupy("b.txt");
+        file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.src.clone(), fx.other.clone()],
+            dest: fx.dest.clone(),
+        });
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
+            .into_commands();
+
+        assert!(
+            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
+            "{commands:?}"
+        );
+        assert!(file_system.pending_paste.is_none());
+        await_terminal_task(&rx);
+        await_terminal_task(&rx);
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
+    }
+
+    #[test]
+    fn dismissing_the_prompt_returns_the_unreached_sources_to_the_clipboard() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_cancel");
+        fx.occupy("b.txt");
+        // The first source pastes cleanly; the second collides and is the one
+        // the prompt is asking about.
+        file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.src.clone(), fx.other.clone()],
+            dest: fx.dest.clone(),
+        });
+
+        let commands = file_system
+            .handle_command(&Command::CancelPrompt)
+            .into_commands();
+
+        // A retry must carry exactly what was not pasted, so the source the
+        // prompt was asking about goes back to the clipboard.
+        let [Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths)))] = commands.as_slice()
+        else {
+            panic!("expected SetClipboardEntry(Copy), got {commands:?}");
+        };
+        assert_eq!(&vec![fx.other.clone()], paths);
+        await_terminal_task(&rx);
+        assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
+    }
+
+    #[test]
+    fn cancelling_an_unrelated_prompt_is_not_claimed() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+
+        // Every prompt broadcasts CancelPrompt on Esc, so with no paste waiting
+        // this must fall through to the view that owns the prompt.
+        let result = file_system.handle_command(&Command::CancelPrompt);
+
+        assert!(matches!(result, CommandResult::NotHandled));
     }
 
     #[test]

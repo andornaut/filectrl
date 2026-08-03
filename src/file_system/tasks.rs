@@ -100,23 +100,18 @@ impl TaskRunResult {
     }
 }
 
+/// A file operation to run. The `bool` on `Copy` and `Move` is the caller's
+/// answer to a destination that already exists: `true` replaces it, `false`
+/// refuses. Only a top-level destination can be replaced; a collision nested
+/// inside a copied directory is still recorded as an error.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskCommand {
-    Copy(PathInfo, PathInfo),
+    Copy(PathInfo, PathInfo, bool),
     Delete(PathInfo),
-    Move(PathInfo, PathInfo),
+    Move(PathInfo, PathInfo, bool),
 }
 
 impl TaskCommand {
-    /// The source path the task operates on.
-    pub fn source(&self) -> &PathInfo {
-        match self {
-            TaskCommand::Copy(path, _) | TaskCommand::Move(path, _) | TaskCommand::Delete(path) => {
-                path
-            }
-        }
-    }
-
     pub fn run(
         self,
         tx: Sender<Command>,
@@ -124,12 +119,12 @@ impl TaskCommand {
         buffer_max_bytes: u64,
     ) -> TaskRunResult {
         match self {
-            TaskCommand::Copy(path, dir) => {
-                run_copy_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            TaskCommand::Copy(path, dir, overwrite) => {
+                run_copy_task(tx, path, dir, overwrite, buffer_min_bytes, buffer_max_bytes)
             }
             TaskCommand::Delete(path) => run_delete_task(tx, path),
-            TaskCommand::Move(path, dir) => {
-                run_move_task(tx, path, dir, buffer_min_bytes, buffer_max_bytes)
+            TaskCommand::Move(path, dir, overwrite) => {
+                run_move_task(tx, path, dir, overwrite, buffer_min_bytes, buffer_max_bytes)
             }
         }
     }
@@ -139,6 +134,7 @@ fn run_copy_task(
     tx: Sender<Command>,
     path: PathInfo,
     dir: PathInfo,
+    overwrite: bool,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
@@ -148,10 +144,19 @@ fn run_copy_task(
         Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let (old_path, new_path) = match validate_paths(&path, &dir, "copy") {
+    let (old_path, new_path) = match validate_paths(&path, &dir, "copy", overwrite) {
         Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
+
+    // Clear the granted destination before the copy opens it with `create_new`.
+    // Removing rather than truncating keeps a destination that is a hard link
+    // to the source from taking the source's contents with it.
+    if overwrite && let Err(error) = remove_existing(&new_path) {
+        return TaskRunResult::failed(
+            Command::AlertError(format!("Failed to replace {new_path:?}: {error}")).into(),
+        );
+    }
 
     info!("Copying {old_path:?} to {new_path:?}");
     let kind = TaskKind::Copy(Transfer {
@@ -207,6 +212,7 @@ fn run_move_task(
     tx: Sender<Command>,
     path: PathInfo,
     dir: PathInfo,
+    overwrite: bool,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
@@ -216,7 +222,7 @@ fn run_move_task(
         Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let (old_path, new_path) = match validate_paths(&path, &dir, "move") {
+    let (old_path, new_path) = match validate_paths(&path, &dir, "move", overwrite) {
         Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
@@ -242,7 +248,15 @@ fn run_move_task(
             active.cancelled();
             return;
         }
-        match rename_no_replace(&old_path, &new_path) {
+        // Overwrite was granted, so let the rename replace the destination
+        // atomically. That leaves no window in which the destination is
+        // missing, unlike removing it first as the copy path has to.
+        let renamed = if overwrite {
+            fs::rename(&old_path, &new_path)
+        } else {
+            rename_no_replace(&old_path, &new_path)
+        };
+        match renamed {
             Ok(_) => {
                 active.increment(size);
                 active.done();
@@ -978,6 +992,7 @@ fn validate_paths(
     source: &PathInfo,
     destination_directory: &PathInfo,
     operation: &str,
+    overwrite: bool,
 ) -> Result<(PathBuf, PathBuf), CommandResult> {
     let old_path = source.path.clone();
     // Join the source's raw `OsStr` file name rather than its display name:
@@ -1017,17 +1032,31 @@ fn validate_paths(
         }
     }
 
-    // Refuse to overwrite an existing destination. `File::create`/`fs::rename`
-    // would silently replace it, and truncating a destination that is a hard
-    // link to the source would destroy the source's contents as well.
-    if new_path.symlink_metadata().is_ok() {
-        return Err(anyhow!(
+    // Refuse to replace an existing destination unless the paste asked for it:
+    // `File::create`/`fs::rename` would otherwise do so silently. An existing
+    // directory is never replaced whatever was asked, because removing it would
+    // take its contents with it and merging into it is not supported.
+    match new_path.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => Err(anyhow!(
+            "Cannot {operation} {old_path:?} to {new_path:?}: a directory already exists there"
+        )
+        .into()),
+        Ok(_) if !overwrite => Err(anyhow!(
             "Cannot {operation} {old_path:?} to {new_path:?}: destination already exists"
         )
-        .into());
+        .into()),
+        _ => Ok((old_path, new_path)),
     }
+}
 
-    Ok((old_path, new_path))
+/// Removes an existing non-directory destination, treating an already-absent
+/// path as success: the entry the user agreed to replace may have been removed
+/// by something else in the meantime, which is not a reason to fail the paste.
+fn remove_existing(path: &Path) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }
 
 #[cfg(test)]
@@ -1088,14 +1117,14 @@ mod tests {
     fn validate_paths_rejects_identical_source_and_destination() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a", "a");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     #[test]
     fn validate_paths_rejects_destination_inside_source() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/b/c", "c");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     #[test]
@@ -1104,7 +1133,7 @@ mod tests {
         // even though a raw component-wise prefix check would not catch it.
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/c/..", "c");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     #[test]
@@ -1120,7 +1149,7 @@ mod tests {
 
         let source = path_info(src.to_str().unwrap(), "src");
         let dest = path_info(link.to_str().unwrap(), "link");
-        assert!(validate_paths(&source, &dest, "copy").is_err());
+        assert!(validate_paths(&source, &dest, "copy", false).is_err());
     }
 
     #[test]
@@ -1136,14 +1165,15 @@ mod tests {
         // no subtree to recurse into and nothing to reject.
         let source = PathInfo::try_from(link.as_path()).unwrap();
         let dest = PathInfo::try_from(target.as_path()).unwrap();
-        assert!(validate_paths(&source, &dest, "copy").is_ok());
+        assert!(validate_paths(&source, &dest, "copy", false).is_ok());
     }
 
     #[test]
     fn validate_paths_allows_sibling_destination() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/x", "x");
-        let (old_path, new_path) = validate_paths(&src, &dest, "copy").expect("should be allowed");
+        let (old_path, new_path) =
+            validate_paths(&src, &dest, "copy", false).expect("should be allowed");
         assert_eq!(PathBuf::from("/a/b"), old_path);
         assert_eq!(PathBuf::from("/x/b"), new_path);
     }
@@ -1153,7 +1183,7 @@ mod tests {
         // "/a/bb" must not be treated as inside "/a/b".
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
-        assert!(validate_paths(&src, &dest, "copy").is_ok());
+        assert!(validate_paths(&src, &dest, "copy", false).is_ok());
     }
 
     #[test]
@@ -1165,7 +1195,7 @@ mod tests {
         let mut src = path_info("/a/placeholder", "placeholder");
         src.path = PathBuf::from("/a").join(name);
         let dest = path_info("/x", "x");
-        let (_, new_path) = validate_paths(&src, &dest, "copy").expect("should be allowed");
+        let (_, new_path) = validate_paths(&src, &dest, "copy", false).expect("should be allowed");
         assert_eq!(PathBuf::from("/x").join(name), new_path);
     }
 
@@ -1173,7 +1203,7 @@ mod tests {
     fn validate_paths_rejects_source_without_file_name() {
         let src = path_info("/", "");
         let dest = path_info("/x", "x");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     #[test]
@@ -1182,7 +1212,7 @@ mod tests {
         std::fs::write(fx.join("existing.txt"), b"x").unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     #[test]
@@ -1192,7 +1222,7 @@ mod tests {
         std::os::unix::fs::symlink(fx.join("missing"), &link).unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
-        assert!(validate_paths(&src, &dest, "copy").is_err());
+        assert!(validate_paths(&src, &dest, "copy", false).is_err());
     }
 
     fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {

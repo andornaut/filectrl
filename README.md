@@ -80,6 +80,20 @@ the config file (e.g. `~/.config/filectrl/bookmarks/`).
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 
+When the destination directory already contains an entry with the same name, the paste stops and asks what to do with it:
+
+Key | Action
+--- | ---
+<kbd>s</kbd> | Skip this entry
+<kbd>S</kbd> | Skip this entry and every later collision in the same paste
+<kbd>o</kbd> | Replace the existing entry
+<kbd>O</kbd> | Replace this and every later collision in the same paste
+<kbd>Esc</kbd> | Abandon the rest of the paste
+
+An existing **directory** is never replaced, so only the skip choices are offered for one. Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately are not kept.
+
+A name that collides *inside* a directory being copied is reported as an error rather than prompting; only the entry you pasted is asked about.
+
 ### Multi-select
 
 Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items at once.

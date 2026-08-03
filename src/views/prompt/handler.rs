@@ -7,7 +7,10 @@ use ratatui_textarea::{CursorMove, Input};
 use super::PromptView;
 use crate::{
     app::config::{Config, keybindings::Action},
-    command::{Command, InputMode, PromptAction, handler::CommandHandler, result::CommandResult},
+    command::{
+        Command, ConflictChoice, InputMode, PromptAction, handler::CommandHandler,
+        result::CommandResult,
+    },
 };
 
 impl CommandHandler for PromptView {
@@ -31,6 +34,24 @@ impl CommandHandler for PromptView {
         if matches!(self.actions, PromptAction::Delete(_)) {
             return match code {
                 KeyCode::Char('y' | 'Y') => Command::ConfirmDelete.into(),
+                _ => Command::CancelPrompt.into(),
+            };
+        }
+
+        // Paste conflict: single keypress, uppercase answering for the rest of
+        // the batch too. Overwrite is only bound when the existing entry is not
+        // a directory, so an unbound key cancels the paste rather than falling
+        // through to a choice the prompt did not offer.
+        if let PromptAction::Conflict { can_overwrite, .. } = self.actions {
+            return match code {
+                KeyCode::Char('s') => Command::ResolveConflict(ConflictChoice::Skip).into(),
+                KeyCode::Char('S') => Command::ResolveConflict(ConflictChoice::SkipAll).into(),
+                KeyCode::Char('o') if can_overwrite => {
+                    Command::ResolveConflict(ConflictChoice::Overwrite).into()
+                }
+                KeyCode::Char('O') if can_overwrite => {
+                    Command::ResolveConflict(ConflictChoice::OverwriteAll).into()
+                }
                 _ => Command::CancelPrompt.into(),
             };
         }
