@@ -48,8 +48,7 @@ impl CommandHandler for PromptView {
             // different key entirely and must not resolve to the destructive
             // choice it shares a letter with; it falls through to the cancel
             // below, which loses nothing because the clipboard is restored.
-            let plain = !modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+            let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
                 KeyCode::Char('s') if plain => {
                     Command::ResolveConflict(ConflictChoice::Skip).into()

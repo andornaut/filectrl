@@ -9,7 +9,8 @@ mod tasks;
 mod watch;
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
+    ffi::OsString,
     fmt::Display,
     fs,
     path::{Path, PathBuf},
@@ -65,6 +66,12 @@ struct PendingPaste {
     /// Set by an `*All` answer, which then resolves every later collision
     /// without prompting again.
     apply_to_all: Option<ConflictChoice>,
+    /// Destination names already spoken for by sources queued earlier in this
+    /// paste. Their work is queued but may not have run, so the filesystem does
+    /// not show them yet; without this, two marked sources sharing a basename
+    /// (which search results make easy) would both see a free name and the
+    /// second would fail at the copy instead of being asked about.
+    claimed: HashSet<OsString>,
 }
 
 /// What already holds a source's name in the destination directory.
@@ -90,6 +97,25 @@ enum PasteStep {
 }
 
 impl PendingPaste {
+    /// What holds `src`'s destination name, counting names an earlier source in
+    /// this same paste has already claimed. A claimed name is `Replaceable`:
+    /// the worker runs the sources in order, so replacing it removes what the
+    /// earlier source wrote rather than racing it.
+    fn occupant(&self, src: &PathInfo) -> Option<Occupant> {
+        existing_destination(&self.dest, src).or_else(|| {
+            let name = src.path.file_name()?;
+            self.claimed.contains(name).then_some(Occupant::Replaceable)
+        })
+    }
+
+    /// Records that `src`'s destination name is spoken for, once its work is
+    /// queued.
+    fn claim(&mut self, src: &PathInfo) {
+        if let Some(name) = src.path.file_name() {
+            self.claimed.insert(name.to_os_string());
+        }
+    }
+
     /// What to do with the source at the front of the queue, given what is
     /// already at its destination. Pure, so the whole answer matrix can be
     /// exercised without a filesystem or a worker.
@@ -525,6 +551,7 @@ impl FileSystem {
             failed: Vec::new(),
             started: 0,
             apply_to_all: None,
+            claimed: HashSet::new(),
         });
         self.advance_paste()
     }
@@ -539,7 +566,7 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         while let Some(src) = pending.remaining.front().cloned() {
-            match pending.step(existing_destination(&pending.dest, &src)) {
+            match pending.step(pending.occupant(&src)) {
                 PasteStep::Ask { can_overwrite } => {
                     commands.push(Command::OpenPrompt(PromptAction::Conflict {
                         name: src.display_name.clone(),
@@ -555,6 +582,7 @@ impl FileSystem {
                 }
                 PasteStep::Run { overwrite } => {
                     pending.remaining.pop_front();
+                    pending.claim(&src);
                     commands.extend(self.run_paste_task(&mut pending, src, overwrite));
                 }
             }
@@ -574,6 +602,7 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         if pending.answer(choice) {
+            pending.claim(&src);
             commands.extend(self.run_paste_task(&mut pending, src, true));
         }
         self.pending_paste = Some(pending);
@@ -963,6 +992,7 @@ mod tests {
             failed: Vec::new(),
             started: 0,
             apply_to_all,
+            claimed: HashSet::new(),
         }
     }
 
@@ -980,6 +1010,47 @@ mod tests {
         occupant: Option<Occupant>,
     ) -> PasteStep {
         pending(apply_to_all).step(occupant)
+    }
+
+    #[test]
+    fn a_name_claimed_earlier_in_the_paste_counts_as_taken() {
+        let fx = CopyFixture::new("fs_claimed");
+        let mut pending = pending(None);
+        pending.dest = fx.dest.clone();
+        // Two marked sources can share a basename when the marks span
+        // directories, which search results make easy.
+        let mut twin = fx.src.clone();
+        twin.path = fx
+            .dest
+            .path
+            .parent()
+            .unwrap()
+            .join("elsewhere")
+            .join("a.txt");
+
+        assert_eq!(None, pending.occupant(&twin));
+        pending.claim(&fx.src);
+
+        // The first source's work is only queued, so the filesystem still
+        // shows the name as free. Without the claim the second source would
+        // fail at the copy instead of being asked about.
+        assert_eq!(Some(Occupant::Replaceable), pending.occupant(&twin));
+    }
+
+    #[test]
+    fn a_later_all_answer_replaces_the_standing_one() {
+        let mut pending = pending(Some(ConflictChoice::OverwriteAll));
+
+        pending.answer(ConflictChoice::SkipAll);
+
+        // Deliberate: "skip all" is answered for the whole batch, so it
+        // supersedes an earlier "overwrite all". A directory collision is the
+        // way this comes up, since it reopens the prompt with only the skip
+        // choices; answering it with the single-entry `s` leaves the standing
+        // answer alone.
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.apply_to_all);
+        pending.answer(ConflictChoice::Skip);
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.apply_to_all);
     }
 
     #[test_case(ConflictChoice::Skip => (false, None) ; "skip runs nothing and does not stand")]
@@ -1003,6 +1074,7 @@ mod tests {
             failed,
             started,
             apply_to_all: None,
+            claimed: HashSet::new(),
         }
         .clipboard_follow_up()
     }
