@@ -96,11 +96,11 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
     let command = template.replace("%s", &shell_words::quote(&path.to_string_lossy()));
     Some(AppCandidate {
         argv: vec!["sh".to_string(), "-c".to_string(), command],
-        detail: template.clone(),
+        // The setting it comes from, so it is obvious which config key to
+        // change.
+        detail: format!("openers.{key}"),
         is_default: false,
-        // Named for the setting it comes from, so it is obvious which config
-        // key to change.
-        name: format!("openers.{key}"),
+        name: template.clone(),
         working_dir: None,
     })
 }

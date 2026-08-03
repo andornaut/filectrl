@@ -239,7 +239,7 @@ On Linux the application directories are indexed once per run, so an application
 
 Applications that need a terminal (`Terminal=true`) run inside `openers.open_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
 
-`openers.open_selected_file` (or `openers.open_current_directory` for a directory) is offered last when it is set, under that setting's name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
+`openers.open_selected_file` (or `openers.open_current_directory` for a directory) is offered last when it is set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
 
 ### Theming
 
