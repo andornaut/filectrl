@@ -1102,6 +1102,37 @@ mod tests {
     }
 
     #[test]
+    fn overwrite_moves_a_directory_over_an_existing_file() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_move_dir_over_file");
+        let src_dir = fx.src.path.parent().unwrap().join("adir");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("inner.txt"), b"src").unwrap();
+        let src = PathInfo::try_from(src_dir.as_path()).unwrap();
+        // A plain file is `Occupant::Replaceable`, so the prompt offers to
+        // replace it whatever the source's type is.
+        fs::write(fx.dest.path.join("adir"), b"dest").unwrap();
+        file_system.handle_command(&Command::Move {
+            srcs: vec![src],
+            dest: fx.dest.clone(),
+        });
+
+        file_system.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
+
+        // `rename` refuses to replace a file with a directory (ENOTDIR), so
+        // granting overwrite would promise a replacement the move could not
+        // deliver unless the destination is cleared first.
+        await_terminal_task(&rx);
+        assert_eq!(
+            b"src".to_vec(),
+            fs::read(fx.dest.path.join("adir").join("inner.txt")).unwrap()
+        );
+        assert!(!src_dir.exists(), "the source should have been moved");
+    }
+
+    #[test]
     fn skip_leaves_the_existing_destination_and_moves_on() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();

@@ -351,12 +351,16 @@ mod tests {
 
     // ── conflict prompt ──────────────────────────────────────────────────────
 
-    fn conflict_key(can_overwrite: bool, key: char) -> Option<Command> {
+    fn conflict_chord(can_overwrite: bool, key: char, modifiers: KeyModifiers) -> Option<Command> {
         let mut view = prompt_with_action(PromptAction::Conflict {
             name: "a.txt".to_string(),
             can_overwrite,
         });
-        Command::try_from(view.handle_key(&KeyCode::Char(key), &KeyModifiers::NONE)).ok()
+        Command::try_from(view.handle_key(&KeyCode::Char(key), &modifiers)).ok()
+    }
+
+    fn conflict_key(can_overwrite: bool, key: char) -> Option<Command> {
+        conflict_chord(can_overwrite, key, KeyModifiers::NONE)
     }
 
     #[test_case('s' => Some(Command::ResolveConflict(ConflictChoice::Skip))         ; "s skips")]
@@ -374,6 +378,28 @@ mod tests {
         // The prompt does not offer replacing a directory, so its keys must
         // not quietly do it anyway.
         assert_eq!(Some(Command::CancelPrompt), conflict_key(false, key));
+    }
+
+    #[test_case('o', KeyModifiers::CONTROL ; "ctrl does not overwrite")]
+    #[test_case('O', KeyModifiers::ALT     ; "alt does not overwrite all")]
+    #[test_case('s', KeyModifiers::CONTROL ; "ctrl does not skip")]
+    #[test_case('s', KeyModifiers::SUPER   ; "super does not skip")]
+    fn a_chord_is_not_one_of_the_offered_choices(key: char, modifiers: KeyModifiers) {
+        // Ctrl+O is a different key from o, and o is destructive, so sharing a
+        // letter must not be enough to trigger it. Falling through to cancel
+        // loses nothing: the clipboard is restored.
+        assert_eq!(
+            Some(Command::CancelPrompt),
+            conflict_chord(true, key, modifiers)
+        );
+    }
+
+    #[test_case('S' => Some(Command::ResolveConflict(ConflictChoice::SkipAll))      ; "shift skips all")]
+    #[test_case('O' => Some(Command::ResolveConflict(ConflictChoice::OverwriteAll)) ; "shift overwrites all")]
+    fn shift_still_reaches_the_uppercase_choices(key: char) -> Option<Command> {
+        // Shift is how the uppercase choices are typed at all, so the chord
+        // guard above must not reject it.
+        conflict_chord(true, key, KeyModifiers::SHIFT)
     }
 
     #[test]

@@ -90,7 +90,9 @@ Key | Action
 <kbd>O</kbd> | Replace this and every later collision in the same paste
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
-An existing **directory** is never replaced, so only the skip choices are offered for one. Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately are not kept.
+An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
+
+Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those, and entries you skip deliberately are not added to it. If nothing was pasted at all, the clipboard is left exactly as it was so the paste can be retried unchanged.
 
 A name that collides *inside* a directory being copied is reported as an error rather than prompting; only the entry you pasted is asked about.
 
