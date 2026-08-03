@@ -58,6 +58,9 @@ impl CommandHandler for FileSystem {
             } => self.open_with(working_dir.as_deref(), label, argv),
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::RefreshDirectory => self.refresh(),
+            Command::DirectoryListingComplete { generation } => {
+                self.on_listing_complete(*generation)
+            }
             Command::Rename { path, name } => self.rename(path, name),
             Command::ExitedSearch { generation } => {
                 self.on_search_exited(*generation);

@@ -206,6 +206,8 @@ fn run_copy_task(
             file_size,
             is_directory,
             source_mode,
+            // Like `cp`, which does not preserve timestamps without `-p`.
+            false,
             buffer_min_bytes,
             buffer_max_bytes,
         ) {
@@ -275,6 +277,11 @@ fn run_move_task(
                         size,
                         is_directory,
                         source_mode,
+                        // A same-device move is a rename, which keeps the
+                        // timestamps; the copy fallback has to put them back
+                        // so the result does not depend on which mount the
+                        // destination happens to be on.
+                        true,
                         buffer_min_bytes,
                         buffer_max_bytes,
                     ) else {
@@ -401,6 +408,7 @@ fn copy_with_progress(
     entry_size: u64,
     is_directory: bool,
     source_mode: u32,
+    preserve_times: bool,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
 ) -> Option<(ActiveTask, Vec<String>)> {
@@ -427,6 +435,7 @@ fn copy_with_progress(
         &mut buffer,
         is_directory,
         source_mode,
+        preserve_times,
     ) {
         active.cancelled();
         return None;
@@ -582,6 +591,7 @@ fn copy_directory(
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
     buffer: &mut [u8],
+    preserve_times: bool,
 ) -> bool {
     if let Err(error) = fs::create_dir(new_path) {
         // The subtree cannot be copied at all; skip it and continue with
@@ -603,6 +613,11 @@ fn copy_directory(
         .ok()
         .map(|metadata| metadata.permissions().mode());
     let apply_source_mode = || {
+        // After the contents, for the same reason the mode is: writing the
+        // children is what moved the directory's own modification time.
+        if preserve_times {
+            apply_times_to_path(old_path, new_path);
+        }
         if let Some(mode) = source_mode {
             apply_permissions(mode, new_path);
         }
@@ -662,6 +677,7 @@ fn copy_directory(
             buffer,
             metadata.is_dir(),
             metadata.permissions().mode(),
+            preserve_times,
         ) {
             return false;
         }
@@ -703,6 +719,7 @@ fn copy_file(
     errors: &mut Vec<String>,
     buffer: &mut [u8],
     source_mode: u32,
+    preserve_times: bool,
 ) -> bool {
     let total_size = active.total_size();
     let (mut old_file, mut new_file) = match open_files(old_path, new_path) {
@@ -728,6 +745,12 @@ fn copy_file(
 
         match old_file.read(buffer) {
             Ok(0) => {
+                // Before the permissions, and before `new_file` is dropped:
+                // writing is what moves the modification time, so it has to be
+                // restored once the last byte is written.
+                if preserve_times {
+                    apply_times(old_path, &new_file);
+                }
                 apply_permissions(source_mode, new_path);
                 return true;
             }
@@ -762,6 +785,7 @@ fn copy_path(
     buffer: &mut [u8],
     is_directory: bool,
     source_mode: u32,
+    preserve_times: bool,
 ) -> bool {
     // Check symlink first: `source_mode` comes from `symlink_metadata`, so a
     // symlink (even one pointing at a directory) is recreated as a link rather
@@ -770,9 +794,17 @@ fn copy_path(
         copy_symlink(old_path, new_path, errors);
         true
     } else if is_directory {
-        copy_directory(old_path, new_path, active, errors, buffer)
+        copy_directory(old_path, new_path, active, errors, buffer, preserve_times)
     } else if unix_mode::is_file(source_mode) {
-        copy_file(old_path, new_path, active, errors, buffer, source_mode)
+        copy_file(
+            old_path,
+            new_path,
+            active,
+            errors,
+            buffer,
+            source_mode,
+            preserve_times,
+        )
     } else {
         copy_special(old_path, new_path, errors, source_mode);
         true
@@ -930,6 +962,33 @@ fn list_entries(
         entries.push((entry.path(), file_type.is_dir()));
     }
     Ok(Some(entries))
+}
+
+/// Copies `source`'s access and modification times onto an already-open
+/// `target`. Best effort: a filesystem that cannot record them is not a reason
+/// to fail the operation.
+fn apply_times(source: &Path, target: &File) {
+    let Ok(metadata) = fs::metadata(source) else {
+        return;
+    };
+    let mut times = fs::FileTimes::new();
+    if let Ok(accessed) = metadata.accessed() {
+        times = times.set_accessed(accessed);
+    }
+    if let Ok(modified) = metadata.modified() {
+        times = times.set_modified(modified);
+    }
+    if let Err(error) = target.set_times(times) {
+        warn!("Failed to set times on {}: {error}", compact(source));
+    }
+}
+
+/// The same, for a path that is not already open. Opening a directory
+/// read-only is enough to set its times when the caller owns it.
+fn apply_times_to_path(source: &Path, target: &Path) {
+    if let Ok(file) = File::open(target) {
+        apply_times(source, &file);
+    }
 }
 
 fn apply_permissions(mode: u32, path: &Path) {
@@ -1411,7 +1470,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 64],
             false,
-            mode
+            mode,
+            false,
         ));
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         let dst_mode = std::fs::symlink_metadata(&dst)
@@ -1444,7 +1504,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 64],
             false,
-            mode
+            mode,
+            false,
         ));
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         let dst_mode = std::fs::symlink_metadata(&dst)
@@ -1489,7 +1550,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 64],
             true,
-            mode
+            mode,
+            false,
         ));
 
         if is_unreadable {
@@ -1537,7 +1599,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 64],
             true,
-            mode
+            mode,
+            false,
         ));
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         active.done();
@@ -1549,6 +1612,110 @@ mod tests {
         assert_eq!(
             b"b".to_vec(),
             std::fs::read(dst.join("b_short.txt")).unwrap()
+        );
+    }
+
+    /// The modification times of `path` and everything under it, by relative
+    /// name, so a tree can be compared against its copy.
+    fn modified_times(root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
+        let mut times = vec![(
+            PathBuf::from("."),
+            fs::metadata(root).unwrap().modified().unwrap(),
+        )];
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                let metadata = fs::metadata(&path).unwrap();
+                if metadata.is_dir() {
+                    stack.push(path.clone());
+                }
+                times.push((
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    metadata.modified().unwrap(),
+                ));
+            }
+        }
+        times.sort();
+        times
+    }
+
+    #[test]
+    fn a_preserving_copy_keeps_the_modification_times_of_the_whole_tree() {
+        let fx = TempDir::new("tasks_times");
+        let src = fx.join("src");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("a.txt"), b"a").unwrap();
+        fs::write(src.join("sub").join("b.txt"), b"b").unwrap();
+        // Backdate everything, deepest first so writing a child does not move
+        // the parent's time again.
+        let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        for relative in ["sub/b.txt", "sub", "a.txt", "."] {
+            let file = File::options().read(true).open(src.join(relative)).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        let before = modified_times(&src);
+        let dst = fx.join("dst");
+        let mode = fs::symlink_metadata(&src).unwrap().permissions().mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        // A same-device move is a rename, which keeps the timestamps. The
+        // cross-device fallback copies, so it has to put them back or the
+        // result depends on which mount the destination is on.
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            &mut [0u8; 64],
+            true,
+            mode,
+            true,
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        active.done();
+
+        assert_eq!(before, modified_times(&dst));
+    }
+
+    #[test]
+    fn a_plain_copy_does_not_keep_the_modification_times() {
+        let fx = TempDir::new("tasks_times_off");
+        let src = fx.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.txt"), b"a").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        for relative in ["a.txt", "."] {
+            let file = File::options().read(true).open(src.join(relative)).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        let dst = fx.join("dst");
+        let mode = fs::symlink_metadata(&src).unwrap().permissions().mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        // `cp` does not preserve timestamps without `-p`, so a copy must not
+        // start doing it just because the move path needs to.
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            &mut [0u8; 64],
+            true,
+            mode,
+            false,
+        ));
+        active.done();
+
+        assert_ne!(
+            old,
+            fs::metadata(dst.join("a.txt")).unwrap().modified().unwrap()
         );
     }
 
@@ -1579,7 +1746,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 64],
             true,
-            mode
+            mode,
+            false,
         ));
 
         assert_eq!(1, errors.len(), "expected one error: {errors:?}");
@@ -1965,7 +2133,8 @@ mod tests {
             &mut errors,
             &mut [0u8; 1024],
             false,
-            source_mode
+            source_mode,
+            false,
         ));
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         active.done();
