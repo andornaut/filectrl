@@ -64,9 +64,9 @@ pub struct FileSystem {
     /// can ignore stale `ListingBatch`es. Shared by both stream kinds so a
     /// generation is never ambiguous between them.
     next_generation: u64,
-    open_current_directory_template: String,
-    open_new_window_template: String,
-    open_selected_file_template: String,
+    open_directory_template: String,
+    open_file_template: String,
+    open_filectrl_window_template: String,
     watcher: Option<DirectoryWatcher>,
 }
 
@@ -91,9 +91,9 @@ impl FileSystem {
             current_load: None,
             current_search_generation: 0,
             next_generation: 0,
-            open_current_directory_template: config.openers.open_current_directory.clone(),
-            open_new_window_template: config.openers.open_new_window.clone(),
-            open_selected_file_template: config.openers.open_selected_file.clone(),
+            open_directory_template: config.openers.open_directory.clone(),
+            open_file_template: config.openers.open_file.clone(),
+            open_filectrl_window_template: config.openers.open_filectrl_window.clone(),
             watcher,
         }
     }
@@ -312,12 +312,7 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path, true)
                 } else {
-                    open_in(
-                        &path,
-                        &self.open_selected_file_template,
-                        self.command_tx.clone(),
-                    )
-                    .into()
+                    open_in(&path, &self.open_file_template, self.command_tx.clone()).into()
                 }
             }
             Err(err) => err.into(),
@@ -327,7 +322,7 @@ impl FileSystem {
     fn open_current_directory(&self) -> CommandResult {
         open_in(
             self.current_directory(),
-            &self.open_current_directory_template,
+            &self.open_directory_template,
             self.command_tx.clone(),
         )
         .into()
@@ -336,7 +331,7 @@ impl FileSystem {
     fn open_new_window(&self) -> CommandResult {
         open_in(
             self.current_directory(),
-            &self.open_new_window_template,
+            &self.open_filectrl_window_template,
             self.command_tx.clone(),
         )
         .into()
@@ -548,9 +543,9 @@ mod tests {
             current_load: None,
             current_search_generation: 0,
             next_generation: 0,
-            open_current_directory_template: String::new(),
-            open_new_window_template: String::new(),
-            open_selected_file_template: String::new(),
+            open_directory_template: String::new(),
+            open_file_template: String::new(),
+            open_filectrl_window_template: String::new(),
             watcher: None,
         }
     }

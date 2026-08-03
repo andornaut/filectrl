@@ -178,8 +178,8 @@ You can also override only the properties you want to change:
 ```bash
 cat ~/.config/filectrl/config.toml
 [openers.linux]
-open_current_directory = "alacritty --working-directory %s"
-open_new_window = "alacritty --command filectrl %s"
+open_directory = "alacritty --working-directory %s"
+open_filectrl_window = "alacritty --command filectrl %s"
 ```
 
 The configuration is validated strictly: an unrecognized key (for example a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) causes FileCTRL to exit with an error rather than silently ignoring it.
@@ -191,9 +191,9 @@ The configuration is validated strictly: an unrecognized key (for example a miss
 
 Keyboard key | Description
 --- | ---
-<kbd>l</kbd> | Open the selected file using the program configured by: `openers.open_selected_file`
-<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_current_directory`
-<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_new_window`
+<kbd>l</kbd> | Open the selected file using the program configured by: `openers.open_file`
+<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_directory`
+<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_filectrl_window`
 <kbd>o</kbd> | Choose from the applications that can open the selected file or directory
 
 ```toml
@@ -201,19 +201,19 @@ Keyboard key | Description
 # %s is replaced by the relevant path at runtime.
 [openers.linux]
 # %s will be replaced by the path to the current working directory:
-open_current_directory = "alacritty --working-directory %s"
-open_new_window = "alacritty --command filectrl %s"
+open_directory = "alacritty --working-directory %s"
 # %s will be replaced by the path to the selected file or directory:
-open_selected_file = "pcmanfm %s"
+open_file = "pcmanfm %s"
+open_filectrl_window = "alacritty --command filectrl %s"
 # %s will be replaced by a command line, not a path (see "Open with..." below):
-open_in_terminal = "alacritty --command %s"
+run_in_terminal = "alacritty --command %s"
 
 [openers.macos]
-open_current_directory = "open %s"
-open_new_window = "open -a Terminal %s"
-open_selected_file = "open %s"
-# open_in_terminal is Linux only and is ignored here
-open_in_terminal = ""
+open_directory = "open %s"
+open_file = "open %s"
+open_filectrl_window = "open -a Terminal %s"
+# run_in_terminal is Linux only and is ignored here
+run_in_terminal = ""
 ```
 
 #### Open with...
@@ -237,9 +237,9 @@ The list is built per platform:
 
 On Linux the application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
 
-Applications that need a terminal (`Terminal=true`) run inside `openers.open_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
+Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
 
-`openers.open_selected_file` (or `openers.open_current_directory` for a directory) is offered last when it is set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
+`openers.open_file` (or `openers.open_directory` for a directory) is offered last when it is set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
 
 ### Theming
 

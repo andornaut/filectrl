@@ -68,10 +68,10 @@ fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
     let mut config = Config::builtin();
     config.config_dir = fixture.root.path().to_path_buf();
     config.openers = Openers {
-        open_current_directory: String::new(),
-        open_in_terminal: String::new(),
-        open_new_window: String::new(),
-        open_selected_file: String::new(),
+        open_directory: String::new(),
+        open_file: String::new(),
+        open_filectrl_window: String::new(),
+        run_in_terminal: String::new(),
     };
     let file_system = FileSystem::new(&config, tx);
     // The views read the process-global Config; the first init wins.

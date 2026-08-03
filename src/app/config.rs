@@ -36,13 +36,13 @@ pub struct FileSystemConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Openers {
-    pub open_current_directory: String,
+    pub open_directory: String,
+    pub open_file: String,
+    pub open_filectrl_window: String,
     /// Wraps a command that needs a terminal, so that a desktop entry marked
     /// `Terminal=true` can be offered by the "open with" picker. Unlike the
     /// other openers, `%s` is replaced by a command line rather than a path.
-    pub open_in_terminal: String,
-    pub open_new_window: String,
-    pub open_selected_file: String,
+    pub run_in_terminal: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -537,7 +537,7 @@ mod tests {
     fn partial_user_config_merges_with_defaults() {
         let partial = r#"
 [openers.linux]
-open_current_directory = "alacritty --working-directory %s"
+open_directory = "alacritty --working-directory %s"
 "#;
         Config::parse(RuntimeEnv::default(), partial, None, &[]).unwrap();
     }

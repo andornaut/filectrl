@@ -258,9 +258,9 @@ fn to_candidate(
     if entry.terminal() {
         // A terminal application launched with null stdio does nothing at all,
         // so it is only worth offering when a terminal is configured to host it.
-        let template = &Config::global().openers.open_in_terminal;
+        let template = &Config::global().openers.run_in_terminal;
         argv = in_terminal(template, &argv).or_else(|| {
-            debug!("Skipping {file:?}: Terminal=true and openers.open_in_terminal is empty");
+            debug!("Skipping {file:?}: Terminal=true and openers.run_in_terminal is empty");
             None
         })?;
     }
