@@ -1,4 +1,5 @@
 use std::{
+    io,
     panic::{self, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -8,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use ratatui::crossterm::event::{poll, read};
+use ratatui::crossterm::event::{Event, poll, read};
 
 use crate::command::Command;
 
@@ -38,6 +39,25 @@ use crate::command::Command;
 // it.  SA_RESTART keeps the rest of the I/O path simple.
 
 static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// Terminal input, abstracted so `event_loop` can be driven by fakes in tests.
+trait EventSource {
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool>;
+
+    fn read(&mut self) -> io::Result<Event>;
+}
+
+struct TerminalEventSource;
+
+impl EventSource for TerminalEventSource {
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        poll(timeout)
+    }
+
+    fn read(&mut self) -> io::Result<Event> {
+        read()
+    }
+}
 
 // SAFETY: Stores to an AtomicBool are single-instruction writes to a
 // fixed address — async-signal-safe per POSIX.
@@ -101,7 +121,7 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
         // silently terminating only the thread (leaving the main loop blocked
         // forever on rx.recv()).
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            event_loop(&reader_tx, poll_interval);
+            event_loop(&reader_tx, poll_interval, &mut TerminalEventSource);
         }));
         if let Err(payload) = result {
             let message = panic_message(payload.as_ref());
@@ -121,7 +141,7 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
     }
 }
 
-fn event_loop(tx: &Sender<Command>, poll_interval: Duration) {
+fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, source: &mut S) {
     loop {
         // Check the signal flag before each poll so that the window
         // between a signal arriving and us noticing it is bounded by
@@ -145,8 +165,16 @@ fn event_loop(tx: &Sender<Command>, poll_interval: Duration) {
         // shuts down, and CleanupOnDropTerminal::Drop restores the terminal.
         // Without this, the main loop would block on rx.recv() forever because
         // this thread is its only command producer.
-        let event = match poll(poll_interval) {
-            Ok(true) => match read() {
+        //
+        // These error arms are the only defence against a vanished terminal, and
+        // they depend on crossterm reporting one. It currently does not: at EOF
+        // the mio event source re-reads a permanently readable fd forever, so
+        // poll() never returns and this thread wedges at 100% CPU with the
+        // process unable to exit. Nothing here can detect that, because control
+        // never comes back. Revisit when the upstream issue is resolved:
+        // https://github.com/crossterm-rs/crossterm/issues/793
+        let event = match source.poll(poll_interval) {
+            Ok(true) => match source.read() {
                 Ok(event) => event,
                 Err(err) => {
                     log::error!("Failed to read terminal event: {err}");
@@ -185,7 +213,101 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::panic_message;
+    use std::{collections::VecDeque, sync::mpsc, time::Duration};
+
+    use ratatui::crossterm::event::Event;
+
+    use super::{Command, EventSource, event_loop, panic_message};
+
+    const INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Scripted input. Exhausting the poll script ends `event_loop` through its
+    /// production error path, which keeps the tests independent of the global
+    /// SIGNAL_RECEIVED flag that other tests in this binary share.
+    struct FakeEventSource {
+        polls: VecDeque<std::io::Result<bool>>,
+        events: VecDeque<Event>,
+    }
+
+    impl FakeEventSource {
+        fn new(polls: Vec<std::io::Result<bool>>) -> Self {
+            Self {
+                polls: polls.into(),
+                events: VecDeque::new(),
+            }
+        }
+
+        fn with_events(mut self, events: Vec<Event>) -> Self {
+            self.events = events.into();
+            self
+        }
+    }
+
+    impl EventSource for FakeEventSource {
+        fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
+            self.polls
+                .pop_front()
+                .unwrap_or_else(|| Err(std::io::Error::other("poll script exhausted")))
+        }
+
+        fn read(&mut self) -> std::io::Result<Event> {
+            self.events
+                .pop_front()
+                .ok_or_else(|| std::io::Error::other("event script exhausted"))
+        }
+    }
+
+    #[test]
+    fn timeouts_keep_polling() {
+        let (tx, rx) = mpsc::channel();
+        let mut source = FakeEventSource::new((0..10).map(|_| Ok(false)).collect());
+
+        event_loop(&tx, INTERVAL, &mut source);
+
+        // The whole script ran, so the only Quit came from its exhaustion.
+        assert!(source.polls.is_empty());
+        assert_eq!(Some(Command::Quit), rx.try_recv().ok());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_poll_error_shuts_down() {
+        let (tx, rx) = mpsc::channel();
+        let mut source = FakeEventSource::new(vec![Err(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        ))]);
+
+        event_loop(&tx, INTERVAL, &mut source);
+
+        assert_eq!(Some(Command::Quit), rx.try_recv().ok());
+    }
+
+    #[test]
+    fn a_read_error_shuts_down() {
+        let (tx, rx) = mpsc::channel();
+        let mut source = FakeEventSource::new(vec![Ok(true)]);
+
+        event_loop(&tx, INTERVAL, &mut source);
+
+        assert_eq!(Some(Command::Quit), rx.try_recv().ok());
+    }
+
+    #[test]
+    fn events_are_forwarded_as_commands() {
+        let (tx, rx) = mpsc::channel();
+        let mut source =
+            FakeEventSource::new(vec![Ok(true)]).with_events(vec![Event::Resize(10, 20)]);
+
+        event_loop(&tx, INTERVAL, &mut source);
+
+        assert_eq!(
+            Some(Command::Resize {
+                width: 10,
+                height: 20
+            }),
+            rx.try_recv().ok()
+        );
+    }
 
     #[test]
     fn panic_message_extracts_str_payload() {
