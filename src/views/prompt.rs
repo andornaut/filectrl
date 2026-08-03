@@ -319,22 +319,18 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::config::{Config, RuntimeEnv},
+        app::config::Config,
         command::{Command, PromptAction, handler::CommandHandler},
         file_system::path_info::PathInfo,
+        test_support::TempDir,
     };
 
     fn test_path() -> PathInfo {
         PathInfo::try_from("/tmp").unwrap()
     }
 
-    fn ensure_config_initialized() {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
-    }
-
     fn prompt_with_action(kind: PromptAction) -> PromptView {
-        ensure_config_initialized();
+        Config::init_test();
         let mut view = PromptView::default();
         view.handle_command(&Command::OpenPrompt(kind));
         view
@@ -374,7 +370,7 @@ mod tests {
 
     #[test]
     fn esc_returns_close_prompt() {
-        ensure_config_initialized();
+        Config::init_test();
         let mut view = PromptView::default();
         let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
         assert_eq!(result, Command::CancelPrompt.into());
@@ -452,31 +448,20 @@ mod tests {
 
     // ── Goto type-ahead ──────────────────────────────────────────────────────
 
-    /// Self-cleaning unique temp directory populated with known entries.
+    /// A temp directory populated with entries that exercise prefix matching,
+    /// sort order, and case sensitivity.
     struct GotoFixture {
-        dir: PathBuf,
+        dir: TempDir,
     }
 
     impl GotoFixture {
         fn new() -> Self {
-            // A per-process counter guarantees a unique directory even when two
-            // fixtures are created in the same nanosecond on parallel threads,
-            // so one fixture's Drop never wipes another's directory.
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir =
-                std::env::temp_dir().join(format!("filectrl_goto_{}_{seq}", std::process::id()));
+            let dir = TempDir::new("goto");
             std::fs::create_dir_all(dir.join("Apple")).unwrap();
             std::fs::create_dir_all(dir.join("Apricot")).unwrap();
             std::fs::write(dir.join("apple"), b"").unwrap();
             std::fs::write(dir.join("Banana"), b"").unwrap();
             Self { dir }
-        }
-    }
-
-    impl Drop for GotoFixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
 
@@ -495,7 +480,7 @@ mod tests {
     #[test]
     fn goto_suggestions_are_prefix_matched_sorted_and_case_sensitive() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         let names: Vec<&str> = view.suggestions.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["Apple", "Apricot"]); // "apple" excluded (case-sensitive)
@@ -504,7 +489,7 @@ mod tests {
     #[test]
     fn tab_accepts_directory_and_appends_slash() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
         assert_eq!(view.text_area.lines()[0], "Apple/");
@@ -514,7 +499,7 @@ mod tests {
     #[test]
     fn down_and_up_cycle_suggestion_index_with_wrap() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
         assert_eq!(view.suggestion_index, 0);
         view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
@@ -528,7 +513,7 @@ mod tests {
     #[test]
     fn cycling_with_cursor_mid_line_does_not_move_the_hidden_suggestion_index() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
         view.text_area.move_cursor(CursorMove::Back);
         view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
@@ -540,7 +525,7 @@ mod tests {
     #[test]
     fn goto_submit_existing_directory_returns_open() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Apple");
         // Enter accepts the directory suggestion (appending `/`, like Tab)
         // and then submits, opening that directory.
@@ -557,7 +542,7 @@ mod tests {
     #[test]
     fn tab_with_cursor_mid_line_does_not_apply_hidden_suggestion() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         view.text_area.move_cursor(CursorMove::Back);
         view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
@@ -567,7 +552,7 @@ mod tests {
     #[test]
     fn enter_with_cursor_mid_line_submits_typed_text_not_hidden_suggestion() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         view.text_area.move_cursor(CursorMove::Back);
         // "Ap" does not exist, so submitting the typed text (rather than the
@@ -582,7 +567,7 @@ mod tests {
     #[test]
     fn goto_submit_missing_path_returns_alert_warn() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Nope");
         let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
         assert!(matches!(
@@ -594,7 +579,7 @@ mod tests {
     #[test]
     fn current_suggestion_is_none_when_suggestions_are_stale() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         assert!(view.current_suggestion().is_some());
         // Mutate the text without refreshing, so the typed partial is no
@@ -606,7 +591,7 @@ mod tests {
     #[test]
     fn clipboard_paste_refreshes_goto_suggestions() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         assert_eq!(view.suggestions.len(), 2);
 
@@ -620,7 +605,7 @@ mod tests {
     #[test]
     fn suggestion_is_hidden_when_cursor_not_at_end() {
         let fixture = GotoFixture::new();
-        let mut view = goto_prompt(&fixture.dir);
+        let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         assert!(view.cursor_at_end());
         assert!(view.current_suggestion().is_some());

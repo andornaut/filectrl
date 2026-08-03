@@ -289,6 +289,7 @@ fn join_parent(left: &Path, right: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use test_case::test_case;
 
     #[test_case("/b", "/a", "b"; "/a to b relative")]
@@ -306,8 +307,7 @@ mod tests {
 
     #[test]
     fn rename_refuses_existing_destination() {
-        let dir = std::env::temp_dir().join(format!("filectrl_ops_rename_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("ops_rename");
         let a = dir.join("a.txt");
         let b = dir.join("b.txt");
         fs::write(&a, b"a").unwrap();
@@ -320,16 +320,11 @@ mod tests {
 
         assert!(rename(&info, "c.txt").is_ok());
         assert!(dir.join("c.txt").exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rename_reports_same_file_for_hard_link_destination() {
-        let dir =
-            std::env::temp_dir().join(format!("filectrl_ops_samefile_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("ops_samefile");
         let a = dir.join("a.txt");
         let b = dir.join("b.txt");
         fs::write(&a, b"a").unwrap();
@@ -342,16 +337,11 @@ mod tests {
         assert!(error.contains("same file"), "unexpected error: {error}");
         assert!(a.exists());
         assert!(b.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rename_allows_case_only_change_to_same_file() {
-        let dir =
-            std::env::temp_dir().join(format!("filectrl_ops_casechange_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("ops_casechange");
         let a = dir.join("a.txt");
         // On a case-insensitive filesystem the destination of a case-only
         // rename resolves to the source itself; a case-variant hard link is
@@ -363,7 +353,5 @@ mod tests {
         let info = PathInfo::try_from(a.as_path()).unwrap();
         assert!(rename(&info, "A.TXT").is_ok());
         assert!(upper.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }

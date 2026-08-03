@@ -350,10 +350,6 @@ mod tests {
 
     use super::*;
 
-    fn make_file_type() -> FileType {
-        FileType::default()
-    }
-
     fn red() -> StyleConfig {
         StyleConfig::new(Some(Color::Red), None, Modifier::empty())
     }
@@ -366,14 +362,14 @@ mod tests {
     #[test_case("Makefile", "rs", false ; "file with no extension returns no match")]
     #[test_case("foo", "foo", false ; "extensionless file does not match")]
     fn extension_pattern(filename: &str, ext: &str, should_match: bool) {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.extension_styles.insert(ext.to_string(), red());
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
     }
 
     #[test]
     fn multi_dot_extension_pattern_wins_over_shorter_suffix() {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.apply_ls_colors("*.tar.gz=34:*.gz=31", false);
         assert_eq!(
             ft.pattern_styles("foo.tar.gz").unwrap().fg,
@@ -389,7 +385,7 @@ mod tests {
     #[test_case("Makefile.bak", "Makefile", false ; "name with trailing suffix does not match")]
     #[test_case(".bashrc", "bashrc", true ; "dotfile matches name pattern by suffix")]
     fn name_pattern(filename: &str, pattern: &str, should_match: bool) {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.name_styles.push((pattern.to_string(), red()));
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
     }
@@ -398,21 +394,21 @@ mod tests {
 
     #[test]
     fn apply_ls_colors_sets_directory_color() {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.apply_ls_colors("di=34", false);
         assert_eq!(ft.directory().fg, Some(Color::Blue));
     }
 
     #[test]
     fn apply_ls_colors_sets_executable_color() {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.apply_ls_colors("ex=32", false);
         assert_eq!(ft.executable().fg, Some(Color::Green));
     }
 
     #[test]
     fn apply_ls_colors_skips_empty_colon_separated_entries() {
-        let mut ft = make_file_type();
+        let mut ft = FileType::default();
         ft.apply_ls_colors("::di=34::", false);
         assert_eq!(ft.directory().fg, Some(Color::Blue));
     }

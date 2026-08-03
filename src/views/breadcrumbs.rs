@@ -80,14 +80,9 @@ impl BreadcrumbsView {
 mod tests {
     use super::*;
     use crate::{
-        app::config::{Config, RuntimeEnv},
+        app::config::Config,
         command::{Command, handler::CommandHandler},
     };
-
-    fn ensure_config_initialized() {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
-    }
 
     fn view(parts: &[&str], mode: ListingMode) -> BreadcrumbsView {
         BreadcrumbsView {
@@ -116,7 +111,7 @@ mod tests {
 
     #[test]
     fn search_after_bookmarks_shows_the_search_tag() {
-        ensure_config_initialized();
+        Config::init_test();
         let mut v = BreadcrumbsView::default();
         v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert_eq!(v.display_breadcrumbs()[0], "[Bookmarks] ");
@@ -127,7 +122,7 @@ mod tests {
 
     #[test]
     fn bookmarks_after_search_shows_the_bookmarks_tag() {
-        ensure_config_initialized();
+        Config::init_test();
         let mut v = BreadcrumbsView::default();
         v.handle_command(&Command::StartSearch("q".into()));
         assert_eq!(v.display_breadcrumbs()[0], "[Search] ");

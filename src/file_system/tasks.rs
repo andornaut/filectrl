@@ -911,6 +911,7 @@ fn validate_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use test_case::test_case;
 
     // (len, min, max) -> expected buffer size. With BUFFER_SIZE_DIVISOR == 20.
@@ -1022,20 +1023,20 @@ mod tests {
 
     #[test]
     fn validate_paths_rejects_existing_destination() {
-        let fx = TempDir::new();
-        std::fs::write(fx.dir.join("existing.txt"), b"x").unwrap();
+        let fx = TempDir::new("tasks");
+        std::fs::write(fx.join("existing.txt"), b"x").unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
-        let dest = path_info(fx.dir.to_str().unwrap(), "dir");
+        let dest = path_info(fx.path().to_str().unwrap(), "dir");
         assert!(validate_paths(&src, &dest, "copy").is_err());
     }
 
     #[test]
     fn validate_paths_rejects_existing_broken_symlink_destination() {
-        let fx = TempDir::new();
-        let link = fx.dir.join("existing.txt");
-        std::os::unix::fs::symlink(fx.dir.join("missing"), &link).unwrap();
+        let fx = TempDir::new("tasks");
+        let link = fx.join("existing.txt");
+        std::os::unix::fs::symlink(fx.join("missing"), &link).unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
-        let dest = path_info(fx.dir.to_str().unwrap(), "dir");
+        let dest = path_info(fx.path().to_str().unwrap(), "dir");
         assert!(validate_paths(&src, &dest, "copy").is_err());
     }
 
@@ -1053,10 +1054,10 @@ mod tests {
 
     #[test]
     fn copy_path_recreates_socket() {
-        let fx = TempDir::new();
-        let src = fx.dir.join("sock");
+        let fx = TempDir::new("tasks");
+        let src = fx.join("sock");
         let _listener = std::os::unix::net::UnixListener::bind(&src).unwrap();
-        let dst = fx.dir.join("sock_copy");
+        let dst = fx.join("sock_copy");
         let mode = std::fs::symlink_metadata(&src)
             .unwrap()
             .permissions()
@@ -1086,10 +1087,10 @@ mod tests {
 
     #[test]
     fn copy_path_recreates_fifo() {
-        let fx = TempDir::new();
-        let src = fx.dir.join("fifo");
+        let fx = TempDir::new("tasks");
+        let src = fx.join("fifo");
         nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
-        let dst = fx.dir.join("fifo_copy");
+        let dst = fx.join("fifo_copy");
         let mode = std::fs::symlink_metadata(&src)
             .unwrap()
             .permissions()
@@ -1119,12 +1120,8 @@ mod tests {
 
     #[test]
     fn copy_path_continues_past_unreadable_entries() {
-        // Root can read a chmod-000 file, which would defeat the test.
-        if nix::unistd::geteuid().is_root() {
-            return;
-        }
-        let fx = TempDir::new();
-        let src = fx.dir.join("src");
+        let fx = TempDir::new("tasks");
+        let src = fx.join("src");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.txt"), b"a").unwrap();
         std::fs::write(src.join("bad"), b"x").unwrap();
@@ -1132,8 +1129,13 @@ mod tests {
         let mut permissions = std::fs::metadata(src.join("bad")).unwrap().permissions();
         permissions.set_mode(0o000);
         std::fs::set_permissions(src.join("bad"), permissions).unwrap();
+        // A chmod-000 file is still readable by root (CAP_DAC_OVERRIDE) and on
+        // mounts that ignore permissions. Probe what this filesystem actually
+        // does rather than inspecting the euid, so the assertions below match
+        // the environment instead of being skipped in it.
+        let is_unreadable = std::fs::File::open(src.join("bad")).is_err();
 
-        let dst = fx.dir.join("dst");
+        let dst = fx.join("dst");
         let mode = std::fs::symlink_metadata(&src)
             .unwrap()
             .permissions()
@@ -1142,7 +1144,6 @@ mod tests {
         let mut active = copy_task(tx);
         let mut errors = Vec::new();
 
-        // Like cp -R: the unreadable entry is recorded and the rest is copied.
         assert!(copy_path(
             &src,
             &dst,
@@ -1152,20 +1153,70 @@ mod tests {
             true,
             mode
         ));
-        assert_eq!(1, errors.len(), "expected one error: {errors:?}");
-        assert!(errors[0].contains("bad"), "unexpected error: {}", errors[0]);
+
+        if is_unreadable {
+            // Like cp -R: the unreadable entry is recorded, not fatal.
+            assert_eq!(1, errors.len(), "expected one error: {errors:?}");
+            assert!(errors[0].contains("bad"), "unexpected error: {}", errors[0]);
+            assert!(!dst.join("bad").exists());
+        } else {
+            // Nothing was unreadable here, so this is a plain full copy.
+            assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+            assert!(dst.join("bad").exists());
+        }
+        // The walk must reach the entries on both sides of "bad" either way: a
+        // failed entry must not abort the siblings.
         assert!(dst.join("a.txt").exists());
         assert!(dst.join("c.txt").exists());
-        assert!(!dst.join("bad").exists());
+        active.done();
+    }
+
+    /// The unreadable-entry test above degrades to a plain full copy when run
+    /// as root, so pin the error-recording path with a failure that the kernel
+    /// enforces for every user.
+    #[test]
+    fn copy_path_records_a_directory_it_cannot_create() {
+        let fx = TempDir::new("tasks");
+        let src = fx.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        // A regular file already occupies the destination, so creating the
+        // directory fails with EEXIST regardless of privileges.
+        let dst = fx.join("dst");
+        std::fs::write(&dst, b"in the way").unwrap();
+        let mode = std::fs::symlink_metadata(&src)
+            .unwrap()
+            .permissions()
+            .mode();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+
+        // The subtree is skipped rather than failing the whole task, so a
+        // multi-source paste still copies its other sources.
+        assert!(copy_path(
+            &src,
+            &dst,
+            &mut active,
+            &mut errors,
+            64,
+            true,
+            mode
+        ));
+
+        assert_eq!(1, errors.len(), "expected one error: {errors:?}");
+        assert!(errors[0].contains("dst"), "unexpected error: {}", errors[0]);
+        // The occupying file must be left exactly as it was.
+        assert_eq!(b"in the way".to_vec(), std::fs::read(&dst).unwrap());
         active.done();
     }
 
     #[test]
     fn rename_no_replace_moves_to_new_destination() {
-        let fx = TempDir::new();
-        let src = fx.dir.join("a.txt");
+        let fx = TempDir::new("tasks");
+        let src = fx.join("a.txt");
         std::fs::write(&src, b"x").unwrap();
-        let dst = fx.dir.join("b.txt");
+        let dst = fx.join("b.txt");
 
         rename_no_replace(&src, &dst).unwrap();
         assert!(!src.exists());
@@ -1174,26 +1225,33 @@ mod tests {
 
     #[test]
     fn rename_no_replace_refuses_existing_destination() {
-        let fx = TempDir::new();
-        let src = fx.dir.join("a.txt");
-        let dst = fx.dir.join("b.txt");
+        let fx = TempDir::new("tasks");
+        let src = fx.join("a.txt");
+        let dst = fx.join("b.txt");
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dst").unwrap();
 
-        // An Ok result means the filesystem lacks an atomic no-replace rename
-        // and fell back to fs::rename, which overwrites; nothing to assert.
-        if let Err(error) = rename_no_replace(&src, &dst) {
-            assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
-            // Both files must be untouched.
-            assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
-            assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
+        match rename_no_replace(&src, &dst) {
+            Err(error) => {
+                assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
+                // Both files must be untouched.
+                assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
+                assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
+            }
+            // The filesystem lacks an atomic no-replace rename, so the call
+            // fell back to fs::rename. Assert the fallback's semantics rather
+            // than passing vacuously, so this test cannot rot into a no-op.
+            Ok(()) => {
+                assert!(!src.exists());
+                assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
+            }
         }
     }
 
     #[test]
     fn remove_path_deletes_directory_tree() {
-        let fx = TempDir::new();
-        let root = fx.dir.join("doomed");
+        let fx = TempDir::new("tasks");
+        let root = fx.join("doomed");
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -1211,8 +1269,8 @@ mod tests {
 
     #[test]
     fn remove_path_stops_when_already_cancelled() {
-        let fx = TempDir::new();
-        let root = fx.dir.join("kept");
+        let fx = TempDir::new("tasks");
+        let root = fx.join("kept");
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -1231,8 +1289,8 @@ mod tests {
 
     #[test]
     fn list_entries_reports_cancellation_during_the_drain() {
-        let fx = TempDir::new();
-        std::fs::write(fx.dir.join("a.txt"), b"x").unwrap();
+        let fx = TempDir::new("tasks");
+        std::fs::write(fx.join("a.txt"), b"x").unwrap();
         let (tx, _rx) = std::sync::mpsc::channel();
         let (active, _, token) = ActiveTask::new(
             tx,
@@ -1245,32 +1303,7 @@ mod tests {
 
         // A cancel observed while listing yields Ok(None), so the caller
         // aborts instead of deleting a directory it never finished reading.
-        assert!(list_entries(&active, &fx.dir).unwrap().is_none());
-    }
-
-    /// Self-cleaning unique temp directory.
-    struct TempDir {
-        dir: PathBuf,
-    }
-
-    impl TempDir {
-        fn new() -> Self {
-            // A per-process counter guarantees a unique directory even when two
-            // fixtures are created in the same nanosecond on parallel threads,
-            // so one fixture's Drop never wipes another's directory.
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir =
-                std::env::temp_dir().join(format!("filectrl_tasks_{}_{seq}", std::process::id()));
-            std::fs::create_dir_all(&dir).unwrap();
-            Self { dir }
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
+        assert!(list_entries(&active, fx.path()).unwrap().is_none());
     }
 
     fn new_active_task() -> ActiveTask {
@@ -1290,14 +1323,14 @@ mod tests {
     fn copy_path_recreates_a_symlink_without_following_it() {
         use std::os::unix::fs::PermissionsExt;
 
-        let fx = TempDir::new();
-        let target = fx.dir.join("target.txt");
+        let fx = TempDir::new("tasks");
+        let target = fx.join("target.txt");
         std::fs::write(&target, b"hello").unwrap();
         std::fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
 
-        let link = fx.dir.join("link.txt");
+        let link = fx.join("link.txt");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let dst = fx.dir.join("copied_link.txt");
+        let dst = fx.join("copied_link.txt");
 
         let source_mode = fs::symlink_metadata(&link).unwrap().permissions().mode();
         assert!(unix_mode::is_symlink(source_mode));

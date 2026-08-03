@@ -20,6 +20,27 @@ impl Position {
     }
 }
 
+/// Maps a click at column `x` on one rendered row to an index into
+/// `BreadcrumbsView::breadcrumbs`, or `None` when the column addresses no
+/// navigable entry.
+///
+/// When a tag is present it occupies position 0 and names no directory, so it
+/// is not navigable and every following position addresses the breadcrumb one
+/// place before it.
+pub(super) fn clicked_index(row: &[Position], x: u16, has_tag: bool) -> Option<usize> {
+    row.iter().find_map(|position| {
+        if !position.intersects(x) {
+            return None;
+        }
+        let index = position.index();
+        if has_tag {
+            index.checked_sub(1)
+        } else {
+            Some(index)
+        }
+    })
+}
+
 pub(super) fn spans<'a>(
     breadcrumbs: &[String],
     width: u16,
@@ -91,7 +112,7 @@ mod tests {
     use ratatui::style::Style;
     use test_case::test_case;
 
-    use super::{Position, spans};
+    use super::{Position, clicked_index, spans};
 
     fn bc(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -157,18 +178,40 @@ mod tests {
         assert_eq!(rows, vec![vec!["[Search] ".to_string(), SEP.to_string()]]);
     }
 
+    // ── click hit-test with a tag ─────────────────────────────────────────────
+    //
+    // Layout for &["[Search] ", "", "home", "user"] at width=80. The tag has no
+    // trailing separator, so it occupies exactly its own 9 columns:
+    //   col 0..=8   → "[Search] " (position 0, not navigable)
+    //   col 9       → "" (root, width=0, x_end=9 via saturating_sub) + "/" sep
+    //   col 10..=13 → "home" (position 2)
+    //   col 14      → "/" separator
+    //   col 15..=18 → "user" (position 3)
+    //
+    // `clicked_index` returns an index into the untagged breadcrumbs, so every
+    // position after the tag shifts down by one.
+
+    #[test_case(0  => None    ; "click on the tag is not navigable")]
+    #[test_case(8  => None    ; "click on the last column of the tag")]
+    #[test_case(9  => Some(0) ; "click on root maps past the tag to breadcrumb 0")]
+    #[test_case(10 => Some(1) ; "click on the first char of home")]
+    #[test_case(13 => Some(1) ; "click on the last char of home")]
+    #[test_case(14 => None    ; "click on the separator")]
+    #[test_case(15 => Some(2) ; "click on the first char of user")]
+    #[test_case(19 => None    ; "click past the end")]
+    fn tagged_click_index(x: u16) -> Option<usize> {
+        let (_, positions) =
+            run_tagged_spans(&["[Search] ", "", "home", "user"], 80, Style::default());
+        clicked_index(&positions[0], x, true)
+    }
+
     #[test]
-    fn tagged_breadcrumb_skip_tag_in_click_test_on_tag_only() {
-        let (_, positions) = run_tagged_spans(&["[Search] ", "home", "user"], 80, Style::default());
-        // Tag at index 0, click on tag should return None
-        let tag_hit = positions[0].iter().find_map(|p| {
-            if p.intersects(0) {
-                (p.index() == 0).then_some(())
-            } else {
-                None
-            }
-        });
-        assert_eq!(tag_hit, Some(()));
+    fn an_untagged_click_is_not_shifted() {
+        // The same column addresses a different breadcrumb depending on
+        // whether a tag is present, so the shift must key off `has_tag` rather
+        // than the position index alone.
+        let (_, positions) = run_spans(&["", "home", "user"], 80);
+        assert_eq!(Some(1), clicked_index(&positions[0], 1, false));
     }
 
     // ── row count ─────────────────────────────────────────────────────────────

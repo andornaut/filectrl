@@ -531,21 +531,14 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::{app::clipboard::ClipboardEntry, command::handler::CommandHandler};
+    use crate::{
+        app::clipboard::ClipboardEntry, command::handler::CommandHandler, test_support::TempDir,
+    };
 
-    /// A unique, not-yet-created temp directory path. The per-process counter
-    /// keeps parallel tests from sharing a path and deleting each other's
-    /// fixtures.
-    fn unique_temp_dir(label: &str) -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!("filectrl_{label}_{}_{seq}", std::process::id()))
-    }
-
-    fn test_file_system(command_tx: Sender<Command>) -> FileSystem {
+    fn test_file_system(bookmarks: &TempDir, command_tx: Sender<Command>) -> FileSystem {
         FileSystem {
             // A temp path, so bookmark reads never touch the real config dir.
-            bookmarks_dir: unique_temp_dir("fs_bookmarks"),
+            bookmarks_dir: bookmarks.path().to_path_buf(),
             buffer_max_bytes: 64_000_000,
             buffer_min_bytes: 64_000,
             cancellables: Vec::new(),
@@ -564,8 +557,9 @@ mod tests {
 
     #[test]
     fn run_batch_reports_every_source_when_every_task_fails_validation() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
+        let mut file_system = test_file_system(&bookmarks, tx);
         // A vanished source fails the pre-flight re-stat, so no task starts.
         let mut src = PathInfo::try_from(Path::new("/")).unwrap();
         src.path = PathBuf::from("/nonexistent/filectrl_missing.txt");
@@ -582,61 +576,80 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn run_batch_reports_no_failed_sources_when_every_task_starts() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
-        let dir =
-            std::env::temp_dir().join(format!("filectrl_fs_run_batch_{}", std::process::id()));
-        let src_dir = dir.join("src");
-        let dest_dir = dir.join("dest");
-        fs::create_dir_all(&src_dir).unwrap();
-        fs::create_dir_all(&dest_dir).unwrap();
-        fs::write(src_dir.join("a.txt"), b"x").unwrap();
-        let src = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
-        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+    /// A populated source directory and an empty destination directory, both
+    /// inside one self-removing temp directory.
+    struct CopyFixture {
+        _dir: TempDir,
+        src: PathInfo,
+        dest: PathInfo,
+        missing: PathInfo,
+    }
 
-        let (failed, commands) =
-            file_system.run_batch(std::iter::once(TaskCommand::Copy(src, dest)));
+    impl CopyFixture {
+        fn new(label: &str) -> Self {
+            let dir = TempDir::new(label);
+            let src_dir = dir.join("src");
+            let dest_dir = dir.join("dest");
+            fs::create_dir_all(&src_dir).unwrap();
+            fs::create_dir_all(&dest_dir).unwrap();
+            fs::write(src_dir.join("a.txt"), b"x").unwrap();
 
-        assert!(failed.is_empty());
-        assert!(commands.is_empty());
-        assert_eq!(1, file_system.cancellables.len());
-        // Drain until the terminal progress so the worker has finished with
-        // the fixture directory before it is removed.
+            // A vanished source fails the pre-flight re-stat, so its task
+            // never starts.
+            let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
+            missing.path = src_dir.join("missing.txt");
+            missing.display_name = "missing.txt".to_string();
+
+            Self {
+                src: PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap(),
+                dest: PathInfo::try_from(dest_dir.as_path()).unwrap(),
+                missing,
+                _dir: dir,
+            }
+        }
+    }
+
+    /// Blocks until a task reports a terminal status, so the worker thread has
+    /// finished with the fixture directory before it is removed.
+    fn await_terminal_task(rx: &std::sync::mpsc::Receiver<Command>) {
         loop {
             match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Command::Progress(task)) if task.is_terminal() => break,
+                Ok(Command::Progress(task)) if task.is_terminal() => return,
                 Ok(_) => {}
                 Err(error) => panic!("task did not finish: {error}"),
             }
         }
-        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_batch_reports_no_failed_sources_when_every_task_starts() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_run_batch");
+
+        let (failed, commands) = file_system.run_batch(std::iter::once(TaskCommand::Copy(
+            fx.src.clone(),
+            fx.dest.clone(),
+        )));
+
+        assert!(failed.is_empty());
+        assert!(commands.is_empty());
+        assert_eq!(1, file_system.cancellables.len());
+        await_terminal_task(&rx);
     }
 
     #[test]
     fn run_batch_reports_only_the_failed_sources_on_partial_failure() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
-        let dir = std::env::temp_dir().join(format!(
-            "filectrl_fs_run_batch_mixed_{}",
-            std::process::id()
-        ));
-        let src_dir = dir.join("src");
-        let dest_dir = dir.join("dest");
-        fs::create_dir_all(&src_dir).unwrap();
-        fs::create_dir_all(&dest_dir).unwrap();
-        fs::write(src_dir.join("a.txt"), b"x").unwrap();
-        let good = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
-        let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
-        missing.path = src_dir.join("missing.txt");
-        missing.display_name = "missing.txt".to_string();
-        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_run_batch_mixed");
 
         let (failed, commands) = file_system.run_batch(
             [
-                TaskCommand::Copy(missing.clone(), dest.clone()),
-                TaskCommand::Copy(good, dest),
+                TaskCommand::Copy(fx.missing.clone(), fx.dest.clone()),
+                TaskCommand::Copy(fx.src.clone(), fx.dest.clone()),
             ]
             .into_iter(),
         );
@@ -644,44 +657,23 @@ mod tests {
         // Only the failed source is reported: the handler reduces the
         // clipboard to exactly these so a retry carries only what was not
         // pasted.
-        assert_eq!(vec![missing], failed);
+        assert_eq!(vec![fx.missing.clone()], failed);
         // The failed task's alert is returned; the started one contributes none.
         assert!(matches!(commands.as_slice(), [Command::AlertError(_)]));
         assert_eq!(1, file_system.cancellables.len());
-        // Drain until the terminal progress so the worker has finished with
-        // the fixture directory before it is removed.
-        loop {
-            match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Command::Progress(task)) if task.is_terminal() => break,
-                Ok(_) => {}
-                Err(error) => panic!("task did not finish: {error}"),
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
+        await_terminal_task(&rx);
     }
 
     #[test]
     fn copy_with_partial_failure_reduces_the_clipboard_to_the_failed_sources() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
-        let dir = std::env::temp_dir().join(format!(
-            "filectrl_fs_partial_clipboard_{}",
-            std::process::id()
-        ));
-        let src_dir = dir.join("src");
-        let dest_dir = dir.join("dest");
-        fs::create_dir_all(&src_dir).unwrap();
-        fs::create_dir_all(&dest_dir).unwrap();
-        fs::write(src_dir.join("a.txt"), b"x").unwrap();
-        let good = PathInfo::try_from(src_dir.join("a.txt").as_path()).unwrap();
-        let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
-        missing.path = src_dir.join("missing.txt");
-        missing.display_name = "missing.txt".to_string();
-        let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_partial_clipboard");
 
         let result = file_system.handle_command(&Command::Copy {
-            srcs: vec![missing.clone(), good],
-            dest,
+            srcs: vec![fx.missing.clone(), fx.src.clone()],
+            dest: fx.dest.clone(),
         });
 
         // The failed source's alert rides the same broadcast as the clipboard
@@ -695,22 +687,13 @@ mod tests {
         else {
             panic!("expected an alert and SetClipboardEntry(Copy), got {commands:?}");
         };
-        assert_eq!(&vec![missing], paths);
-        // Drain until the terminal progress so the worker has finished with
-        // the fixture directory before it is removed.
-        loop {
-            match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Command::Progress(task)) if task.is_terminal() => break,
-                Ok(_) => {}
-                Err(error) => panic!("task did not finish: {error}"),
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(&vec![fx.missing.clone()], paths);
+        await_terminal_task(&rx);
     }
 
     #[test]
     fn read_bookmarks_creates_the_directory_and_lists_its_entries() {
-        let base = unique_temp_dir("read_bookmarks_ok");
+        let base = TempDir::reserved("read_bookmarks_ok");
         let dir = base.join("bookmarks");
 
         // The directory does not exist yet; reading it creates it.
@@ -727,14 +710,11 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(vec!["one".to_string(), "two".to_string()], names);
-
-        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
     fn read_bookmarks_reports_an_uncreatable_directory() {
-        let base = unique_temp_dir("read_bookmarks_err");
-        fs::create_dir_all(&base).unwrap();
+        let base = TempDir::new("read_bookmarks_err");
         // A regular file cannot be a parent directory, so create_dir_all fails.
         let file = base.join("not-a-dir");
         fs::write(&file, b"").unwrap();
@@ -746,13 +726,13 @@ mod tests {
             error.starts_with("Cannot create bookmarks directory"),
             "unexpected message: {error}"
         );
-        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
     fn get_bookmarks_cancels_the_in_flight_directory_load() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
+        let mut file_system = test_file_system(&bookmarks, tx);
         let load_token = CancellationToken::new();
         file_system.current_load = Some(load_token.clone());
 
@@ -767,13 +747,13 @@ mod tests {
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
         drop(rx);
-        let _ = fs::remove_dir_all(&file_system.bookmarks_dir);
     }
 
     #[test]
     fn search_cancels_the_in_flight_directory_load() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
+        let mut file_system = test_file_system(&bookmarks, tx);
         file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
         let load_token = CancellationToken::new();
         file_system.current_load = Some(load_token.clone());
@@ -789,8 +769,9 @@ mod tests {
 
     #[test]
     fn search_with_an_empty_query_returns_the_started_exited_pair() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(tx);
+        let mut file_system = test_file_system(&bookmarks, tx);
         file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
 
         let result = file_system.search("");

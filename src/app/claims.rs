@@ -13,29 +13,24 @@ use std::{path::PathBuf, sync::mpsc};
 
 use super::*;
 use crate::{
-    app::{
-        clipboard::ClipboardEntry,
-        config::{Openers, RuntimeEnv},
-    },
+    app::{clipboard::ClipboardEntry, config::Openers},
     command::{
         PromptAction,
         progress::{ActiveTask, TaskKind},
     },
     file_system::path_info::PathInfo,
+    test_support::TempDir,
 };
 
 /// A temp tree containing the working directory, so navigating to the parent
 /// stays inside the fixture instead of walking into the real temp directory.
 struct Fixture {
-    root: PathBuf,
+    root: TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("filectrl_claims_{}_{seq}", std::process::id()));
+        let root = TempDir::new("claims");
         std::fs::create_dir_all(root.join("cwd")).unwrap();
         std::fs::write(root.join("cwd").join("file.txt"), b"x").unwrap();
         Self { root }
@@ -64,20 +59,14 @@ impl Fixture {
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-
 /// The real handler tree, minus the two things that reach outside the process.
 /// `FileSystem` takes its config by reference and copies out what it needs, so
 /// blanking the openers is enough to stop any command from shelling out
 /// (`open_in` returns early on an empty template) and redirecting `config_dir`
 /// keeps bookmark reads inside the fixture.
 fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
-    let mut config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-    config.config_dir = fixture.root.clone();
+    let mut config = Config::builtin();
+    config.config_dir = fixture.root.path().to_path_buf();
     config.openers = Openers {
         open_current_directory: String::new(),
         open_in_terminal: String::new(),
@@ -86,7 +75,7 @@ fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
     };
     let file_system = FileSystem::new(&config, tx);
     // The views read the process-global Config; the first init wins.
-    Config::init(Config::load(RuntimeEnv::default(), None, vec![]).unwrap());
+    Config::init_test();
     Handlers {
         clipboard: Clipboard::disabled(),
         #[cfg(debug_assertions)]

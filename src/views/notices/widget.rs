@@ -285,21 +285,21 @@ mod tests {
     use crate::command::progress::{TaskKind, Transfer};
 
     // Left-truncation keeps the tail (destination) visible as the width
-    // shrinks, e.g. `…naut/Downloads/` then `…aut/Downloads/`.
-    #[test_case(60, "/tmp/a to /home/andornaut/Downloads/"; "unchanged when it fits")]
-    #[test_case(40, "…a to /home/andornaut/Downloads/"; "source truncated from the left first")]
-    #[test_case(30, "…/andornaut/Downloads/"; "more of the source dropped")]
-    #[test_case(24, "…naut/Downloads/"; "destination tail kept at width 24")]
-    #[test_case(23, "…aut/Downloads/"; "destination tail kept at width 23")]
+    // shrinks, e.g. `…oper/Downloads/` then `…per/Downloads/`.
+    #[test_case(60, "/tmp/a to /home/developer/Downloads/"; "unchanged when it fits")]
+    #[test_case(40, "…a to /home/developer/Downloads/"; "source truncated from the left first")]
+    #[test_case(30, "…/developer/Downloads/"; "more of the source dropped")]
+    #[test_case(24, "…oper/Downloads/"; "destination tail kept at width 24")]
+    #[test_case(23, "…per/Downloads/"; "destination tail kept at width 23")]
     #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
     fn truncate_detail_copy(width: u16, expected: &str) {
         assert_eq!(
             expected,
-            truncate_detail("Copying ", "/tmp/a to /home/andornaut/Downloads/", width)
+            truncate_detail("Copying ", "/tmp/a to /home/developer/Downloads/", width)
         );
     }
 
-    #[test_case(80, "/home/andornaut/projects/old/cache/data.bin"; "unchanged when it fits")]
+    #[test_case(80, "/home/developer/projects/old/cache/data.bin"; "unchanged when it fits")]
     #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
     #[test_case(20, "…e/data.bin"; "left-truncated further")]
     #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
@@ -308,7 +308,7 @@ mod tests {
             expected,
             truncate_detail(
                 "Deleting ",
-                "/home/andornaut/projects/old/cache/data.bin",
+                "/home/developer/projects/old/cache/data.bin",
                 width
             )
         );
@@ -317,30 +317,30 @@ mod tests {
     fn copy_kind() -> TaskKind {
         TaskKind::Copy(Transfer {
             source: "/tmp/a/file.txt".into(),
-            destination: "/home/andornaut/Downloads/file.txt".into(),
+            destination: "/home/developer/Downloads/file.txt".into(),
         })
     }
 
     // As the width shrinks: full source + dest dir, then left-truncated source,
     // then (once the source basename no longer fits) switch to
     // `to <full destination incl. basename>`, then an ellipsis.
-    #[test_case(80, "/tmp/a/file.txt to /home/andornaut/Downloads/"; "full when it fits")]
-    #[test_case(50, "…/a/file.txt to /home/andornaut/Downloads/"; "source left-truncated, basename intact")]
-    #[test_case(47, "…file.txt to /home/andornaut/Downloads/"; "source basename still fully shown")]
-    #[test_case(46, "to /home/andornaut/Downloads/file.txt"; "switches to to-form before basename is truncated")]
-    #[test_case(40, "…me/andornaut/Downloads/file.txt"; "destination form left-truncated")]
+    #[test_case(80, "/tmp/a/file.txt to /home/developer/Downloads/"; "full when it fits")]
+    #[test_case(50, "…/a/file.txt to /home/developer/Downloads/"; "source left-truncated, basename intact")]
+    #[test_case(47, "…file.txt to /home/developer/Downloads/"; "source basename still fully shown")]
+    #[test_case(46, "to /home/developer/Downloads/file.txt"; "switches to to-form before basename is truncated")]
+    #[test_case(40, "…me/developer/Downloads/file.txt"; "destination form left-truncated")]
     #[test_case(24, "…nloads/file.txt"; "destination form truncated further, basename kept")]
     #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
     fn operation_detail_copy(width: u16, expected: &str) {
         assert_eq!(expected, operation_detail(&copy_kind(), width));
     }
 
-    #[test_case(80, "/home/andornaut/projects/old/cache/data.bin"; "full when it fits")]
+    #[test_case(80, "/home/developer/projects/old/cache/data.bin"; "full when it fits")]
     #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
     #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
     fn operation_detail_delete(width: u16, expected: &str) {
         let kind = TaskKind::Delete {
-            path: "/home/andornaut/projects/old/cache/data.bin".into(),
+            path: "/home/developer/projects/old/cache/data.bin".into(),
         };
         assert_eq!(expected, operation_detail(&kind, width));
     }

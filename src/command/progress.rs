@@ -570,23 +570,15 @@ mod tests {
     }
 
     #[test]
-    fn task_increment_transitions_status() {
+    fn task_increment_to_total_stays_in_progress_until_done() {
         let mut t = delete_task();
         t.increment(40);
         assert!(!t.is_new());
         assert!(!t.is_terminal());
-        t.increment(60);
         // Byte counts reaching the total must not end the task: the total may
         // be stale (source grew after the size scan) or work may remain (a
         // cross-device move still has to remove the source).
-        assert!(!t.is_terminal());
-    }
-
-    #[test]
-    fn task_increment_to_total_stays_in_progress_until_done() {
-        let mut t = delete_task();
-        t.increment(100);
-        assert!(!t.is_new());
+        t.increment(60);
         assert!(!t.is_terminal());
         // A filled-but-unfinalized task still renders as 100%.
         assert_eq!(100, t.progress.percentage());
