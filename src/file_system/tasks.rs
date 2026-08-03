@@ -15,8 +15,10 @@ use anyhow::{Result, anyhow};
 use log::{error, info, warn};
 
 use super::{
-    conflicts::{self, Conflicts},
+    Occupant, PasteStep,
+    conflicts::Conflicts,
     path_info::{PathInfo, compact},
+    step,
 };
 use crate::{
     command::{
@@ -33,13 +35,33 @@ use crate::{
 struct CopyContext<'a> {
     /// One read buffer for the whole tree; see `copy_with_progress`.
     buffer: &'a mut [u8],
-    /// How a name already taken at a destination inside the tree is resolved.
-    /// `None` for an operation with nobody to ask, which records an error
-    /// instead.
+    /// The paste's standing `*All` answer, which settles a name already taken
+    /// at a destination inside the tree. `None` for an operation that is not
+    /// part of a paste, which records such a name instead.
     conflicts: Option<&'a Conflicts>,
     /// Restore each entry's modification time, so a cross-device move leaves
     /// what a same-device rename would have.
     preserve_times: bool,
+    /// Entries a standing "skip all" left alone. Counted separately from the
+    /// errors: skipping is a choice rather than a failure, but a move still
+    /// must not remove a source whose entries never reached the destination.
+    skipped: usize,
+}
+
+/// What a tree copy left behind: the entries that could not be written, and how
+/// many a standing "skip all" left alone.
+#[derive(Default)]
+struct CopyOutcome {
+    errors: Vec<String>,
+    skipped: usize,
+}
+
+impl CopyOutcome {
+    /// Whether the destination now holds every entry of the source, which is
+    /// what a move requires before it removes the source.
+    fn is_complete(&self) -> bool {
+        self.errors.is_empty() && self.skipped == 0
+    }
 }
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
@@ -128,8 +150,8 @@ impl TaskRunResult {
 
 /// A file operation to run. The `bool` on `Copy` and `Move` is the caller's
 /// answer to a destination that already exists: `true` replaces it, `false`
-/// refuses. Only a top-level destination can be replaced; a collision nested
-/// inside a copied directory is still recorded as an error.
+/// refuses. It covers the top level only; a name another process takes inside
+/// the tree while the copy runs is settled by the paste's standing answer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskCommand {
     Copy(PathInfo, PathInfo, bool),
@@ -138,8 +160,8 @@ pub enum TaskCommand {
 }
 
 impl TaskCommand {
-    /// `conflicts` is the paste's shared decisions, which a copy consults when
-    /// it finds a name already taken inside a directory it is merging into.
+    /// `conflicts` is the paste's standing `*All` answer, which a copy consults
+    /// when it finds a name already taken inside the tree it is writing.
     /// `None` for a delete, which never collides.
     pub fn run(
         self,
@@ -235,7 +257,7 @@ fn run_copy_task(
         else {
             return;
         };
-        if let Some((active, errors)) = copy_with_progress(
+        if let Some((active, outcome)) = copy_with_progress(
             &old_path,
             &new_path,
             active,
@@ -248,7 +270,10 @@ fn run_copy_task(
             buffer_min_bytes,
             buffer_max_bytes,
         ) {
-            finalize_copy(active, errors);
+            // A skipped entry needs no mention here: nothing is left behind by
+            // a copy that did not make it, and the standing "skip all" that
+            // settled it was the user's own answer.
+            finalize_copy(active, outcome.errors);
         }
     });
 
@@ -309,7 +334,7 @@ fn run_move_task(
                     else {
                         return;
                     };
-                    let Some((active, errors)) = copy_with_progress(
+                    let Some((active, outcome)) = copy_with_progress(
                         &old_path,
                         &new_path,
                         active,
@@ -327,31 +352,7 @@ fn run_move_task(
                     ) else {
                         return;
                     };
-                    // Like `mv`: the source is removed only after a fully clean
-                    // copy. If any entry failed, the entire source is left in
-                    // place (even entries that copied fine) and the partial
-                    // destination is kept.
-                    if !errors.is_empty() {
-                        finalize_copy(active, errors);
-                        return;
-                    }
-                    // Not cancellable: the copy is complete, so removing the
-                    // source outright is the only way to finish the move. Mark it
-                    // so a cancel keypress during this stage does not claim to
-                    // have cancelled anything.
-                    active.set_uncancellable();
-                    let removed = if is_directory {
-                        fs::remove_dir_all(&old_path)
-                    } else {
-                        fs::remove_file(&old_path)
-                    };
-                    match removed {
-                        Ok(_) => active.done(),
-                        Err(error) => active.error(format!(
-                            "Copy succeeded, but failed to delete original {}: {error}",
-                            compact(&old_path)
-                        )),
-                    }
+                    finish_cross_device_move(active, outcome, &old_path, is_directory);
                 }
                 _ => active.error(format!(
                     "Failed to move {} to {}: {error}",
@@ -439,7 +440,7 @@ fn copy_buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> 
 ///
 /// Returns `None` when the task was cancelled, in which case it has already
 /// been finalized via `active.cancelled()`. Otherwise returns the task and
-/// the accumulated per-entry errors for the caller to finalize.
+/// what the walk left behind, for the caller to finalize.
 #[allow(clippy::too_many_arguments)]
 fn copy_with_progress(
     old_path: &Path,
@@ -452,7 +453,7 @@ fn copy_with_progress(
     conflicts: Option<&Conflicts>,
     buffer_min_bytes: u64,
     buffer_max_bytes: u64,
-) -> Option<(ActiveTask, Vec<String>)> {
+) -> Option<(ActiveTask, CopyOutcome)> {
     let total_size = if is_directory {
         let Some(size) = dir_total_size(&active, old_path) else {
             active.cancelled();
@@ -471,6 +472,7 @@ fn copy_with_progress(
         buffer: &mut buffer,
         conflicts,
         preserve_times,
+        skipped: 0,
     };
     let mut errors = Vec::new();
     if !copy_path(
@@ -485,7 +487,13 @@ fn copy_with_progress(
         active.cancelled();
         return None;
     }
-    Some((active, errors))
+    Some((
+        active,
+        CopyOutcome {
+            errors,
+            skipped: context.skipped,
+        },
+    ))
 }
 
 /// Best-effort recursive size for the progress total. Entries that cannot be
@@ -600,9 +608,55 @@ fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandRe
         .map_err(|error| anyhow!("Cannot {operation} {}: {error}", compact(old_path)).into())
 }
 
+/// Finishes a cross-device move once the copy stage is done, removing the
+/// source only when the destination holds every entry of it, like `mv`.
+///
+/// An entry that failed leaves the whole source in place, even the entries that
+/// copied fine, and keeps the partial destination. A skipped entry does the
+/// same: skipping is a choice rather than a failure, but the entry is no more
+/// at the destination than a failed one, so removing the source would delete
+/// what nothing else holds.
+fn finish_cross_device_move(
+    active: ActiveTask,
+    outcome: CopyOutcome,
+    old_path: &Path,
+    is_directory: bool,
+) {
+    if !outcome.errors.is_empty() {
+        finalize_copy(active, outcome.errors);
+        return;
+    }
+    if !outcome.is_complete() {
+        let skipped = outcome.skipped;
+        let entries = if skipped == 1 { "entry" } else { "entries" };
+        active.error(format!(
+            "Skipped {skipped} {entries}, so the original {} was kept",
+            compact(old_path)
+        ));
+        return;
+    }
+    // Not cancellable: the copy is complete, so removing the source outright is
+    // the only way to finish the move. Mark it so a cancel keypress during this
+    // stage does not claim to have cancelled anything.
+    active.set_uncancellable();
+    let removed = if is_directory {
+        fs::remove_dir_all(old_path)
+    } else {
+        fs::remove_file(old_path)
+    };
+    match removed {
+        Ok(_) => active.done(),
+        Err(error) => active.error(format!(
+            "Copy succeeded, but failed to delete original {}: {error}",
+            compact(old_path)
+        )),
+    }
+}
+
 /// Finalizes a copy/move task following coreutils semantics: success when no
 /// per-entry errors were recorded, otherwise a single error alert summarizing
-/// them. Every recorded error is also logged.
+/// them. Skipped entries are not failures, so they do not appear here. Every
+/// recorded error is also logged.
 fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
     if errors.is_empty() {
         active.done();
@@ -614,11 +668,7 @@ fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
     let summary = if errors.len() == 1 {
         errors.into_iter().next().expect("errors is non-empty")
     } else {
-        format!(
-            "{} ({} more errors; see the log)",
-            errors[0],
-            errors.len() - 1
-        )
+        format!("{} (and {} more)", errors[0], errors.len() - 1)
     };
     active.error(summary);
 }
@@ -641,24 +691,18 @@ fn copy_directory(
         Ok(()) => {}
         // Something took this name while the copy was running: the destination
         // was free when the task started, so this is another process writing
-        // into the tree. Ask, exactly as the top level would; a directory is
-        // never replaced, so only the skip choices are offered for one, and
-        // skipping drops this subtree.
+        // into the tree. A directory is never replaced, so only a standing
+        // "skip all" settles this one, and skipping drops the subtree.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            match resolve_nested(context, errors, new_path) {
-                Some(true) => {
-                    if let Err(error) =
-                        remove_existing(new_path).and_then(|()| fs::create_dir(new_path))
-                    {
-                        errors.push(format!(
-                            "Failed to create directory {}: {error}",
-                            compact(new_path)
-                        ));
-                        return true;
-                    }
-                }
-                Some(false) => return true,
-                None => return false,
+            if !resolve_nested(context, errors, new_path) {
+                return true;
+            }
+            if let Err(error) = remove_existing(new_path).and_then(|()| fs::create_dir(new_path)) {
+                errors.push(format!(
+                    "Failed to create directory {}: {error}",
+                    compact(new_path)
+                ));
+                return true;
             }
         }
         Err(error) => {
@@ -761,19 +805,39 @@ fn copy_directory(
 /// is copied; its target is never followed, so no bytes are transferred and no
 /// permissions are applied (`fs::set_permissions` would follow the link and
 /// chmod the target instead of the link).
-fn copy_symlink(old_path: &Path, new_path: &Path, errors: &mut Vec<String>) {
-    match fs::read_link(old_path) {
-        Ok(target) => {
-            if let Err(error) = std::os::unix::fs::symlink(&target, new_path) {
-                errors.push(format!(
-                    "Failed to create symlink {}: {error}",
-                    compact(new_path)
-                ));
+fn copy_symlink(
+    old_path: &Path,
+    new_path: &Path,
+    errors: &mut Vec<String>,
+    context: &mut CopyContext<'_>,
+) {
+    let target = match fs::read_link(old_path) {
+        Ok(target) => target,
+        Err(error) => {
+            errors.push(format!(
+                "Failed to read symlink {}: {error}",
+                compact(old_path)
+            ));
+            return;
+        }
+    };
+    match std::os::unix::fs::symlink(&target, new_path) {
+        Ok(()) => {}
+        // Raced, like the other kinds: settled from the paste's standing
+        // answer, and recorded when nothing settles it.
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            if !resolve_nested(context, errors, new_path) {
+                return;
+            }
+            if let Err(error) = remove_existing(new_path)
+                .and_then(|()| std::os::unix::fs::symlink(&target, new_path))
+            {
+                errors.push(format!("Failed to replace {}: {error}", compact(new_path)));
             }
         }
         Err(error) => errors.push(format!(
-            "Failed to read symlink {}: {error}",
-            compact(old_path)
+            "Failed to create symlink {}: {error}",
+            compact(new_path)
         )),
     }
 }
@@ -793,21 +857,18 @@ fn copy_file(
     let (mut old_file, mut new_file) = match open_files(old_path, new_path) {
         Ok(files) => files,
         // A name already taken inside the tree being copied. The top-level
-        // collision was answered before the task started; this one is only
-        // found here, so it is asked about from here.
+        // collision was answered before the task started, so this one is a
+        // race, settled from the paste's standing answer or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            match resolve_nested(context, errors, new_path) {
-                Some(true) => match remove_existing(new_path)
-                    .and_then(|()| open_files(old_path, new_path))
-                {
-                    Ok(files) => files,
-                    Err(error) => {
-                        errors.push(format!("Failed to replace {}: {error}", compact(new_path)));
-                        return true;
-                    }
-                },
-                Some(false) => return true,
-                None => return false,
+            if !resolve_nested(context, errors, new_path) {
+                return true;
+            }
+            match remove_existing(new_path).and_then(|()| open_files(old_path, new_path)) {
+                Ok(files) => files,
+                Err(error) => {
+                    errors.push(format!("Failed to replace {}: {error}", compact(new_path)));
+                    return true;
+                }
             }
         }
         Err(error) => {
@@ -876,14 +937,14 @@ fn copy_path(
     // symlink (even one pointing at a directory) is recreated as a link rather
     // than followed. `is_directory` is already false for any symlink.
     if unix_mode::is_symlink(source_mode) {
-        copy_symlink(old_path, new_path, errors);
+        copy_symlink(old_path, new_path, errors, context);
         true
     } else if is_directory {
         copy_directory(old_path, new_path, active, errors, context)
     } else if unix_mode::is_file(source_mode) {
         copy_file(old_path, new_path, active, errors, context, source_mode)
     } else {
-        copy_special(old_path, new_path, errors, source_mode);
+        copy_special(old_path, new_path, errors, context, source_mode);
         true
     }
 }
@@ -893,7 +954,13 @@ fn copy_path(
 /// are transferred: reading a FIFO would block until a writer appears. FIFOs
 /// and sockets need no privileges; device nodes require root, so as a normal
 /// user they record a "not permitted" error here, exactly as `cp` reports.
-fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, source_mode: u32) {
+fn copy_special(
+    old_path: &Path,
+    new_path: &Path,
+    errors: &mut Vec<String>,
+    context: &mut CopyContext<'_>,
+    source_mode: u32,
+) {
     use nix::sys::stat::{Mode, SFlag, mknod};
 
     let kind = if unix_mode::is_fifo(source_mode) {
@@ -931,11 +998,27 @@ fn copy_special(old_path: &Path, new_path: &Path, errors: &mut Vec<String>, sour
 
     // `mode_t` is u32 on Linux but u16 on macOS, so cast rather than assume.
     let permissions = Mode::from_bits_truncate(source_mode as nix::libc::mode_t);
-    if let Err(error) = mknod(new_path, kind, permissions, rdev) {
-        errors.push(format!(
+    match mknod(new_path, kind, permissions, rdev) {
+        Ok(()) => {}
+        // Raced, like the other kinds: settled from the paste's standing
+        // answer, and recorded when nothing settles it.
+        Err(nix::errno::Errno::EEXIST) => {
+            if !resolve_nested(context, errors, new_path) {
+                return;
+            }
+            if let Err(error) = remove_existing(new_path)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    mknod(new_path, kind, permissions, rdev).map_err(|error| error.to_string())
+                })
+            {
+                errors.push(format!("Failed to replace {}: {error}", compact(new_path)));
+            }
+        }
+        Err(error) => errors.push(format!(
             "Cannot create special file {}: {error}",
             compact(new_path)
-        ));
+        )),
     }
 }
 
@@ -1245,29 +1328,39 @@ fn validate_paths(
     }
 }
 
-/// What to do about `new_path`, which already exists inside the tree being
-/// copied. Returns whether to replace it, `Some(false)` to leave it alone, or
-/// `None` when the operation was cancelled while asking.
+/// What to do about `new_path`, a name another process took at a destination
+/// inside the tree being copied: the destination was free when the task
+/// started. Returns whether to replace it, having counted or recorded it
+/// otherwise.
 ///
-/// A copy with nobody to ask (there is no paste behind it) records an error and
-/// leaves the entry, which is what the whole copy used to do.
+/// The same decision the queue makes for a top-level collision, minus the one
+/// outcome a worker cannot produce: it never asks, so a collision the paste's
+/// standing answer does not settle is recorded like any other entry that could
+/// not be written.
 fn resolve_nested(
-    context: &CopyContext<'_>,
+    context: &mut CopyContext<'_>,
     errors: &mut Vec<String>,
     new_path: &Path,
-) -> Option<bool> {
-    let Some(conflicts) = context.conflicts else {
-        errors.push(format!("{} already exists", compact(new_path)));
-        return Some(false);
+) -> bool {
+    // A directory is never replaced, so only the skip choices apply to one,
+    // exactly as at the top level.
+    let occupant = if new_path.symlink_metadata().is_ok_and(|it| it.is_dir()) {
+        Occupant::Directory
+    } else {
+        Occupant::Replaceable
     };
-    let name = new_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    // A directory is never replaced, so only the skip choices are offered for
-    // one, exactly as at the top level.
-    let can_overwrite = !new_path.symlink_metadata().is_ok_and(|it| it.is_dir());
-    Some(conflicts::replaces(conflicts.resolve(&name, can_overwrite)))
+    let standing = context.conflicts.and_then(Conflicts::standing);
+    match step(standing, Some(occupant)) {
+        PasteStep::Run { overwrite } => overwrite,
+        PasteStep::Skip => {
+            context.skipped += 1;
+            false
+        }
+        PasteStep::Ask { .. } => {
+            errors.push(format!("{} already exists", compact(new_path)));
+            false
+        }
+    }
 }
 
 /// Removes an existing non-directory destination, treating an already-absent
@@ -1549,6 +1642,7 @@ mod tests {
             buffer,
             conflicts: None,
             preserve_times,
+            skipped: 0,
         }
     }
 
@@ -1828,8 +1922,8 @@ mod tests {
         );
     }
 
-    /// A copy context whose collisions are answered by a standing choice, so
-    /// nothing blocks waiting for a user who is not there.
+    /// A copy context whose collisions are settled by a standing choice, which
+    /// is the only kind of answer that reaches a worker.
     fn answered_context<'a>(
         standing: ConflictChoice,
         buffer: &'a mut [u8],
@@ -1840,6 +1934,7 @@ mod tests {
             buffer,
             conflicts: Some(conflicts),
             preserve_times: false,
+            skipped: 0,
         }
     }
 
@@ -1861,7 +1956,7 @@ mod tests {
     fn raced_parts() -> (ActiveTask, Vec<String>, Conflicts) {
         let (tx, rx) = std::sync::mpsc::channel();
         std::mem::forget(rx);
-        (copy_task(tx.clone()), Vec::new(), Conflicts::new(tx))
+        (copy_task(tx), Vec::new(), Conflicts::default())
     }
 
     fn mode_of(path: &Path) -> u32 {
@@ -1898,21 +1993,173 @@ mod tests {
         fs::write(dst.join("a.txt"), b"raced").unwrap();
         let (mut active, mut errors, conflicts) = raced_parts();
         let mut buffer = [0u8; 64];
+        let mut context = answered_context(ConflictChoice::SkipAll, &mut buffer, &conflicts);
 
         assert!(copy_path(
             &src.join("a.txt"),
             &dst.join("a.txt"),
             &mut active,
             &mut errors,
-            &mut answered_context(ConflictChoice::SkipAll, &mut buffer, &conflicts),
+            &mut context,
             false,
             mode_of(&src.join("a.txt")),
         ));
         // A skipped name is a choice, not a failure, so nothing is reported.
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        // It is still counted: a move must not remove a source whose entries
+        // are not all at the destination.
+        assert_eq!(1, context.skipped);
         active.done();
 
         assert_eq!(b"raced".to_vec(), fs::read(dst.join("a.txt")).unwrap());
+    }
+
+    #[test]
+    fn a_raced_name_with_no_standing_answer_is_recorded_rather_than_asked_about() {
+        let (_fx, src, dst) = raced("tasks_raced_unanswered");
+        fs::write(src.join("a.txt"), b"src").unwrap();
+        fs::write(dst.join("a.txt"), b"raced").unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+        let mut context = CopyContext {
+            buffer: &mut buffer,
+            conflicts: Some(&conflicts),
+            preserve_times: false,
+            skipped: 0,
+        };
+
+        // A worker never asks. It runs long after the queue that could have
+        // prompted is gone, on the one thread every operation is serialized
+        // onto, so a collision no standing answer settles is recorded.
+        assert!(copy_path(
+            &src.join("a.txt"),
+            &dst.join("a.txt"),
+            &mut active,
+            &mut errors,
+            &mut context,
+            false,
+            mode_of(&src.join("a.txt")),
+        ));
+        active.done();
+
+        assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
+        assert!(errors[0].contains("already exists"), "{}", errors[0]);
+        // Recorded, not skipped: the entry was left behind by a failure to
+        // settle it, so a move must report it rather than call it a choice.
+        assert_eq!(0, context.skipped);
+        assert_eq!(b"raced".to_vec(), fs::read(dst.join("a.txt")).unwrap());
+    }
+
+    #[test]
+    fn a_raced_directory_is_recorded_when_only_overwrite_all_stands() {
+        let (_fx, src, dst) = raced("tasks_raced_directory_overwrite");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::create_dir_all(dst.join("sub")).unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+
+        // A directory is never replaced, so "overwrite all" cannot settle this
+        // one and there is nobody to ask.
+        assert!(copy_path(
+            &src.join("sub"),
+            &dst.join("sub"),
+            &mut active,
+            &mut errors,
+            &mut answered_context(ConflictChoice::OverwriteAll, &mut buffer, &conflicts),
+            true,
+            mode_of(&src.join("sub")),
+        ));
+        active.done();
+
+        assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
+        assert!(errors[0].contains("already exists"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn a_raced_symlink_is_replaced_when_that_is_the_answer() {
+        let (_fx, src, dst) = raced("tasks_raced_symlink");
+        std::os::unix::fs::symlink("target", src.join("link")).unwrap();
+        std::os::unix::fs::symlink("raced", dst.join("link")).unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+
+        assert!(copy_path(
+            &src.join("link"),
+            &dst.join("link"),
+            &mut active,
+            &mut errors,
+            &mut answered_context(ConflictChoice::OverwriteAll, &mut buffer, &conflicts),
+            false,
+            mode_of(&src.join("link")),
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        active.done();
+
+        assert_eq!(
+            PathBuf::from("target"),
+            fs::read_link(dst.join("link")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_raced_symlink_with_no_standing_answer_is_recorded() {
+        let (_fx, src, dst) = raced("tasks_raced_symlink_unanswered");
+        std::os::unix::fs::symlink("target", src.join("link")).unwrap();
+        std::os::unix::fs::symlink("raced", dst.join("link")).unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+        let mut context = CopyContext {
+            buffer: &mut buffer,
+            conflicts: Some(&conflicts),
+            preserve_times: false,
+            skipped: 0,
+        };
+
+        assert!(copy_path(
+            &src.join("link"),
+            &dst.join("link"),
+            &mut active,
+            &mut errors,
+            &mut context,
+            false,
+            mode_of(&src.join("link")),
+        ));
+        active.done();
+
+        assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
+        assert!(errors[0].contains("already exists"), "{}", errors[0]);
+        assert_eq!(
+            PathBuf::from("raced"),
+            fs::read_link(dst.join("link")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_raced_special_file_is_left_alone_when_that_is_the_answer() {
+        use nix::sys::stat::Mode;
+
+        let (_fx, src, dst) = raced("tasks_raced_fifo");
+        nix::unistd::mkfifo(&src.join("pipe"), Mode::from_bits_truncate(0o644)).unwrap();
+        nix::unistd::mkfifo(&dst.join("pipe"), Mode::from_bits_truncate(0o600)).unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+        let mut context = answered_context(ConflictChoice::SkipAll, &mut buffer, &conflicts);
+
+        assert!(copy_path(
+            &src.join("pipe"),
+            &dst.join("pipe"),
+            &mut active,
+            &mut errors,
+            &mut context,
+            false,
+            mode_of(&src.join("pipe")),
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(1, context.skipped);
+        active.done();
+
+        // Left exactly as the other process made it.
+        assert_eq!(0o600, mode_of(&dst.join("pipe")) & 0o7777);
     }
 
     #[test]
@@ -1949,8 +2196,8 @@ mod tests {
         fs::write(dst.join("a.txt"), b"raced").unwrap();
         let (mut active, mut errors, _conflicts) = raced_parts();
 
-        // Nobody to ask, so the entry is left alone and reported. Blocking a
-        // worker on an answer that cannot come would hang the queue.
+        // No paste at all (an operation that is not one), so there is not even
+        // a standing answer to consult: the entry is left alone and reported.
         assert!(copy_path(
             &src.join("a.txt"),
             &dst.join("a.txt"),
@@ -1965,6 +2212,85 @@ mod tests {
         assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
         assert!(errors[0].contains("already exists"), "{}", errors[0]);
         assert_eq!(b"raced".to_vec(), fs::read(dst.join("a.txt")).unwrap());
+    }
+
+    // ── finishing a cross-device move, which is the only path that deletes ───
+
+    /// A source tree, and the channel the finished task reports on.
+    fn moved(label: &str) -> (TempDir, PathBuf, mpsc::Receiver<Command>, ActiveTask) {
+        let fx = TempDir::new(label);
+        let src = fx.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.txt"), b"src").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let active = copy_task(tx);
+        (fx, src, rx, active)
+    }
+
+    /// The last task the operation sent, which carries how it finished.
+    fn finished_task(rx: &mpsc::Receiver<Command>) -> Task {
+        let mut last = None;
+        while let Ok(command) = rx.try_recv() {
+            if let Command::Progress(task) = command {
+                last = Some(task);
+            }
+        }
+        last.expect("the task sent no progress")
+    }
+
+    #[test]
+    fn a_cross_device_move_removes_its_source_once_every_entry_arrived() {
+        let (_fx, src, rx, active) = moved("tasks_move_complete");
+
+        finish_cross_device_move(active, CopyOutcome::default(), &src, true);
+
+        assert!(!src.exists());
+        assert_eq!(None, finished_task(&rx).error_message());
+    }
+
+    #[test]
+    fn a_cross_device_move_keeps_its_source_when_an_entry_was_skipped() {
+        let (_fx, src, rx, active) = moved("tasks_move_skipped");
+
+        finish_cross_device_move(
+            active,
+            CopyOutcome {
+                errors: Vec::new(),
+                skipped: 1,
+            },
+            &src,
+            true,
+        );
+
+        // The skipped entry never reached the destination, so removing the
+        // source would delete the only copy of it. A skip is not an error, so
+        // the emptiness of `errors` must not be what decides this.
+        assert!(src.join("a.txt").exists());
+        let message = finished_task(&rx)
+            .error_message()
+            .expect("the kept source must be reported");
+        assert!(message.contains("Skipped 1 entry"), "{message}");
+    }
+
+    #[test]
+    fn a_cross_device_move_keeps_its_source_when_an_entry_failed() {
+        let (_fx, src, rx, active) = moved("tasks_move_failed");
+
+        finish_cross_device_move(
+            active,
+            CopyOutcome {
+                errors: vec!["a.txt already exists".to_string()],
+                skipped: 0,
+            },
+            &src,
+            true,
+        );
+
+        assert!(src.join("a.txt").exists());
+        assert_eq!(
+            Some("a.txt already exists".to_string()),
+            finished_task(&rx).error_message()
+        );
     }
 
     #[test]

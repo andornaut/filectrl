@@ -92,7 +92,9 @@ Key | Action
 
 An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
 
-A name that appears *inside* a directory while it is being copied, because another program wrote there at the same time, is asked about the same way, at any depth. An <kbd>S</kbd> or <kbd>O</kbd> answer applies to the rest of that tree as well as to the rest of the paste.
+An <kbd>S</kbd> or <kbd>O</kbd> answer also covers the sources already being copied, at any depth: if another program writes a name into a directory while that directory is being copied, the standing answer settles it without stopping the copy. Without one, that entry is reported when the copy finishes, along with anything else that could not be written. A copy in progress is never interrupted to ask about a name you have not seen.
+
+A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 
 Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those, and entries you skip deliberately are not added to it. If nothing was pasted at all, the clipboard is left exactly as it was so the paste can be retried unchanged.
 
