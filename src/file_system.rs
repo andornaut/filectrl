@@ -80,8 +80,8 @@ struct PendingPaste {
 /// What already holds a source's name in the destination directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Occupant {
-    /// A directory. Never replaced, because removing it would take its
-    /// contents with it; a directory source merges into it instead.
+    /// A directory, which is never replaced: removing it would take its
+    /// contents with it, and merging into it is not supported.
     Directory,
     /// A file, symlink, or other non-directory, which the user may replace.
     Replaceable,
@@ -124,14 +124,8 @@ impl PendingPaste {
     /// What to do with the source at the front of the queue, given what is
     /// already at its destination. Pure, so the whole answer matrix can be
     /// exercised without a filesystem or a worker.
-    fn step(&self, src: &PathInfo, occupant: Option<Occupant>) -> PasteStep {
-        // Only a copy can merge into an existing directory; a move would have
-        // to rename over a non-empty one.
-        step(
-            self.conflicts.standing(),
-            src.is_directory() && !self.is_move,
-            occupant,
-        )
+    fn step(&self, occupant: Option<Occupant>) -> PasteStep {
+        step(self.conflicts.standing(), occupant)
     }
 
     /// Records the answer to the collision in front of the user. Returns
@@ -162,26 +156,13 @@ impl PendingPaste {
     }
 }
 
-/// What to do with a source, given the paste's standing answer, whether the
-/// source is a directory, and what already holds its destination name. Pure, so
-/// the whole answer matrix can be exercised without a filesystem or a worker.
-fn step(
-    standing: Option<ConflictChoice>,
-    can_merge: bool,
-    occupant: Option<Occupant>,
-) -> PasteStep {
+/// What to do with a source, given the paste's standing answer and what already
+/// holds its destination name. Pure, so the whole answer matrix can be
+/// exercised without a filesystem or a worker.
+fn step(standing: Option<ConflictChoice>, occupant: Option<Occupant>) -> PasteStep {
     let Some(occupant) = occupant else {
         return PasteStep::Run { overwrite: false };
     };
-    // A directory pasted onto a directory merges, which only adds to what is
-    // there; each name that actually collides inside it is asked about as the
-    // copy reaches it. Nothing is lost, so there is nothing to ask here.
-    if occupant == Occupant::Directory && can_merge {
-        return match standing {
-            Some(ConflictChoice::SkipAll) => PasteStep::Skip,
-            _ => PasteStep::Run { overwrite: false },
-        };
-    }
     let can_overwrite = occupant == Occupant::Replaceable;
     match standing {
         Some(ConflictChoice::SkipAll) => PasteStep::Skip,
@@ -668,7 +649,7 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         while let Some(src) = pending.remaining.front().cloned() {
-            match pending.step(&src, pending.occupant(&src)) {
+            match pending.step(pending.occupant(&src)) {
                 PasteStep::Ask { can_overwrite } => {
                     commands.push(Command::OpenPrompt(PromptAction::Conflict {
                         name: src.display_name.clone(),
@@ -1159,18 +1140,7 @@ mod tests {
         standing: Option<ConflictChoice>,
         occupant: Option<Occupant>,
     ) -> PasteStep {
-        // A non-directory source, so the merge case is exercised separately.
-        step(standing, false, occupant)
-    }
-
-    #[test_case(None => PasteStep::Run { overwrite: false } ; "merges without asking")]
-    #[test_case(Some(ConflictChoice::SkipAll) => PasteStep::Skip ; "skip all still skips it")]
-    #[test_case(Some(ConflictChoice::OverwriteAll) => PasteStep::Run { overwrite: false } ; "overwrite all still merges rather than replacing")]
-    fn a_directory_onto_a_directory(standing: Option<ConflictChoice>) -> PasteStep {
-        // Merging only adds to what is there, and each name that actually
-        // collides inside is asked about as the copy reaches it, so there is
-        // nothing to ask here.
-        step(standing, true, Some(Occupant::Directory))
+        step(standing, occupant)
     }
 
     #[test]
