@@ -230,8 +230,13 @@ fn render_resize_message(buf: &mut Buffer, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
-    use crate::file_system::path_info::PathInfo;
+    use crate::{
+        command::{ConflictChoice, PromptAction},
+        file_system::path_info::PathInfo,
+    };
 
     fn view() -> RootView {
         Config::init_test();
@@ -253,6 +258,48 @@ mod tests {
             }
         });
         assert!(handled);
+    }
+
+    /// Opening a prompt is what routes keys to `PromptView`, and every prompt
+    /// resolves through a command that has to bring the mode back. The paste
+    /// conflict prompt is the only one opened by a handler that is not a view,
+    /// so `FileSystem` depends on both halves of this holding for a command it
+    /// cannot observe.
+    #[test_case(Command::OpenPrompt(PromptAction::Conflict {
+        name: "a.txt".to_string(),
+        can_overwrite: true,
+    }), InputMode::Prompt ; "opening the conflict prompt takes keys")]
+    #[test_case(Command::ResolveConflict(ConflictChoice::Skip), InputMode::Normal ; "answering it gives them back")]
+    #[test_case(Command::CancelPrompt, InputMode::Normal ; "dismissing it gives them back")]
+    fn a_command_leaves_the_root_in_mode(command: Command, expected: InputMode) {
+        let mut root = view();
+        // Start from the opposite mode so a no-op arm cannot pass by accident.
+        root.mode = match expected {
+            InputMode::Prompt => InputMode::Normal,
+            InputMode::Normal => InputMode::Prompt,
+        };
+
+        root.handle_command(&command);
+
+        assert_eq!(expected, root.mode());
+    }
+
+    #[test]
+    fn only_the_prompt_view_takes_keys_in_prompt_mode() {
+        let mut root = view();
+        // Prompt mode both adds PromptView to the visited views and makes it
+        // the only key handler. That pairing is the other half of the routing:
+        // it is what carries the conflict prompt's keypress to PromptView
+        // rather than to the table.
+        root.mode = InputMode::Prompt;
+
+        let mut key_handlers = 0;
+        root.visit_command_handlers(&mut |handler| {
+            if handler.should_handle_key(&InputMode::Prompt) {
+                key_handlers += 1;
+            }
+        });
+        assert_eq!(1, key_handlers);
     }
 
     #[test]
