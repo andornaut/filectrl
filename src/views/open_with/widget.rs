@@ -88,7 +88,7 @@ mod tests {
 
     fn candidate(name: &str, is_default: bool) -> AppCandidate {
         AppCandidate {
-            argv: vec!["prog".to_string()],
+            argv: vec!["prog".into()],
             detail: "prog".to_string(),
             is_default,
             name: name.to_string(),

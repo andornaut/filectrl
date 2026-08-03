@@ -3,7 +3,9 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     sync::OnceLock,
     time::Instant,
@@ -18,7 +20,7 @@ use super::{
     exec::{ExecContext, expand, file_uri},
     mimeapps::{self, AppDirIndex, Level, MimeAppsList},
 };
-use crate::app::config::Config;
+use crate::{app::config::Config, file_system::shell};
 
 /// Matches every file, per the mime-apps spec's fallback types.
 const ALL_FILES: &str = "all/allfiles";
@@ -284,12 +286,12 @@ fn to_candidate(
 /// (and individually quoted only where needed) rather than quoted as a whole:
 /// `xterm -e %s` has to become `xterm -e vim '/a b'`, not `xterm -e 'vim /a b'`.
 /// Returns `None` when no terminal is configured.
-fn in_terminal(template: &str, argv: &[String]) -> Option<Vec<String>> {
+fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     if template.is_empty() {
         return None;
     }
-    let command = template.replace("%s", &shell_words::join(argv.iter().map(String::as_str)));
-    Some(vec!["sh".to_string(), "-c".to_string(), command])
+    let command = shell::template(template, &shell::join(argv));
+    Some(vec![OsString::from("sh"), OsString::from("-c"), command])
 }
 
 /// Whether a `TryExec` value names an executable that exists. Only an absolute
@@ -465,7 +467,7 @@ fn lists_in(desktops: &[String], dir: &Path) -> Vec<MimeAppsList> {
 mod tests {
     use test_case::test_case;
 
-    use std::path::PathBuf;
+    use std::{ffi::OsString, path::PathBuf};
 
     use super::{dedupe_dirs, in_terminal, parse_subclasses, scan_mime_types};
 
@@ -494,13 +496,18 @@ mod tests {
     #[test_case(&["vim", "/a b.txt"], "sh -c xterm -e vim '/a b.txt'" ; "only the argument that needs it is quoted")]
     #[test_case(&["vim"], "sh -c xterm -e vim" ; "a single argument")]
     fn in_terminal_substitutes_a_command_line(argv: &[&str], expected: &str) {
-        let wrapped = in_terminal("xterm -e %s", &strings(argv)).unwrap();
-        assert_eq!(expected, wrapped.join(" "));
+        let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
+        let wrapped = in_terminal("xterm -e %s", &argv).unwrap();
+        let words: Vec<String> = wrapped
+            .iter()
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(expected, words.join(" "));
     }
 
     #[test]
     fn in_terminal_declines_when_no_terminal_is_configured() {
-        assert_eq!(None, in_terminal("", &strings(&["vim", "/a/b.txt"])));
+        assert_eq!(None, in_terminal("", &[OsString::from("vim")]));
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub mod open_with;
 mod operations;
 pub mod path_info;
 mod search;
+mod shell;
 mod stream;
 mod tasks;
 mod watch;
@@ -497,7 +498,12 @@ impl FileSystem {
 
     /// Launch an application the "open with" picker already resolved into an
     /// argv, so no template substitution or shell is involved here.
-    fn open_with(&self, working_dir: Option<&Path>, label: &str, argv: &[String]) -> CommandResult {
+    fn open_with(
+        &self,
+        working_dir: Option<&Path>,
+        label: &str,
+        argv: &[OsString],
+    ) -> CommandResult {
         spawn_argv(working_dir, label, argv, self.command_tx.clone()).into()
     }
 

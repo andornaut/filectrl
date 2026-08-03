@@ -3,6 +3,17 @@
 //! Each platform module answers "which applications handle this path", and
 //! returns the concrete argv that launches each one, so that nothing
 //! platform-specific has to travel through `Command` or `FileSystem`.
+//!
+//! Two limitations here are deliberate:
+//!
+//! - **The application database is read, never written.** Nothing writes
+//!   `mimeapps.list`, so the picker cannot set an application as the default
+//!   for a type; it reports the default the desktop already resolves to. Use
+//!   `xdg-mime default` or the desktop's own settings to change one.
+//! - **The index is built once per process and not refreshed.** Installing or
+//!   removing an application while FileCTRL is running is not picked up until
+//!   it restarts (see the `OnceLock`s in `linux.rs`). Rebuilding on every open
+//!   would pay the scan repeatedly to catch something that changes rarely.
 
 // The desktop entry and mime-apps specs are Linux only; macOS answers the same
 // question through Launch Services.
@@ -17,18 +28,20 @@ mod mimeapps;
 
 use std::{
     collections::HashSet,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
 use log::debug;
 
+use super::shell;
 use crate::app::config::Config;
 
 /// An application offered by the "open with" picker, and the argv that launches
 /// it against the chosen path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppCandidate {
-    pub argv: Vec<String>,
+    pub argv: Vec<OsString>,
     /// The program or bundle behind `name`, which is what tells two similarly
     /// named applications apart.
     pub detail: String,
@@ -93,9 +106,9 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
         debug!("No configured opener for {path:?}");
         return None;
     }
-    let command = template.replace("%s", &shell_words::quote(&path.to_string_lossy()));
+    let command = shell::template(template, &shell::quote(path.as_os_str()));
     Some(AppCandidate {
-        argv: vec!["sh".to_string(), "-c".to_string(), command],
+        argv: vec![OsString::from("sh"), OsString::from("-c"), command],
         // The setting it comes from, so it is obvious which config key to
         // change.
         detail: format!("openers.{key}"),
@@ -107,11 +120,13 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use super::{AppCandidate, dedupe_by_name};
 
     fn candidate(name: &str, detail: &str) -> AppCandidate {
         AppCandidate {
-            argv: vec![detail.to_string()],
+            argv: vec![OsString::from(detail)],
             detail: detail.to_string(),
             is_default: false,
             name: name.to_string(),

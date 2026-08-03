@@ -2,7 +2,7 @@
 //!
 //! <https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html>
 
-use std::path::Path;
+use std::{ffi::OsString, os::unix::ffi::OsStrExt, path::Path};
 
 use anyhow::{Result, anyhow};
 
@@ -27,7 +27,7 @@ pub(super) struct ExecContext<'a> {
 /// code only when it is an entire token (so `--file=%f` is passed through
 /// literally), and rejects any `Exec` whose first token contains '='
 /// (`env FOO=1 app %f`).
-pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<String>> {
+pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsString>> {
     // The desktop entry string escapes are undone before the quoting rules are
     // applied, so a literal backslash inside a quoted argument is written as
     // four backslashes.
@@ -39,15 +39,15 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<String
         .map_err(|error| anyhow!("Malformed Exec {exec:?}: {error}"))?;
 
     // Only ever one path, so %F and %U behave as %f and %u.
-    let mut argv = Vec::with_capacity(tokens.len() + 1);
+    let mut argv: Vec<OsString> = Vec::with_capacity(tokens.len() + 1);
     let mut consumed_path = false;
     for token in tokens {
         match token.as_str() {
             // The only code that expands to more than one argument.
             "%i" => {
                 if let Some(icon) = context.icon {
-                    argv.push("--icon".to_string());
-                    argv.push(icon.to_string());
+                    argv.push(OsString::from("--icon"));
+                    argv.push(OsString::from(icon));
                 }
             }
             // Deprecated codes expand to nothing.
@@ -72,7 +72,7 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<String
     // application against nothing. A program that rejects the extra argument
     // exits straight away and is reported.
     if !consumed_path {
-        argv.push(context.path.to_string_lossy().into_owned());
+        argv.push(context.path.as_os_str().to_os_string());
     }
     Ok(argv)
 }
@@ -80,27 +80,29 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<String
 /// Substitute the field codes appearing anywhere within a single argument, so
 /// that `--file=%f` works as well as a bare `%f`. Returns the expansion and
 /// whether it consumed the path.
-fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (String, bool) {
-    let mut expanded = String::with_capacity(token.len());
+fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
+    let mut expanded = OsString::with_capacity(token.len());
     let mut consumed_path = false;
     let mut chars = token.chars();
     while let Some(c) = chars.next() {
         if c != '%' {
-            expanded.push(c);
+            expanded.push(c.encode_utf8(&mut [0u8; 4]));
             continue;
         }
         match chars.next() {
-            Some('%') => expanded.push('%'),
+            Some('%') => expanded.push("%"),
+            // Pushed as an `OsStr`, so a name that is not valid UTF-8 reaches
+            // the program intact rather than as replacement characters.
             Some('f' | 'F') => {
-                expanded.push_str(&context.path.to_string_lossy());
+                expanded.push(context.path.as_os_str());
                 consumed_path = true;
             }
             Some('u' | 'U') => {
-                expanded.push_str(context.uri);
+                expanded.push(context.uri);
                 consumed_path = true;
             }
-            Some('c') => expanded.push_str(context.name),
-            Some('k') => expanded.push_str(&context.desktop_file.to_string_lossy()),
+            Some('c') => expanded.push(context.name),
+            Some('k') => expanded.push(context.desktop_file.as_os_str()),
             // Deprecated, unrecognized, %i in a position where it cannot expand
             // to two arguments, and a trailing '%' are all dropped.
             _ => {}
@@ -111,9 +113,13 @@ fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (String, bool) {
 
 /// The `file://` URI of an absolute path, for the `%u` and `%U` field codes.
 /// Everything outside the RFC 3986 unreserved set is percent encoded.
+///
+/// Encoded from the raw bytes: a lossy conversion would turn a name that is
+/// not valid UTF-8 into replacement characters, and the URI would then be
+/// percent encoding those rather than the name.
 pub(super) fn file_uri(path: &Path) -> String {
     let mut uri = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
+    for &byte in path.as_os_str().as_bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 uri.push(byte as char)
@@ -161,6 +167,15 @@ mod tests {
 
     use super::{ExecContext, expand, file_uri, unescape_value};
 
+    /// The expansion as plain strings, for comparing against the expected argv.
+    fn expanded(exec: &str, context: &ExecContext<'_>) -> Vec<String> {
+        expand(context, exec)
+            .unwrap()
+            .iter()
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect()
+    }
+
     const PATH: &str = "/home/u/report.pdf";
     const URI: &str = "file:///home/u/report.pdf";
 
@@ -195,7 +210,7 @@ mod tests {
     #[test_case("app \"\" %f", &["app", "", PATH] ; "an explicitly empty argument is kept")]
     #[test_case("flatpak run --command=\"foo bar\" org.x %U", &["flatpak", "run", "--command=foo bar", "org.x", URI] ; "quoting inside a token")]
     fn expand_produces(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expand(&context(), exec).unwrap().as_slice());
+        assert_eq!(expected, expanded(exec, &context()).as_slice());
     }
 
     #[test_case("app \"unmatched" ; "unmatched quote")]
@@ -211,8 +226,28 @@ mod tests {
         context.icon = None;
         assert_eq!(
             vec!["app".to_string(), PATH.to_string()],
-            expand(&context, "app %i %f").unwrap()
+            expanded("app %i %f", &context)
         );
+    }
+
+    #[test]
+    fn expand_preserves_a_name_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt");
+        let path = Path::new(name);
+        let uri = file_uri(path);
+        let context = ExecContext {
+            path,
+            uri: &uri,
+            ..context()
+        };
+
+        // A lossy conversion would hand the program U+FFFD instead of 0xe9,
+        // and it would open nothing.
+        let argv = expand(&context, "app %f").unwrap();
+        assert_eq!(name, argv[1]);
+        // The URI encodes the byte itself rather than a replacement character.
+        assert_eq!("file:///tmp/caf%E9.txt", uri);
     }
 
     #[test_case("/a/b.txt", "file:///a/b.txt" ; "unreserved characters pass through")]

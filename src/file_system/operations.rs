@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
     path::{Path, PathBuf},
     process::{Child, Stdio},
@@ -13,6 +13,7 @@ use log::{info, warn};
 
 use super::{
     path_info::{PathInfo, compact},
+    shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
 use crate::command::{Command, progress::CancellationToken};
@@ -94,10 +95,13 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     if template.is_empty() {
         return Ok(());
     }
-    let command = template.replace("%s", &shell_words::quote(&path.path.to_string_lossy()));
-    let child = spawn_detached("sh", ["-c", &command])
-        .map_err(|error| anyhow!("Failed to run command \"{command}\": {error}"))?;
-    watch_for_immediate_failure(child, format!("Command \"{command}\""), command_tx);
+    let command = shell::template(template, &shell::quote(path.path.as_os_str()));
+    // Only for the message: the command line itself is passed to the shell as
+    // raw bytes, so a path that is not valid UTF-8 still reaches the program.
+    let label = format!("Command {:?}", command.to_string_lossy());
+    let child = spawn_detached("sh", [OsStr::new("-c"), command.as_os_str()])
+        .map_err(|error| anyhow!("Failed to run {label}: {error}"))?;
+    watch_for_immediate_failure(child, label, command_tx);
     Ok(())
 }
 
@@ -107,7 +111,7 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
 pub(super) fn spawn_argv(
     working_dir: Option<&Path>,
     label: &str,
-    argv: &[String],
+    argv: &[OsString],
     command_tx: Sender<Command>,
 ) -> Result<()> {
     info!("Opening {label:?} using: {argv:?}");
@@ -116,6 +120,16 @@ pub(super) fn spawn_argv(
     };
     let mut command = detached_command(program, args);
     if let Some(working_dir) = working_dir {
+        // A desktop entry's `Path=` key names the directory to run in. Check it
+        // here so a stale one is reported as what it is: `spawn` would fail
+        // with the same ENOENT as a missing program, and the alert would send
+        // the user looking for the wrong thing.
+        if !working_dir.is_dir() {
+            return Err(anyhow!(
+                "Cannot run {label:?}: its working directory {} is not a directory",
+                compact(working_dir)
+            ));
+        }
         command.current_dir(working_dir);
     }
     let child = command
@@ -269,8 +283,9 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
 
 /// The single place the detach strategy is defined, so that both spawn paths
 /// stay in step.
-fn detached_command<I, S>(program: &str, args: I) -> std::process::Command
+fn detached_command<P, I, S>(program: P, args: I) -> std::process::Command
 where
+    P: AsRef<OsStr>,
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
@@ -283,8 +298,9 @@ where
     command
 }
 
-fn spawn_detached<I, S>(program: &str, args: I) -> Result<Child>
+fn spawn_detached<P, I, S>(program: P, args: I) -> Result<Child>
 where
+    P: AsRef<OsStr>,
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {

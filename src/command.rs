@@ -5,6 +5,7 @@ pub mod result;
 use anyhow::Error;
 #[cfg(test)]
 use anyhow::anyhow;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::{
@@ -120,7 +121,7 @@ pub enum Command {
     // concrete argv; FileSystem spawns it detached. `label` names the
     // application in the failure alert. An empty `argv` is a no-op.
     OpenWith {
-        argv: Vec<String>,
+        argv: Vec<OsString>,
         label: String,
         working_dir: Option<PathBuf>,
     },
