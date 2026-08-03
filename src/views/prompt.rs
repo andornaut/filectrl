@@ -380,18 +380,27 @@ mod tests {
         assert_eq!(Some(Command::CancelPrompt), conflict_key(false, key));
     }
 
-    #[test_case('o', KeyModifiers::CONTROL ; "ctrl does not overwrite")]
-    #[test_case('O', KeyModifiers::ALT     ; "alt does not overwrite all")]
-    #[test_case('s', KeyModifiers::CONTROL ; "ctrl does not skip")]
-    #[test_case('s', KeyModifiers::SUPER   ; "super does not skip")]
-    fn a_chord_is_not_one_of_the_offered_choices(key: char, modifiers: KeyModifiers) {
+    /// Every modifier crossterm can report except Shift, which is how the
+    /// uppercase choices are typed. Enumerated so that a modifier missing from
+    /// the rule is a failure here rather than a way to trigger a destructive
+    /// choice by accident.
+    #[test_case(KeyModifiers::CONTROL ; "ctrl")]
+    #[test_case(KeyModifiers::ALT     ; "alt")]
+    #[test_case(KeyModifiers::SUPER   ; "super key")]
+    #[test_case(KeyModifiers::HYPER   ; "hyper")]
+    #[test_case(KeyModifiers::META    ; "meta")]
+    #[test_case(KeyModifiers::CONTROL.union(KeyModifiers::SHIFT) ; "ctrl and shift")]
+    fn a_chord_is_not_one_of_the_offered_choices(modifiers: KeyModifiers) {
         // Ctrl+O is a different key from o, and o is destructive, so sharing a
         // letter must not be enough to trigger it. Falling through to cancel
         // loses nothing: the clipboard is restored.
-        assert_eq!(
-            Some(Command::CancelPrompt),
-            conflict_chord(true, key, modifiers)
-        );
+        for key in ['s', 'S', 'o', 'O'] {
+            assert_eq!(
+                Some(Command::CancelPrompt),
+                conflict_chord(true, key, modifiers),
+                "{key} with {modifiers:?} should not resolve a conflict"
+            );
+        }
     }
 
     #[test_case('S' => Some(Command::ResolveConflict(ConflictChoice::SkipAll))      ; "shift skips all")]

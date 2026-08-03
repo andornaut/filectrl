@@ -190,7 +190,9 @@ fn run_copy_task(
     let uncancellable = active.uncancellable_handle();
 
     queue_operation(move || {
-        let Some(active) = prepare_destination(active, &new_path, overwrite) else {
+        let Some(active) = check_cancelled(active)
+            .and_then(|active| clear_destination(active, &new_path, overwrite))
+        else {
             return;
         };
         if let Some((active, errors)) = copy_with_progress(
@@ -244,12 +246,10 @@ fn run_move_task(
     let uncancellable = active.uncancellable_handle();
 
     queue_operation(move || {
-        // Also narrows the cancel-vs-rename window: a keypress that lands
-        // before the worker starts is honored instead of racing the rename.
-        let Some(mut active) = prepare_destination(active, &new_path, overwrite) else {
+        let Some(mut active) = check_cancelled(active) else {
             return;
         };
-        match rename_no_replace(&old_path, &new_path) {
+        match rename_for_move(&old_path, &new_path, overwrite) {
             Ok(_) => {
                 active.increment(size);
                 active.done();
@@ -257,6 +257,12 @@ fn run_move_task(
             Err(error) => match error.kind() {
                 // If the file is on a different device/mount-point, we must copy-then-delete it instead
                 ErrorKind::CrossesDevices => {
+                    // There is no rename to replace the destination here, and
+                    // the copy below opens it with `create_new`, so a granted
+                    // overwrite has to clear it first.
+                    let Some(active) = clear_destination(active, &new_path, overwrite) else {
+                        return;
+                    };
                     let Some((active, errors)) = copy_with_progress(
                         &old_path,
                         &new_path,
@@ -996,7 +1002,19 @@ fn validate_paths(
     };
     let new_path = destination_directory.path.join(file_name);
 
-    if old_path == new_path {
+    // Compare resolved paths so that neither a parent-dir segment (e.g.
+    // `/a/c/../b`) nor a destination directory that is a symlink to the
+    // source's own directory can disguise one path as another. The
+    // destination's own name does not exist yet, so its parent is resolved and
+    // the name rejoined.
+    let abs_old = resolve(&old_path);
+    let abs_new = resolve(&destination_directory.path).join(file_name);
+
+    // The two paths name the same entry. This has to be caught here whatever
+    // the source's type: a granted overwrite clears the destination before
+    // copying, so letting an aliased path through would unlink the source and
+    // leave nothing to copy.
+    if abs_old == abs_new {
         return Err(anyhow!("Cannot {operation} {old_path:?} to {new_path:?}: Source and destination paths must be different").into());
     }
 
@@ -1008,21 +1026,11 @@ fn validate_paths(
     // link and copies a file as bytes, so neither descends into what it is
     // creating. Restricting the check to directories also keeps it from
     // refusing a copy of a symlink into the directory that symlink points at.
-    //
-    // Compare resolved paths so that neither a parent-dir segment (e.g.
-    // `/a/c/../b`) nor a destination directory that is a symlink back into the
-    // source can slip past the component-wise prefix check. The destination's
-    // own name does not exist yet, so its parent is resolved and the name
-    // rejoined.
-    if source.is_directory() {
-        let abs_old = resolve(&old_path);
-        let abs_new = resolve(&destination_directory.path).join(file_name);
-        if abs_new.starts_with(&abs_old) {
-            return Err(anyhow!(
-                "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
-            )
-            .into());
-        }
+    if source.is_directory() && abs_new.starts_with(&abs_old) {
+        return Err(anyhow!(
+            "Cannot {operation} {old_path:?} into its own subdirectory {new_path:?}"
+        )
+        .into());
     }
 
     // Refuse to replace an existing destination unless the paste asked for it:
@@ -1052,31 +1060,52 @@ fn remove_existing(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// The first thing every queued copy and move does: honor a cancel that landed
-/// while the task sat in the queue, then clear the destination if the paste
-/// granted overwrite. Returns `None` when the task was finalized here and must
-/// not continue.
-///
-/// Both halves have to happen here rather than in the caller. The caller queues
-/// every source of an "overwrite all" paste in one pass, so clearing there
-/// would delete every destination up front and leave a hole wherever a later
-/// task is cancelled or fails; and clearing before the cancel check would
-/// destroy a destination the user had already asked not to touch.
-///
-/// Clearing is needed even for a move, whose rename would replace the
-/// destination itself: `rename` refuses to replace a file with a directory, and
-/// a cross-device move falls back to a byte copy that opens the destination
-/// with `create_new`. Neither can proceed with the destination still there.
-fn prepare_destination(active: ActiveTask, new_path: &Path, overwrite: bool) -> Option<ActiveTask> {
+/// Honors a cancel that landed while the task sat in the queue, which can be a
+/// long time: a single worker runs every operation in turn. Returns `None` when
+/// the task was finalized here and must not continue.
+fn check_cancelled(active: ActiveTask) -> Option<ActiveTask> {
     if active.is_cancelled() {
         active.cancelled();
         return None;
     }
+    Some(active)
+}
+
+/// Clears a destination the paste granted permission to replace. Returns `None`
+/// when the task was finalized here and must not continue.
+///
+/// This runs in the worker rather than the caller, and only once the operation
+/// is about to write. The caller queues every source of an "overwrite all"
+/// paste in one pass, so clearing there would delete every destination up front
+/// and leave a hole wherever a later task is cancelled or fails.
+fn clear_destination(active: ActiveTask, new_path: &Path, overwrite: bool) -> Option<ActiveTask> {
     if overwrite && let Err(error) = remove_existing(new_path) {
         active.error(format!("Failed to replace {new_path:?}: {error}"));
         return None;
     }
     Some(active)
+}
+
+/// Renames `old_path` onto `new_path`, replacing an existing destination when
+/// `overwrite`.
+///
+/// Prefers the kernel's atomic replace: it leaves no window in which the
+/// destination is missing, and a rename that fails for an unrelated reason (a
+/// source that vanished while the task was queued, a permission error) leaves
+/// the destination untouched rather than destroying it for nothing. The
+/// destination is cleared only for the one case the kernel refuses outright,
+/// replacing a non-directory with a directory.
+fn rename_for_move(old_path: &Path, new_path: &Path, overwrite: bool) -> std::io::Result<()> {
+    if !overwrite {
+        return rename_no_replace(old_path, new_path);
+    }
+    match fs::rename(old_path, new_path) {
+        Err(error) if error.kind() == ErrorKind::NotADirectory => {
+            remove_existing(new_path)?;
+            fs::rename(old_path, new_path)
+        }
+        result => result,
+    }
 }
 
 #[cfg(test)]
@@ -1188,6 +1217,27 @@ mod tests {
         let source = PathInfo::try_from(link.as_path()).unwrap();
         let dest = PathInfo::try_from(target.as_path()).unwrap();
         assert!(validate_paths(&source, &dest, "copy", false).is_ok());
+    }
+
+    #[test_case(true  ; "overwrite granted")]
+    #[test_case(false ; "overwrite not granted")]
+    fn validate_paths_rejects_a_destination_that_aliases_the_source(overwrite: bool) {
+        let fx = TempDir::new("tasks");
+        let real = fx.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("f.txt"), b"precious").unwrap();
+        // A second path to the same directory, which the clipboard can easily
+        // carry: it holds whatever absolute path the other window was showing.
+        std::os::unix::fs::symlink(&real, fx.join("link")).unwrap();
+
+        let src = PathInfo::try_from(real.join("f.txt").as_path()).unwrap();
+        let dest = PathInfo::try_from(fx.join("link").as_path()).unwrap();
+
+        // The two paths name one file. A granted overwrite clears the
+        // destination before copying, so letting this through would unlink the
+        // source and leave nothing to copy from.
+        assert!(validate_paths(&src, &dest, "copy", overwrite).is_err());
+        assert!(real.join("f.txt").exists());
     }
 
     #[test]
@@ -1480,14 +1530,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cancel_that_lands_while_queued_stops_before_the_destination_is_cleared() {
+    fn a_cancel_that_lands_while_queued_stops_the_task() {
         let (_fx, dst, active, token) = destination("tasks_prepare_cancelled");
         token.cancel();
 
-        // The user asked for the operation not to happen, so the entry it was
-        // going to replace must survive: the queue can hold a task for as long
-        // as the operations ahead of it take.
-        assert!(prepare_destination(active, &dst, true).is_none());
+        // The queue can hold a task for as long as the operations ahead of it
+        // take, so a cancel has to be honored before anything is written, and
+        // before the destination it would have replaced is cleared.
+        assert!(check_cancelled(active).is_none());
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
     }
 
@@ -1495,7 +1545,7 @@ mod tests {
     fn a_granted_overwrite_clears_the_destination() {
         let (_fx, dst, active, _token) = destination("tasks_prepare_overwrite");
 
-        let active = prepare_destination(active, &dst, true).expect("the task should continue");
+        let active = clear_destination(active, &dst, true).expect("the task should continue");
 
         assert!(!dst.exists());
         active.done();
@@ -1505,7 +1555,7 @@ mod tests {
     fn a_destination_survives_when_overwrite_was_not_granted() {
         let (_fx, dst, active, _token) = destination("tasks_prepare_no_overwrite");
 
-        let active = prepare_destination(active, &dst, false).expect("the task should continue");
+        let active = clear_destination(active, &dst, false).expect("the task should continue");
 
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
         active.done();
@@ -1518,7 +1568,7 @@ mod tests {
 
         // Something else removed it between the prompt and the worker, which
         // is the outcome the user asked for anyway.
-        assert!(prepare_destination(active, &dst, true).is_some());
+        assert!(clear_destination(active, &dst, true).is_some());
     }
 
     #[test]
@@ -1527,7 +1577,7 @@ mod tests {
         let src = fx.join("src.txt");
         std::fs::write(&src, b"src").unwrap();
 
-        let active = prepare_destination(active, &dst, true).expect("the task should continue");
+        let active = clear_destination(active, &dst, true).expect("the task should continue");
 
         // A move across filesystems cannot rename, so it falls back to a byte
         // copy that opens the destination with `create_new`. That open fails
@@ -1535,6 +1585,69 @@ mod tests {
         // not skippable just because a rename would have replaced it.
         assert!(open_files(&src, &dst).is_ok());
         active.done();
+    }
+
+    #[test]
+    fn a_failed_overwriting_move_leaves_the_destination_in_place() {
+        let fx = TempDir::new("tasks_move_failure");
+        let src = fx.join("gone.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&dst, b"dest").unwrap();
+
+        // The source vanished while the task sat in the queue, which a single
+        // worker running a long copy makes easy. Clearing the destination up
+        // front would lose it for a move that then cannot happen, leaving the
+        // user with neither file.
+        assert!(rename_for_move(&src, &dst, true).is_err());
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
+    }
+
+    #[test]
+    fn an_overwriting_move_replaces_a_file_without_clearing_it_first() {
+        let fx = TempDir::new("tasks_move_atomic");
+        let src = fx.join("src.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::write(&dst, b"dest").unwrap();
+
+        // The kernel replaces atomically here, so there is no moment in which
+        // the destination is missing.
+        rename_for_move(&src, &dst, true).unwrap();
+        assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
+        assert!(!src.exists());
+    }
+
+    #[test]
+    fn an_overwriting_move_clears_a_file_that_a_directory_must_replace() {
+        let fx = TempDir::new("tasks_move_dir_over_file");
+        let src = fx.join("srcdir");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("inner.txt"), b"src").unwrap();
+        let dst = fx.join("dest");
+        std::fs::write(&dst, b"dest").unwrap();
+
+        // `rename` refuses to replace a non-directory with a directory, so
+        // this is the one case that has to clear the destination itself.
+        rename_for_move(&src, &dst, true).unwrap();
+        assert_eq!(
+            b"src".to_vec(),
+            std::fs::read(dst.join("inner.txt")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_move_without_overwrite_refuses_an_existing_destination() {
+        let fx = TempDir::new("tasks_move_no_overwrite");
+        let src = fx.join("src.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::write(&dst, b"dest").unwrap();
+
+        // Without a granted overwrite the destination is never touched, even
+        // though the same function would replace it with one.
+        assert!(rename_for_move(&src, &dst, false).is_err());
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
+        assert!(src.exists());
     }
 
     #[test]
