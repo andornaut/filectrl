@@ -62,6 +62,11 @@ impl CommandHandler for PromptView {
                 KeyCode::Char('O') if plain && can_overwrite => {
                     Command::ResolveConflict(ConflictChoice::OverwriteAll).into()
                 }
+                // A real choice that this collision cannot offer. Ignoring it
+                // keeps the prompt up: treating it as the abandon key would
+                // lose the rest of a batch for someone who has been answering
+                // `o` and reaches the first directory.
+                KeyCode::Char('o' | 'O') if plain => CommandResult::Handled,
                 _ => Command::CancelPrompt.into(),
             };
         }

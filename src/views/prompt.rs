@@ -363,6 +363,14 @@ mod tests {
         conflict_chord(can_overwrite, key, KeyModifiers::NONE)
     }
 
+    fn conflict_result(can_overwrite: bool, key: char) -> CommandResult {
+        let mut view = prompt_with_action(PromptAction::Conflict {
+            name: "a.txt".to_string(),
+            can_overwrite,
+        });
+        view.handle_key(&KeyCode::Char(key), &KeyModifiers::NONE)
+    }
+
     #[test_case('s' => Some(Command::ResolveConflict(ConflictChoice::Skip))         ; "s skips")]
     #[test_case('S' => Some(Command::ResolveConflict(ConflictChoice::SkipAll))      ; "S skips all")]
     #[test_case('o' => Some(Command::ResolveConflict(ConflictChoice::Overwrite))    ; "o overwrites")]
@@ -374,10 +382,15 @@ mod tests {
 
     #[test_case('o' ; "overwrite")]
     #[test_case('O' ; "overwrite all")]
-    fn a_directory_collision_does_not_bind_the_overwrite_keys(key: char) {
-        // The prompt does not offer replacing a directory, so its keys must
-        // not quietly do it anyway.
-        assert_eq!(Some(Command::CancelPrompt), conflict_key(false, key));
+    fn a_directory_collision_ignores_the_overwrite_keys(key: char) {
+        // The prompt does not offer replacing a directory, so its keys must not
+        // quietly do it. Ignoring them rather than treating them as the abandon
+        // key keeps the prompt up: someone answering `o` through a batch would
+        // otherwise lose the rest of the paste at the first directory.
+        assert!(matches!(
+            conflict_result(false, key),
+            CommandResult::Handled
+        ));
     }
 
     /// Every modifier crossterm can report except Shift, which is how the
