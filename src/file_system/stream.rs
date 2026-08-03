@@ -78,3 +78,103 @@ impl Batcher {
         send(std::mem::take(&mut self.batch))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, path::Path};
+
+    use super::*;
+
+    /// A never-elapsing interval, so only the size rule can flush.
+    const NEVER: Duration = Duration::from_secs(86_400);
+
+    fn item() -> PathInfo {
+        PathInfo::try_from(Path::new(".")).unwrap()
+    }
+
+    /// Records the size of each flushed batch and reports the channel as open.
+    fn recorder(sizes: &RefCell<Vec<usize>>) -> impl Fn(Vec<PathInfo>) -> bool + '_ {
+        move |items| {
+            sizes.borrow_mut().push(items.len());
+            true
+        }
+    }
+
+    #[test]
+    fn items_are_held_until_the_batch_is_full() {
+        let sizes = RefCell::new(Vec::new());
+        let send = recorder(&sizes);
+        let mut batcher = Batcher::new(3, NEVER);
+
+        assert!(batcher.push(item(), &send));
+        assert!(batcher.push(item(), &send));
+        // Batching exists to keep a flood of per-item commands from sitting
+        // ahead of terminal input in the single command channel.
+        assert!(sizes.borrow().is_empty());
+
+        assert!(batcher.push(item(), &send));
+        assert_eq!(vec![3], *sizes.borrow());
+    }
+
+    #[test]
+    fn an_elapsed_interval_flushes_a_partial_batch() {
+        let sizes = RefCell::new(Vec::new());
+        let send = recorder(&sizes);
+        // A zero interval is always due, standing in for a producer whose
+        // matches arrive more sparsely than the flush interval.
+        let mut batcher = Batcher::new(1_000, Duration::ZERO);
+
+        assert!(batcher.push(item(), &send));
+        assert_eq!(vec![1], *sizes.borrow());
+    }
+
+    #[test]
+    fn flushing_an_empty_batch_sends_nothing() {
+        let sizes = RefCell::new(Vec::new());
+        let send = recorder(&sizes);
+        let mut batcher = Batcher::new(3, Duration::ZERO);
+
+        // An empty batch must not send a ListingBatch: consumers would count
+        // it as a completed batch of zero items.
+        assert!(batcher.flush(&send));
+        assert!(batcher.flush_if_due(&send));
+        assert!(sizes.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_closed_channel_is_reported_so_the_producer_stops() {
+        let closed = |_: Vec<PathInfo>| false;
+        let mut batcher = Batcher::new(1, NEVER);
+
+        // Every producer treats `false` as "stop walking": the receiver is
+        // gone, so any further work is wasted.
+        assert!(!batcher.push(item(), &closed));
+
+        let mut batcher = Batcher::new(10, NEVER);
+        batcher.push(item(), &|_| true);
+        assert!(!batcher.flush(&closed));
+    }
+
+    #[test]
+    fn a_flush_restarts_the_interval() {
+        let sizes = RefCell::new(Vec::new());
+        let send = recorder(&sizes);
+        let interval = Duration::from_secs(1);
+        let mut batcher = Batcher::new(1_000, interval);
+        // Backdate the timer so the first push is due. Reaching into the field
+        // keeps the test off the wall clock: the two pushes below are
+        // microseconds apart, so only the reset inside `flush` can decide
+        // whether the second one flushes.
+        batcher.last_flush = Instant::now()
+            .checked_sub(interval)
+            .expect("the monotonic clock should be past the interval");
+
+        assert!(batcher.push(item(), &send));
+        assert_eq!(vec![1], *sizes.borrow());
+
+        // Without the reset the timer would still read as elapsed, and a
+        // producer adding items sparsely would send each one as its own batch.
+        assert!(batcher.push(item(), &send));
+        assert_eq!(vec![1], *sizes.borrow());
+    }
+}

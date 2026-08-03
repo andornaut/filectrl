@@ -159,15 +159,7 @@ mod tests {
     use test_case::test_case;
 
     use super::{item_height, row_widget_and_height};
-    use crate::{
-        app::config::{Config, RuntimeEnv},
-        file_system::path_info::PathInfo,
-    };
-
-    fn ensure_config_initialized() {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
-    }
+    use crate::{app::config::Config, file_system::path_info::PathInfo};
 
     // `item_height` must always agree with the height `row_widget_and_height`
     // actually renders, since the windowing scroll math relies on it.
@@ -175,7 +167,7 @@ mod tests {
     #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20 ; "wraps")]
     #[test_case("中文文件名称非常长非常长非常长.txt", 12 ; "wide chars")]
     fn item_height_matches_rendered_row_height(name: &str, width: u16) {
-        ensure_config_initialized();
+        Config::init_test();
         let theme = Config::global().theme();
         let mut item = PathInfo::try_from(Path::new(".")).unwrap();
         item.display_name = name.to_string();

@@ -176,34 +176,22 @@ impl TableView {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use super::{Reselect, SortColumn, TableView};
     use crate::{
-        app::config::{Config, RuntimeEnv},
+        app::config::Config,
         command::{Command, handler::CommandHandler, result::CommandResult},
         file_system::path_info::PathInfo,
+        test_support::TempDir,
     };
 
-    fn ensure_config_initialized() {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
-    }
-
     struct Fixture {
-        dir: PathBuf,
+        dir: TempDir,
     }
 
     impl Fixture {
         fn new() -> Self {
-            // A per-process counter guarantees a unique directory even when two
-            // fixtures are created in the same nanosecond on parallel threads,
-            // so one fixture's Drop never wipes another's directory.
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir =
-                std::env::temp_dir().join(format!("filectrl_nav_{}_{seq}", std::process::id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = TempDir::new("nav");
             Self { dir }
         }
 
@@ -214,13 +202,7 @@ mod tests {
         }
 
         fn directory(&self) -> PathInfo {
-            PathInfo::try_from(&self.dir).unwrap()
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
+            PathInfo::try_from(self.dir.path()).unwrap()
         }
     }
 
@@ -244,7 +226,7 @@ mod tests {
 
     #[test]
     fn set_directory_top_selects_the_first_item() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         let children = vec![fx.file("b", 1), fx.file("a", 1), fx.file("c", 1)];
@@ -256,7 +238,7 @@ mod tests {
 
     #[test]
     fn sort_keeps_the_selected_file_when_it_moves_position() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         // Name-ascending order: a, b, c
@@ -275,7 +257,7 @@ mod tests {
 
     #[test]
     fn reselect_keep_holds_the_cursor_position_when_the_selected_file_is_deleted() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(
@@ -297,7 +279,7 @@ mod tests {
 
     #[test]
     fn reselect_top_falls_back_to_first_when_the_selected_file_is_gone() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(
@@ -334,7 +316,7 @@ mod tests {
 
     #[test]
     fn delete_clears_marks_and_resets_the_mark_count_notice() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
@@ -346,7 +328,7 @@ mod tests {
 
     #[test]
     fn delete_without_marks_does_not_emit_a_mark_count_command() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
@@ -358,7 +340,7 @@ mod tests {
 
     #[test]
     fn refreshed_directory_clears_marks_and_resets_the_mark_count_notice() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
@@ -389,7 +371,7 @@ mod tests {
 
     #[test]
     fn late_listing_completion_does_not_clobber_the_bookmarks_listing() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         // A load is in flight for the CWD when the bookmarks key is pressed.
@@ -414,7 +396,7 @@ mod tests {
 
     #[test]
     fn refreshed_directory_while_searching_keeps_the_marks_and_the_notice() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
         // start_search is called directly, so the two marks carry into the
@@ -438,7 +420,7 @@ mod tests {
 
     #[test]
     fn bookmarks_clears_the_marks_and_emits_the_mark_reset_snapshot() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
@@ -453,7 +435,7 @@ mod tests {
 
     #[test]
     fn refreshed_directory_while_showing_bookmarks_reloads_them_and_keeps_the_marks() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
         table
@@ -478,7 +460,7 @@ mod tests {
 
     #[test]
     fn sort_by_clears_marks_and_resets_the_mark_count_notice() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
@@ -490,7 +472,7 @@ mod tests {
 
     #[test]
     fn toggle_show_hidden_snapshot_carries_the_new_selection_and_cleared_marks() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         // Sorted (a leading dot is ignored when comparing names): a, .b
@@ -520,7 +502,7 @@ mod tests {
 
     #[test]
     fn toggle_show_hidden_is_a_noop_during_a_search() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(
@@ -558,7 +540,7 @@ mod tests {
 
     #[test]
     fn stale_listing_batches_are_ignored() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
@@ -582,7 +564,7 @@ mod tests {
 
     #[test]
     fn late_search_batches_are_dropped_in_bookmarks_mode() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
@@ -610,7 +592,7 @@ mod tests {
 
     #[test]
     fn search_started_outside_search_mode_keeps_the_load_generation() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
@@ -630,7 +612,7 @@ mod tests {
 
     #[test]
     fn showing_bookmarks_clears_an_active_search() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
@@ -652,7 +634,7 @@ mod tests {
 
     #[test]
     fn starting_a_search_clears_the_bookmarks_view() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
         table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);

@@ -1,6 +1,8 @@
 pub mod app;
 mod command;
 mod file_system;
+#[cfg(test)]
+mod test_support;
 mod views;
 
 use std::{

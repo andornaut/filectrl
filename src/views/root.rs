@@ -230,11 +230,10 @@ fn render_resize_message(buf: &mut Buffer, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{app::config::RuntimeEnv, file_system::path_info::PathInfo};
+    use crate::file_system::path_info::PathInfo;
 
     fn view() -> RootView {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
+        Config::init_test();
         RootView::new()
     }
 

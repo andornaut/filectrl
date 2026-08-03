@@ -2,7 +2,7 @@ use std::path::Path;
 
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use super::BreadcrumbsView;
+use super::{BreadcrumbsView, widget::clicked_index};
 use crate::{
     app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
@@ -60,19 +60,8 @@ impl CommandHandler for BreadcrumbsView {
                     return CommandResult::Handled;
                 };
                 let has_tag = self.mode != ListingMode::Normal;
-                let clicked_index = row.iter().find_map(|p| {
-                    if p.intersects(x) {
-                        let i = p.index();
-                        if has_tag {
-                            if i == 0 { None } else { Some(i - 1) }
-                        } else {
-                            Some(i)
-                        }
-                    } else {
-                        None
-                    }
-                });
-                if let Some(path) = clicked_index.and_then(|i| self.to_path(i)) {
+                let index = clicked_index(row, x, has_tag);
+                if let Some(path) = index.and_then(|i| self.to_path(i)) {
                     Command::Open(path).into()
                 } else {
                     CommandResult::Handled

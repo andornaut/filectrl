@@ -77,12 +77,12 @@ mod tests {
 
     use super::{DEFAULT_MARKER, NO_APPLICATIONS, build_rows};
     use crate::{
-        app::config::{Config, RuntimeEnv, theme::OpenWith},
+        app::config::{Config, theme::OpenWith},
         file_system::open_with::AppCandidate,
     };
 
     fn theme() -> &'static OpenWith {
-        Config::init(Config::load(RuntimeEnv::default(), None, vec![]).unwrap());
+        Config::init_test();
         &Config::global().theme().open_with
     }
 

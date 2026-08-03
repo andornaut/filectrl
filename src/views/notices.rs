@@ -143,7 +143,6 @@ mod tests {
     use super::*;
     use crate::{
         app::clipboard::ClipboardEntry,
-        app::config::RuntimeEnv,
         command::{
             Command,
             progress::{ActiveTask, Task, TaskKind, Transfer},
@@ -152,8 +151,7 @@ mod tests {
     };
 
     fn view() -> NoticesView {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
+        Config::init_test();
         NoticesView::new()
     }
 

@@ -105,6 +105,37 @@ impl Config {
         CONFIG.get().expect("config should be initialized")
     }
 
+    /// A `Config` built from the embedded defaults alone. Tests must not read
+    /// the host's `~/.config/filectrl/config.toml`: a developer who changes a
+    /// `[ui]` default there would otherwise see unrelated tests fail.
+    ///
+    /// `config_dir` exists only so that paths derived from it (notably
+    /// `bookmarks_dir`) resolve somewhere inert instead of the real config
+    /// directory. The `TempDir` guard is deliberately dropped rather than
+    /// held: the path is reserved and never created, so there is nothing for
+    /// it to remove. Reserving keeps it unique per call, so concurrent runs
+    /// cannot collide on it.
+    ///
+    /// A test that needs a config directory on disk should own a `TempDir` and
+    /// set `config_dir` from it, as `app::claims` does, rather than letting
+    /// anything create this one.
+    #[cfg(test)]
+    pub(crate) fn builtin() -> Self {
+        let config_dir = crate::test_support::TempDir::reserved("config")
+            .path()
+            .to_path_buf();
+        Self::parse(RuntimeEnv::default(), "", Some(config_dir), &[])
+            .expect("the embedded default config should parse")
+    }
+
+    /// Initializes the process-global config from [`Config::builtin`]. Tests
+    /// share one global config, so the first call wins and the rest are
+    /// no-ops; every test that reaches `Config::global` calls this first.
+    #[cfg(test)]
+    pub(crate) fn init_test() {
+        Self::init(Self::builtin());
+    }
+
     pub fn theme(&self) -> &Theme {
         if self.is_truecolor {
             &self.theme

@@ -361,28 +361,15 @@ fn ends_with_ignore_case(haystack: &str, suffix_lowercase: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::config::RuntimeEnv;
+    use crate::test_support::TempDir;
 
-    fn ensure_config_initialized() {
-        let config = Config::load(RuntimeEnv::default(), None, vec![]).unwrap();
-        Config::init(config);
-    }
-
-    /// Self-cleaning unique temp directory.
     struct Fixture {
-        dir: PathBuf,
+        dir: TempDir,
     }
 
     impl Fixture {
         fn new() -> Self {
-            // A per-process counter guarantees a unique directory even when two
-            // fixtures are created in the same nanosecond on parallel threads,
-            // so one fixture's Drop never wipes another's directory.
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir =
-                std::env::temp_dir().join(format!("filectrl_content_{}_{seq}", std::process::id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = TempDir::new("content");
             Self { dir }
         }
 
@@ -408,13 +395,7 @@ mod tests {
         }
 
         fn directory(&self) -> PathInfo {
-            PathInfo::try_from(&self.dir).unwrap()
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
+            PathInfo::try_from(self.dir.path()).unwrap()
         }
     }
 
@@ -428,7 +409,7 @@ mod tests {
 
     #[test]
     fn sort_by_name_ascending_groups_directories_first_then_case_insensitive() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         // Intentionally unsorted input order.
         let items = vec![
@@ -453,7 +434,7 @@ mod tests {
 
     #[test]
     fn sort_by_name_descending_reverses_within_the_directory_grouping() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.dir_entry("Apple"),
@@ -472,7 +453,7 @@ mod tests {
 
     #[test]
     fn sort_by_size_orders_by_byte_length() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("medium", 50),
@@ -491,7 +472,7 @@ mod tests {
 
     #[test]
     fn filter_retains_case_insensitive_substring_matches() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("Apple", 1),
@@ -512,7 +493,7 @@ mod tests {
 
     #[test]
     fn toggle_show_hidden_filters_dotfiles() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
         let mut content = DirectoryContent::default();
@@ -534,7 +515,7 @@ mod tests {
 
     #[test]
     fn revision_changes_when_the_listing_changes_but_not_on_reads() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut content = DirectoryContent::default();
 
@@ -559,7 +540,7 @@ mod tests {
 
     #[test]
     fn streamed_listing_matches_set_items_then_sort() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("Banana", 1),
@@ -585,7 +566,7 @@ mod tests {
 
     #[test]
     fn listing_is_visible_in_read_order_before_finalize() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("c", 1),
@@ -607,7 +588,7 @@ mod tests {
 
     #[test]
     fn appended_batches_honor_the_active_filter_before_finalize() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("Apple", 1),
@@ -628,7 +609,7 @@ mod tests {
 
     #[test]
     fn appended_batches_honor_show_hidden_before_finalize() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
         let mut content = DirectoryContent::default();
@@ -646,7 +627,7 @@ mod tests {
 
     #[test]
     fn search_results_bypass_the_show_hidden_filter() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut content = DirectoryContent::default();
         content.set_items(fx.directory(), vec![]);
@@ -665,7 +646,7 @@ mod tests {
 
     #[test]
     fn finalize_after_a_mid_stream_filter_change_matches_a_full_sort() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut content = DirectoryContent::default();
         content.start_listing(fx.directory());
@@ -683,7 +664,7 @@ mod tests {
 
     #[test]
     fn filter_is_case_insensitive_for_non_ascii_names() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.file_entry("Équipe", 1), fx.file_entry("autre", 1)];
         let mut content = DirectoryContent::default();
@@ -697,7 +678,7 @@ mod tests {
     /// filters to directories.
     #[test]
     fn filter_matches_the_trailing_separator_on_directories() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.dir_entry("reports"),
@@ -731,7 +712,7 @@ mod tests {
     /// search of that name, in every listing mode.
     #[test]
     fn filter_agrees_with_a_substring_search_of_the_displayed_name() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let entries = [
             fx.dir_entry("reports"),
@@ -763,7 +744,11 @@ mod tests {
             "z",
         ];
         // Normal, searching from the fixture root, and bookmarks.
-        let modes = [(false, None), (false, Some(fx.dir.clone())), (true, None)];
+        let modes = [
+            (false, None),
+            (false, Some(fx.dir.path().to_path_buf())),
+            (true, None),
+        ];
 
         for (is_bookmarks, search_root) in modes {
             for filter in filters {
@@ -794,7 +779,7 @@ mod tests {
     /// three modes here.
     #[test]
     fn displayed_name_per_listing_mode() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let dir = fx.dir_entry("reports");
         let nested = fx.nested_file_entry("reports", "inner.txt");
@@ -804,7 +789,7 @@ mod tests {
         assert_eq!("inner.txt", displayed_name(&nested, false, None));
 
         // Searching: the path relative to the search root.
-        let root = Some(fx.dir.as_path());
+        let root = Some(fx.dir.path());
         assert_eq!("reports/", displayed_name(&dir, false, root));
         assert_eq!("reports/inner.txt", displayed_name(&nested, false, root));
 
@@ -817,7 +802,7 @@ mod tests {
     /// has to reach the directory part, not just the basename.
     #[test]
     fn filter_matches_the_relative_path_of_search_results() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.dir_entry("reports"),
@@ -845,7 +830,7 @@ mod tests {
     /// a filter to match.
     #[test]
     fn filter_finds_no_separator_in_bookmark_rows() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let mut content = DirectoryContent::default();
         content.set_bookmarks(vec![
@@ -866,7 +851,7 @@ mod tests {
     /// rendered name as the ASCII fast path.
     #[test]
     fn filter_matches_the_trailing_separator_on_non_ascii_directories() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.dir_entry("Équipe"), fx.file_entry("Équipe.txt", 1)];
         let mut content = DirectoryContent::default();
@@ -881,7 +866,7 @@ mod tests {
     /// so the trailing separator has to be visible to `append` too.
     #[test]
     fn appended_batches_match_the_trailing_separator_on_directories() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.dir_entry("reports"), fx.file_entry("report.txt", 1)];
         let mut content = DirectoryContent::default();
@@ -899,7 +884,7 @@ mod tests {
     /// which the trailing separator on directories must not disturb.
     #[test]
     fn filter_without_a_separator_matches_files_and_directories_alike() {
-        ensure_config_initialized();
+        Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.dir_entry("reports"),

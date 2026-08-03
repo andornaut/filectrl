@@ -183,11 +183,12 @@ fn watch_for_delayed_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
 
     #[test]
     fn watch_directory_tracks_only_successful_watches() {
-        let dir = std::env::temp_dir().join(format!("filectrl_watch_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let temp = TempDir::new("watch");
+        let dir = temp.path().to_path_buf();
         let mut watcher = DirectoryWatcher::try_new(100).unwrap();
 
         watcher.watch_directory(dir.clone()).unwrap();
@@ -207,7 +208,5 @@ mod tests {
 
         watcher.watch_directory(dir.clone()).unwrap();
         assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
