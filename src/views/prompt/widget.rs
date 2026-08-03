@@ -2,8 +2,10 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::config::theme::Theme;
 
-/// Full-width label paragraph for a Delete confirmation prompt.
-pub(super) fn delete_label_widget(label: String, theme: &Theme) -> Paragraph<'static> {
+/// Full-width label paragraph for a single-keypress confirmation prompt, which
+/// has no input area. Shared by the delete and paste-conflict prompts: both ask
+/// the user to approve something destructive, so they read the same.
+pub(super) fn confirmation_label_widget(label: String, theme: &Theme) -> Paragraph<'static> {
     Paragraph::new(label).style(theme.prompt.delete())
 }
 

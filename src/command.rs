@@ -60,6 +60,35 @@ pub enum PromptAction {
         name: String,
     },
     Search(String),
+    /// A paste found `name` already present in the destination directory.
+    /// `can_overwrite` is false when the existing entry is a directory, which
+    /// is never replaced, so the prompt offers only the skip choices.
+    Conflict {
+        name: String,
+        can_overwrite: bool,
+    },
+}
+
+impl PromptAction {
+    /// True for the prompts that take a single keypress rather than text, and
+    /// so render as a full-width label with no input area.
+    pub fn is_confirmation(&self) -> bool {
+        matches!(
+            self,
+            PromptAction::Delete(_) | PromptAction::Conflict { .. }
+        )
+    }
+}
+
+/// How a paste resolves a destination that already exists. The `*All` variants
+/// answer for the rest of the batch as well as for the collision in front of
+/// the user, so a paste of many sources need not be answered many times.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum ConflictChoice {
+    Overwrite,
+    OverwriteAll,
+    Skip,
+    SkipAll,
 }
 
 /// The single message type for the whole app: terminal input, navigation,
@@ -142,6 +171,10 @@ pub enum Command {
         dest: PathInfo,
     },
     Paste(PathInfo), // Intent: resolved by App into Copy or Move
+    // Intent: answers the conflict prompt FileSystem opened for the source at
+    // the front of the paste it is holding; resolved by FileSystem into the
+    // next task, the next prompt, or the clipboard follow-up.
+    ResolveConflict(ConflictChoice),
     CreateDirectory(String),
     ConfirmDelete, // Intent: resolved by TableView into Delete
     Delete(Vec<PathInfo>),

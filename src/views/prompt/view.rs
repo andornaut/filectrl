@@ -5,7 +5,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use super::widget::{delete_label_widget, label_widget, suggestion_overlay_text};
+use super::widget::{confirmation_label_widget, label_widget, suggestion_overlay_text};
 use super::{PromptView, View};
 use crate::app::config::Config;
 use crate::command::PromptAction;
@@ -20,8 +20,8 @@ impl View for PromptView {
         let label = self.label();
         let label_width = label.cell_width();
 
-        if matches!(self.actions, PromptAction::Delete(_)) {
-            delete_label_widget(label, theme).render(area, frame.buffer_mut());
+        if self.actions.is_confirmation() {
+            confirmation_label_widget(label, theme).render(area, frame.buffer_mut());
             return;
         }
 

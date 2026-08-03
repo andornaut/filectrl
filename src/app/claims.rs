@@ -11,11 +11,13 @@
 
 use std::{path::PathBuf, sync::mpsc};
 
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+
 use super::*;
 use crate::{
     app::{clipboard::ClipboardEntry, config::Openers},
     command::{
-        PromptAction,
+        ConflictChoice, PromptAction,
         progress::{ActiveTask, TaskKind},
     },
     file_system::path_info::PathInfo,
@@ -147,6 +149,9 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
             dest: fixture.directory(),
         },
         Command::Paste(fixture.directory()),
+        // No paste is waiting on an answer, so this resolves to a no-op; the
+        // arm still has to claim it.
+        Command::ResolveConflict(ConflictChoice::Skip),
         Command::CreateDirectory("created".to_string()),
         Command::ConfirmDelete,
         Command::Delete(vec![fixture.missing()]),
@@ -217,6 +222,7 @@ fn every_variant_is_accounted_for(command: &Command) {
         | Command::Copy { .. }
         | Command::Move { .. }
         | Command::Paste(_)
+        | Command::ResolveConflict(_)
         | Command::CreateDirectory(_)
         | Command::ConfirmDelete
         | Command::Delete(_)
@@ -263,6 +269,71 @@ fn every_command_variant_is_claimed_by_a_handler() {
             "no handler claims {command:?}, which `App::run` treats as fatal"
         );
     }
+}
+
+/// Broadcasts `command` through the real handler tree the way `App::run` does,
+/// following each derived command until nothing new is produced.
+fn dispatch(handlers: &mut Handlers, command: Command) {
+    let mut queue = vec![command];
+    while !queue.is_empty() {
+        let mut derived = Vec::new();
+        for command in queue.drain(..) {
+            let mode = handlers.root.mode();
+            recursively_handle_command(&mut derived, &command, &mode, handlers);
+        }
+        queue = derived;
+    }
+}
+
+/// The conflict prompt is the only prompt opened by a handler that is not a
+/// view, so its wiring is exercised end to end: FileSystem must be able to put
+/// the app into Prompt mode, and the keypress that answers it must reach
+/// PromptView and come back as a resolved paste.
+#[test]
+fn a_paste_conflict_is_answered_by_a_keypress_through_the_whole_handler_tree() {
+    let fixture = Fixture::new();
+    let (tx, rx) = mpsc::channel();
+    let mut handlers = test_handlers(tx, &fixture);
+    handlers.file_system.run_once(Some(fixture.cwd())).unwrap();
+    // A destination directory already holding a file named like the source.
+    let dest_dir = fixture.root.join("dest");
+    std::fs::create_dir_all(&dest_dir).unwrap();
+    std::fs::write(dest_dir.join("file.txt"), b"old").unwrap();
+    let dest = PathInfo::try_from(dest_dir.as_path()).unwrap();
+
+    dispatch(
+        &mut handlers,
+        Command::Copy {
+            srcs: vec![fixture.file()],
+            dest,
+        },
+    );
+
+    // The paste stopped to ask, which means the app is waiting for input.
+    assert_eq!(InputMode::Prompt, handlers.root.mode());
+    assert_eq!(
+        b"old".to_vec(),
+        std::fs::read(dest_dir.join("file.txt")).unwrap()
+    );
+
+    dispatch(
+        &mut handlers,
+        Command::Key(KeyCode::Char('o'), KeyModifiers::NONE),
+    );
+
+    // Answering returns to Normal mode and lets the paste through.
+    assert_eq!(InputMode::Normal, handlers.root.mode());
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Command::Progress(task)) if task.is_terminal() => break,
+            Ok(_) => {}
+            Err(error) => panic!("the paste did not finish: {error}"),
+        }
+    }
+    assert_eq!(
+        b"x".to_vec(),
+        std::fs::read(dest_dir.join("file.txt")).unwrap()
+    );
 }
 
 #[test]
