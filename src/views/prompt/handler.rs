@@ -43,13 +43,24 @@ impl CommandHandler for PromptView {
         // a directory, so an unbound key cancels the paste rather than falling
         // through to a choice the prompt did not offer.
         if let PromptAction::Conflict { can_overwrite, .. } = self.actions {
+            // Shift is what produces the uppercase "all" choices, so it is the
+            // only modifier the offered keys carry. A chord like Ctrl+O is a
+            // different key entirely and must not resolve to the destructive
+            // choice it shares a letter with; it falls through to the cancel
+            // below, which loses nothing because the clipboard is restored.
+            let plain = !modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
             return match code {
-                KeyCode::Char('s') => Command::ResolveConflict(ConflictChoice::Skip).into(),
-                KeyCode::Char('S') => Command::ResolveConflict(ConflictChoice::SkipAll).into(),
-                KeyCode::Char('o') if can_overwrite => {
+                KeyCode::Char('s') if plain => {
+                    Command::ResolveConflict(ConflictChoice::Skip).into()
+                }
+                KeyCode::Char('S') if plain => {
+                    Command::ResolveConflict(ConflictChoice::SkipAll).into()
+                }
+                KeyCode::Char('o') if plain && can_overwrite => {
                     Command::ResolveConflict(ConflictChoice::Overwrite).into()
                 }
-                KeyCode::Char('O') if can_overwrite => {
+                KeyCode::Char('O') if plain && can_overwrite => {
                     Command::ResolveConflict(ConflictChoice::OverwriteAll).into()
                 }
                 _ => Command::CancelPrompt.into(),

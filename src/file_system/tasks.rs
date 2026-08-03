@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use log::{info, warn};
+use log::{error, info, warn};
 
 use super::path_info::PathInfo;
 use crate::{
@@ -52,12 +52,20 @@ fn queue_operation(job: impl FnOnce() + Send + 'static) {
         let (tx, rx) = mpsc::channel::<Job>();
         thread::spawn(move || {
             for job in rx {
-                job();
+                // A panicking job must not take the worker down with it: the
+                // receiver would be dropped, and every later operation would
+                // register a task, announce itself at 0%, and never run. The
+                // job's `ActiveTask` still finalizes as it unwinds, so the
+                // notice clears. Release builds abort on panic, so this only
+                // has anything to catch in a debug build.
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+                    error!("A file operation panicked; the queue is still running");
+                }
             }
         });
         tx
     });
-    // The receiver outlives the process, so the send cannot fail.
+    // The worker never exits, so the receiver outlives the process.
     let _ = queue.send(Box::new(job));
 }
 
@@ -149,15 +157,6 @@ fn run_copy_task(
         Err(result) => return TaskRunResult::failed(result),
     };
 
-    // Clear the granted destination before the copy opens it with `create_new`.
-    // Removing rather than truncating keeps a destination that is a hard link
-    // to the source from taking the source's contents with it.
-    if overwrite && let Err(error) = remove_existing(&new_path) {
-        return TaskRunResult::failed(
-            Command::AlertError(format!("Failed to replace {new_path:?}: {error}")).into(),
-        );
-    }
-
     info!("Copying {old_path:?} to {new_path:?}");
     let kind = TaskKind::Copy(Transfer {
         source: display_path(&old_path),
@@ -191,6 +190,9 @@ fn run_copy_task(
     let uncancellable = active.uncancellable_handle();
 
     queue_operation(move || {
+        let Some(active) = prepare_destination(active, &new_path, overwrite) else {
+            return;
+        };
         if let Some((active, errors)) = copy_with_progress(
             &old_path,
             &new_path,
@@ -232,7 +234,7 @@ fn run_move_task(
         source: display_path(&old_path),
         destination: display_path(&new_path),
     });
-    let (mut active, initial, token) = ActiveTask::new(tx, kind, path.size);
+    let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let size = path.size;
     let source_mode = path.mode();
     let is_directory = path.is_directory();
@@ -242,21 +244,12 @@ fn run_move_task(
     let uncancellable = active.uncancellable_handle();
 
     queue_operation(move || {
-        // Narrow the cancel-vs-rename window: a keypress that lands before
-        // the worker starts is honored instead of racing the rename.
-        if active.is_cancelled() {
-            active.cancelled();
+        // Also narrows the cancel-vs-rename window: a keypress that lands
+        // before the worker starts is honored instead of racing the rename.
+        let Some(mut active) = prepare_destination(active, &new_path, overwrite) else {
             return;
-        }
-        // Overwrite was granted, so let the rename replace the destination
-        // atomically. That leaves no window in which the destination is
-        // missing, unlike removing it first as the copy path has to.
-        let renamed = if overwrite {
-            fs::rename(&old_path, &new_path)
-        } else {
-            rename_no_replace(&old_path, &new_path)
         };
-        match renamed {
+        match rename_no_replace(&old_path, &new_path) {
             Ok(_) => {
                 active.increment(size);
                 active.done();
@@ -1059,8 +1052,37 @@ fn remove_existing(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// The first thing every queued copy and move does: honor a cancel that landed
+/// while the task sat in the queue, then clear the destination if the paste
+/// granted overwrite. Returns `None` when the task was finalized here and must
+/// not continue.
+///
+/// Both halves have to happen here rather than in the caller. The caller queues
+/// every source of an "overwrite all" paste in one pass, so clearing there
+/// would delete every destination up front and leave a hole wherever a later
+/// task is cancelled or fails; and clearing before the cancel check would
+/// destroy a destination the user had already asked not to touch.
+///
+/// Clearing is needed even for a move, whose rename would replace the
+/// destination itself: `rename` refuses to replace a file with a directory, and
+/// a cross-device move falls back to a byte copy that opens the destination
+/// with `create_new`. Neither can proceed with the destination still there.
+fn prepare_destination(active: ActiveTask, new_path: &Path, overwrite: bool) -> Option<ActiveTask> {
+    if active.is_cancelled() {
+        active.cancelled();
+        return None;
+    }
+    if overwrite && let Err(error) = remove_existing(new_path) {
+        active.error(format!("Failed to replace {new_path:?}: {error}"));
+        return None;
+    }
+    Some(active)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use test_case::test_case;
 
     use super::*;
@@ -1434,6 +1456,102 @@ mod tests {
         // The occupying file must be left exactly as it was.
         assert_eq!(b"in the way".to_vec(), std::fs::read(&dst).unwrap());
         active.done();
+    }
+
+    // ── prepare_destination: the ordering every queued operation depends on ──
+
+    /// A destination file holding "dest", and an `ActiveTask` for the operation
+    /// that would replace it.
+    fn destination(label: &str) -> (TempDir, PathBuf, ActiveTask, CancellationToken) {
+        let fx = TempDir::new(label);
+        let dst = fx.join("dest.txt");
+        std::fs::write(&dst, b"dest").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::mem::forget(rx);
+        let (active, _, token) = ActiveTask::new(
+            tx,
+            TaskKind::Copy(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            1,
+        );
+        (fx, dst, active, token)
+    }
+
+    #[test]
+    fn a_cancel_that_lands_while_queued_stops_before_the_destination_is_cleared() {
+        let (_fx, dst, active, token) = destination("tasks_prepare_cancelled");
+        token.cancel();
+
+        // The user asked for the operation not to happen, so the entry it was
+        // going to replace must survive: the queue can hold a task for as long
+        // as the operations ahead of it take.
+        assert!(prepare_destination(active, &dst, true).is_none());
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
+    }
+
+    #[test]
+    fn a_granted_overwrite_clears_the_destination() {
+        let (_fx, dst, active, _token) = destination("tasks_prepare_overwrite");
+
+        let active = prepare_destination(active, &dst, true).expect("the task should continue");
+
+        assert!(!dst.exists());
+        active.done();
+    }
+
+    #[test]
+    fn a_destination_survives_when_overwrite_was_not_granted() {
+        let (_fx, dst, active, _token) = destination("tasks_prepare_no_overwrite");
+
+        let active = prepare_destination(active, &dst, false).expect("the task should continue");
+
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
+        active.done();
+    }
+
+    #[test]
+    fn a_destination_that_already_vanished_is_not_an_error() {
+        let (_fx, dst, active, _token) = destination("tasks_prepare_vanished");
+        std::fs::remove_file(&dst).unwrap();
+
+        // Something else removed it between the prompt and the worker, which
+        // is the outcome the user asked for anyway.
+        assert!(prepare_destination(active, &dst, true).is_some());
+    }
+
+    #[test]
+    fn a_cleared_destination_can_be_opened_by_the_cross_device_move_fallback() {
+        let (fx, dst, active, _token) = destination("tasks_prepare_reopen");
+        let src = fx.join("src.txt");
+        std::fs::write(&src, b"src").unwrap();
+
+        let active = prepare_destination(active, &dst, true).expect("the task should continue");
+
+        // A move across filesystems cannot rename, so it falls back to a byte
+        // copy that opens the destination with `create_new`. That open fails
+        // unless the destination was cleared first, which is why clearing is
+        // not skippable just because a rename would have replaced it.
+        assert!(open_files(&src, &dst).is_ok());
+        active.done();
+    }
+
+    #[test]
+    fn a_panicking_job_does_not_stop_the_queue() {
+        // The worker is shared by every file operation. If a panic took it
+        // down, every later operation would register a task, announce itself
+        // at 0%, and never run or finish.
+        queue_operation(|| panic!("a file operation panicked on purpose"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        queue_operation(move || {
+            let _ = tx.send(());
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "the job queued after a panicking one never ran"
+        );
     }
 
     #[test]
