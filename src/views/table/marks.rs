@@ -47,6 +47,11 @@ impl Marks {
         self.range_anchor.is_some()
     }
 
+    /// Mark `item`, leaving it marked if it already was.
+    pub(super) fn insert(&mut self, item: usize) {
+        self.set.insert(item);
+    }
+
     pub(super) fn clear(&mut self) {
         self.set.clear();
         self.range_anchor = None;

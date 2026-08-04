@@ -150,10 +150,6 @@ impl PathInfo {
         }
     }
 
-    pub fn name_comparator(&self) -> String {
-        self.display_name.trim_start_matches('.').to_lowercase()
-    }
-
     pub fn is_hidden(&self) -> bool {
         self.display_name.starts_with('.')
     }
@@ -390,6 +386,28 @@ pub enum DateTimeAge {
     GreaterThanYear,
 }
 
+/// The Name column's ordering rule: case is ignored, and leading dots are
+/// ignored so a dot file sorts next to its undotted neighbours. This is what
+/// `ls -a` does under a UTF-8 locale, whose collation drops the dot rather
+/// than hoisting every hidden entry to the top the way `LC_ALL=C` does.
+///
+/// Takes the name rather than a `PathInfo` because the column does not always
+/// show the entry's own name: in a search it shows the path relative to the
+/// search root, and the order has to follow what is on screen. The rule is
+/// applied per path segment for the same reason the locale's is, so a dot
+/// file deep in the tree sorts next to its own neighbours rather than at the
+/// top of its subtree.
+pub fn name_comparator(name: &str) -> String {
+    let mut key = String::with_capacity(name.len());
+    for (index, segment) in name.split(MAIN_SEPARATOR).enumerate() {
+        if index > 0 {
+            key.push(MAIN_SEPARATOR);
+        }
+        key.push_str(segment.trim_start_matches('.'));
+    }
+    key.to_lowercase()
+}
+
 pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
     let duration = relative_to.signed_duration_since(datetime);
 
@@ -560,9 +578,13 @@ mod tests {
     #[test_case("..hidden", "hidden"  ; "strips all leading dots")]
     #[test_case("Makefile", "makefile"; "lowercases")]
     #[test_case(".README",  "readme"  ; "strips dot and lowercases")]
-    fn name_comparator_is_correct(basename: &str, expected: &str) {
-        let mut info = PathInfo::try_from(Path::new(".")).unwrap();
-        info.display_name = basename.to_string();
-        assert_eq!(expected, info.name_comparator());
+    #[test_case("Docs/Notes.md", "docs/notes.md" ; "a relative path is normalized whole")]
+    // Per segment, matching `ls -a`: a dot file below the search root sorts
+    // next to its own neighbours, not at the top of its subtree.
+    #[test_case("projects/.zshrc", "projects/zshrc" ; "strips a dot below the root")]
+    #[test_case("a/.b/c", "a/b/c" ; "strips a dot on an interior segment")]
+    #[test_case(".a/.b", "a/b" ; "strips a dot on every segment")]
+    fn name_comparator_is_correct(name: &str, expected: &str) {
+        assert_eq!(expected, name_comparator(name));
     }
 }

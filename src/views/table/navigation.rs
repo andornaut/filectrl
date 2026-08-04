@@ -111,9 +111,16 @@ impl TableView {
         self.clear_marks();
 
         // Store the currently selected item before reordering, then try to
-        // restore it afterward by comparing inodes. The file may have moved
-        // position (another process modified the directory) or disappeared
-        // (navigation, deletion, or filtering it out).
+        // restore it afterward. The file may have moved position or dropped
+        // out of the listing entirely (filtering, show-hidden).
+        //
+        // By path: this reorders and refilters the entries already loaded
+        // rather than reloading them, so nothing here can rename an entry,
+        // and a path names exactly one of them. Identity by inode cannot,
+        // because two hard links to one file share a device and inode, and it
+        // would put the cursor on whichever name sorted first. A reload
+        // restores the selection separately, in `restore_selection`, where
+        // inode is the right identity precisely because a rename is possible.
         let selected = self.selected_path().cloned();
         let selected_index = self.table_state.selected();
 
@@ -121,7 +128,7 @@ impl TableView {
             .sort(self.columns.sort_column(), self.columns.sort_direction());
 
         if let Some(selected_path) = selected {
-            if let Some(new_index) = self.content.find_by_inode(&selected_path) {
+            if let Some(new_index) = self.content.find_by_path(selected_path.as_path()) {
                 // The selected file still exists after sort/filter
                 return self.select(new_index);
             }
@@ -138,6 +145,31 @@ impl TableView {
 
         // Fallback: Select the first item
         self.select(0)
+    }
+
+    /// Reorder the visible items, carrying the marks across.
+    ///
+    /// Every other reorder is one the user asked for (a different sort column,
+    /// a filter, a reload), and dropping index-based marks is the honest answer
+    /// to those. A search ending is not: results stream so they can be marked
+    /// before the walk is done, and neither finishing nor being cancelled is a
+    /// request to reorder them. The marks are re-derived from the entries they
+    /// named, so one the reorder dropped loses its mark. Range mode ends either
+    /// way: its anchor names a position, and the positions have just changed.
+    pub(super) fn sort_keeping_marks(&mut self, reselect: Reselect) -> CommandResult {
+        // Captured before the sort clears them: an index says nothing about an
+        // entry once the order has changed.
+        let marked = self.marked_paths();
+        let result = self.sort(reselect);
+        if marked.is_empty() {
+            return result;
+        }
+        for index in self.content.find_all_by_path(&marked) {
+            self.marks.insert(index);
+        }
+        // `sort` already reported the selection, but with a mark count of zero,
+        // which was only true for the moment between there and here.
+        self.selection_snapshot()
     }
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
@@ -177,6 +209,8 @@ impl TableView {
 #[cfg(test)]
 mod tests {
 
+    use std::path::PathBuf;
+
     use super::{Reselect, SortColumn, TableView};
     use crate::{
         app::config::Config,
@@ -198,6 +232,16 @@ mod tests {
         fn file(&self, name: &str, size: usize) -> PathInfo {
             let path = self.dir.join(name);
             std::fs::write(&path, vec![b'x'; size]).unwrap();
+            PathInfo::try_from(&path).unwrap()
+        }
+
+        /// A file one level down, so a search result's displayed name (the
+        /// path relative to the search root) differs from its basename.
+        fn nested(&self, dir: &str, name: &str) -> PathInfo {
+            let dir = self.dir.join(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, b"x").unwrap();
             PathInfo::try_from(&path).unwrap()
         }
 
@@ -536,6 +580,263 @@ mod tests {
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
+    }
+
+    #[test]
+    fn search_results_are_sorted_once_the_walk_is_done() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        // Batches arrive in walk order, which is whatever readdir gave the
+        // walk, not the order the header advertises.
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("cab", 1), fx.file("bat", 1)],
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("art", 1)],
+            generation: 1,
+        });
+        assert_eq!(
+            vec!["cab", "bat", "art"],
+            table
+                .content
+                .items_sorted()
+                .iter()
+                .map(|item| item.display_name.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        assert_eq!(
+            vec!["art", "bat", "cab"],
+            table
+                .content
+                .items_sorted()
+                .iter()
+                .map(|item| item.display_name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn search_results_are_sorted_by_the_name_the_column_shows() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        // `start_search` takes the search root from the current directory, and
+        // the root is what the column renders names relative to.
+        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        let apple = fx.nested("z", "apple.txt");
+        let zebra = fx.nested("a", "zebra.txt");
+
+        table.handle_command(&Command::StartSearch("txt".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![apple, zebra],
+            generation: 1,
+        });
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // Ordering by the basename would put `z/apple.txt` first, which reads
+        // as unsorted in a column that shows the path relative to the root.
+        let search_root = table.content.search_root().map(PathBuf::from);
+        let displayed: Vec<String> = table
+            .content
+            .items_sorted()
+            .iter()
+            .map(|item| {
+                super::super::content::displayed_name(item, false, search_root.as_deref())
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(vec!["a/zebra.txt", "z/apple.txt"], displayed);
+    }
+
+    #[test]
+    fn a_mark_made_while_a_search_streamed_follows_its_entry_through_the_sort() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        let apple = fx.nested("z", "apple.txt");
+        let zebra = fx.nested("a", "zebra.txt");
+
+        table.handle_command(&Command::StartSearch("txt".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![apple.clone(), zebra],
+            generation: 1,
+        });
+        // Marked while the walk is still running, which is what streaming the
+        // results is for.
+        table.select(0);
+        table.toggle_mark();
+
+        let result = table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // The sort moves `z/apple.txt` to the end, so a mark carried by index
+        // would land on `a/zebra.txt` instead.
+        assert_eq!(
+            vec![apple.path.clone()],
+            table
+                .marked_paths()
+                .into_iter()
+                .map(|item| item.path)
+                .collect::<Vec<_>>()
+        );
+        // The notice has to agree, or it would still read the zero the sort
+        // reported on its way through.
+        match &result {
+            CommandResult::HandledWith(command) => assert!(
+                matches!(**command, Command::SelectionChanged { mark_count: 1, .. }),
+                "expected a snapshot counting the carried mark, got {command:?}"
+            ),
+            other => panic!("expected a SelectionChanged snapshot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dot_file_below_the_search_root_sorts_next_to_its_neighbours() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        let hidden = fx.nested("projects", ".zzz.txt");
+        let plain = fx.nested("projects", "bbb.txt");
+
+        table.handle_command(&Command::StartSearch("txt".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![hidden.clone(), plain.clone()],
+            generation: 1,
+        });
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // What `ls -a` does under a UTF-8 locale: the dot is ignored wherever
+        // it sits, so `.zzz.txt` sorts after `bbb.txt` rather than ahead of
+        // every visible entry in its own subtree.
+        assert_eq!(
+            vec![plain.path, hidden.path],
+            table
+                .content
+                .items_sorted()
+                .iter()
+                .map(|item| item.path.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn carrying_marks_does_not_spread_them_across_hard_links() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        let first = fx.nested("a", "obj");
+        // A second name for the same file. A recursive search finds both, and
+        // they share a device and inode, so identity by inode cannot tell them
+        // apart. Object stores, hardlinked node_modules, and `rsync
+        // --link-dest` backups all put such a pair in one result set.
+        let link_dir = fx.directory().path.join("b");
+        std::fs::create_dir_all(&link_dir).unwrap();
+        let link_path = link_dir.join("obj");
+        std::fs::hard_link(&first.path, &link_path).unwrap();
+        let link = PathInfo::try_from(&link_path).unwrap();
+
+        table.handle_command(&Command::StartSearch("obj".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![link.clone(), first],
+            generation: 1,
+        });
+        table.select(0);
+        table.toggle_mark();
+
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // Only the entry the user marked. Marking the other one too would put
+        // it in the next delete or cut without it ever having been chosen.
+        assert_eq!(
+            vec![link.path.clone()],
+            table
+                .marked_paths()
+                .into_iter()
+                .map(|item| item.path)
+                .collect::<Vec<_>>()
+        );
+        // And the cursor stays on it. Restoring the selection by inode would
+        // move it to whichever name sorted first, so the next delete, rename,
+        // or open would act on a path the user never selected.
+        assert_eq!(
+            Some(link.path),
+            table.selected_path().map(|item| item.path.clone())
+        );
+    }
+
+    #[test]
+    fn a_cancelled_search_sorts_the_results_it_did_find() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        let apple = fx.nested("z", "apple.txt");
+        let zebra = fx.nested("a", "zebra.txt");
+
+        table.handle_command(&Command::StartSearch("txt".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![apple.clone(), zebra.clone()],
+            generation: 1,
+        });
+        // Stopped part way through. The results found so far are kept, and the
+        // listing stays in search mode, so the exit still arrives.
+        table.handle_command(&Command::CancelSearch);
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // Nothing more is coming, so walk order would be the final order and
+        // the header would be describing something the listing never becomes.
+        assert_eq!(
+            vec![zebra.path, apple.path],
+            table
+                .content
+                .items_sorted()
+                .iter()
+                .map(|item| item.path.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_superseded_search_exiting_does_not_reorder_its_replacement() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 2 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("cab", 1), fx.file("bat", 1)],
+            generation: 2,
+        });
+
+        // The search this one replaced exits with its own generation, while
+        // the replacement is still streaming.
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        assert_eq!(
+            vec!["cab", "bat"],
+            table
+                .content
+                .items_sorted()
+                .iter()
+                .map(|item| item.display_name.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
