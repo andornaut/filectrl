@@ -63,13 +63,17 @@ fn to_candidate(path: &Path, is_default: bool, bundle: String) -> AppCandidate {
         .to_string();
     AppCandidate {
         argv: vec![
-            OPEN.to_string(),
-            "-a".to_string(),
-            bundle.clone(),
+            OPEN.into(),
+            "-a".into(),
+            bundle.clone().into(),
+            // The path's own bytes, like every other platform's argv: a lossy
+            // conversion would hand `open` replacement characters and it would
+            // open nothing.
+            //
             // No "--" terminator: `open` documents "--args", not "--", so a
             // "--" could be taken as a filename operand. `candidates_for`
             // guarantees an absolute path, which can never look like a flag.
-            path.to_string_lossy().into_owned(),
+            path.as_os_str().to_os_string(),
         ],
         // The bundle path is what tells two identically named applications
         // apart, which a display name cannot.
