@@ -92,11 +92,11 @@ Key | Action
 
 An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
 
-An <kbd>S</kbd> or <kbd>O</kbd> answer also covers the sources already being copied, at any depth: if another program writes a name into a directory while that directory is being copied, the standing answer settles it without stopping the copy. A directory is the exception, because it is never replaced: only <kbd>S</kbd> settles one, and <kbd>O</kbd> leaves it to be reported. Anything no standing answer settles is reported when the copy finishes, along with everything else that could not be written. A copy in progress is never interrupted to ask about a name you have not seen.
+An <kbd>S</kbd> or <kbd>O</kbd> answer also covers copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. A directory is the exception, since it is never replaced, so only <kbd>S</kbd> settles one. Anything left unsettled is reported when the copy finishes, rather than interrupting it to ask about a name you have not seen.
 
 A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 
-Whatever is not pasted (both collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those, and entries you skip deliberately are not added to it. If nothing was pasted at all, the clipboard is left exactly as it was so the paste can be retried unchanged.
+Whatever is not pasted (collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those; entries you skip deliberately are not. If nothing was pasted at all, the clipboard is left unchanged.
 
 ### Multi-select
 
@@ -109,12 +109,19 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - In range mode, clicking always extends the range from the anchor to the clicked row
 - <kbd>Esc</kbd> clears all marks and exits range mode
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
+- Marks track row positions, so re-sorting, filtering, or reloading the listing clears them
+
+### Sorting
+
+<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; the same key again reverses it.
+
+The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section of the [configuration](#configuration) groups directories first, for the Name column only.
 
 ### Searching
 
 Search (<kbd>/</kbd>) walks the current directory recursively and matches a case-insensitive substring against each entry's name. Symlinked directories are not descended into. The walk is bounded by `search_max_depth` and `search_max_results` in the `[file_system]` section of the [configuration](#configuration); when either bound is reached, FileCTRL keeps the results it has and says so.
 
-Results appear as the walk finds them and are ordered by the sort column once it finishes, so a long search shows matches immediately and settles into the order the column header shows.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. Marks made while it was still running are kept.
 
 ### Filtering
 
