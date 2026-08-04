@@ -13,7 +13,7 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 - [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
 - File operations: chmod, create directory, and [copy/cut/paste across instances/windows](#copy--paste)
 - "Go to" feature with path completion suggestions
-- Recursive search
+- [Filtering](#filtering), [Searching](#searching), [Sorting](#sorting)
 - Responsive layout: adapts columns and content to small and large terminal windows
 
 ## Installation
@@ -125,7 +125,7 @@ Results appear as the walk finds them and settle into the sort order once it end
 
 ### Filtering
 
-The filter (<kbd>f</kbd>/<kbd>\</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
+The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
 
 ### Default keybindings
 
@@ -154,7 +154,7 @@ Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Chmod (octal) | <kbd>P</kbd> (Uppercase)
 Create directory | <kbd>c</kbd>
 Delete | <kbd>d</kbd>/<kbd>Delete</kbd>
-Filter | <kbd>f</kbd>/<kbd>\</kbd>
+Filter | <kbd>f</kbd>/<kbd>&#92;</kbd>
 Search | <kbd>/</kbd>
 Add bookmark | <kbd>B</kbd> (Uppercase)
 Show bookmarks | <kbd>'</kbd>/<kbd>&#96;</kbd>
