@@ -168,18 +168,36 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
         .collect()
 }
 
+/// The name the glob rules are matched against. Lossy, because the rules are
+/// patterns over a string and `guess` drops a name it cannot convert rather
+/// than converting it, which would leave `caf\xe9.txt` unmatched by `*.txt`
+/// and so unopenable by anything. Replacement characters cannot create a false
+/// match: no rule contains one. The conversion stops here, and the path itself
+/// reaches the launched program as the bytes it really is.
+fn glob_name(path: &Path) -> Option<String> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
 /// The MIME types to look up, most specific first: the guessed type, then its
 /// ancestors in the subclass graph, then the spec's fallback types.
 fn mime_chain(path: &Path) -> Vec<String> {
     let db = mime_db();
-    let guessed = db.guess_mime_type().path(path).guess();
+    let file_name = glob_name(path);
+    let mut builder = db.guess_mime_type();
+    // Set before the path, which fills the name in only when it is still
+    // unset, so this is what the globs see.
+    if let Some(file_name) = &file_name {
+        builder.file_name(file_name);
+    }
+    let guessed = builder.path(path).guess();
     let mut queue: VecDeque<String> = VecDeque::new();
     // An empty file short circuits the guess before the globs are consulted,
     // so recover what the file name alone implies. The zero size type itself
     // is then dropped: it says nothing about an empty `notes.md`, and keeping
     // it would rank it above text/plain.
     let from_name = (guessed.mime_type().essence_str() == ZEROSIZE)
-        .then(|| path.file_name().and_then(|name| name.to_str()))
+        .then_some(file_name.as_deref())
         .flatten()
         .map(|name| db.get_mime_types_from_file_name(name))
         .filter(|types| !types.is_empty());
@@ -469,10 +487,23 @@ mod tests {
 
     use std::{ffi::OsString, path::PathBuf};
 
-    use super::{dedupe_dirs, in_terminal, parse_subclasses, scan_mime_types};
+    use super::{dedupe_dirs, glob_name, in_terminal, parse_subclasses, scan_mime_types};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn glob_name_keeps_the_extension_of_a_name_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt"));
+
+        // The glob rules are patterns over a string, so a name that cannot be
+        // converted has to be converted lossily rather than dropped: dropping
+        // it leaves `*.txt` unmatched and the picker offers nothing.
+        let name = glob_name(&path).expect("a file name");
+        assert!(name.ends_with(".txt"), "{name}");
     }
 
     #[test]
