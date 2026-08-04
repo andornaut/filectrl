@@ -92,7 +92,7 @@ Key | Action
 
 An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
 
-An <kbd>S</kbd> or <kbd>O</kbd> answer also covers the sources already being copied, at any depth: if another program writes a name into a directory while that directory is being copied, the standing answer settles it without stopping the copy. Without one, that entry is reported when the copy finishes, along with anything else that could not be written. A copy in progress is never interrupted to ask about a name you have not seen.
+An <kbd>S</kbd> or <kbd>O</kbd> answer also covers the sources already being copied, at any depth: if another program writes a name into a directory while that directory is being copied, the standing answer settles it without stopping the copy. A directory is the exception, because it is never replaced: only <kbd>S</kbd> settles one, and <kbd>O</kbd> leaves it to be reported. Anything no standing answer settles is reported when the copy finishes, along with everything else that could not be written. A copy in progress is never interrupted to ask about a name you have not seen.
 
 A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 

@@ -113,8 +113,8 @@ impl PendingPaste {
     }
 
     /// Records that `src`'s destination name is spoken for, once its work is
-    /// queued. The claim carries the source's own kind: that is what its work
-    /// will leave at the name, so a directory claimed here is no more
+    /// actually running. The claim carries the source's own kind: that is what
+    /// its work will leave at the name, so a directory claimed here is no more
     /// replaceable than one already on disk.
     fn claim(&mut self, src: &PathInfo) {
         if let Some(name) = src.path.file_name() {
@@ -669,7 +669,6 @@ impl FileSystem {
                 }
                 PasteStep::Run { overwrite } => {
                     pending.remaining.pop_front();
-                    pending.claim(&src);
                     commands.extend(self.run_paste_task(&mut pending, src, overwrite));
                 }
             }
@@ -689,7 +688,6 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         if pending.answer(choice) {
-            pending.claim(&src);
             commands.extend(self.run_paste_task(&mut pending, src, true));
         }
         self.pending_paste = Some(pending);
@@ -720,6 +718,11 @@ impl FileSystem {
 
     /// Runs one source of a paste, recording whether it started so the
     /// clipboard follow-up can tell a clean run from a partial one.
+    ///
+    /// The destination name is claimed only once the task is running. A source
+    /// that failed validation writes nothing, so claiming its name would make a
+    /// later source of the same name collide with something that is never going
+    /// to be there.
     fn run_paste_task(
         &mut self,
         pending: &mut PendingPaste,
@@ -731,9 +734,10 @@ impl FileSystem {
         } else {
             TaskCommand::Copy(src.clone(), pending.dest.clone(), overwrite)
         };
-        let (started, commands) = self.run_task(task, Some(&pending.conflicts.clone()));
+        let (started, commands) = self.run_task(task, Some(&pending.conflicts));
         if started {
             pending.started += 1;
+            pending.claim(&src);
         } else {
             pending.failed.push(src);
         }
@@ -1522,6 +1526,40 @@ mod tests {
         assert!(matches!(result, CommandResult::NotHandled));
         await_terminal_task(&rx);
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+    }
+
+    #[test]
+    fn a_source_whose_task_never_started_claims_no_name() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_failed_claim");
+        // A second marked source of the same name, which search results make
+        // easy to end up with. This one exists.
+        let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("missing.txt"), b"twin").unwrap();
+        let twin = PathInfo::try_from(elsewhere.join("missing.txt").as_path()).unwrap();
+
+        let result = file_system.handle_command(&Command::Copy {
+            srcs: vec![fx.missing.clone(), twin],
+            dest: fx.dest.clone(),
+        });
+
+        // The vanished source writes nothing, so the name stays free and the
+        // second source just runs. Claiming a name for a task that never
+        // started would ask about a collision that does not exist, and for a
+        // directory it would offer no way to proceed at all.
+        let commands = result.into_commands();
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::OpenPrompt(PromptAction::Conflict { .. })
+            )),
+            "unexpected conflict prompt: {commands:?}"
+        );
+        await_terminal_task(&rx);
+        assert_eq!(b"twin".to_vec(), fx.pasted("missing.txt"));
     }
 
     #[test]

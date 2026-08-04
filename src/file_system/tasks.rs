@@ -56,14 +56,6 @@ struct CopyOutcome {
     skipped: usize,
 }
 
-impl CopyOutcome {
-    /// Whether the destination now holds every entry of the source, which is
-    /// what a move requires before it removes the source.
-    fn is_complete(&self) -> bool {
-        self.errors.is_empty() && self.skipped == 0
-    }
-}
-
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 /// Floor for the per-file copy read buffer. `buffer_bytes` can yield a very
@@ -626,7 +618,7 @@ fn finish_cross_device_move(
         finalize_copy(active, outcome.errors);
         return;
     }
-    if !outcome.is_complete() {
+    if outcome.skipped > 0 {
         let skipped = outcome.skipped;
         let entries = if skipped == 1 { "entry" } else { "entries" };
         active.error(format!(
