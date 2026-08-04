@@ -1,9 +1,10 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
 use crate::app::config::Config;
-use crate::file_system::path_info::PathInfo;
+use crate::file_system::path_info::{PathInfo, name_comparator};
 use crate::views::ListingMode;
 
 #[derive(Default)]
@@ -178,9 +179,24 @@ impl DirectoryContent {
     /// the same predicate, so finalizing a stream can skip the re-filter and
     /// re-clone of every entry.
     fn sort_in_place(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
+        // The Name column does not always show the entry's own name: in a
+        // search it shows the path relative to the search root. Order by that
+        // same string, or the listing looks unsorted to the person reading it
+        // (`z/apple.txt` above `a/zebra.txt`). The filter already matches the
+        // displayed name for the same reason. Read before the sort borrows
+        // `items_sorted` mutably.
+        let is_bookmarks = self.is_showing_bookmarks();
+        let search_root = self.search_root.clone();
+        let name_key = |item: &PathInfo| {
+            name_comparator(&displayed_name_stem(
+                item,
+                is_bookmarks,
+                search_root.as_deref(),
+            ))
+        };
         self.items_sorted.sort_by(|a, b| {
             let ord = match sort_column {
-                SortColumn::Name => a.name_comparator().cmp(&b.name_comparator()),
+                SortColumn::Name => name_key(a).cmp(&name_key(b)),
                 SortColumn::Modified => a.modified_comparator().cmp(&b.modified_comparator()),
                 SortColumn::Size => a.size.cmp(&b.size),
             };
@@ -236,6 +252,26 @@ impl DirectoryContent {
 
     pub(super) fn find_by_inode(&self, path: &PathInfo) -> Option<usize> {
         self.items_sorted.iter().position(|p| p.is_same_inode(path))
+    }
+
+    /// The indices `paths` now occupy, for carrying marks across a reorder.
+    /// One pass over the listing rather than a scan per path, so marking every
+    /// result of a large search stays linear. An entry the reorder dropped
+    /// (filtered out, or gone from the listing) simply has no index.
+    ///
+    /// By path, not by inode: a reorder does not change what an entry is, and
+    /// two hard links to one file share a device and inode, so identity by
+    /// inode would spread one mark onto every name the file has in the
+    /// listing. A path appears at most once, which is exactly the identity a
+    /// mark needs.
+    pub(super) fn find_all_by_path(&self, paths: &[PathInfo]) -> Vec<usize> {
+        let wanted: HashSet<&Path> = paths.iter().map(PathInfo::as_path).collect();
+        self.items_sorted
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| wanted.contains(item.as_path()))
+            .map(|(index, _)| index)
+            .collect()
     }
 
     pub(super) fn find_by_path(&self, target: &Path) -> Option<usize> {

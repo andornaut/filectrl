@@ -167,7 +167,31 @@ impl CommandHandler for TableView {
                 }
                 CommandResult::Handled
             }
-            Command::ExitedSearch { .. } => CommandResult::Handled,
+            Command::ExitedSearch { generation } => {
+                // Results are appended in walk order so partial ones show up
+                // immediately, but the header advertises a sort column and
+                // direction the whole time, so apply it once the walk is done.
+                // This is what `DirectoryListingComplete` does for a listing;
+                // a search never reaches it, because `set_mode` clears the
+                // loading flag its guard requires.
+                //
+                // A cancelled search arrives here too: `run_search` announces
+                // its exit whether it finished or was stopped, and cancelling
+                // keeps the partial results and stays in search mode. They are
+                // sorted for the same reason, and more so: nothing further is
+                // coming, so leaving them in walk order would leave the header
+                // describing an order the listing never takes.
+                //
+                // A superseded search exits with its own generation, which no
+                // longer matches, so it cannot reorder its replacement.
+                if *generation != self.stream_generation || !self.content.is_searching() {
+                    return CommandResult::Handled;
+                }
+                // Marks carry across: results stream so they can be marked
+                // while the walk is still running, and the walk finishing is
+                // not a reorder the user asked for.
+                self.sort_keeping_marks(Reselect::Top)
+            }
             // FileSystem resolves GetBookmarks into Bookmarks.
             Command::GetBookmarks => CommandResult::NotHandled,
             Command::Bookmarks { bookmarks } => {
