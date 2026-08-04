@@ -55,6 +55,10 @@ pub(crate) fn template(template: &str, replacement: &OsStr) -> OsString {
 }
 
 /// Joins `argv` into one shell command line, quoting each word that needs it.
+///
+/// Only the Linux terminal wrapper needs this: macOS launches through `open`
+/// with an argv and never builds a command line.
+#[cfg(target_os = "linux")]
 pub(crate) fn join(argv: &[OsString]) -> OsString {
     let mut joined = OsString::new();
     for (index, word) in argv.iter().enumerate() {
@@ -115,6 +119,7 @@ mod tests {
         assert_eq!(b"cp 'caf\xe9.txt' /dest".as_slice(), expanded.as_bytes());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn join_quotes_only_the_words_that_need_it() {
         let argv = [
