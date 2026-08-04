@@ -111,11 +111,9 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
 - Marks track row positions, so re-sorting, filtering, or reloading the listing clears them
 
-### Sorting
+### Filtering
 
-<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; the same key again reverses it.
-
-The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section of the [configuration](#configuration) groups directories first, for the Name column only.
+The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
 
 ### Searching
 
@@ -123,9 +121,11 @@ Search (<kbd>/</kbd>) walks the current directory recursively and matches a case
 
 Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. Marks made while it was still running are kept.
 
-### Filtering
+### Sorting
 
-The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
+<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; the same key again reverses it.
+
+The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section of the [configuration](#configuration) groups directories first, for the Name column only.
 
 ### Default keybindings
 
