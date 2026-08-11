@@ -29,4 +29,4 @@ jobs:
       # Scans what the push or the pull request added, not the history it
       # arrived on, and fails with the commands to take an attribution back off.
       - name: Scan for AI attributions
-        uses: andornaut/ai-attributions@main
+        uses: andornaut/ai-attributions@v1
