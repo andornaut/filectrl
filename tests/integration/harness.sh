@@ -53,7 +53,20 @@ app_start() {
         fatal "could not start tmux session"
     # The status bar renders once the initial directory listing is loaded.
     wait_for 'Directory +Mode:' || fatal "filectrl did not start; screen: $(screen)"
+    # The listing streams in batches, so an early key could act on a partial
+    # table (e.g. G selecting the last row loaded so far). Wait until a row is
+    # selected and the screen has stopped changing before returning.
+    local prev="" cur deadline=$((SECONDS + TIMEOUT))
+    while :; do
+        cur="$(screen)"
+        [ -n "$cur" ] && [ "$cur" = "$prev" ] && _has_selection && return
+        prev="$cur"
+        ((SECONDS >= deadline)) && fatal "screen did not settle after startup; screen: $(screen)"
+        sleep 0.15
+    done
 }
+
+_has_selection() { [ -n "$(selected_row)" ]; }
 
 app_stop() {
     "${TMUX[@]}" kill-server 2>/dev/null || true
@@ -146,11 +159,17 @@ assert_screen() {
     wait_for "$1" || _fail "expected screen to match: $1"
 }
 
-# No waiting: asserts about the current, settled screen.
+# No waiting: asserts about the current, settled screen. Use assert_gone
+# instead when the disappearance is the effect being waited for.
 assert_not_screen() {
     if _screen_matches "$1"; then
         _fail "expected screen NOT to match: $1"
     fi
+}
+
+# Polls until the pattern disappears from the screen.
+assert_gone() {
+    wait_gone "$1" || _fail "expected screen to stop matching: $1"
 }
 
 assert_selected() {

@@ -26,6 +26,7 @@ test_create_directory_esc_cancels() {
     assert_screen 'New directory'
     type_text "never_created"
     send Escape
+    assert_gone 'New directory'
     send j # normal mode again
     assert_selected "executables/"
     [ ! -e "$(FX)/never_created" ] || _fail "directory was created despite Esc"
@@ -177,6 +178,7 @@ test_chmod_esc_cancels() {
     send C-a
     type_text "600"
     send Escape
+    assert_gone 'Chmod 1 item'
     send j
     assert_selected "hello.md" # normal mode again
     [ "$(stat -c %a "$(FX)/a.txt")" = "644" ] || _fail "mode changed despite Esc"

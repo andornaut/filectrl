@@ -22,7 +22,7 @@ test_copy_paste_file_into_another_directory() {
     [ -f "$(FX)/documents/a.txt" ] || _fail "file not pasted on disk"
     [ -f "$(FX)/a.txt" ] || _fail "source file removed by a copy"
     # A clean paste clears the clipboard, so the notice disappears
-    assert_not_screen '\[Copy\]'
+    assert_gone '\[Copy\]'
 }
 
 test_cut_paste_moves_file() {
@@ -33,8 +33,10 @@ test_cut_paste_moves_file() {
     send g Enter # documents/
     assert_breadcrumbs "$(FX)/documents"
     send p
-    assert_screen 'a\.txt'
-    [ -f "$(FX)/documents/a.txt" ] || _fail "file not moved to destination"
+    # A clean move clears the clipboard, so the [Cut] notice disappearing
+    # signals completion
+    assert_gone '\[Cut\]'
+    wait_until [ -f "$(FX)/documents/a.txt" ] || _fail "file not moved to destination"
     wait_until [ ! -e "$(FX)/a.txt" ] || _fail "source file still exists after a move"
 }
 
@@ -43,7 +45,7 @@ test_copy_esc_clears_clipboard() {
     send y # copy documents/
     assert_screen '\[Copy\]'
     send Escape
-    assert_not_screen '\[Copy\]'
+    assert_gone '\[Copy\]'
     send p
     assert_screen 'Cannot paste: no system clipboard available'
 }
@@ -84,8 +86,8 @@ test_copy_directory_pastes_recursively() {
 }
 
 test_paste_conflict_skip_keeps_destination() {
-    app_start
     echo "from fixtures root" > "$(FX)/readme.txt"
+    app_start
     send G # readme.txt, which also exists in documents/
     assert_selected "readme.txt"
     send y
@@ -102,8 +104,8 @@ test_paste_conflict_skip_keeps_destination() {
 }
 
 test_paste_conflict_overwrite_replaces_destination() {
-    app_start
     echo "from fixtures root" > "$(FX)/readme.txt"
+    app_start
     send G
     assert_selected "readme.txt"
     send y
