@@ -1,0 +1,5 @@
+# Marks the selected table row with a unique truecolor background so tests can
+# locate it in `tmux capture-pane -e` output as the SGR fragment "48;2;1;2;3".
+[theme.table.selected]
+bg = "#010203"
+fg = "#FEFDFC"
