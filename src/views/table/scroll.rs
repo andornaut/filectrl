@@ -75,14 +75,14 @@ mod tests {
 
     #[test]
     fn next_page_jumps_to_last_visible_when_not_already_there() {
-        // viewport shows items 0-2; selected=0 — should jump to item 2, not a full page
+        // viewport shows items 0-2; selected=0: should jump to item 2, not a full page
         let m = map(vec![1; 5], 3, 0);
         assert_eq!(Some(2), next_page(&m, 0, 5));
     }
 
     #[test]
     fn next_page_advances_a_full_page_when_at_last_visible() {
-        // viewport shows items 0-2; selected=2 (last visible) — pages to item 4
+        // viewport shows items 0-2; selected=2 (last visible): pages to item 4
         let m = map(vec![1; 5], 3, 0);
         assert_eq!(Some(4), next_page(&m, 2, 5));
     }
@@ -105,14 +105,14 @@ mod tests {
 
     #[test]
     fn previous_page_jumps_to_first_visible_when_not_already_there() {
-        // first visible item = 2; selected=4 — should jump to item 2, not a full page
+        // first visible item = 2; selected=4: should jump to item 2, not a full page
         let m = map(vec![1; 5], 3, 2);
         assert_eq!(Some(2), previous_page(&m, 4, 2));
     }
 
     #[test]
     fn previous_page_retreats_a_full_page_when_at_first_visible() {
-        // viewport shows items 2-4; selected=2 (first visible) — retreats to item 0
+        // viewport shows items 2-4; selected=2 (first visible): retreats to item 0
         let m = map(vec![1; 5], 3, 2);
         assert_eq!(Some(0), previous_page(&m, 2, 2));
     }

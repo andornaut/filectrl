@@ -152,7 +152,7 @@ impl App {
 
         if !pending.is_empty() {
             // A non-empty `pending` after the cap means either a chain longer
-            // than expected or a handler stuck deriving in a loop — both bugs.
+            // than expected or a handler stuck deriving in a loop; both bugs.
             // Fail loudly in dev/test; in release surface an alert (sent through
             // the channel so it is non-fatal) instead of silently dropping the
             // user's action.

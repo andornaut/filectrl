@@ -379,14 +379,14 @@ fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Va
 
 fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
     // Canonicalize so the same file referenced via different paths is detected.
-    // Fall back to the raw path if canonicalization fails — a missing file or
+    // Fall back to the raw path if canonicalization fails: a missing file or
     // permission error will then surface from `fs::read_to_string` below with
     // a more informative message.
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     // Resolve this file's own include_files relative to its real directory.
     // Deriving the directory from the canonical (absolute, when canonicalize
-    // succeeds) path means a bare filename — whose `parent()` is "" — still
+    // succeeds) path means a bare filename (whose `parent()` is "") still
     // resolves nested includes against the file's directory, not the CWD.
     let base_dir = canonical
         .parent()
@@ -408,7 +408,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
 
     let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
 
-    // Merge the file's content first, then its nested includes on top — the
+    // Merge the file's content first, then its nested includes on top, the
     // same precedence rule the top level uses (includes override the config
     // that requested them).
     let mut value = merge_toml_values(value, include_value);
@@ -449,7 +449,7 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
 /// Style properties that may appear on any style table. The embedded default
 /// omits these where they are unset (e.g. `[theme.alert]` lists only `fg`), so
 /// they are permitted everywhere rather than validated against the default's
-/// shape — otherwise a user adding `bg`/`modifiers` to such an entry would be
+/// shape; otherwise a user adding `bg`/`modifiers` to such an entry would be
 /// wrongly rejected. Misplaced occurrences are harmless and rare.
 const STYLE_KEYS: &[&str] = &["fg", "bg", "modifiers"];
 

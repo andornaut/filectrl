@@ -2,9 +2,9 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
-/// Debug key bindings — only compiled in non-release builds.
+/// Debug key bindings, only compiled in non-release builds.
 ///
-/// Bare numbers only — Alt/Option is not portable on macOS.
+/// Bare numbers only: Alt/Option is not portable on macOS.
 #[derive(Default)]
 pub(super) struct DebugHandler;
 
@@ -15,13 +15,13 @@ fn debug_command(ch: char) -> Option<Command> {
         '3' => Command::AlertError("Debug: error alert".into()),
         // Exercises alert text truncation.
         '4' => Command::AlertError(
-            "Debug: long error alert — \
+            "Debug: long error alert, \
              Lorem ipsum dolor sit amet, consectetur adipiscing elit, \
              sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
                 .into(),
         ),
         // Exercises display-width handling.
-        '5' => Command::AlertInfo("Debug: unicode alert — こんにちは 🦀 café naïve 北京".into()),
+        '5' => Command::AlertInfo("Debug: unicode alert, こんにちは 🦀 café naïve 北京".into()),
         '6' => Command::AlertWarn("No file selected".into()),
         '7' => Command::AlertError("Permission denied: /etc/hosts".into()),
         '8' => Command::AlertError(

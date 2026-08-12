@@ -114,7 +114,7 @@ pub enum Command {
         height: u16,
     },
 
-    // External commands — handled by FileSystem (shell out via open_in)
+    // External commands, handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
     OpenNewWindow,
     // Intent: the "open with" picker resolved a chosen application into a
@@ -219,7 +219,7 @@ pub enum Command {
     SearchTick,
     StartSearch(String), // Intent: spawns the search thread; streams ListingBatch
 
-    // View state notifications — emitted by TableView
+    // View state notifications, emitted by TableView
     FilterChanged(String),
     SelectionChanged {
         // Snapshot of the table's cursor and mark count, taken whenever either
@@ -253,7 +253,7 @@ impl Command {
                 Some(Self::Key(code, modifiers))
             }
             Event::Mouse(mouse_event) => {
-                // Suppress Move events — they are too noisy and no handler uses them.
+                // Suppress Move events: they are too noisy and no handler uses them.
                 // Up events are kept: the scrollbar needs them to clear its drag state.
                 if mouse_event.kind == MouseEventKind::Moved {
                     None

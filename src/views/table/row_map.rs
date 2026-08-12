@@ -5,7 +5,7 @@ pub(super) struct LineItemMap {
 
     /// Maps each line index (y offset) to its corresponding item index
     lines_to_items: Vec<usize>,
-    /// Maps each item index to the index of its first line — O(1) alternative to scanning lines_to_items
+    /// Maps each item index to the index of its first line: an O(1) alternative to scanning lines_to_items
     item_first_lines: Vec<usize>,
 }
 
