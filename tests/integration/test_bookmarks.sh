@@ -131,7 +131,8 @@ test_open_bookmark_with_missing_target_shows_error() {
     send "'"
     assert_breadcrumbs "[Bookmarks] $(BM)"
     send Enter
-    assert_screen 'Failed|does not exist|No such'
+    # The error names the bookmark being opened, not just the raw io error
+    assert_screen 'Failed to open .*documents'
     assert_running
 }
 
