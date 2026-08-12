@@ -7,6 +7,11 @@ use log::warn;
 
 pub struct Clipboard {
     backend: Option<ClipboardBackend>,
+    /// In-process fallback so copy/paste within this window keeps working
+    /// when no system clipboard is available (e.g. no X11/Wayland session).
+    /// The system clipboard, when present, remains the storage, which is what
+    /// makes copy/paste work across filectrl windows.
+    fallback: Option<String>,
 }
 
 impl Default for Clipboard {
@@ -19,27 +24,38 @@ impl Default for Clipboard {
             }
         };
 
-        Self { backend }
+        Self {
+            backend,
+            fallback: None,
+        }
     }
 }
 
 impl Clipboard {
+    /// Whether a system clipboard backend is available. When it is not (e.g.
+    /// no X11/Wayland session), copy/paste cannot work: the system clipboard
+    /// is the only storage for clipboard entries.
+    pub fn is_available(&self) -> bool {
+        self.backend.is_some()
+    }
+
     /// A clipboard with no backend, so nothing reaches the system clipboard.
     /// Every method already handles the backend-less state (it is what a
     /// failed `try_new` leaves behind), so handlers still run their real
     /// paths and return their real `CommandResult`s.
     #[cfg(test)]
     pub fn disabled() -> Self {
-        Self { backend: None }
+        Self {
+            backend: None,
+            fallback: None,
+        }
     }
 
     pub fn clear(&mut self) -> Result<(), Error> {
+        self.fallback = None;
         match &mut self.backend {
             Some(backend) => backend.clear(),
-            None => {
-                warn!("No clipboard backend available");
-                Ok(())
-            }
+            None => Ok(()),
         }
     }
 
@@ -59,10 +75,7 @@ impl Clipboard {
     pub fn get_text(&mut self) -> Option<String> {
         let backend = match &mut self.backend {
             Some(b) => b,
-            None => {
-                warn!("No clipboard backend available");
-                return None;
-            }
+            None => return self.fallback.clone(),
         };
         match backend.get_string() {
             Ok(t) => Some(t),
@@ -74,26 +87,20 @@ impl Clipboard {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        match &mut self.backend {
-            Some(backend) => {
-                if let Err(e) = backend.set_string(text) {
-                    warn!("Failed to set clipboard text: {e}");
-                }
-            }
-            None => warn!("No clipboard backend available"),
+        self.fallback = Some(text.to_string());
+        if let Some(backend) = &mut self.backend
+            && let Err(e) = backend.set_string(text)
+        {
+            warn!("Failed to set clipboard text: {e}");
         }
     }
 
     pub fn set_clipboard_entry(&mut self, entry: &ClipboardEntry) -> Result<(), Error> {
+        let text = entry.to_string();
+        self.fallback = Some(text.clone());
         match &mut self.backend {
-            Some(backend) => {
-                let text = entry.to_string();
-                backend.set_string(&text)
-            }
-            None => {
-                warn!("No clipboard backend available");
-                Ok(())
-            }
+            Some(backend) => backend.set_string(&text),
+            None => Ok(()),
         }
     }
 }
