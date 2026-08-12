@@ -106,8 +106,11 @@ selected_row() {
         sed -e $'s/\x1b\\[[0-9;]*m//g' -e 's/^ *//' -e 's/ *$//'
 }
 
+# The breadcrumbs render on the line directly above the table header. Locating
+# the header (rather than assuming line 1) keeps this correct when the alerts
+# panel is open above and pushes the layout down.
 breadcrumbs() {
-    screen | sed -n '1p'
+    screen | awk '/\[N\]ame|\[M\]odified|\[S\]ize/ { print prev; exit } { prev = $0 }'
 }
 
 # ------------------------------------------------------- waiting + assertions
