@@ -46,7 +46,12 @@ test_add_duplicate_bookmark_name_is_refused() {
     assert_screen 'Add bookmark'
     send Enter
     assert_screen 'A bookmark named "fixtures" already exists'
-    local entries=("$(BM)"/*)
+    # nullglob: without it an empty directory yields the unexpanded pattern and
+    # counts as one entry, which is the case this is meant to catch.
+    local entries
+    shopt -s nullglob
+    entries=("$(BM)"/*)
+    shopt -u nullglob
     [ "${#entries[@]}" = "1" ] || _fail "expected exactly one bookmark, found: ${entries[*]}"
 }
 

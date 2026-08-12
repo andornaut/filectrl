@@ -4,22 +4,12 @@
 # documented interactions (marks clear the clipboard; sorting clears marks).
 #
 # The cursor row renders with the selected style even when marked, so
-# assertions use the "[Selected] N items" notice for counts and marked_rows
-# (marked style) for rows other than the cursor.
+# assertions use assert_marked_count (the "[Selected] N items" notice) for
+# counts and assert_marked (the marked style) for rows other than the cursor.
 
 source "$(dirname "${BASH_SOURCE[0]}")/harness.sh"
 
 FIRST_ROW_Y=3
-
-assert_marked_count() {
-    assert_screen "\[Selected\] $1"
-}
-
-_marked_contains() { marked_rows | grep -Fq -- "$1"; }
-assert_marked() {
-    wait_until _marked_contains "$1" ||
-        _fail "expected a marked row containing '$1' (marked: $(marked_rows | tr '\n' '|'))"
-}
 
 test_v_toggles_a_mark() {
     app_start
@@ -130,12 +120,9 @@ test_marked_chmod_applies_to_all_marked() {
     send C-a
     type_text "600"
     send Enter
-    wait_until [ "$(stat -c %a "$SANDBOX/fixtures/a.txt")" = "600" ] ||
-        _fail "a.txt mode is $(stat -c %a "$SANDBOX/fixtures/a.txt"), expected 600"
-    wait_until [ "$(stat -c %a "$SANDBOX/fixtures/hello.md")" = "600" ] ||
-        _fail "hello.md mode is $(stat -c %a "$SANDBOX/fixtures/hello.md"), expected 600"
-    [ "$(stat -c %a "$SANDBOX/fixtures/readme.txt")" = "644" ] ||
-        _fail "unmarked readme.txt mode changed"
+    assert_mode 600 "$SANDBOX/fixtures/a.txt"
+    assert_mode 600 "$SANDBOX/fixtures/hello.md"
+    assert_mode 644 "$SANDBOX/fixtures/readme.txt" # unmarked
 }
 
 run_tests

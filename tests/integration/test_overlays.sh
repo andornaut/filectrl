@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Integration tests for the help overlay (?) and the "open with" picker (o).
+# Integration tests for the help overlay (?), the "open with" picker (o), and
+# the keys that hand the current directory to an external program (t, w).
 
 source "$(dirname "${BASH_SOURCE[0]}")/harness.sh"
 
@@ -67,6 +68,28 @@ test_open_with_enter_runs_the_opener() {
     assert_gone 'Open a\.txt with'
     assert_running
     assert_breadcrumbs "$SANDBOX/fixtures"
+}
+
+# t and w hand a path to a stubbed program, so nothing is visible either way.
+# Sending a key whose effect is visible afterwards is what proves the app
+# processed them: the assertions below are about what must NOT have happened.
+test_open_current_directory_runs_its_opener_without_navigating() {
+    app_start
+    send t
+    send j
+    assert_selected "executables/"
+    assert_not_screen 'Alerts'
+    assert_breadcrumbs "$SANDBOX/fixtures"
+}
+
+test_open_new_window_leaves_this_one_alone() {
+    app_start
+    send w
+    send j
+    assert_selected "executables/"
+    assert_not_screen 'Alerts'
+    assert_breadcrumbs "$SANDBOX/fixtures"
+    assert_running
 }
 
 run_tests

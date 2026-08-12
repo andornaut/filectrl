@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Integration tests for edge cases: unicode and special-character filenames,
-# long filenames, symlinks (valid and broken), chmod on a directory, and the
-# responsive layout at narrow terminal widths.
+# long filenames, symlinks (valid and broken), chmod on a directory, the
+# responsive layout at narrow terminal widths, and the 256-color theme.
 
 source "$(dirname "${BASH_SOURCE[0]}")/harness.sh"
 
@@ -93,8 +93,7 @@ test_chmod_on_a_directory() {
     type_text "700"
     send Enter
     assert_screen 'drwx------'
-    wait_until [ "$(stat -c %a "$(FX)/documents")" = "700" ] ||
-        _fail "directory mode is $(stat -c %a "$(FX)/documents"), expected 700"
+    assert_mode 700 "$(FX)/documents"
 }
 
 # ---------------------------------------------------------- responsive layout
@@ -102,8 +101,11 @@ test_chmod_on_a_directory() {
 test_narrow_window_drops_columns() {
     app_start
     resize_window 50 30
+    # Wait on the column that disappears: [M]odified renders at both widths, so
+    # asserting it first would match the pre-resize screen and synchronize
+    # nothing.
+    assert_gone '\[S\]ize'
     assert_screen '\[M\]odified'
-    assert_not_screen '\[S\]ize'
     resize_window 30 30
     assert_gone '\[M\]odified' # name column only
     assert_screen 'documents/'
@@ -123,6 +125,22 @@ test_tiny_window_shows_resize_message_and_recovers() {
     send j
     assert_selected "executables/"
     assert_running
+}
+
+# -------------------------------------------------------------- color depth
+
+# --colors-256 selects the theme's [theme256] section, a separate palette that
+# nothing else in the suite renders. The marker theme defines the selected and
+# marked rows there too, so the usual assertions work unchanged.
+test_256_color_theme_renders_and_navigates() {
+    COLORS_256=1
+    app_start
+    assert_selected "documents/"
+    send j v
+    assert_marked_count '1 item'
+    send G
+    assert_selected "readme.txt"
+    assert_marked "executables/"
 }
 
 run_tests

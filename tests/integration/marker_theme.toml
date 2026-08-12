@@ -1,6 +1,7 @@
-# Marks the selected and marked table rows with unique truecolor backgrounds
-# so tests can locate them in `tmux capture-pane -e` output as the SGR
-# fragments "48;2;1;2;3" (selected) and "48;2;4;5;6" (marked).
+# Marks the selected and marked table rows with unique backgrounds so tests can
+# locate them in `tmux capture-pane -e` output as the SGR fragments
+# "48;2;1;2;3"/"48;2;4;5;6" (truecolor) and "48;5;17"/"48;5;53" (--colors-256).
+# The 256-color indices are ones the default theme does not otherwise use.
 [theme.table.selected]
 bg = "#010203"
 fg = "#FEFDFC"
@@ -8,3 +9,11 @@ fg = "#FEFDFC"
 [theme.table.marked]
 bg = "#040506"
 fg = "#FBFAF9"
+
+[theme256.table.selected]
+bg = "17"
+fg = "231"
+
+[theme256.table.marked]
+bg = "53"
+fg = "255"
