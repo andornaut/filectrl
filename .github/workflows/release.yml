@@ -45,11 +45,35 @@ jobs:
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
+  # Drives the real binary's TUI in tmux (tests/integration). Runs the suites
+  # directly rather than through tests/integration/run.sh, which rebuilds from
+  # scratch in a container; the Dockerfile stays a local convenience.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install XCB dependencies and tmux
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev tmux
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run integration tests
+        run: tests/integration/run_tests.sh
+
   # Validates that every published target still compiles, and produces the
   # binary the dev release ships. Skipped on tags, where `release` builds the
   # same targets.
   build:
-    needs: check
+    needs: [check, integration]
     if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -139,7 +163,7 @@ jobs:
   # upload-rust-binary-action uploads to an existing release rather than
   # creating one, so the release has to exist before the matrix fans out.
   create-release:
-    needs: check
+    needs: [check, integration]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:

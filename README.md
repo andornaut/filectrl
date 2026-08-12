@@ -462,8 +462,9 @@ RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
 
 [`tests/integration/`](./tests/integration/) drives the real binary in a tmux
 pane - keyboard, mouse, and window resizes - and asserts on the rendered
-screen and the on-disk results. See its [README](./tests/integration/README.md)
-for how the harness works and how to add a suite.
+screen and the on-disk results. They are Linux-only, and CI runs them on every
+push and pull request. See its [README](./tests/integration/README.md) for how
+the harness works and how to add a suite.
 
 ```bash
 tests/integration/run.sh                 # build and run everything in Docker
