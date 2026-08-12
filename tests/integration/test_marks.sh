@@ -73,10 +73,7 @@ test_range_mode_shrinks_when_cursor_moves_back() {
     assert_marked_count '2 items'
 }
 
-# NOTE: the README says that while marks exist, clicking an unmarked row adds
-# it and clicking a marked row removes it. That is not implemented - outside
-# range mode a click only moves the cursor (existing marks are kept). This
-# test pins the actual behavior.
+# Outside range mode a click only moves the cursor; existing marks are kept.
 test_click_moves_cursor_and_keeps_marks() {
     app_start
     send v # mark documents/ (row 1)
