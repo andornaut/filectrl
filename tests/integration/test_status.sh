@@ -175,11 +175,15 @@ test_a_filter_with_no_matches_clears_the_selected_detail() {
 
 # ------------------------------------------------------------------- the kinds
 
+# The test makes the pipe rather than reading one out of the fixtures: git
+# stores regular files, symlinks and gitlinks, so a fixture pipe exists only in
+# the working tree of whoever made it and is absent from a fresh checkout.
 test_an_executable_and_a_fifo_are_typed() {
+    mkfifo "$(FX)/special_files/a_pipe"
     app_start "$(FX)/special_files"
     pick "executable-file"
     assert_kind "File,Executable"
-    pick "fifo"
+    pick "a_pipe"
     assert_kind "FIFO"
 }
 
