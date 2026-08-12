@@ -41,6 +41,17 @@ pub(super) fn run_search(
     });
 }
 
+/// "1 result" / "2 results". Both bounds are configurable, so either case is
+/// reachable. `views::unicode::pluralize_items` is the same idea one layer up,
+/// and stays there: this module is below the views.
+fn plural(count: u32, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// Sends a warning about the traversal itself, unless a newer search has
 /// already superseded this one: the user would read a late warning as
 /// describing their current search rather than the abandoned one.
@@ -125,7 +136,7 @@ fn search(
                     warn_unless_superseded(
                         tx,
                         cancel,
-                        format!("Search stopped at {} results", limits.max_results),
+                        format!("Search stopped at {}", plural(limits.max_results, "result")),
                     );
                     exit(&mut batcher);
                     return;
@@ -154,8 +165,8 @@ fn search(
                         tx,
                         cancel,
                         format!(
-                            "Search reached maximum depth of {} levels; some results may be missing",
-                            limits.max_depth
+                            "Search reached maximum depth of {}; some results may be missing",
+                            plural(limits.max_depth, "level")
                         ),
                     );
                 }
@@ -316,6 +327,45 @@ mod tests {
         // Truncating is still a normal finish, so the consumers' search state
         // is unwound exactly once.
         assert_eq!(1, exits(&commands));
+    }
+
+    /// The shipped bounds are 20 and 10,000, so the singular reads only under
+    /// a configured limit of one, which is where a hardcoded plural shows.
+    #[test]
+    fn a_limit_of_one_is_reported_in_the_singular() {
+        let root = TempDir::new("search_singular_results");
+        for i in 0..3 {
+            std::fs::write(root.join(format!("hit{i}")), b"").unwrap();
+        }
+        let limits = Limits {
+            max_results: 1,
+            ..default_limits()
+        };
+
+        let (commands, _) = run(&limits, &root, "hit");
+
+        assert_eq!(
+            vec!["Search stopped at 1 result".to_string()],
+            warnings(&commands)
+        );
+    }
+
+    #[test]
+    fn a_depth_of_one_is_reported_in_the_singular() {
+        let root = nested_tree("search_singular_depth", 3);
+        let limits = Limits {
+            max_depth: 1,
+            ..default_limits()
+        };
+
+        let (commands, _) = run(&limits, &root, "hit");
+
+        assert_eq!(
+            vec![
+                "Search reached maximum depth of 1 level; some results may be missing".to_string()
+            ],
+            warnings(&commands)
+        );
     }
 
     #[test]

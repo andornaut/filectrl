@@ -111,7 +111,7 @@ test_the_depth_limit_warns_and_leaves_the_deepest_match_unfound() {
     app_start
     search_for "rabbit"
     assert_screen 'orange/rabbit'
-    assert_alert warn "Search reached maximum depth of 1 levels"
+    assert_alert warn "Search reached maximum depth of 1 level;"
     assert_not_screen 'plant/orange/rabbit'
 }
 
@@ -122,7 +122,7 @@ test_the_depth_limit_warns_only_once() {
     limit search_max_depth 1
     app_start
     search_for "a"
-    assert_alert warn "Search reached maximum depth of 1 levels"
+    assert_alert warn "Search reached maximum depth of 1 level;"
     [ "$(alert_lines warn | wc -l)" = 1 ] ||
         _fail "expected one warning (got: $(alert_lines warn | tr '\n' '|'))"
 }
@@ -133,7 +133,7 @@ test_the_result_limit_warns_and_truncates() {
     limit search_max_results 1
     app_start
     search_for "readme"
-    assert_alert warn "Search stopped at 1 results"
+    assert_alert warn "Search stopped at 1 result"
     assert_screen 'readme\.txt'
     assert_not_screen 'documents/readme'
     assert_not_screen '008_readme'
