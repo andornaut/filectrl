@@ -209,10 +209,7 @@ pub(super) fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)
         ),
         kb_entry("Move cursor", "←/→".into()),
         kb_entry("Move cursor by word", "Ctrl+←/→".into()),
-        kb_entry(
-            "Move cursor to start, end",
-            "Ctrl+a/Home, Ctrl+e/End".into(),
-        ),
+        kb_entry("Move cursor to start, end", "Home, Ctrl+e/End".into()),
         kb_entry("Select text", "Shift+←/→".into()),
         kb_entry("Select to line start, end", "Shift+Home, Shift+End".into()),
         kb_entry("Select by word", "Ctrl+Shift+←/→".into()),

@@ -1,18 +1,25 @@
 # Integration test harness: drives the real filectrl binary inside a tmux pane.
 #
 # Sourced by test_*.sh suites. Provides:
-#   app_start [dir]        launch filectrl in a fresh tmux session
+#   app_start [dir]        launch filectrl in a fresh tmux session (returns
+#                          once the screen has settled and a row is selected)
 #   app_stop               kill the tmux session
 #   send KEY...            send keys (tmux key names: j, Enter, Escape, Left, ...)
 #   type_text TEXT         send literal text (for prompts)
-#   click X Y / double_click X Y   SGR mouse events (1-based screen coordinates)
+#   click X Y / double_click X Y / scroll_wheel up|down X Y
+#                          SGR mouse events (1-based screen coordinates)
+#   resize_window COLS ROWS
 #   screen                 plain-text screen capture
 #   selected_row           text of the highlighted table row (via marker theme)
-#   assert_screen REGEX / assert_not_screen REGEX / assert_selected TEXT
-#   assert_breadcrumbs TEXT / assert_running
+#   marked_rows            text of marked rows other than the cursor row
+#   breadcrumbs            the path line above the table header
+#   wait_until COMMAND...  poll until COMMAND succeeds or TIMEOUT elapses
+#   assert_screen REGEX / assert_not_screen REGEX / assert_gone REGEX
+#   assert_selected TEXT / assert_breadcrumbs TEXT / assert_running
 #
-# Each test is a shell function named test_*; run_tests discovers and runs them,
-# giving every test a fresh sandbox (a copy of fixtures/) and a fresh app.
+# Each test is a shell function named test_*; run_tests discovers and runs
+# them, giving every test a fresh sandbox (a copy of fixtures/, a fake $HOME,
+# and its own copy of the config) and a fresh app.
 
 set -u
 

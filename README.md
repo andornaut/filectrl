@@ -80,6 +80,8 @@ the config file (e.g. `~/.config/filectrl/bookmarks/`).
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 
+Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting when there is nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
+
 When the destination directory already contains an entry with the same name, the paste stops and asks what to do with it:
 
 Key | Action
@@ -107,7 +109,7 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - Press <kbd>V</kbd> again to exit range mode (marks are kept)
 - In range mode, clicking extends the range from the anchor to the clicked row; outside range mode, clicking only moves the cursor
 - <kbd>Esc</kbd> clears all marks and exits range mode
-- Marks and clipboard are mutually exclusive -marking clears the clipboard
+- Marks and clipboard are mutually exclusive - marking clears the clipboard
 - Marks track row positions, so re-sorting, filtering, or reloading the listing clears them
 
 ### Filtering
@@ -122,7 +124,7 @@ Results appear as the walk finds them and settle into the sort order once it end
 
 ### Sorting
 
-<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; the same key again reverses it.
+<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; clicking a column header does the same. Each column starts with the direction it is usually reached for - name A-Z, modified newest first, size largest first - and sorting by the same column again reverses it.
 
 The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section of the [configuration](#configuration) groups directories first, for the Name column only.
 
@@ -177,7 +179,7 @@ Select all | <kbd>Ctrl</kbd>+<kbd>a</kbd>
 Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
 Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
-Move cursor to start, end | <kbd>Ctrl</kbd>+<kbd>a</kbd>/<kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
+Move cursor to start, end | <kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
 Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
@@ -436,12 +438,12 @@ update-desktop-database ~/.local/share/applications/
 
 The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
 
-- **`file_dates/`** - files with mtimes in each date-colour bucket (< 1 min, < 1 hour, < 1 day, < 1 month, < 1 year, > 1 year)
-- **`file_sizes/`** - sparse files covering every size-colour bucket (bytes → GiB)
 - **`file_types/`** - named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
-- **`no_delete/`** - read-only parent directory (`chmod 555`); navigate here to trigger delete/rename permission errors
-- **`scrolling/`** - 53 entries with long filenames interspersed to exercise scrolling and multi-row truncation
+- **`no_delete/`** - `chmod 555 fixtures/no_delete` (git does not track the read-only bit), then navigate here to trigger delete/rename permission errors
+- **`scrolling/`** - 48 entries with long filenames interspersed to exercise scrolling and multi-row truncation
 - Plus: executables, symlinks, hidden files, Unicode names, special characters, and long filenames
+
+Date-colour and size-colour buckets need fixtures git cannot store (mtimes, sparse files); create files locally with `touch -t`/`truncate` to exercise those.
 
 ```bash
 cargo clippy
@@ -454,6 +456,19 @@ sudo cp ./target/release/filectrl /usr/local/bin/
 
 # Log to ./err
 RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
+```
+
+### Integration tests
+
+[`tests/integration/`](./tests/integration/) drives the real binary in a tmux
+pane - keyboard, mouse, and window resizes - and asserts on the rendered
+screen and the on-disk results. See its [README](./tests/integration/README.md)
+for how the harness works and how to add a suite.
+
+```bash
+tests/integration/run.sh                 # build and run everything in Docker
+tests/integration/run_tests.sh           # run directly (needs tmux and a release build)
+tests/integration/test_navigation.sh     # run a single suite
 ```
 
 ### Git hooks
