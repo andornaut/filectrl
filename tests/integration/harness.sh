@@ -105,6 +105,10 @@ scroll_wheel() { # scroll_wheel up|down X Y
     type_text "$(printf '\033[<%d;%d;%dM' "$code" "$2" "$3")"
 }
 
+resize_window() { # resize_window COLS ROWS
+    "${TMUX[@]}" resize-window -t "$SESSION" -x "$1" -y "$2"
+}
+
 # -------------------------------------------------------------------- capture
 
 screen() {
