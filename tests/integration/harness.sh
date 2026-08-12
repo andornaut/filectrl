@@ -13,11 +13,13 @@
 #   screen                 plain-text screen capture
 #   selected_row           text of the highlighted table row (via marker theme)
 #   marked_rows            text of marked rows other than the cursor row
+#   alert_lines warn|error the alert lines of one kind (via marker theme)
 #   breadcrumbs            the path line above the table header
 #   wait_until COMMAND...  poll until COMMAND succeeds or TIMEOUT elapses
 #   assert_screen REGEX / assert_not_screen REGEX / assert_gone REGEX
 #   assert_selected TEXT / assert_breadcrumbs TEXT / assert_running
 #   assert_marked TEXT / assert_marked_count "N items"
+#   assert_alert warn|error TEXT
 #   assert_mode OCTAL PATH
 #   run_filectrl ARG...    run the binary outside tmux (RUN_OUTPUT/RUN_STATUS)
 #   assert_run_succeeded / assert_run_failed / assert_run_output REGEX
@@ -70,6 +72,14 @@ MARKED_MARKER_256='48;5;53'
 MARKER="$MARKER_TRUECOLOR"
 MARKED_MARKER="$MARKED_MARKER_TRUECOLOR"
 
+# The same technique for the alert kinds, which differ only in foreground.
+ALERT_WARN_TRUECOLOR='38;2;10;11;12'
+ALERT_ERROR_TRUECOLOR='38;2;13;14;15'
+ALERT_WARN_256='38;5;55'
+ALERT_ERROR_256='38;5;56'
+ALERT_WARN="$ALERT_WARN_TRUECOLOR"
+ALERT_ERROR="$ALERT_ERROR_TRUECOLOR"
+
 # The config directory is resolved from the environment, so a host that sets
 # XDG_CONFIG_HOME would otherwise pull the developer's own config into a run
 # that reaches for the default path.
@@ -93,9 +103,13 @@ app_start() {
         color_args=(--colors-256)
         MARKER="$MARKER_256"
         MARKED_MARKER="$MARKED_MARKER_256"
+        ALERT_WARN="$ALERT_WARN_256"
+        ALERT_ERROR="$ALERT_ERROR_256"
     else
         MARKER="$MARKER_TRUECOLOR"
         MARKED_MARKER="$MARKED_MARKER_TRUECOLOR"
+        ALERT_WARN="$ALERT_WARN_TRUECOLOR"
+        ALERT_ERROR="$ALERT_ERROR_TRUECOLOR"
     fi
     local include_args=(-i "$HERE/marker_theme.toml") extra
     for extra in "${EXTRA_INCLUDES[@]}"; do
@@ -212,6 +226,24 @@ marked_rows() {
         grep -v '^\[Selected\]'
 }
 
+# The alert kinds differ only in foreground color, so the marker theme is what
+# tells them apart on screen.
+_alert_marker() {
+    case "$1" in
+    warn) echo "$ALERT_WARN" ;;
+    error) echo "$ALERT_ERROR" ;;
+    *) fatal "unknown alert kind: $1 (expected warn or error)" ;;
+    esac
+}
+
+# alert_lines warn|error : the alerts of that kind, one per line, with the
+# border and the trailing padding removed. The " • " prefix is kept, because a
+# wrapped alert's continuation lines carry "   " instead.
+alert_lines() {
+    screen_ansi | grep -F "$(_alert_marker "$1")" |
+        sed -e $'s/\x1b\\[[0-9;]*m//g' -e 's/^│//' -e 's/│$//' -e 's/ *$//'
+}
+
 # The breadcrumbs render on the line directly above the table header. Locating
 # the header (rather than assuming line 1) keeps this correct when the alerts
 # panel is open above and pushes the layout down.
@@ -296,6 +328,14 @@ assert_marked() {
 # The "[Selected] N items" notice, which counts the cursor row too.
 assert_marked_count() {
     assert_screen "\[Selected\] $1"
+}
+
+_alert_contains() { alert_lines "$1" | grep -Fq -- "$2"; }
+
+# assert_alert warn|error TEXT
+assert_alert() {
+    wait_until _alert_contains "$1" "$2" ||
+        _fail "expected a $1 alert containing '$2' (alerts: $(alert_lines "$1" | tr '\n' '|'))"
 }
 
 _mode_is() { [ "$(stat -c %a "$2" 2>/dev/null)" = "$1" ]; }
