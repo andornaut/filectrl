@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::serde::{deserialize_color, deserialize_modifier};
 
 /// A triplet of style properties: foreground color, background color, and modifiers.
-/// All fields are optional — omitted fields inherit defaults (no color, no modifiers).
+/// All fields are optional: omitted fields inherit defaults (no color, no modifiers).
 /// `fg` and `bg` accept `""` in config to explicitly inherit from the parent widget.
 #[derive(Copy, Clone, Default, Deserialize)]
 pub struct StyleConfig {
@@ -171,13 +171,13 @@ impl FileType {
 
             let style = StyleConfig::new(fg, bg, attrs);
             if self.set_ls_color(key, style) {
-                // Recognized file-type key — handled by set_ls_color.
+                // Recognized file-type key, handled by set_ls_color.
             } else if let Some(ext) = key.strip_prefix("*.") {
                 self.extension_styles.insert(ext.to_string(), style);
             } else if let Some(name) = key.strip_prefix('*') {
                 self.name_styles.push((name.to_string(), style));
             }
-            // Otherwise unrecognized (e.g. "ca" capabilities) — ignored.
+            // Otherwise unrecognized (e.g. "ca" capabilities), ignored.
         }
         if found_rgb {
             log::warn!(

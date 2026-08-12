@@ -34,8 +34,8 @@ use crate::command::Command;
 // ----------
 // We set SA_RESTART so that the kernel transparently retries interrupted
 // syscalls (poll, read, write) after the signal handler returns. This is
-// the standard approach: we don't want every syscall to fail with EINTR
-// — the signal flag is already set, and the next poll timeout will detect
+// the standard approach: we don't want every syscall to fail with EINTR.
+// The signal flag is already set, and the next poll timeout will detect
 // it.  SA_RESTART keeps the rest of the I/O path simple.
 
 static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
@@ -60,7 +60,7 @@ impl EventSource for TerminalEventSource {
 }
 
 // SAFETY: Stores to an AtomicBool are single-instruction writes to a
-// fixed address — async-signal-safe per POSIX.
+// fixed address, async-signal-safe per POSIX.
 extern "C" fn handle_signal(_: i32) {
     SIGNAL_RECEIVED.store(true, Ordering::Relaxed);
 }
@@ -90,7 +90,7 @@ pub fn install_signal_handlers() -> Result<(), nix::errno::Errno> {
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives
     let Ok(first) = rx.recv() else {
-        // The channel is disconnected — all senders have been dropped. This should
+        // The channel is disconnected: all senders have been dropped. This should
         // not happen in normal operation because App holds tx for its entire lifetime.
         // Returning an empty Vec here would cause App::run to loop forever: it would
         // call receive_commands again immediately (since recv() returns Err instantly
@@ -150,7 +150,7 @@ fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, sou
         // the signal fires between poll() returning Ok(false) and the
         // continue jumping back to the top.
         if SIGNAL_RECEIVED.load(Ordering::Relaxed) {
-            // Signal handler fired — ask the main loop to shut down.
+            // Signal handler fired: ask the main loop to shut down.
             let _ = tx.send(Command::Quit);
             return;
         }

@@ -96,7 +96,7 @@ fn kind_field(selected: &PathInfo) -> String {
 
     // Note: is_door() is not included as it's a Solaris-specific IPC mechanism
     // and would only be relevant on Solaris systems
-    kind.join(",") // No space after comma — intentional to save status bar width
+    kind.join(",") // No space after comma, intentional to save status bar width
 }
 
 fn to_entries(

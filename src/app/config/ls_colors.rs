@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn reset_code_clears_modifiers_set_before_it() {
-        // Bold is set, then reset — the final result should have no modifiers
+        // Bold is set, then reset: the final result should have no modifiers
         let (_, _, attrs) = parse("01;00");
         assert!(attrs.is_empty());
     }
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn truncated_256_sequence_produces_no_style() {
-        // "38;5" is missing the color index — should produce nothing
+        // "38;5" is missing the color index: should produce nothing
         let (fg, bg, attrs) = parse("38;5");
         assert!(fg.is_none());
         assert!(bg.is_none());
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn truncated_rgb_sequence_produces_no_style() {
-        // "38;2;255" is missing G and B — should produce nothing
+        // "38;2;255" is missing G and B: should produce nothing
         let (fg, bg, attrs) = parse("38;2;255");
         assert!(fg.is_none());
         assert!(bg.is_none());
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn extended_color_followed_by_modifier_both_apply() {
-        // 38;5;200 (indexed fg) then 01 (bold) — the i += skip must not consume the bold code
+        // 38;5;200 (indexed fg) then 01 (bold): the i += skip must not consume the bold code
         let (fg, _, attrs) = parse("38;5;200;01");
         assert_eq!(Some(Color::Indexed(200)), fg);
         assert_eq!(Modifier::BOLD, attrs);
