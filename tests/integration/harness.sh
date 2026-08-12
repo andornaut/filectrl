@@ -49,7 +49,7 @@ app_start() {
     "${TMUX[@]}" kill-server 2>/dev/null || true
     "${TMUX[@]}" new-session -d -s "$SESSION" -x "$COLS" -y "$ROWS" \
         env COLORTERM=truecolor HOME="$SANDBOX/home" \
-        "$FILECTRL_BIN" -c "$HERE/test_config.toml" -i "$HERE/marker_theme.toml" "$dir" ||
+        "$FILECTRL_BIN" -c "$SANDBOX/config.toml" -i "$HERE/marker_theme.toml" "$dir" ||
         fatal "could not start tmux session"
     # The status bar renders once the initial directory listing is loaded.
     wait_for 'Directory +Mode:' || fatal "filectrl did not start; screen: $(screen)"
@@ -198,6 +198,9 @@ run_tests() {
     for t in $tests; do
         SANDBOX="$(mktemp -d)"
         cp -r "$REPO_ROOT/fixtures" "$SANDBOX/fixtures"
+        # The config lives in the sandbox so side effects beside it (the
+        # bookmarks/ directory) are isolated per test.
+        cp "$HERE/test_config.toml" "$SANDBOX/config.toml"
         mkdir -p "$SANDBOX/home"
         touch "$SANDBOX/home/home_marker.txt"
 
