@@ -23,17 +23,21 @@ tests/integration/test_navigation.sh # one suite
 
 ## How it works
 
-- `harness.sh` starts `filectrl` in a detached tmux session with a hermetic
-  config (`test_config.toml`; openers are stubbed with `true` so tests never
-  launch real programs) and a per-test sandbox: a fresh copy of `fixtures/`
-  and a fake `$HOME`.
-- Keys are sent with `tmux send-keys`; mouse events are injected as raw SGR
-  escape sequences, so clicks, double-clicks, and scrolling work too.
+- `harness.sh` starts `filectrl` in a detached tmux session with a per-test
+  sandbox: a fresh copy of `fixtures/`, a fake `$HOME`, and its own copy of
+  the hermetic config (`test_config.toml`; openers are stubbed with `true` so
+  tests never launch real programs). The config lives in the sandbox so state
+  stored beside it - the `bookmarks/` directory - is isolated per test.
+- Keys are sent with `tmux send-keys`; mouse events (clicks, double-clicks,
+  the scroll wheel) are injected as raw SGR escape sequences, and
+  `resize_window` exercises the responsive layout.
 - Assertions poll `tmux capture-pane` until they match or time out, so tests
-  wait exactly as long as the app takes.
-- `marker_theme.toml` paints the selected table row with a unique truecolor
-  background (`#010203`), letting `selected_row` locate the highlighted row in
-  `capture-pane -e` output without guessing at screen coordinates.
+  wait exactly as long as the app takes. `app_start` returns only once the
+  screen has settled, so early keys cannot act on a partially loaded listing.
+- `marker_theme.toml` paints the selected table row (`#010203`) and marked
+  rows (`#040506`) with unique truecolor backgrounds, letting `selected_row`
+  and `marked_rows` locate them in `capture-pane -e` output without guessing
+  at screen coordinates.
 
 ## Adding a suite
 
