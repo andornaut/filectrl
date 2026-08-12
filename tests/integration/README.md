@@ -51,9 +51,11 @@ tests/integration/test_navigation.sh # one suite
 - `marker_theme.toml` paints the selected table row (`#010203`, 256-color
   index 17) and marked rows (`#040506`, index 53) with backgrounds nothing
   else uses, letting `selected_row` and `marked_rows` locate them in
-  `capture-pane -e` output without guessing at screen coordinates. It covers
-  both palettes so a test can set `COLORS_256=1` before `app_start` and keep
-  the same assertions.
+  `capture-pane -e` output without guessing at screen coordinates. The warn
+  and error alert kinds get marker foregrounds for the same reason, since
+  style is all that separates them, and `alert_lines` reads them back. It
+  covers both palettes so a test can set `COLORS_256=1` before `app_start` and
+  keep the same assertions.
 
 ## In CI
 
