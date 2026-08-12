@@ -500,8 +500,10 @@ impl FileSystem {
     }
 
     fn open(&mut self, path: &PathInfo) -> CommandResult {
+        // Name the path in the error: a broken symlink (e.g. a bookmark whose
+        // target was removed) would otherwise surface a bare io error.
         match fs::canonicalize(&path.path)
-            .map_err(anyhow::Error::from)
+            .map_err(|error| anyhow!("Failed to open {}: {error}", compact(&path.path)))
             .and_then(|path| PathInfo::try_from(&path))
         {
             Ok(path) => {
