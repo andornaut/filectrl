@@ -7,11 +7,16 @@ set -e
 
 # Format, then re-stage only files that were already staged for this commit
 # (avoids accidentally staging unrelated working-tree changes).
+#
+# -u restricts the re-staging to tracked paths, which every staged path is by
+# definition. Without it, a staged path that an ignore rule also matches (the
+# fixtures are ignored so that new ones are not added by accident) is refused
+# and `set -e` aborts the commit.
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 echo '+cargo fmt'
 cargo fmt
 if [ -n "$staged" ]; then
-    echo "$staged" | tr '\n' '\0' | xargs -0 git add --
+    echo "$staged" | tr '\n' '\0' | xargs -0 git add -u --
 fi
 echo '+cargo test'
 cargo test
