@@ -293,9 +293,10 @@ mod tests {
         table.select(1);
         assert_eq!(selected_basename(&table).as_deref(), Some("b"));
 
-        // Re-sort by size (b=1, c=2, a=3): "b" moves to index 0 but stays selected.
+        // Re-sort by size, largest first (a=3, c=2, b=1): "b" moves to the
+        // last index but stays selected.
         table.sort_by(SortColumn::Size);
-        assert_eq!(table.table_state.selected(), Some(0));
+        assert_eq!(table.table_state.selected(), Some(2));
         assert_eq!(selected_basename(&table).as_deref(), Some("b"));
     }
 

@@ -86,33 +86,32 @@ test_sort_by_name_toggles_direction() {
 test_sort_by_size() {
     app_start
     send s
-    # Switching to a new sort column keeps the current (ascending) direction
+    assert_screen '\[S\]ize⌄' # size defaults to largest first: directories (4K)
+    send g
+    assert_selected "4K"
+    send s
     assert_screen '\[S\]ize⌃' # smallest first: empty files
     send g
     assert_selected " 0 "
-    send s
-    assert_screen '\[S\]ize⌄' # largest first: directories (4K)
-    send g
-    assert_selected "4K"
 }
 
 test_sort_by_modified() {
     touch -t 200001010000 "$(FX)/z_from_2000.txt"
     app_start
     send m
-    assert_screen '\[M\]odified⌃' # oldest first
-    send g
+    assert_screen '\[M\]odified⌄' # modified defaults to newest first
+    send G
     assert_selected "z_from_2000.txt"
     send m
-    assert_screen '\[M\]odified⌄' # newest first
-    send G
+    assert_screen '\[M\]odified⌃' # oldest first
+    send g
     assert_selected "z_from_2000.txt"
 }
 
 test_sort_persists_across_navigation() {
     app_start
     send s
-    assert_screen '\[S\]ize⌃'
+    assert_screen '\[S\]ize⌄'
     send : # navigate by path to keep the sort probe independent of row order
     type_text "$(FX)/documents"
     send Enter
@@ -126,12 +125,12 @@ test_click_header_sorts_by_that_column() {
     local offset
     offset=$(screen | sed -n '2p' | grep -bo '\[S\]ize' | head -1 | cut -d: -f1)
     click $((offset + 2)) 2
-    assert_screen '\[S\]ize⌃' # inherits the current (ascending) direction
+    assert_screen '\[S\]ize⌄' # size defaults to largest first
     click $((offset + 2)) 2
-    assert_screen '\[S\]ize⌄' # clicking the same column toggles direction
+    assert_screen '\[S\]ize⌃' # clicking the same column toggles direction
     offset=$(screen | sed -n '2p' | grep -bo '\[N\]ame' | head -1 | cut -d: -f1)
     click $((offset + 2)) 2
-    assert_screen '\[N\]ame⌄'
+    assert_screen '\[N\]ame⌃' # name defaults to ascending
 }
 
 # ------------------------------------------------- hidden-files toggle (.)
