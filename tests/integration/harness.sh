@@ -29,9 +29,11 @@ COLS=120
 ROWS=30
 TIMEOUT="${FILECTRL_IT_TIMEOUT:-5}"
 
-# The marker theme paints the selected table row with bg #010203, which appears
-# in `capture-pane -e` output as the unique SGR fragment "48;2;1;2;3".
+# The marker theme paints the selected table row with bg #010203 and marked
+# rows with bg #040506, which appear in `capture-pane -e` output as the unique
+# SGR fragments below.
 MARKER='48;2;1;2;3'
+MARKED_MARKER='48;2;4;5;6'
 
 PASS=0
 FAIL=0
@@ -117,6 +119,16 @@ screen_ansi() {
 selected_row() {
     screen_ansi | grep -F "$MARKER" | head -1 |
         sed -e $'s/\x1b\\[[0-9;]*m//g' -e 's/^ *//' -e 's/ *$//'
+}
+
+# Text of every marked table row, one per line, ANSI codes stripped, trimmed.
+# The cursor row renders with the selected style even when marked, so it is
+# not listed here; the "[Selected] N items" notice shares the marked style and
+# is filtered out.
+marked_rows() {
+    screen_ansi | grep -F "$MARKED_MARKER" |
+        sed -e $'s/\x1b\\[[0-9;]*m//g' -e 's/^ *//' -e 's/ *$//' |
+        grep -v '^\[Selected\]'
 }
 
 # The breadcrumbs render on the line directly above the table header. Locating
