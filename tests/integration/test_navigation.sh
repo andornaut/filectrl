@@ -160,6 +160,7 @@ test_goto_prompt_esc_cancels() {
     send :
     type_text "/etc"
     send Escape
+    assert_gone 'Go to /etc'
     send j
     assert_selected "executables/" # normal mode again; j moves selection
     assert_breadcrumbs "$SANDBOX/fixtures"
