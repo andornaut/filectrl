@@ -54,7 +54,8 @@ test_paste_with_nothing_copied_alerts() {
     app_start
     send p
     assert_screen 'Cannot paste: no system clipboard available'
-    assert_screen '# Items:20' # nothing changed
+    assert_not_screen '\[Copy\]|\[Cut\]' # the failed read left nothing behind
+    assert_screen '# Items:20'           # and nothing was pasted
     assert_running
 }
 
@@ -116,6 +117,78 @@ test_paste_conflict_overwrite_replaces_destination() {
     send o
     wait_until grep -q "from fixtures root" "$(FX)/documents/readme.txt" ||
         _fail "destination was not overwritten"
+}
+
+# Copies notes.md and readme.txt from the fixtures root, both of which already
+# exist in documents/, and pastes them there: two collisions in one paste, so
+# the answer to the first is what decides whether the second is asked about.
+two_collisions() {
+    echo "from fixtures root" > "$(FX)/notes.md"
+    echo "from fixtures root" > "$(FX)/readme.txt"
+    app_start
+    send G   # readme.txt (last row)
+    send v k v # mark readme.txt and notes.md
+    send y
+    send g Enter # documents/
+    assert_breadcrumbs "$(FX)/documents"
+    send p
+    assert_screen '"notes\.md" exists: \[s\]kip'
+}
+
+test_paste_conflict_skip_all_answers_the_rest_of_the_batch() {
+    two_collisions
+    send S
+    assert_gone 'exists:' # the second collision is settled without asking
+    wait_until grep -q "Hello" "$(FX)/documents/readme.txt" ||
+        _fail "readme.txt was overwritten despite skip all"
+    [ ! -s "$(FX)/documents/notes.md" ] || _fail "notes.md was overwritten despite skip all"
+    # Nothing was pasted, so the clipboard is kept for a retry
+    assert_screen '\[Copy\] 2 items'
+}
+
+test_paste_conflict_overwrite_all_answers_the_rest_of_the_batch() {
+    two_collisions
+    send O
+    assert_gone 'exists:'
+    wait_until grep -q "from fixtures root" "$(FX)/documents/notes.md" ||
+        _fail "notes.md was not overwritten"
+    wait_until grep -q "from fixtures root" "$(FX)/documents/readme.txt" ||
+        _fail "readme.txt was not overwritten by the standing answer"
+    assert_gone '\[Copy\]' # a clean paste clears the clipboard
+}
+
+# An unbound key abandons the paste rather than resolving the collision, and
+# the clipboard is restored so the whole batch can be retried.
+test_paste_conflict_unrecognized_key_abandons_the_paste() {
+    two_collisions
+    send q
+    assert_gone 'exists:'
+    assert_running # q is quit in normal mode, not at a conflict prompt
+    [ ! -s "$(FX)/documents/notes.md" ] || _fail "notes.md was written by an abandoned paste"
+    wait_until grep -q "Hello" "$(FX)/documents/readme.txt" ||
+        _fail "readme.txt was written by an abandoned paste"
+    assert_screen '\[Copy\] 2 items'
+}
+
+# Overwrite is not offered when the existing entry is a directory, so `o` is
+# ignored instead of abandoning the batch.
+test_paste_conflict_overwrite_key_is_ignored_for_a_directory() {
+    mkdir "$(FX)/documents/images"
+    app_start
+    send j j j j # images/
+    assert_selected "images/"
+    send y
+    send g Enter # documents/
+    assert_breadcrumbs "$(FX)/documents"
+    send p
+    assert_screen '"images" exists as a directory: \[s\]kip, \[S\]kip all'
+    send o
+    # Still asking: an ignored key must not resolve or abandon the collision
+    assert_screen '"images" exists as a directory'
+    send s
+    assert_gone 'exists as a directory'
+    [ -z "$(ls -A "$(FX)/documents/images")" ] || _fail "the directory was merged"
+    assert_screen '\[Copy\]'
 }
 
 test_second_paste_after_clean_paste_alerts() {

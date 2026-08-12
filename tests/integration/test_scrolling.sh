@@ -10,8 +10,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/harness.sh"
 
 scrolling_start() { app_start "$SANDBOX/fixtures/scrolling"; }
 
-top_row() { screen | sed -n '3p'; }
-
 test_page_down_selects_last_visible_then_pages() {
     scrolling_start
     send C-d

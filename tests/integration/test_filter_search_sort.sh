@@ -116,7 +116,9 @@ test_sort_persists_across_navigation() {
     type_text "$(FX)/documents"
     send Enter
     assert_breadcrumbs "$(FX)/documents"
-    assert_screen '\[S\]ize'
+    # The direction arrow, not the header, is the signal: every column header
+    # renders at this width whatever the sort column is.
+    assert_screen '\[S\]ize⌄'
     assert_not_screen '\[N\]ame⌃'
 }
 

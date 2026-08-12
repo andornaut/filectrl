@@ -23,7 +23,7 @@ test_externally_created_directory_appears() {
 test_externally_deleted_file_disappears() {
     app_start
     rm "$(FX)/a.txt"
-    assert_gone ' a\.txt' # trailing context avoids matching the notice area
+    assert_gone ' a\.txt' # leading context keeps this off the notice area
     assert_screen '# Items:19'
 }
 

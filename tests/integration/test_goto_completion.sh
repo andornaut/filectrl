@@ -50,13 +50,28 @@ test_no_suggestion_for_unmatched_prefix() {
     assert_screen "Path does not exist"
 }
 
-test_prompt_reset_restores_initial_value() {
+# Reset restores the value the prompt opened with, which for goto is empty.
+test_prompt_reset_clears_a_goto_prompt() {
     app_start
     send :
     type_text "/some/garbage"
     assert_screen 'Go to /some/garbage'
-    send C-u # prompt reset (goto starts empty)
+    send C-u
     assert_gone '/some/garbage'
+    send Escape
+}
+
+# Rename opens prefilled, so the same key restores the original name there.
+test_prompt_reset_restores_a_prefilled_rename() {
+    app_start
+    send G k k k # a.txt
+    send r
+    assert_screen 'Rename a\.txt'
+    send C-a
+    type_text "clobbered"
+    assert_screen 'Rename clobbered'
+    send C-u
+    assert_screen 'Rename a\.txt'
     send Escape
 }
 
