@@ -105,8 +105,7 @@ Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items
 - <kbd>v</kbd> toggles a mark on the current item
 - <kbd>V</kbd> enters **range mode**: the current row becomes the anchor, and moving the cursor (arrow keys or clicking) extends the marked range from the anchor to the cursor
 - Press <kbd>V</kbd> again to exit range mode (marks are kept)
-- While marks exist, clicking an unmarked row adds it to the marks; clicking a marked row removes it
-- In range mode, clicking always extends the range from the anchor to the clicked row
+- In range mode, clicking extends the range from the anchor to the clicked row; outside range mode, clicking only moves the cursor
 - <kbd>Esc</kbd> clears all marks and exits range mode
 - Marks and clipboard are mutually exclusive -marking clears the clipboard
 - Marks track row positions, so re-sorting, filtering, or reloading the listing clears them
