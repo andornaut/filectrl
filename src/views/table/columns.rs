@@ -35,6 +35,18 @@ pub(super) enum SortColumn {
     Size,
 }
 
+impl SortColumn {
+    /// The direction a column starts with when it becomes the sort column,
+    /// matching what a user reaches for that column to find: names A-Z,
+    /// newest first, largest first.
+    fn default_direction(self) -> SortDirection {
+        match self {
+            Self::Name => SortDirection::Ascending,
+            Self::Modified | Self::Size => SortDirection::Descending,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Columns {
     name_width: u16,
@@ -78,6 +90,7 @@ impl Columns {
             self.sort_direction.toggle();
         } else {
             self.sort_column = column;
+            self.sort_direction = column.default_direction();
         }
     }
 }
@@ -170,14 +183,24 @@ mod tests {
         assert_eq!(&SortDirection::Ascending, cols.sort_direction());
     }
 
-    #[test]
-    fn switching_to_a_new_column_preserves_sort_direction() {
-        // Direction is not reset when changing columns — it carries over
+    #[test_case(SortColumn::Modified, SortDirection::Descending; "modified starts newest first")]
+    #[test_case(SortColumn::Size, SortDirection::Descending; "size starts largest first")]
+    fn switching_to_a_new_column_uses_its_default_direction(
+        column: SortColumn,
+        expected: SortDirection,
+    ) {
         let mut cols = Columns::default();
-        cols.sort_by(SortColumn::Name); // toggle to Descending
-        cols.sort_by(SortColumn::Modified); // switch column
-        assert_eq!(&SortColumn::Modified, cols.sort_column());
-        assert_eq!(&SortDirection::Descending, cols.sort_direction());
+        cols.sort_by(column);
+        assert_eq!(&column, cols.sort_column());
+        assert_eq!(&expected, cols.sort_direction());
+    }
+
+    #[test]
+    fn switching_back_to_name_restores_ascending() {
+        let mut cols = Columns::default();
+        cols.sort_by(SortColumn::Size); // Descending
+        cols.sort_by(SortColumn::Name);
+        assert_eq!(&SortDirection::Ascending, cols.sort_direction());
     }
 
     // --- sort_column_for_click ---
