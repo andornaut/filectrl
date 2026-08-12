@@ -43,6 +43,12 @@ impl CommandHandler for Handlers {
                     dest: dest.clone(),
                 }
                 .into(),
+                // Nothing to paste and no system clipboard to read: an entry
+                // copied in another window would be unreachable here, so warn
+                // rather than surprise the user with a silent no-op.
+                Ok(None) if !self.clipboard.is_available() => {
+                    Command::AlertWarn("Cannot paste: no system clipboard available".into()).into()
+                }
                 Ok(None) => CommandResult::Handled,
                 Err(e) => Command::AlertWarn(format!("Cannot paste: {e}")).into(),
             },
