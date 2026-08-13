@@ -101,6 +101,7 @@ test_rename_bookmark() {
     add_bookmark
     send "'"
     assert_breadcrumbs "[Bookmarks] $(BM)"
+    wait_for_selection # rename acts on the selected bookmark
     send r
     assert_screen 'Rename fixtures'
     send C-a
@@ -117,6 +118,7 @@ test_delete_bookmark_keeps_target_directory() {
     add_bookmark
     send "'"
     assert_breadcrumbs "[Bookmarks] $(BM)"
+    wait_for_selection # delete acts on the selected bookmark
     send d
     assert_screen 'Delete 1 item\? \(y/n\)'
     send y
@@ -135,6 +137,7 @@ test_open_bookmark_with_missing_target_shows_error() {
     rm -rf "$(FX)/documents"
     send "'"
     assert_breadcrumbs "[Bookmarks] $(BM)"
+    wait_for_selection # Enter opens the selected bookmark
     send Enter
     # The error names the bookmark being opened, not just the raw io error
     assert_screen 'Failed to open .*documents'

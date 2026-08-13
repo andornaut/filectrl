@@ -19,6 +19,8 @@
 #   breadcrumbs            the path line above the table header
 #   wait_until COMMAND...  poll until COMMAND succeeds or TIMEOUT elapses
 #   wait_settled [CMD...]  poll until the screen stops changing
+#   wait_for_selection     poll until a row is selected (after a navigation,
+#                          before a key that acts on the selection)
 #   assert_screen REGEX / assert_not_screen REGEX / assert_gone REGEX
 #   assert_selected TEXT / assert_breadcrumbs TEXT / assert_running
 #   assert_marked TEXT / assert_marked_count "N items"
@@ -367,6 +369,17 @@ _alert_contains() { alert_lines "$1" | grep -Fq -- "$2"; }
 assert_alert() {
     wait_until _alert_contains "$1" "$2" ||
         _fail "expected a $1 alert containing '$2' (alerts: $(alert_lines "$1" | tr '\n' '|'))"
+}
+
+# A listing streams in batches, so the path line updates before the rows have
+# arrived and the cursor has been restored. Use this between a navigation and
+# the next key that acts on the selection: a cursor move sent early runs off a
+# partial table, and Enter or an operation lands on no row at all.
+#
+# Fails the test on timeout rather than returning a status, like the other
+# assertions: nothing selected at one of these points is never expected.
+wait_for_selection() {
+    wait_until _has_selection || _fail "expected a row to be selected"
 }
 
 _mode_is() { [ "$(stat -c %a "$2" 2>/dev/null)" = "$1" ]; }
