@@ -578,11 +578,25 @@ mod tests {
 
     #[test]
     fn partial_user_config_merges_with_defaults() {
+        // Set on both platforms, since `parse_value` picks the section by
+        // target and the assertion below must hold on either.
         let partial = r#"
 [openers.linux]
 open_directory = "alacritty --working-directory %s"
+[openers.macos]
+open_directory = "alacritty --working-directory %s"
 "#;
-        Config::parse(RuntimeEnv::default(), partial, None, &[]).unwrap();
+        let defaults = Config::parse(RuntimeEnv::default(), "", None, &[]).unwrap();
+        let merged = Config::parse(RuntimeEnv::default(), partial, None, &[]).unwrap();
+
+        // The named key is replaced, and the ones the partial does not mention
+        // keep the built-in defaults rather than being blanked by the merge.
+        assert_eq!(
+            "alacritty --working-directory %s",
+            merged.openers.open_directory
+        );
+        assert_eq!(defaults.openers.open_file, merged.openers.open_file);
+        assert!(!merged.openers.open_file.is_empty());
     }
 
     /// Parse a config that is expected to fail, returning the error message.

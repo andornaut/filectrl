@@ -29,6 +29,8 @@
 #   assert_mode OCTAL PATH
 #   write_desktop_entry NAME EXEC [LINE...]   an application for the picker
 #   write_mime_globs "TYPE:GLOB" ...          a minimal MIME database
+#   trace_openers          make the openers leave a marker file behind
+#   assert_opener_ran KEY  assert the traced opener named by KEY ran
 #   cleanup_later PATH     remove a path outside the sandbox along with it
 #   run_filectrl ARG...    run the binary outside tmux (RUN_OUTPUT/RUN_STATUS)
 #   assert_run_succeeded / assert_run_failed / assert_run_output REGEX
@@ -131,6 +133,28 @@ write_mime_globs() {
     printf '%s\n' "$@" > "$SANDBOX/xdg/mime/globs"
 }
 
+# Replaces the stubbed openers with ones that leave a marker file behind. The
+# stubs are `true`, which is indistinguishable from doing nothing at all, so a
+# test that asserts an opener ran needs this. Call it before app_start, and read
+# the result with assert_opener_ran.
+#
+# The template is run through `sh -c`, and %s is optional, so a bare `touch`
+# needs no path to substitute.
+trace_openers() {
+    local key
+    printf '[openers.linux]\n' > "$SANDBOX/trace_openers.toml"
+    for key in open_directory open_file open_filectrl_window; do
+        printf '%s = "touch %s/ran_%s"\n' "$key" "$SANDBOX" "$key" \
+            >> "$SANDBOX/trace_openers.toml"
+    done
+    EXTRA_INCLUDES=("$SANDBOX/trace_openers.toml")
+}
+
+# assert_opener_ran open_directory|open_file|open_filectrl_window
+assert_opener_ran() {
+    wait_until [ -f "$SANDBOX/ran_$1" ] || _fail "the $1 opener did not run"
+}
+
 PASS=0
 FAIL=0
 FAILED_TESTS=()
@@ -202,21 +226,16 @@ type_text() {
     "${TMUX[@]}" send-keys -t "$SESSION" -l -- "$1"
 }
 
-# Escape has to reach the app on its own. Whatever is sent next can land in the
-# same read, and an escape byte followed by another byte is an Alt+key sequence
-# rather than Escape and then that key, so the next key is lost; under load that
-# happened in a fifth of attempts. The pause puts the two in separate reads.
+# Use this for every Escape a test sends. An escape byte followed by another
+# byte in the same read is an Alt+key sequence rather than Escape and then that
+# key, which loses the next key; the pause puts the two in separate reads. It is
+# a pause rather than wait_settled because the screen does not settle while a
+# search spinner is animating.
 #
-# Use this for every Escape a test sends. An assertion in between looks like it
-# separates them, but only if it actually waits: one that is already true
-# returns before the app has read the escape at all. A pause rather than
-# wait_settled, because the screen does not settle while a search spinner is
-# animating.
-#
-# The pause makes the loss unlikely, not impossible: a machine busy enough not
-# to read for that long can still take the two together. Where the next key
-# depends on the escape having landed, follow it with an assertion of what the
-# escape closed, so the wait is on the effect rather than on a duration.
+# The pause makes the loss unlikely, not impossible. Where the next key depends
+# on the escape having landed, follow this with an assertion of what the escape
+# closed, so the wait is on the effect. An assertion that is already true does
+# not separate them: it returns before the app has read the escape.
 send_escape() {
     send Escape
     sleep 0.2

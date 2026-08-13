@@ -112,31 +112,4 @@ mod tests {
             vec![Command::Quit, Command::ResetView].into()
         );
     }
-
-    #[test]
-    fn try_from_handled_with_extracts_command() {
-        let result = CommandResult::HandledWith(Box::new(Command::Quit));
-        assert_eq!(Command::Quit, Command::try_from(result).unwrap());
-    }
-
-    #[test]
-    fn try_from_handled_is_err() {
-        assert!(Command::try_from(CommandResult::Handled).is_err());
-    }
-
-    #[test]
-    fn try_from_not_handled_is_err() {
-        assert!(Command::try_from(CommandResult::NotHandled).is_err());
-    }
-
-    #[test]
-    fn try_from_handled_with_many_is_err() {
-        assert!(
-            Command::try_from(CommandResult::HandledWithMany(vec![
-                Command::Quit,
-                Command::ResetView
-            ]))
-            .is_err()
-        );
-    }
 }

@@ -823,8 +823,7 @@ mod tests {
         let first = fx.nested("a", "obj");
         // A second name for the same file. A recursive search finds both, and
         // they share a device and inode, so identity by inode cannot tell them
-        // apart. Object stores, hardlinked node_modules, and `rsync
-        // --link-dest` backups all put such a pair in one result set.
+        // apart.
         let link_dir = fx.directory().path.join("b");
         std::fs::create_dir_all(&link_dir).unwrap();
         let link_path = link_dir.join("obj");

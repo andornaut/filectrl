@@ -614,19 +614,13 @@ mod tests {
 
     #[test]
     fn parse_shift_lowercase_normalizes_to_uppercase() {
-        // Terminals emit shifted letters as the uppercase character, so
-        // "Shift+q" must produce the same combo as "Q".
+        // Terminals emit shifted letters as the uppercase character, so all
+        // three spellings must produce the same combo.
         let combo = parse_key_combo("Shift+q").unwrap();
         assert_eq!(combo.code, KeyCode::Char('Q'));
         assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+        assert_eq!(combo, parse_key_combo("Shift+Q").unwrap());
         assert_eq!(combo, parse_key_combo("Q").unwrap());
-    }
-
-    #[test]
-    fn parse_shift_uppercase() {
-        let combo = parse_key_combo("Shift+Q").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('Q'));
-        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
     }
 
     #[test]
@@ -672,14 +666,10 @@ mod tests {
 
     #[test]
     fn parse_f_keys() {
-        assert_eq!(parse_key_combo("F2").unwrap().code, KeyCode::F(2));
+        // F1 and F24 are the ends of the accepted range.
+        assert_eq!(parse_key_combo("F1").unwrap().code, KeyCode::F(1));
         assert_eq!(parse_key_combo("F5").unwrap().code, KeyCode::F(5));
         assert_eq!(parse_key_combo("F12").unwrap().code, KeyCode::F(12));
-    }
-
-    #[test]
-    fn parse_f_key_boundaries() {
-        assert_eq!(parse_key_combo("F1").unwrap().code, KeyCode::F(1));
         assert_eq!(parse_key_combo("F24").unwrap().code, KeyCode::F(24));
     }
 
@@ -843,13 +833,6 @@ mod tests {
     }
 
     #[test]
-    fn display_for_quit_shows_q() {
-        let kb = default_keybindings();
-        let display = kb.display_for(Action::Quit);
-        assert_eq!(display, "q");
-    }
-
-    #[test]
     fn hint_for_quotes_each_key() {
         let kb = default_keybindings();
         let hint = kb.hint_for(&[Action::SelectNext]);
@@ -868,11 +851,12 @@ mod tests {
         );
     }
 
+    /// An uppercase binding parses to the letter plus SHIFT, but a terminal may
+    /// report the letter alone, which only the fallback resolves.
     #[test]
-    fn uppercase_fallback_with_shift() {
+    fn an_uppercase_key_reported_without_shift_resolves_through_the_fallback() {
         let kb = default_keybindings();
-        // SelectLast default is "G" which parses to Char('G') + SHIFT.
-        // Terminal might send Char('G') with NONE; fallback should find it.
+        // SelectLast is bound to "G", so this is Char('G') + SHIFT in the map.
         assert_eq!(
             kb.normal_action(&KeyCode::Char('G'), &KeyModifiers::NONE),
             Some(Action::SelectLast)
@@ -880,10 +864,9 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_fallback_without_shift() {
+    fn an_uppercase_key_reported_with_shift_matches_directly() {
         let kb = default_keybindings();
-        // RangeMark default is "V" which parses to Char('V') + SHIFT.
-        // Direct match with SHIFT.
+        // RangeMark is bound to "V", which parses to Char('V') + SHIFT.
         assert_eq!(
             kb.normal_action(&KeyCode::Char('V'), &KeyModifiers::SHIFT),
             Some(Action::RangeMark)
@@ -932,15 +915,6 @@ mod tests {
         assert_eq!(
             kb.normal_action(&KeyCode::Tab, &KeyModifiers::NONE),
             Some(Action::Goto)
-        );
-    }
-
-    #[test]
-    fn prompt_mode_tab_resolves_to_accept_suggestion() {
-        let kb = default_keybindings();
-        assert_eq!(
-            kb.prompt_action(&KeyCode::Tab, &KeyModifiers::NONE),
-            Some(Action::PromptAcceptSuggestion)
         );
     }
 

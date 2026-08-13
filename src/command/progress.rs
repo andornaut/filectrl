@@ -421,6 +421,8 @@ enum TaskStatus {
 mod tests {
     use std::collections::HashSet;
 
+    use test_case::test_case;
+
     use super::*;
 
     fn progress(completed: u64, total: u64) -> Progress {
@@ -501,40 +503,33 @@ mod tests {
         assert_eq!(None, del.source_basename());
     }
 
-    #[test]
-    fn task_kind_copy_into_directory_shows_parent() {
-        // Same basename: show the destination's parent directory with a trailing slash.
-        let k = copy("/a/b/file.txt", "/c/d/file.txt");
-        assert_eq!("/c/d/", k.target());
-        assert_eq!("/a/b/file.txt to /c/d/", k.detail());
-        assert_eq!("Copying /a/b/file.txt to /c/d/", k.message());
-    }
-
-    #[test]
-    fn task_kind_copy_with_rename_shows_full_destination() {
-        // Different basename: show the full destination path.
-        let k = copy("/a/b/old.txt", "/c/d/new.txt");
-        assert_eq!("/c/d/new.txt", k.target());
-        assert_eq!("/a/b/old.txt to /c/d/new.txt", k.detail());
-    }
-
-    #[test]
-    fn task_kind_dest_display_edge_parents() {
-        // Destination at filesystem root: parent is "/".
-        assert_eq!("/", copy("z/file.txt", "/file.txt").target());
-        // Destination has no directory component: empty parent falls back to the
-        // destination itself, with a trailing slash appended.
-        assert_eq!("file.txt/", copy("z/file.txt", "file.txt").target());
-    }
-
-    #[test]
-    fn task_kind_delete_detail_and_message() {
-        let k = TaskKind::Delete {
-            path: "/x/y".into(),
+    /// A destination whose basename matches the source is a copy into a
+    /// directory, so the parent is shown with a trailing slash; a differing
+    /// basename is a rename, so the whole destination is shown. An empty
+    /// `destination` builds a delete, which names one path.
+    #[test_case("/a/b/file.txt", "/c/d/file.txt", "/c/d/" ; "copy into a directory")]
+    #[test_case("/a/b/old.txt", "/c/d/new.txt", "/c/d/new.txt" ; "copy with a rename")]
+    #[test_case("z/file.txt", "/file.txt", "/" ; "destination at the filesystem root")]
+    // No directory component: the empty parent falls back to the destination.
+    #[test_case("z/file.txt", "file.txt", "file.txt/" ; "destination with no directory")]
+    #[test_case("/x/y", "", "/x/y" ; "delete")]
+    fn task_kind_renders(source: &str, destination: &str, target: &str) {
+        let kind = if destination.is_empty() {
+            TaskKind::Delete {
+                path: source.to_string(),
+            }
+        } else {
+            copy(source, destination)
         };
-        assert_eq!("/x/y", k.target());
-        assert_eq!("/x/y", k.detail());
-        assert_eq!("Deleting /x/y", k.message());
+
+        assert_eq!(target, kind.target());
+        // A delete names one path; a transfer reads "<source> to <target>".
+        let detail = match kind.source() {
+            Some(source) => format!("{source} to {target}"),
+            None => target.to_string(),
+        };
+        assert_eq!(detail, kind.detail());
+        assert_eq!(format!("{}{detail}", kind.prefix()), kind.message());
     }
 
     fn delete_task() -> Task {
@@ -626,60 +621,60 @@ mod tests {
         }
     }
 
-    #[test]
-    fn active_task_drop_without_finalize_reports_error() {
+    /// A task and the channel it reports on.
+    fn active_task() -> (ActiveTask, std::sync::mpsc::Receiver<Command>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let (active, _initial, _token) =
             ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
-        drop(active);
+        (active, rx)
+    }
 
-        let task = recv_task(&rx);
-        assert_eq!(Some("Task interrupted".to_string()), task.error_message());
+    /// The terminal snapshot, asserting that finalizing sent exactly one. A
+    /// second would mean `Drop` ran after a finalizer that had consumed the
+    /// task.
+    fn only_terminal_task(rx: &std::sync::mpsc::Receiver<Command>) -> Task {
+        let task = recv_task(rx);
         assert!(task.is_terminal());
-        // Drop sends exactly one message.
-        assert!(rx.recv().is_err());
+        assert!(rx.recv().is_err(), "expected exactly one update");
+        task
     }
 
     #[test]
-    fn active_task_done_sends_done_and_drop_is_noop() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (active, _initial, _token) =
-            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+    fn active_task_drop_without_finalize_reports_error() {
+        // An operation that returned early still has to clear its progress bar.
+        let (active, rx) = active_task();
+        drop(active);
+
+        let task = only_terminal_task(&rx);
+        assert_eq!(Some("Task interrupted".to_string()), task.error_message());
+    }
+
+    #[test]
+    fn active_task_done_fills_the_progress_bar() {
+        let (active, rx) = active_task();
         active.done();
 
-        let task = recv_task(&rx);
-        assert!(task.is_terminal());
+        let task = only_terminal_task(&rx);
         assert_eq!(None, task.error_message());
         assert_eq!(100, task.progress.percentage());
-        // Finalization consumed the task, so Drop must not send a second update.
-        assert!(rx.recv().is_err());
     }
 
     #[test]
     fn active_task_cancelled_sends_cancelled_status() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (active, _initial, _token) =
-            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        let (active, rx) = active_task();
         active.cancelled();
 
-        let task = recv_task(&rx);
-        assert!(task.is_cancelled());
-        assert!(task.is_terminal());
-        assert!(rx.recv().is_err());
+        assert!(only_terminal_task(&rx).is_cancelled());
     }
 
     #[test]
     fn active_task_error_sends_error_message() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (active, _initial, _token) =
-            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 100);
+        let (active, rx) = active_task();
         active.error("disk full".to_string());
 
-        let task = recv_task(&rx);
+        let task = only_terminal_task(&rx);
         assert_eq!(Some("disk full".to_string()), task.error_message());
-        assert!(task.is_terminal());
         assert!(!task.is_cancelled());
-        assert!(rx.recv().is_err());
     }
 
     #[test]

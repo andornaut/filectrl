@@ -115,169 +115,54 @@ fn parse_extended_color(codes: &[&str], i: usize) -> (Option<Color>, usize) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
-    #[test]
-    fn empty_input_produces_no_style() {
-        let (fg, bg, attrs) = parse("");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
+    type Style = (Option<Color>, Option<Color>, Modifier);
+
+    const NONE: Style = (None, None, Modifier::empty());
+
+    fn style(fg: Option<Color>, bg: Option<Color>, attrs: Modifier) -> Style {
+        (fg, bg, attrs)
     }
 
-    #[test]
-    fn unknown_code_is_silently_ignored() {
-        let (fg, bg, attrs) = parse("99");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
+    // ratatui's `Gray` is ANSI 7 (normal white) and `White` is ANSI 15 (bright
+    // white), so the normal codes (37/47) must map to the dimmer one.
+    #[test_case("31" => style(Some(Color::Red), None, Modifier::empty()) ; "standard foreground")]
+    #[test_case("41" => style(None, Some(Color::Red), Modifier::empty()) ; "standard background")]
+    #[test_case("91" => style(Some(Color::LightRed), None, Modifier::empty()) ; "bright foreground")]
+    #[test_case("37" => style(Some(Color::Gray), None, Modifier::empty()) ; "normal white foreground is Gray")]
+    #[test_case("97" => style(Some(Color::White), None, Modifier::empty()) ; "bright white foreground is White")]
+    #[test_case("47" => style(None, Some(Color::Gray), Modifier::empty()) ; "normal white background is Gray")]
+    #[test_case("107" => style(None, Some(Color::White), Modifier::empty()) ; "bright white background is White")]
+    #[test_case("32;42" => style(Some(Color::Green), Some(Color::Green), Modifier::empty()) ; "foreground then background")]
+    #[test_case("01" => style(None, None, Modifier::BOLD) ; "bold")]
+    #[test_case("06" => style(None, None, Modifier::RAPID_BLINK) ; "rapid blink")]
+    #[test_case("09" => style(None, None, Modifier::CROSSED_OUT) ; "crossed out")]
+    #[test_case("01;32" => style(Some(Color::Green), None, Modifier::BOLD) ; "modifier then foreground")]
+    #[test_case("01;00" => NONE ; "reset clears the modifiers set before it")]
+    #[test_case("38;5;200" => style(Some(Color::Indexed(200)), None, Modifier::empty()) ; "extended 256 foreground")]
+    #[test_case("48;5;100" => style(None, Some(Color::Indexed(100)), Modifier::empty()) ; "extended 256 background")]
+    #[test_case("38;2;255;128;0" => style(Some(Color::Rgb(255, 128, 0)), None, Modifier::empty()) ; "extended rgb foreground")]
+    #[test_case("48;2;0;64;128" => style(None, Some(Color::Rgb(0, 64, 128)), Modifier::empty()) ; "extended rgb background")]
+    // The index of an extended color must not be consumed as a code of its own.
+    #[test_case("38;5;200;01" => style(Some(Color::Indexed(200)), None, Modifier::BOLD) ; "extended color then modifier")]
+    // The trailing "0" belongs to the malformed group, so it is not the reset code.
+    #[test_case("01;38;2;255;bad;0" => style(None, None, Modifier::BOLD) ; "a malformed group does not reset the modifiers")]
+    fn parse_produces(line: &str) -> Style {
+        parse(line)
     }
 
-    #[test]
-    fn standard_foreground_color() {
-        let (fg, bg, attrs) = parse("31");
-        assert_eq!(Some(Color::Red), fg);
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn standard_background_color() {
-        let (fg, bg, attrs) = parse("41");
-        assert!(fg.is_none());
-        assert_eq!(Some(Color::Red), bg);
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn bright_foreground_color() {
-        let (fg, _, _) = parse("91");
-        assert_eq!(Some(Color::LightRed), fg);
-    }
-
-    #[test]
-    fn white_codes_map_to_normal_and_bright_intensity() {
-        // ratatui's `Gray` is ANSI 7 (normal white) and `White` is ANSI 15
-        // (bright white), so the normal code (37/47) must be the dimmer one.
-        assert_eq!(parse("37").0, Some(Color::Gray));
-        assert_eq!(parse("97").0, Some(Color::White));
-        assert_eq!(parse("47").1, Some(Color::Gray));
-        assert_eq!(parse("107").1, Some(Color::White));
-    }
-
-    #[test]
-    fn bold_modifier() {
-        let (_, _, attrs) = parse("01");
-        assert_eq!(Modifier::BOLD, attrs);
-    }
-
-    #[test]
-    fn rapid_blink_modifier() {
-        let (_, _, attrs) = parse("06");
-        assert_eq!(Modifier::RAPID_BLINK, attrs);
-    }
-
-    #[test]
-    fn crossed_out_modifier() {
-        let (_, _, attrs) = parse("09");
-        assert_eq!(Modifier::CROSSED_OUT, attrs);
-    }
-
-    #[test]
-    fn combined_fg_and_modifier() {
-        let (fg, _, attrs) = parse("01;32");
-        assert_eq!(Some(Color::Green), fg);
-        assert_eq!(Modifier::BOLD, attrs);
-    }
-
-    #[test]
-    fn reset_code_clears_modifiers_set_before_it() {
-        // Bold is set, then reset: the final result should have no modifiers
-        let (_, _, attrs) = parse("01;00");
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn fg_then_bg_are_both_captured() {
-        let (fg, bg, _) = parse("32;42");
-        assert_eq!(Some(Color::Green), fg);
-        assert_eq!(Some(Color::Green), bg);
-    }
-
-    #[test]
-    fn extended_256_foreground() {
-        let (fg, _, _) = parse("38;5;200");
-        assert_eq!(Some(Color::Indexed(200)), fg);
-    }
-
-    #[test]
-    fn extended_256_background() {
-        let (_, bg, _) = parse("48;5;100");
-        assert_eq!(Some(Color::Indexed(100)), bg);
-    }
-
-    #[test]
-    fn extended_rgb_foreground() {
-        let (fg, _, _) = parse("38;2;255;128;0");
-        assert_eq!(Some(Color::Rgb(255, 128, 0)), fg);
-    }
-
-    #[test]
-    fn extended_rgb_background() {
-        let (_, bg, _) = parse("48;2;0;64;128");
-        assert_eq!(Some(Color::Rgb(0, 64, 128)), bg);
-    }
-
-    #[test]
-    fn truncated_256_sequence_produces_no_style() {
-        // "38;5" is missing the color index: should produce nothing
-        let (fg, bg, attrs) = parse("38;5");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn truncated_rgb_sequence_produces_no_style() {
-        // "38;2;255" is missing G and B: should produce nothing
-        let (fg, bg, attrs) = parse("38;2;255");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn malformed_rgb_group_is_skipped_entirely() {
-        // 300 is not a valid u8; the whole group must be skipped so that
-        // "31" and "40" are not misread as standalone color codes.
-        let (fg, bg, attrs) = parse("38;2;300;31;40");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn malformed_rgb_group_does_not_reset_modifiers() {
-        // The trailing "0" belongs to the malformed group and must not be
-        // misread as the reset code.
-        let (fg, _, attrs) = parse("01;38;2;255;bad;0");
-        assert!(fg.is_none());
-        assert_eq!(Modifier::BOLD, attrs);
-    }
-
-    #[test]
-    fn invalid_256_index_produces_no_style() {
-        let (fg, bg, attrs) = parse("38;5;300");
-        assert!(fg.is_none());
-        assert!(bg.is_none());
-        assert!(attrs.is_empty());
-    }
-
-    #[test]
-    fn extended_color_followed_by_modifier_both_apply() {
-        // 38;5;200 (indexed fg) then 01 (bold): the i += skip must not consume the bold code
-        let (fg, _, attrs) = parse("38;5;200;01");
-        assert_eq!(Some(Color::Indexed(200)), fg);
-        assert_eq!(Modifier::BOLD, attrs);
+    // A malformed extended-color group is skipped whole, so the codes inside it
+    // are never read as standalone colors or modifiers.
+    #[test_case("" ; "empty input")]
+    #[test_case("99" ; "unknown code")]
+    #[test_case("38;5" ; "256 sequence missing its index")]
+    #[test_case("38;5;300" ; "256 index out of range")]
+    #[test_case("38;2;255" ; "rgb sequence missing green and blue")]
+    #[test_case("38;2;300;31;40" ; "rgb component out of range")]
+    fn parse_produces_no_style(line: &str) {
+        assert_eq!(NONE, parse(line));
     }
 }

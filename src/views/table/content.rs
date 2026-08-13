@@ -698,51 +698,6 @@ mod tests {
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
     }
 
-    #[test]
-    fn filter_is_case_insensitive_for_non_ascii_names() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![fx.file_entry("Équipe", 1), fx.file_entry("autre", 1)];
-        let mut content = DirectoryContent::default();
-        content.set_items(fx.directory(), items);
-        content.set_filter("équipe".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["Équipe"]);
-    }
-
-    /// The filter runs against `PathInfo::name`, so a trailing separator
-    /// filters to directories.
-    #[test]
-    fn filter_matches_the_trailing_separator_on_directories() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![
-            fx.dir_entry("reports"),
-            fx.file_entry("report.txt", 1),
-            fx.file_entry("notes.txt", 1),
-        ];
-        let mut content = DirectoryContent::default();
-        content.set_items(fx.directory(), items);
-
-        content.set_filter("/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["reports"]);
-
-        // A name cannot contain the separator, so it only ever matches at the
-        // end.
-        content.set_filter("reports/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["reports"]);
-
-        content.set_filter("report/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert!(names(&content).is_empty());
-
-        content.set_filter("reports/x".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert!(names(&content).is_empty());
-    }
-
     /// `matches_filter` avoids building the displayed name by special-casing
     /// the trailing separator, so it must agree exactly with a plain substring
     /// search of that name, in every listing mode.
@@ -836,6 +791,10 @@ mod tests {
 
     /// Search rows render the path relative to the search root, so the filter
     /// has to reach the directory part, not just the basename.
+    ///
+    /// The property test above builds its `Visibility` by hand, so this and
+    /// `filter_finds_no_separator_in_bookmark_rows` are what pin `visibility()`
+    /// threading the mode through from the content's own state.
     #[test]
     fn filter_matches_the_relative_path_of_search_results() {
         Config::init_test();
@@ -877,58 +836,6 @@ mod tests {
         content.set_filter("/".to_string());
         content.sort(&SortColumn::Name, &SortDirection::Ascending);
         assert!(names(&content).is_empty());
-
-        content.set_filter("report".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["reports", "report.txt"]);
-    }
-
-    /// Non-ASCII names take the allocating branch, which must see the same
-    /// rendered name as the ASCII fast path.
-    #[test]
-    fn filter_matches_the_trailing_separator_on_non_ascii_directories() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![fx.dir_entry("Équipe"), fx.file_entry("Équipe.txt", 1)];
-        let mut content = DirectoryContent::default();
-        content.set_items(fx.directory(), items);
-
-        content.set_filter("équipe/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["Équipe"]);
-    }
-
-    /// A batch filtered mid-stream must apply the same predicate as a re-sort,
-    /// so the trailing separator has to be visible to `append` too.
-    #[test]
-    fn appended_batches_match_the_trailing_separator_on_directories() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![fx.dir_entry("reports"), fx.file_entry("report.txt", 1)];
-        let mut content = DirectoryContent::default();
-        content.set_filter("/".to_string());
-        content.start_listing(fx.directory());
-
-        content.append(&items);
-        assert_eq!(names(&content), vec!["reports"]);
-
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
-        assert_eq!(names(&content), vec!["reports"]);
-    }
-
-    /// A filter that does not mention the separator must still match files,
-    /// which the trailing separator on directories must not disturb.
-    #[test]
-    fn filter_without_a_separator_matches_files_and_directories_alike() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![
-            fx.dir_entry("reports"),
-            fx.file_entry("report.txt", 1),
-            fx.file_entry("notes.txt", 1),
-        ];
-        let mut content = DirectoryContent::default();
-        content.set_items(fx.directory(), items);
 
         content.set_filter("report".to_string());
         content.sort(&SortColumn::Name, &SortDirection::Ascending);

@@ -106,11 +106,15 @@ test_long_filenames_display_without_breaking_navigation() {
 # ------------------------------------------------------------------- symlinks
 
 test_valid_symlink_shows_symlink_type() {
+    trace_openers
     app_start "$(FX)/symlinks"
     send G # valid_link.txt sorts after broken_link.txt
     assert_selected "valid_link.txt"
     assert_screen 'Type:[A-Za-z,]*Symlink'
-    send Enter # opens the target file via the stubbed opener
+    # Opened through the link rather than navigated into, and the target is a
+    # file, so this is the file opener and not a directory change.
+    send Enter
+    assert_opener_ran open_file
     assert_running
     assert_breadcrumbs "$(FX)/symlinks"
 }

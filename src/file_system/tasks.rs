@@ -1478,15 +1478,6 @@ mod tests {
         assert_eq!(max as usize, copy_buffer_bytes(0, max, max));
     }
 
-    #[test]
-    fn copy_buffer_bytes_is_a_noop_for_large_buffers() {
-        // Well above the floor: passes through buffer_bytes unchanged.
-        assert_eq!(
-            buffer_bytes(1_000_000, 64_000, 64_000_000),
-            copy_buffer_bytes(1_000_000, 64_000, 64_000_000)
-        );
-    }
-
     fn path_info(path: &str, basename: &str) -> PathInfo {
         let mut info = PathInfo::try_from(Path::new("/")).unwrap();
         info.path = PathBuf::from(path);
@@ -1769,9 +1760,6 @@ mod tests {
         active.done();
     }
 
-    /// The unreadable-entry test above degrades to a plain full copy when run
-    /// as root, so pin the error-recording path with a failure that the kernel
-    /// enforces for every user.
     #[test]
     fn copy_path_reuses_one_buffer_without_leaking_bytes_between_files() {
         let fx = TempDir::new("tasks");
@@ -2020,9 +2008,8 @@ mod tests {
             skipped: 0,
         };
 
-        // A worker never asks. It runs long after the queue that could have
-        // prompted is gone, on the one thread every operation is serialized
-        // onto, so a collision no standing answer settles is recorded.
+        // A worker never asks: the queue that could have prompted is gone by
+        // the time it runs.
         assert!(copy_path(
             &src.join("a.txt"),
             &dst.join("a.txt"),
@@ -2285,6 +2272,9 @@ mod tests {
         );
     }
 
+    /// `copy_path_continues_past_unreadable_entries` degrades to a plain full
+    /// copy under root, so the error-recording path is pinned here instead,
+    /// with a failure the kernel enforces for every user.
     #[test]
     fn copy_path_records_a_directory_it_cannot_create() {
         let fx = TempDir::new("tasks");

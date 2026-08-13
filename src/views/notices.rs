@@ -392,23 +392,6 @@ mod tests {
     }
 
     #[test]
-    fn set_total_does_not_resurrect_cleared_tasks() {
-        let mut v = view();
-        let (tx, rx) = mpsc::channel();
-        let (mut at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
-        v.update_tasks(initial);
-        v.clear_progress();
-
-        // A late total update (e.g. after a directory size scan) must not
-        // re-add the cleared task.
-        at.set_total(500);
-        let update = recv_task(&rx);
-        assert!(!update.is_new());
-        v.update_tasks(update);
-        assert!(v.build_notices().is_empty());
-    }
-
-    #[test]
     fn updates_for_cleared_tasks_are_not_resurrected() {
         let mut v = view();
         let (tx, rx) = mpsc::channel();
@@ -417,12 +400,17 @@ mod tests {
         v.clear_progress();
         assert!(v.build_notices().is_empty());
 
-        // A late, non-new (in-progress) update for the cleared task is ignored.
+        // Every later update is non-new, whether it carries progress or a
+        // total the directory size scan only just produced, so none of them
+        // may re-add the cleared task.
         at.increment(10);
         at.send_progress();
-        let update = recv_task(&rx);
-        assert!(!update.is_new());
-        v.update_tasks(update);
-        assert!(v.build_notices().is_empty());
+        at.set_total(500);
+        for _ in 0..2 {
+            let update = recv_task(&rx);
+            assert!(!update.is_new());
+            v.update_tasks(update);
+            assert!(v.build_notices().is_empty());
+        }
     }
 }

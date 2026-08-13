@@ -105,12 +105,14 @@ test_open_with_esc_closes() {
 }
 
 test_open_with_enter_runs_the_opener() {
+    trace_openers
     app_start
-    send G k k k # a.txt (opener is a stub, so nothing visible happens)
+    send G k k k # a.txt
     send o
     assert_screen 'Open a\.txt with'
     send Enter
     assert_gone 'Open a\.txt with'
+    assert_opener_ran open_file
     assert_running
     assert_breadcrumbs "$SANDBOX/fixtures"
 }
@@ -199,12 +201,14 @@ test_a_terminal_application_is_offered_when_one_is_configured() {
     assert_screen 'Termy'
 }
 
-# t and w hand a path to a stubbed program, so nothing is visible either way.
-# Sending a key whose effect is visible afterwards is what proves the app
-# processed them: the assertions below are about what must NOT have happened.
+# t and w hand the current directory to a program and change nothing on screen,
+# so each is traced: without the marker these would pass with the key doing
+# nothing at all. The rest of each test is what must NOT have happened.
 test_open_current_directory_runs_its_opener_without_navigating() {
+    trace_openers
     app_start
     send t
+    assert_opener_ran open_directory
     send j
     assert_selected "executables/"
     assert_not_screen 'Alerts'
@@ -212,8 +216,10 @@ test_open_current_directory_runs_its_opener_without_navigating() {
 }
 
 test_open_new_window_leaves_this_one_alone() {
+    trace_openers
     app_start
     send w
+    assert_opener_ran open_filectrl_window
     send j
     assert_selected "executables/"
     assert_not_screen 'Alerts'

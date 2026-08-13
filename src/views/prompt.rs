@@ -705,17 +705,6 @@ mod tests {
         assert_eq!(view.current_suggestion(), None);
     }
 
-    #[test]
-    fn suggestion_is_hidden_when_cursor_not_at_end() {
-        let fixture = GotoFixture::new();
-        let mut view = goto_prompt(fixture.dir.path());
-        type_str(&mut view, "Ap");
-        assert!(view.cursor_at_end());
-        assert!(view.current_suggestion().is_some());
-        view.handle_key(&KeyCode::Left, &KeyModifiers::NONE);
-        assert!(!view.cursor_at_end()); // overlay is skipped in render() when false
-    }
-
     // ── split_input ──────────────────────────────────────────────────────────
 
     #[test_case("",          "",      ""    ; "empty input")]

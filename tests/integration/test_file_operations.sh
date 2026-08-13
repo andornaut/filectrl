@@ -122,14 +122,24 @@ test_delete_file_after_confirm() {
     [ ! -e "$(FX)/a.txt" ] || _fail "file still on disk after delete"
 }
 
+# Only `y` deletes. `n` is the key the prompt offers, but anything else cancels
+# too, rather than falling through to whatever it means in normal mode.
 test_delete_any_other_key_cancels() {
     app_start
     send G k k k # a.txt
     send d
     assert_screen 'Delete 1 item\? \(y/n\)'
     send n
+    assert_gone 'Delete 1 item'
+    assert_screen '# Items:20'
+
+    send d
+    assert_screen 'Delete 1 item\? \(y/n\)'
+    send e # unoffered here, and unbound in normal mode, so nothing else moves
+    assert_gone 'Delete 1 item'
     assert_screen '# Items:20'
     [ -f "$(FX)/a.txt" ] || _fail "file deleted despite cancel"
+    assert_running
 }
 
 test_delete_directory_recursively() {
@@ -172,10 +182,9 @@ test_delete_from_an_unwritable_directory_is_reported() {
 # ------------------------------------------------- tasks (K, Ctrl+p)
 
 # Bytes in the sparse file the copy tests use as a source. Creating it costs no
-# disk, but the copy writes every byte, which is what keeps the task in flight
-# long enough to act on: roughly two seconds at 1 GB/s. Both tests assert an
-# effect that only their key produces, so a copy that somehow finished first
-# fails them rather than passing silently.
+# disk, but the copy writes every byte, which keeps the task in flight long
+# enough to act on. Both tests assert an effect only their key produces, so a
+# copy that finished first fails them rather than passing silently.
 SPARSE_SIZE=2147483648
 
 # Starts copying the sparse file into documents/ and returns once the copy is
@@ -193,11 +202,10 @@ start_big_copy() {
     assert_breadcrumbs "$(FX)/documents"
     send p
     assert_screen 'Copying .*big\.bin'
-    # The notice goes up when the task starts, which is before the worker has
-    # sized the source and opened the destination. Wait for bytes on disk, so
-    # that a test acting on a running copy is acting on one: a key that lands
-    # in that window cancels a copy that has written nothing, and there is no
-    # partial file to make an assertion about.
+    # The notice goes up when the task starts, before the worker has sized the
+    # source and opened the destination. Wait for bytes on disk: a key landing
+    # in that window cancels a copy that has written nothing, leaving no
+    # partial file to assert about.
     wait_until _copy_has_bytes ||
         _fail "the copy wrote nothing to $(FX)/documents/big.bin"
 }

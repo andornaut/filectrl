@@ -1231,33 +1231,12 @@ mod tests {
         .clipboard_follow_up()
     }
 
+    /// The nothing-started, clean and partial outcomes are all covered against
+    /// the real handler above. What only this reaches is the move: a partial
+    /// one has to keep the operation, or the retry would copy what it cut.
     #[test]
-    fn nothing_started_leaves_the_clipboard_alone() {
+    fn a_partial_move_keeps_the_clipboard_under_the_move_operation() {
         let src = PathInfo::try_from(Path::new("/")).unwrap();
-        // The paste is retried as-is, so the clipboard must not be touched.
-        assert_eq!(None, finished(false, 0, Vec::new()));
-        assert_eq!(None, finished(false, 0, vec![src]));
-    }
-
-    #[test]
-    fn a_clean_run_clears_the_clipboard() {
-        assert_eq!(
-            Some(Command::SetClipboardEntry(None)),
-            finished(false, 2, Vec::new())
-        );
-    }
-
-    #[test]
-    fn a_partial_run_reduces_the_clipboard_to_what_was_not_pasted() {
-        let src = PathInfo::try_from(Path::new("/")).unwrap();
-        // A full retry would collide with the destinations just created, so
-        // only what was not pasted is kept, under the original operation.
-        assert_eq!(
-            Some(Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
-                vec![src.clone()]
-            )))),
-            finished(false, 1, vec![src.clone()])
-        );
         assert_eq!(
             Some(Command::SetClipboardEntry(Some(ClipboardEntry::Move(
                 vec![src.clone()]
