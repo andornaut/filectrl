@@ -185,13 +185,16 @@ test_search_with_no_matches_shows_empty_results() {
     assert_breadcrumbs "$(FX)"
 }
 
-test_search_open_result_does_not_crash() {
+test_search_open_result_opens_it_without_leaving_the_results() {
+    trace_openers
     app_start
     send /
     type_text "photo"
     send Enter
     assert_screen 'images/photo\.gif'
-    send g Enter # open the first result (a file; opener is stubbed)
+    send g Enter # open the first result, which is a file
+    assert_opener_ran open_file
+    assert_breadcrumbs "[Search] $(FX)"
     assert_running
 }
 

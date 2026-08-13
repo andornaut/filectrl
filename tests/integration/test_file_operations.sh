@@ -61,8 +61,10 @@ test_rename_file() {
     send C-a # select all, so typing replaces the prefilled name
     type_text "renamed.txt"
     send Enter
-    assert_screen 'renamed\.txt'
-    [ -f "$(FX)/renamed.txt" ] || _fail "renamed file missing on disk"
+    # The prompt closing, not the name: the typed text is on screen from the
+    # moment it is typed, so asserting it would hold before Enter was handled.
+    assert_gone 'Rename '
+    wait_until [ -f "$(FX)/renamed.txt" ] || _fail "renamed file missing on disk"
     [ ! -e "$(FX)/a.txt" ] || _fail "old name still exists on disk"
 }
 

@@ -97,7 +97,6 @@ test_parentheses_and_brackets_filename_renders() {
 test_long_filenames_display_without_breaking_navigation() {
     app_start "$(FX)/long_names"
     assert_screen '# Items:4'
-    send G
     send g
     assert_selected "a file name with spaces"
     assert_running

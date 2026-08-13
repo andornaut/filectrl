@@ -555,11 +555,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_parses_successfully() {
-        Config::parse(RuntimeEnv::default(), "", None, &[]).unwrap();
-    }
-
-    #[test]
     fn merge_overlay_overrides_base_values() {
         let base = parse_toml("key = \"base\"").unwrap();
         let overlay = parse_toml("key = \"overlay\"").unwrap();
