@@ -45,9 +45,8 @@ jobs:
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
-  # Drives the real binary's TUI in tmux (tests/integration). Runs the suites
-  # directly rather than through tests/integration/run.sh, which rebuilds from
-  # scratch in a container; the Dockerfile stays a local convenience.
+  # Drives the real binary's TUI in tmux (tests/integration). The suites run
+  # from the checkout, which `run_tests.sh --committed` reproduces locally.
   integration:
     runs-on: ubuntu-latest
     steps:

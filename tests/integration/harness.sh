@@ -407,6 +407,9 @@ run_tests() {
     # The hermetic config stubs `[openers.linux]` only, so anywhere else a test
     # that opens an entry would launch the real program for its type.
     [ "$(uname -s)" = "Linux" ] || fatal "the integration suites are Linux-only (openers are stubbed per platform)"
+    # Root bypasses the permission bits, so the tests that asserted an
+    # operation was refused would pass with the refusal never happening.
+    [ "$(id -u)" != 0 ] || fatal "the integration suites must not run as root (a refusal test cannot fail as root)"
 
     # A subshell does not inherit the EXIT trap, so a `fatal` inside a test
     # ends only that test and the loop below does the cleanup.

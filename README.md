@@ -467,9 +467,9 @@ push and pull request. See its [README](./tests/integration/README.md) for how
 the harness works and how to add a suite.
 
 ```bash
-tests/integration/run.sh                 # build and run everything in Docker
-tests/integration/run_tests.sh           # run directly (needs tmux and a release build)
-tests/integration/test_navigation.sh     # run a single suite
+tests/integration/run_tests.sh             # all suites (needs tmux and a release build)
+tests/integration/test_navigation.sh       # a single suite
+tests/integration/run_tests.sh --committed # against `git archive HEAD`, as CI checks out
 ```
 
 ### Git hooks
