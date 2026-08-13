@@ -34,11 +34,19 @@ test_externally_renamed_file_updates() {
     assert_gone 'readme\.txt'
 }
 
+# The watcher has already applied any external change by the time a manual
+# refresh could, so a refresh has no effect of its own to observe. What is
+# observable is what it must not disturb: the cursor is moved off the first row
+# first, because asserting the default position would hold whether the refresh
+# reselected it or reset the listing.
 test_manual_refresh_keeps_listing_and_selection() {
     app_start
+    send j j
+    assert_selected "file_types/"
     send C-r
+    wait_settled # give the reload time to land, since nothing else marks it
     assert_screen '# Items:20'
-    assert_selected "documents/"
+    assert_selected "file_types/"
     assert_running
 }
 

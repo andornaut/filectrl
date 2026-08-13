@@ -95,7 +95,7 @@ test_creating_a_directory_raises_the_item_count() {
     send c
     type_text "brand_new"
     send Enter
-    assert_screen 'brand_new'
+    assert_screen 'brand_new/' # the row, not the prompt text still on screen
     assert_items 4
 }
 
@@ -115,7 +115,7 @@ test_an_empty_directory_reports_no_items_and_no_selection() {
     send c
     type_text "empty_dir"
     send Enter
-    assert_screen 'empty_dir'
+    assert_screen 'empty_dir/' # the row, not the prompt text still on screen
     send :
     type_text "$(FX)/empty_dir"
     send Enter
