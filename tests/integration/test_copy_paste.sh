@@ -44,7 +44,7 @@ test_copy_esc_clears_clipboard() {
     app_start
     send y # copy documents/
     assert_screen '\[Copy\]'
-    send Escape
+    send_escape
     assert_gone '\[Copy\]'
     send p
     assert_screen 'Cannot paste: no system clipboard available'

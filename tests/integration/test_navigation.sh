@@ -73,6 +73,9 @@ test_l_and_right_arrow_open_selected_directory() {
     assert_breadcrumbs "$SANDBOX/fixtures/documents"
     send h
     assert_breadcrumbs "$SANDBOX/fixtures"
+    # The path line updates before the listing has streamed in and the cursor
+    # has been restored, and Right opens whatever is selected.
+    assert_selected "documents/"
     send Right
     assert_breadcrumbs "$SANDBOX/fixtures/documents"
 }
@@ -121,7 +124,10 @@ test_navigate_nested_directories_and_back_to_start() {
     app_start
     send Enter # documents
     send h     # fixtures
-    send G     # readme.txt (last)
+    # Both listings stream in batches, so a cursor key sent while one is still
+    # arriving acts on a partial table: G lands on the last row loaded so far.
+    wait_settled
+    send G # readme.txt (last)
     send g     # documents (first)
     send j j j j # images/  (after .hidden_dir)
     assert_selected "images/"
@@ -149,7 +155,7 @@ test_goto_prompt_rejects_nonexistent_path() {
     # An error alert appears and the prompt stays open for correction
     assert_screen 'Path does not exist: /nonexistent_path_xyz'
     assert_screen 'Go to /nonexistent_path_xyz'
-    send Escape # close the prompt
+    send_escape # close the prompt
     send C-a    # clear the alert
     assert_breadcrumbs "$SANDBOX/fixtures"
     assert_running
@@ -159,7 +165,10 @@ test_goto_prompt_esc_cancels() {
     app_start
     send :
     type_text "/etc"
-    send Escape
+    # Assert the prompt is up before dismissing it: assert_gone below would
+    # otherwise pass against a screen where it had not yet appeared.
+    assert_screen 'Go to /etc'
+    send_escape
     assert_gone 'Go to /etc'
     send j
     assert_selected "executables/" # normal mode again; j moves selection

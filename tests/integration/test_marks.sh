@@ -32,7 +32,7 @@ test_marks_accumulate_and_esc_clears() {
     send j v       # hello.md
     assert_marked_count '2 items'
     assert_marked "a.txt"
-    send Escape
+    send_escape
     assert_gone '\[Selected\]'
     [ -z "$(marked_rows)" ] || _fail "marked rows remain after Esc"
 }

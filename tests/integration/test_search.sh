@@ -88,7 +88,7 @@ test_a_filter_narrows_the_results() {
     # Esc resets the view rather than peeling the filter off the search: one
     # press drops both and returns to the directory, unlike a filter over a
     # plain listing, which Esc restores in place.
-    send Escape
+    send_escape
     assert_breadcrumbs "$(FX)"
     assert_gone '\[Filtered\]'
     assert_screen 'documents/'
@@ -154,6 +154,8 @@ SEARCH_FILES=1000
 # be mistaken for one.
 visible_result_names() { screen | awk '$1 ~ /^d[0-9]+\/hit_/ { print $1 }'; }
 
+_has_results() { [ -n "$(visible_result_names)" ]; }
+
 _results_are_ordered() {
     local names
     names="$(visible_result_names)"
@@ -179,6 +181,9 @@ start_slow_search() {
     app_start "$SANDBOX/big"
     search_for "hit_"
     assert_screen '\[Searching\.\.\.\]'
+    # Results stream, so the walk being under way does not mean any have
+    # arrived. There is nothing to select or mark until one has.
+    wait_until _has_results || _fail "the walk produced no results to act on"
 }
 
 # Only a running search can be cancelled, so a walk that somehow finished first
@@ -202,7 +207,7 @@ test_cancelling_a_running_search_keeps_its_results_and_its_marks() {
     # cursor moved with it rather than staying on a row index.
     assert_marked_count '1 item'
     assert_selected_name "$marked"
-    send Escape
+    send_escape
     assert_gone 'Cancelled'
     assert_breadcrumbs "$SANDBOX/big"
     assert_running

@@ -27,7 +27,7 @@ test_filter_esc_restores_full_listing() {
     type_text "txt"
     send Enter
     assert_screen '\[Filtered\] txt'
-    send Escape
+    send_escape
     assert_gone '\[Filtered\]'
     assert_screen 'hello\.md'
     assert_screen 'documents/'
@@ -40,7 +40,7 @@ test_filter_with_no_matches_shows_empty_table() {
     send Enter
     assert_screen '\[Filtered\] zzzznothing'
     assert_not_screen 'a\.txt'
-    send Escape
+    send_escape
     assert_screen 'a\.txt'
 }
 
@@ -168,7 +168,7 @@ test_search_esc_returns_to_directory() {
     type_text "photo"
     send Enter
     assert_breadcrumbs "[Search] $(FX)"
-    send Escape
+    send_escape
     assert_breadcrumbs "$(FX)"
     assert_screen 'documents/'
     assert_screen '# Items:20'
@@ -181,7 +181,7 @@ test_search_with_no_matches_shows_empty_results() {
     send Enter
     assert_breadcrumbs "[Search] $(FX)"
     assert_not_screen 'documents/'
-    send Escape
+    send_escape
     assert_breadcrumbs "$(FX)"
 }
 

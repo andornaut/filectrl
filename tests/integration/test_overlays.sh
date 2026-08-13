@@ -19,7 +19,7 @@ test_help_esc_closes() {
     app_start
     send '?'
     assert_screen 'Normal Mode'
-    send Escape
+    send_escape
     assert_gone 'Normal Mode'
 }
 
@@ -28,7 +28,7 @@ test_help_captures_keys_from_the_table() {
     send '?'
     assert_screen 'Normal Mode'
     send j j # must scroll the help view, not move the table selection
-    send Escape
+    send_escape
     assert_gone 'Normal Mode'
     assert_selected "documents/" # table selection unchanged
 }
@@ -53,7 +53,7 @@ test_open_with_esc_closes() {
     app_start
     send o
     assert_screen 'Open documents/ with'
-    send Escape
+    send_escape
     assert_gone 'Open documents/ with'
     send j
     assert_selected "executables/" # normal mode again

@@ -19,7 +19,7 @@ warn_alert() { # warn_alert SUFFIX
     type_text "$(FX)/zz$1"
     send Enter
     assert_alert warn "Path does not exist: $(FX)/zz$1"
-    send Escape
+    send_escape
 }
 
 # Unlinking needs write permission on the containing directory, so a delete

@@ -58,7 +58,7 @@ test_prompt_reset_clears_a_goto_prompt() {
     assert_screen 'Go to /some/garbage'
     send C-u
     assert_gone '/some/garbage'
-    send Escape
+    send_escape
 }
 
 # Rename opens prefilled, so the same key restores the original name there.
@@ -72,7 +72,7 @@ test_prompt_reset_restores_a_prefilled_rename() {
     assert_screen 'Rename clobbered'
     send C-u
     assert_screen 'Rename a\.txt'
-    send Escape
+    send_escape
 }
 
 test_prompt_cursor_movement_and_insertion() {
@@ -86,7 +86,7 @@ test_prompt_cursor_movement_and_insertion() {
     type_text "z" # replaces the selection
     assert_screen 'Go to z'
     assert_not_screen 'aXbc'
-    send Escape
+    send_escape
 }
 
 test_backspace_deletes_before_cursor() {
@@ -96,7 +96,7 @@ test_backspace_deletes_before_cursor() {
     send BSpace
     type_text "c"
     assert_screen 'Go to abc'
-    send Escape
+    send_escape
 }
 
 run_tests

@@ -62,7 +62,7 @@ test_a_press_while_the_scrollbar_is_hidden_does_not_arm_a_drag() {
     [ -z "$(scrollbar_column)" ] || _fail "one match should not overflow the viewport"
     mouse_down "$SCROLLBAR_X" 3
     mouse_up "$SCROLLBAR_X" 3
-    send Escape # back to all 48 entries, so the scrollbar is drawn again
+    send_escape # back to all 48 entries, so the scrollbar is drawn again
     assert_gone '\[Filtered\]'
     mouse_drag "$SCROLLBAR_X" "$SCROLLBAR_BOTTOM"
     send j # processed after the motion, so the selection below is settled
