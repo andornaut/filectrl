@@ -6,20 +6,22 @@ all inside a tmux pane.
 
 ## Running
 
-In Docker (builds the binary and runs every suite in a container):
-
-```bash
-tests/integration/run.sh
-```
-
-Directly on a host with `tmux` installed (uses `target/release/filectrl`, or
-set `FILECTRL_BIN`):
+Needs `tmux` and a release build (`target/release/filectrl`, or set
+`FILECTRL_BIN`):
 
 ```bash
 cargo build --release
-tests/integration/run_tests.sh       # all suites
-tests/integration/test_navigation.sh # one suite
+tests/integration/run_tests.sh             # all suites
+tests/integration/test_navigation.sh       # one suite
+tests/integration/run_tests.sh --committed # against `git archive HEAD`
 ```
+
+`--committed` takes the fixtures from the commit and the suites from the
+working tree. It is what catches a test that depends on something the
+repository cannot hold: git stores regular files, symlinks and gitlinks, so a
+named pipe or a setuid bit exists only where someone made it, and an ignore
+rule can keep a fixture out of a checkout entirely. A suite that needs one of
+those makes it itself.
 
 ## How it works
 
@@ -35,9 +37,9 @@ tests/integration/test_navigation.sh # one suite
   what the copy/paste suite asserts, and keeps a test run off the developer's
   real selection) and no external colors on the table.
 - The suites are Linux-only, because `test_config.toml` stubs the openers per
-  platform; `run_tests` refuses to run anywhere else. Tests that assert an
-  operation is refused need the permission bits to apply, so the Docker image
-  runs them as a normal user rather than root.
+  platform; `run_tests` refuses to run anywhere else. It also refuses to run as
+  root, which bypasses the permission bits the refusal tests need: as root they
+  would pass with the refusal never happening.
 - Keys are sent with `tmux send-keys`; mouse events (clicks, double-clicks,
   the scroll wheel, and press/move/release drags) are injected as raw SGR
   escape sequences, and `resize_window` exercises the responsive layout.
@@ -61,8 +63,8 @@ tests/integration/test_navigation.sh # one suite
 
 The `integration` job in `.github/workflows/release.yml` builds the release
 binary and runs `run_tests.sh` on every push and pull request; the release
-builds depend on it. That job does not use the Docker image, so build it
-locally with `run.sh` after changing the `Dockerfile`.
+builds depend on it. It runs from a checkout, which is what `--committed`
+reproduces locally.
 
 ## Adding a suite
 
