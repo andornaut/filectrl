@@ -91,7 +91,7 @@ test_bookmarks_view_esc_returns_to_directory() {
     add_bookmark
     send "'"
     assert_breadcrumbs "[Bookmarks] $(BM)"
-    send Escape
+    send_escape
     assert_breadcrumbs "$(FX)"
     assert_screen '# Items:20'
 }

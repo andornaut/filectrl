@@ -25,7 +25,7 @@ test_create_directory_esc_cancels() {
     send c
     assert_screen 'New directory'
     type_text "never_created"
-    send Escape
+    send_escape
     assert_gone 'New directory'
     send j # normal mode again
     assert_selected "executables/"
@@ -88,7 +88,7 @@ test_rename_esc_cancels() {
     assert_screen 'Rename a\.txt'
     send C-a
     type_text "nope.txt"
-    send Escape
+    send_escape
     assert_selected "a.txt"
     [ -f "$(FX)/a.txt" ] || _fail "file renamed despite Esc"
     [ ! -e "$(FX)/nope.txt" ] || _fail "new name exists despite Esc"
@@ -155,7 +155,7 @@ test_delete_marked_files() {
 }
 
 # Unlinking needs write permission on the containing directory, not on the
-# file. The Docker image runs the suites as a normal user for this reason.
+# file, which is why run_tests refuses to run as root.
 test_delete_from_an_unwritable_directory_is_reported() {
     chmod 555 "$(FX)/no_delete"
     app_start "$(FX)/no_delete"
@@ -276,7 +276,7 @@ test_chmod_esc_cancels() {
     assert_screen 'Chmod 1 item \(octal\)'
     send C-a
     type_text "600"
-    send Escape
+    send_escape
     assert_gone 'Chmod 1 item'
     send j
     assert_selected "hello.md" # normal mode again

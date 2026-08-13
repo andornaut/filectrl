@@ -53,7 +53,7 @@ assert_not_status() {
 # Filtering is how a test lands on a named entry without counting rows. The
 # filter stays up while the assertions run: clearing it moves the cursor back.
 pick() {
-    send Escape # drop a filter left by an earlier pick
+    send_escape # drop a filter left by an earlier pick
     send f
     type_text "$1"
     send Enter

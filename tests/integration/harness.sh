@@ -5,6 +5,8 @@
 #                          once the screen has settled and a row is selected)
 #   app_stop               kill the tmux session
 #   send KEY...            send keys (tmux key names: j, Enter, Escape, Left, ...)
+#   send_escape            Escape, separated from whatever is sent next (use
+#                          this for every Escape, never `send Escape`)
 #   type_text TEXT         send literal text (for prompts)
 #   click X Y / double_click X Y / scroll_wheel up|down X Y
 #   drag X Y1 Y2 / mouse_down X Y / mouse_drag X Y / mouse_up X Y
@@ -16,6 +18,7 @@
 #   alert_lines warn|error the alert lines of one kind (via marker theme)
 #   breadcrumbs            the path line above the table header
 #   wait_until COMMAND...  poll until COMMAND succeeds or TIMEOUT elapses
+#   wait_settled [CMD...]  poll until the screen stops changing
 #   assert_screen REGEX / assert_not_screen REGEX / assert_gone REGEX
 #   assert_selected TEXT / assert_breadcrumbs TEXT / assert_running
 #   assert_marked TEXT / assert_marked_count "N items"
@@ -132,14 +135,8 @@ app_start() {
     # The listing streams in batches, so an early key could act on a partial
     # table (e.g. G selecting the last row loaded so far). Wait until a row is
     # selected and the screen has stopped changing before returning.
-    local prev="" cur deadline=$((SECONDS + TIMEOUT))
-    while :; do
-        cur="$(screen)"
-        [ -n "$cur" ] && [ "$cur" = "$prev" ] && _has_selection && return
-        prev="$cur"
-        ((SECONDS >= deadline)) && fatal "screen did not settle after startup; screen: $(screen)"
-        sleep 0.15
-    done
+    wait_settled _has_selection ||
+        fatal "screen did not settle after startup; screen: $(screen)"
 }
 
 _has_selection() { [ -n "$(selected_row)" ]; }
@@ -160,6 +157,21 @@ send() {
 
 type_text() {
     "${TMUX[@]}" send-keys -t "$SESSION" -l -- "$1"
+}
+
+# Escape has to reach the app on its own. Whatever is sent next can land in the
+# same read, and an escape byte followed by another byte is an Alt+key sequence
+# rather than Escape and then that key, so the next key is lost; under load that
+# happened in a fifth of attempts. The pause puts the two in separate reads.
+#
+# Use this for every Escape a test sends. An assertion in between looks like it
+# separates them, but only if it actually waits: one that is already true
+# returns before the app has read the escape at all. A pause rather than
+# wait_settled, because the screen does not settle while a search spinner is
+# animating.
+send_escape() {
+    send Escape
+    sleep 0.2
 }
 
 # SGR mouse events at 1-based screen coordinates. Button 0 is the left button;
@@ -272,6 +284,25 @@ _selected_contains() { selected_row | grep -Fq -- "$1"; }
 # Exact match (after trimming): a substring match would let assertions pass
 # early while the app is still mid-navigation (e.g. /a matching inside /a/b).
 _breadcrumbs_equal() { [ "$(breadcrumbs | sed -e 's/^ *//' -e 's/ *$//')" = "$1" ]; }
+
+# wait_settled [PREDICATE...] : poll until the screen has stopped changing and
+# the predicate, if given, succeeds; or until TIMEOUT elapses.
+#
+# For the points where a test must not act on a screen that is still moving: a
+# directory listing streams in batches, so a cursor key sent while it arrives
+# acts on a partial table.
+wait_settled() {
+    local prev="" cur deadline=$((SECONDS + TIMEOUT))
+    while :; do
+        cur="$(screen)"
+        if [ -n "$cur" ] && [ "$cur" = "$prev" ] && { [ $# -eq 0 ] || "$@"; }; then
+            return 0
+        fi
+        prev="$cur"
+        ((SECONDS >= deadline)) && return 1
+        sleep 0.15
+    done
+}
 
 wait_for() { wait_until _screen_matches "$1"; }
 wait_gone() { wait_until assert_not_now "$1"; }
