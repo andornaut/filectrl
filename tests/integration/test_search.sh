@@ -18,16 +18,6 @@ search_for() {
     send Enter
 }
 
-_selected_name_is() { [ "$(selected_row | awk '{print $1}')" = "$1" ]; }
-
-# The name column, compared exactly. A result's name carries its path relative
-# to the search root, and assert_selected matches a substring, so it cannot
-# tell "readme.txt" from "documents/readme.txt".
-assert_selected_name() {
-    wait_until _selected_name_is "$1" ||
-        _fail "expected the selected row to be exactly '$1' (got: '$(selected_row | awk '{print $1}')')"
-}
-
 # Overrides one [file_system] key for the next app_start. The limits are
 # configurable so that they can be reached without building a tree big enough
 # to hit the shipped ones.

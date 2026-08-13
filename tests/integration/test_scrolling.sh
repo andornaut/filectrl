@@ -59,6 +59,59 @@ test_mouse_wheel_moves_selection() {
     assert_selected "002_another_normal_file.md"
 }
 
+test_the_wheel_clamps_at_both_ends() {
+    scrolling_start
+    local i
+    for i in $(seq 1 8); do scroll_wheel up 40 10; done
+    assert_selected "001_normal_file.txt" # already at the top
+    send G
+    assert_selected "053_bonus_file_three.txt"
+    for i in $(seq 1 8); do scroll_wheel down 40 10; done
+    assert_selected "053_bonus_file_three.txt" # already at the end
+}
+
+# H, M and L are about the window rather than the listing, so they follow it
+# when it scrolls.
+test_visible_row_keys_follow_the_scrolled_window() {
+    scrolling_start
+    send C-d C-d
+    assert_selected "053_bonus_file_three.txt"
+    send H
+    assert_selected "023_short_three.txt"
+    send M
+    assert_selected "036_data_export"
+    send L
+    assert_selected "053_bonus_file_three.txt"
+}
+
+# A name too long for the column wraps onto a second screen row, which is one
+# entry and not two: the cursor steps over it in a single press.
+test_a_wrapped_name_is_still_one_entry() {
+    scrolling_start
+    send g
+    send j j j j j j j j j # nine rows down, over the gap where 007 would be
+    assert_selected "011_this_filename_is_quite_long"
+    assert_screen 'rrow_terminal_column\.txt' # the tail, on its own row
+    send j
+    assert_selected "012_short.txt"
+}
+
+# The selection is what the viewport follows, so a window too small to hold the
+# rows it held before keeps showing it.
+test_shrinking_the_window_keeps_the_selection_visible() {
+    scrolling_start
+    send G
+    assert_selected "053_bonus_file_three.txt"
+    assert_screen '023_short_three' # the top of the bottom-most window at 30 rows
+    resize_window 120 15
+    wait_settled
+    assert_selected "053_bonus_file_three.txt"
+    assert_not_screen '023_short_three' # too far back to fit now
+    resize_window 120 30
+    wait_settled
+    assert_selected "053_bonus_file_three.txt"
+}
+
 # assert_selected only matches visible rows (the highlight marker), so these
 # also prove the viewport scrolled to keep the selection on screen.
 test_viewport_follows_selection_to_the_ends() {

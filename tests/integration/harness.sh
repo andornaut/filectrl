@@ -22,7 +22,8 @@
 #   wait_for_selection     poll until a row is selected (after a navigation,
 #                          before a key that acts on the selection)
 #   assert_screen REGEX / assert_not_screen REGEX / assert_gone REGEX
-#   assert_selected TEXT / assert_breadcrumbs TEXT / assert_running
+#   assert_selected TEXT / assert_selected_name NAME / assert_running
+#   assert_breadcrumbs TEXT
 #   assert_marked TEXT / assert_marked_count "N items"
 #   assert_alert warn|error TEXT
 #   assert_mode OCTAL PATH
@@ -338,6 +339,17 @@ assert_gone() {
 assert_selected() {
     wait_until _selected_contains "$1" ||
         _fail "expected selected row to contain '$1' (selected: '$(selected_row)')"
+}
+
+_selected_name() { selected_row | awk '{print $1}'; }
+_selected_name_is() { [ "$(_selected_name)" = "$1" ]; }
+
+# The name column, compared exactly. Use this wherever one row's name can
+# contain another's: a search result carries its path relative to the search
+# root, so assert_selected cannot tell "readme.txt" from "documents/readme.txt".
+assert_selected_name() {
+    wait_until _selected_name_is "$1" ||
+        _fail "expected the selected row to be exactly '$1' (got: '$(_selected_name)')"
 }
 
 assert_breadcrumbs() {
