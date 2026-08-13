@@ -27,6 +27,8 @@
 #   assert_marked TEXT / assert_marked_count "N items"
 #   assert_alert warn|error TEXT
 #   assert_mode OCTAL PATH
+#   write_desktop_entry NAME EXEC [LINE...]   an application for the picker
+#   write_mime_globs "TYPE:GLOB" ...          a minimal MIME database
 #   run_filectrl ARG...    run the binary outside tmux (RUN_OUTPUT/RUN_STATUS)
 #   assert_run_succeeded / assert_run_failed / assert_run_output REGEX
 #
@@ -89,7 +91,44 @@ ALERT_ERROR="$ALERT_ERROR_TRUECOLOR"
 # The config directory is resolved from the environment, so a host that sets
 # XDG_CONFIG_HOME would otherwise pull the developer's own config into a run
 # that reaches for the default path.
-HERMETIC_ENV=(-u XDG_CONFIG_HOME -u XDG_CONFIG_DIRS)
+#
+# The "open with" picker reads desktop entries from $XDG_DATA_HOME and
+# $XDG_DATA_DIRS and MIME associations from $XDG_CONFIG_DIRS, all of which fall
+# back to the machine's own directories when unset. Those are pointed at the
+# sandbox rather than dropped: unset means /usr/share, so the picker would
+# offer whatever the developer has installed, and Enter would launch it.
+# Set per test, once the sandbox exists.
+HERMETIC_ENV=()
+_set_hermetic_env() {
+    HERMETIC_ENV=(
+        -u XDG_CONFIG_HOME
+        "XDG_CONFIG_DIRS=$SANDBOX/xdg"
+        "XDG_DATA_HOME=$SANDBOX/xdg"
+        "XDG_DATA_DIRS=$SANDBOX/xdg"
+    )
+}
+
+# Writes a desktop entry into the sandbox's applications directory, so a test
+# can give the picker something to offer.
+# write_desktop_entry NAME EXEC [EXTRA_LINE...]
+write_desktop_entry() {
+    local name="$1" exec_line="$2"
+    shift 2
+    mkdir -p "$SANDBOX/xdg/applications"
+    {
+        printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\n' "$name" "$exec_line"
+        printf '%s\n' "$@"
+    } > "$SANDBOX/xdg/applications/$name.desktop"
+}
+
+# A minimal shared-MIME-info database. The real one lives under the data
+# directories the sandbox replaces, so without this nothing resolves a name to
+# a type and the picker has only the configured opener to offer.
+# write_mime_globs "text/plain:*.txt" ...
+write_mime_globs() {
+    mkdir -p "$SANDBOX/xdg/mime"
+    printf '%s\n' "$@" > "$SANDBOX/xdg/mime/globs"
+}
 
 PASS=0
 FAIL=0
@@ -483,6 +522,7 @@ run_tests() {
             fatal "could not copy the test config into the sandbox"
         mkdir -p "$SANDBOX/home"
         touch "$SANDBOX/home/home_marker.txt"
+        _set_hermetic_env
 
         # Plain command (not an `if` condition) so `set -e` stays active
         # inside the subshell and the first failed assertion ends the test.
