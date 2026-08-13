@@ -159,8 +159,7 @@ impl Config {
         // For a bare filename like `--config config.toml`, `parent()` would
         // return `Some("")`, making `config_dir` empty and every path derived
         // from it (bookmarks, relative includes) CWD-relative by accident.
-        let path = std::path::absolute(&path)
-            .map_err(|err| anyhow!("Cannot resolve config path {}: {}", path.display(), err))?;
+        let path = absolute_path(&path)?;
 
         debug!("Loading config from user-provided path: {}", path.display());
         match fs::read_to_string(&path) {
@@ -170,17 +169,16 @@ impl Config {
                 path.parent().map(|p| p.to_path_buf()),
                 &include_paths,
             ),
-            Err(err) => Err(anyhow!(
-                "Could not read config from user-supplied path ({}): {}",
-                path.display(),
-                err
+            Err(error) => Err(anyhow!(
+                "Failed to read config file {}: {error}",
+                path.display()
             )),
         }
     }
 
     fn default_config_dir() -> Result<PathBuf> {
         Ok(ProjectDirs::from("", "", "filectrl")
-            .ok_or_else(|| anyhow!("Cannot determine config directory"))?
+            .ok_or_else(|| anyhow!("Cannot determine the config directory"))?
             .config_dir()
             .to_path_buf())
     }
@@ -189,27 +187,40 @@ impl Config {
         Ok(Self::default_config_dir()?.join(CONFIG_RELATIVE_PATH))
     }
 
-    pub fn write_default() -> Result<()> {
-        let path = Self::default_path()?;
-        fs::create_dir_all(
-            path.parent()
-                .ok_or_else(|| anyhow!("Config path has no parent directory"))?,
-        )?;
-        fs::write(&path, default_config_content())
-            .map_err(|error| anyhow!("Cannot write configuration file to {path:?}: {error}"))?;
-        info!("Wrote the default config to {path:?}");
-        Ok(())
+    /// The config file the CLI is acting on: the one `--config` names, or the
+    /// default. Absolutized, so that what is reported back is the file that was
+    /// touched rather than the argument as it was typed.
+    fn target_path(config_path: Option<PathBuf>) -> Result<PathBuf> {
+        match config_path {
+            Some(path) => absolute_path(&path),
+            None => Self::default_path(),
+        }
     }
 
-    pub fn write_default_themes() -> Result<()> {
-        let dir = Self::default_config_dir()?;
-        fs::create_dir_all(&dir)?;
+    /// Writes the config keys only. The theme is a separate file written by
+    /// [`Config::write_default_themes`], so that the two flags produce two
+    /// files that do not restate each other.
+    pub fn write_default(config_path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
+        let path = Self::target_path(config_path)?;
+        write_new(&path, DEFAULT_CONFIG_BASE, force)?;
+        info!("Wrote the default config to {}", path.display());
+        Ok(path)
+    }
 
-        let theme_path = dir.join(DEFAULT_THEME_FILENAME);
-        fs::write(&theme_path, DEFAULT_THEME)
-            .map_err(|error| anyhow!("Cannot write theme file to {theme_path:?}: {error}"))?;
-        info!("Wrote the default theme to {theme_path:?}");
-        Ok(())
+    /// Writes the theme beside the config, where a relative `include_files`
+    /// entry resolves from.
+    pub fn write_default_themes(config_path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
+        let config = Self::target_path(config_path)?;
+        let dir = config.parent().ok_or_else(|| {
+            anyhow!(
+                "Cannot write the theme: {} has no parent directory",
+                config.display()
+            )
+        })?;
+        let path = dir.join(DEFAULT_THEME_FILENAME);
+        write_new(&path, DEFAULT_THEME, force)?;
+        info!("Wrote the default theme to {}", path.display());
+        Ok(path)
     }
 
     fn parse(
@@ -300,7 +311,7 @@ impl Config {
 
         let raw: RawConfig = value
             .try_into()
-            .map_err(|error| anyhow!("Cannot deserialize config: {error}"))?;
+            .map_err(|error| anyhow!("Failed to deserialize the config: {error}"))?;
 
         validate_file_system(&raw.file_system)?;
 
@@ -352,17 +363,46 @@ impl Config {
                 debug!("No config file found, using the built-in config");
                 Self::parse(env, "", None, &include_paths)
             }
-            Err(err) => Err(anyhow!(
-                "Could not read the config file from the default path ({}): {}",
-                default_path.display(),
-                err
+            Err(error) => Err(anyhow!(
+                "Failed to read config file {}: {error}",
+                default_path.display()
             )),
         }
     }
 }
 
 fn parse_toml(content: &str) -> Result<Value> {
-    toml::from_str::<Value>(content).map_err(|error| anyhow!("Cannot parse TOML: {error}"))
+    toml::from_str::<Value>(content).map_err(|error| anyhow!("Failed to parse TOML: {error}"))
+}
+
+/// Absolutizes without requiring the path to exist, which `canonicalize` does.
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    std::path::absolute(path)
+        .map_err(|error| anyhow!("Failed to resolve {}: {error}", path.display()))
+}
+
+/// Writes `content` to `path`, creating the parent directory. Refuses to
+/// replace an existing file unless `force`, so that a hand-edited config is not
+/// lost to a flag whose only other output is the path it wrote.
+///
+/// Existence is tested without following symlinks: a config symlinked into a
+/// dotfiles repository is a file to refuse, not one to write through.
+fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
+    if !force && path.symlink_metadata().is_ok() {
+        return Err(anyhow!(
+            "Cannot write {}: it already exists; pass --force to replace it",
+            path.display()
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        anyhow!(
+            "Cannot write {}: it has no parent directory",
+            path.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
+    fs::write(path, content).map_err(|error| anyhow!("Failed to write {}: {error}", path.display()))
 }
 
 /// Merges the given include files on top of an existing config value.
@@ -403,7 +443,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
 
     debug!("Loading include file: {}", path.display());
     let content = fs::read_to_string(path)
-        .map_err(|error| anyhow!("Cannot read include file ({}): {}", path.display(), error))?;
+        .map_err(|error| anyhow!("Failed to read include file {}: {error}", path.display()))?;
     let include_value = parse_toml(&content)?;
 
     let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
@@ -482,15 +522,6 @@ fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> 
     Ok(())
 }
 
-/// The default config written by `--write-default-config`: the two embedded
-/// source files concatenated, rather than a serialized merged TOML value, so
-/// their inline documentation comments are preserved. The base config and
-/// theme define disjoint top-level keys, so concatenation yields valid,
-/// complete TOML.
-fn default_config_content() -> String {
-    format!("{DEFAULT_CONFIG_BASE}\n{DEFAULT_THEME}")
-}
-
 /// Merges the embedded default config from its two source files:
 /// base config + theme (which includes both truecolor and 256-color variants).
 fn merge_default_config() -> Result<Value> {
@@ -563,13 +594,25 @@ open_directory = "alacritty --working-directory %s"
         }
     }
 
-    #[test]
-    fn written_default_config_parses_and_preserves_comments() {
-        let content = default_config_content();
-        // The written file must round-trip through the loader.
-        Config::parse(RuntimeEnv::default(), &content, None, &[]).unwrap();
-        // Concatenation (not re-serialization) keeps the documentation comments.
+    /// Both files are embedded source rather than a re-serialized merge, so
+    /// their inline documentation survives being written out, and each must
+    /// round-trip through the loader on its own.
+    #[test_case(DEFAULT_CONFIG_BASE ; "config")]
+    #[test_case(DEFAULT_THEME ; "theme")]
+    fn a_written_default_parses_and_keeps_its_comments(content: &str) {
+        Config::parse(RuntimeEnv::default(), content, None, &[]).unwrap();
         assert!(content.contains('#'), "comments should be preserved");
+    }
+
+    /// The two write flags produce two files that do not restate each other:
+    /// the theme keys belong to the theme file alone.
+    #[test]
+    fn the_default_config_and_theme_do_not_overlap() {
+        assert!(
+            !DEFAULT_CONFIG_BASE.contains("[theme"),
+            "theme keys in config"
+        );
+        assert!(DEFAULT_THEME.contains("[theme"), "no theme keys in theme");
     }
 
     #[test_case("not_a_key = 1", "not_a_key" ; "top-level key")]

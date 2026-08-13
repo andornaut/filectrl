@@ -283,10 +283,12 @@ impl FileSystem {
             let home = directories::UserDirs::new()
                 .map(|dirs| dirs.home_dir().to_path_buf())
                 .ok_or_else(|| anyhow!("Cannot determine the home directory"))?;
-            directory = PathInfo::try_from(home.as_path())
-                .map_err(|error| anyhow!("Failed to read home directory {home:?}: {error}"))?;
-            fs::read_dir(&directory.path)
-                .map_err(|error| anyhow!("Failed to read home directory {home:?}: {error}"))?;
+            directory = PathInfo::try_from(home.as_path()).map_err(|error| {
+                anyhow!("Failed to read home directory {}: {error}", home.display())
+            })?;
+            fs::read_dir(&directory.path).map_err(|error| {
+                anyhow!("Failed to read home directory {}: {error}", home.display())
+            })?;
         }
 
         Ok(self.cd(directory, true).into_commands())
@@ -828,12 +830,16 @@ impl FileSystem {
 pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
     if let Err(error) = fs::create_dir_all(dir) {
         return Err(format!(
-            "Cannot create bookmarks directory {}: {error}",
+            "Failed to create bookmarks directory {}: {error}",
             compact(dir)
         ));
     }
-    let entries = fs::read_dir(dir)
-        .map_err(|error| format!("Cannot read bookmarks directory {}: {error}", compact(dir)))?;
+    let entries = fs::read_dir(dir).map_err(|error| {
+        format!(
+            "Failed to read bookmarks directory {}: {error}",
+            compact(dir)
+        )
+    })?;
     Ok(entries
         .flatten()
         .filter_map(|entry| {
@@ -1596,7 +1602,7 @@ mod tests {
             .expect_err("expected an error for an uncreatable directory");
 
         assert!(
-            error.starts_with("Cannot create bookmarks directory"),
+            error.starts_with("Failed to create bookmarks directory"),
             "unexpected message: {error}"
         );
     }

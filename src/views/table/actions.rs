@@ -23,9 +23,13 @@ impl TableView {
         match directories::BaseDirs::new() {
             Some(base_dirs) => match PathInfo::try_from(base_dirs.home_dir()) {
                 Ok(path) => Command::Open(path).into(),
-                Err(_) => Command::AlertError("Could not access home directory".into()).into(),
+                Err(error) => Command::AlertError(format!(
+                    "Failed to open the home directory {}: {error:#}",
+                    base_dirs.home_dir().display()
+                ))
+                .into(),
             },
-            None => Command::AlertError("Could not determine home directory".into()).into(),
+            None => Command::AlertError("Cannot determine the home directory".into()).into(),
         }
     }
 

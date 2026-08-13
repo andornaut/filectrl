@@ -59,7 +59,10 @@ pub(super) fn stream_cd(
             let path = match entry {
                 Ok(entry) => entry.path(),
                 Err(error) => {
-                    warn!("Could not read an entry in {:?}: {error}", directory.path);
+                    warn!(
+                        "Failed to read an entry in {}: {error}",
+                        directory.path.display()
+                    );
                     error_count += 1;
                     continue;
                 }
@@ -71,7 +74,7 @@ pub(super) fn stream_cd(
                     }
                 }
                 Err(error) => {
-                    warn!("Could not read metadata for {path:?}: {error}");
+                    warn!("Failed to read metadata for {}: {error}", path.display());
                     error_count += 1;
                 }
             }
@@ -233,7 +236,7 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
             return Err(if error.kind() == std::io::ErrorKind::NotFound {
                 anyhow!("{} no longer exists", compact(old_path))
             } else {
-                anyhow!("Cannot rename {}: {error}", compact(old_path))
+                anyhow!("Failed to rename {}: {error}", compact(old_path))
             });
         }
         // Refuse to overwrite: `fs::rename` would silently replace an

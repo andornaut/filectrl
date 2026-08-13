@@ -171,7 +171,7 @@ test_tiny_window_shows_resize_message_and_recovers() {
 
 # -------------------------------------------------------------- color depth
 
-# --colors-256 selects the theme's [theme256] section, a separate palette that
+# --no-truecolor selects the theme's [theme256] section, a separate palette that
 # nothing else in the suite renders. The marker theme defines the selected and
 # marked rows there too, so the usual assertions work unchanged.
 test_256_color_theme_renders_and_navigates() {

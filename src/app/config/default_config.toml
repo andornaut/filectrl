@@ -4,7 +4,8 @@ log_level = "off"
 
 # Include files are merged on top of this config (later files take precedence)
 # Relative paths are resolved from the directory containing this config file
-# include_files = ["my-theme.toml"]
+# Run `filectrl --write-default-themes` to write theme.toml beside this file
+# include_files = ["theme.toml"]
 
 [file_system]
 # Buffer sizes for file operations

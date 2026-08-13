@@ -7,7 +7,7 @@ mod views;
 
 use std::{
     env,
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Write, stdout},
     path::PathBuf,
 };
 
@@ -28,7 +28,7 @@ pub fn run(
     config_path: Option<PathBuf>,
     include_paths: Vec<PathBuf>,
     initial_directory: Option<PathBuf>,
-    colors_256: bool,
+    no_truecolor: bool,
 ) -> Result<()> {
     // Configure logging with a default level before loading config, so that Info+ messages from the
     // config initialization are logged
@@ -41,7 +41,7 @@ pub fn run(
         .map(validate_initial_directory)
         .transpose()?;
 
-    let is_truecolor = supports_truecolor() && !colors_256;
+    let is_truecolor = supports_truecolor() && !no_truecolor;
     let ls_colors = env::var("LS_COLORS").ok();
     let env = RuntimeEnv {
         is_truecolor,
@@ -58,7 +58,14 @@ pub fn run(
     // shell in a broken state.
     install_signal_handlers()?;
 
-    let terminal = CleanupOnDropTerminal::try_new()?;
+    // Checked after everything the user typed has been validated, so that a bad
+    // argument or config is reported before the environment is. Crossterm opens
+    // the controlling terminal itself, so without this a redirected stdout
+    // surfaces as a bare ENXIO that names nothing.
+    if !stdout().is_terminal() {
+        return Err(anyhow!("Cannot start: standard output is not a terminal"));
+    }
+    let terminal = CleanupOnDropTerminal::try_new().context("Failed to initialize the terminal")?;
     App::new(terminal).run(initial_directory)
 }
 
@@ -74,11 +81,17 @@ pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBu
 }
 
 fn validate_initial_directory(path: PathBuf) -> Result<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return Err(anyhow!("Cannot open an empty path"));
+    }
     let canonical = path
         .canonicalize()
-        .with_context(|| format!("Cannot open {}", path.display()))?;
+        .map_err(|error| anyhow!("Failed to open {}: {error}", path.display()))?;
     if !canonical.is_dir() {
-        return Err(anyhow!("Not a directory: {}", canonical.display()));
+        return Err(anyhow!(
+            "Cannot open {}: not a directory",
+            canonical.display()
+        ));
     }
     Ok(canonical)
 }
@@ -134,16 +147,31 @@ mod tests {
         assert_eq!(result, dir.canonicalize().unwrap());
     }
 
+    /// An attempt that the OS refused, so the message carries its cause.
     #[test]
     fn validate_initial_directory_rejects_a_nonexistent_path() {
         let path = env::temp_dir().join("filectrl-does-not-exist-xyz");
-        assert!(validate_initial_directory(path).is_err());
+        let error = validate_initial_directory(path).unwrap_err().to_string();
+        assert!(error.starts_with("Failed to open "), "{error}");
     }
 
+    /// Refused by filectrl rather than by the OS, so the message gives its own
+    /// reason instead of an errno.
     #[test]
     fn validate_initial_directory_rejects_a_regular_file() {
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-        let error = validate_initial_directory(file).unwrap_err();
-        assert!(error.to_string().starts_with("Not a directory:"));
+        let error = validate_initial_directory(file).unwrap_err().to_string();
+        assert!(error.starts_with("Cannot open "), "{error}");
+        assert!(error.ends_with(": not a directory"), "{error}");
+    }
+
+    /// An empty positional would otherwise reach `canonicalize` and be reported
+    /// against a path that renders as nothing at all.
+    #[test]
+    fn validate_initial_directory_rejects_an_empty_path() {
+        let error = validate_initial_directory(PathBuf::new())
+            .unwrap_err()
+            .to_string();
+        assert_eq!("Cannot open an empty path", error);
     }
 }

@@ -597,7 +597,7 @@ macro_rules! list_or_abort {
 /// delete must unlink rather than follow).
 fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandResult> {
     PathInfo::try_from(old_path)
-        .map_err(|error| anyhow!("Cannot {operation} {}: {error}", compact(old_path)).into())
+        .map_err(|error| anyhow!("Failed to {operation} {}: {error}", compact(old_path)).into())
 }
 
 /// Finishes a cross-device move once the copy stage is done, removing the
@@ -1008,7 +1008,7 @@ fn copy_special(
             }
         }
         Err(error) => errors.push(format!(
-            "Cannot create special file {}: {error}",
+            "Failed to create special file {}: {error}",
             compact(new_path)
         )),
     }
@@ -1145,7 +1145,7 @@ fn apply_times_to_path(source: &Path, target: &Path) {
 
 fn apply_permissions(mode: u32, path: &Path) {
     if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
-        warn!("Failed to set permissions on {path:?}: {e}");
+        warn!("Failed to set permissions on {}: {e}", path.display());
     }
 }
 
@@ -1400,7 +1400,7 @@ fn clear_destination(
     }
     if let Err(error) = old_path.symlink_metadata() {
         active.error(format!(
-            "Cannot replace {}: cannot read {}: {error}",
+            "Failed to replace {}: failed to read {}: {error}",
             compact(new_path),
             compact(old_path)
         ));

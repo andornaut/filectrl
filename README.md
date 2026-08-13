@@ -43,7 +43,7 @@ xattr -d com.apple.quarantine filectrl
 Run `filectrl --help` to view the available command line arguments and options:
 
 ```text
-Usage: filectrl [-c <config>] [-i <include...>] [--write-default-config] [--write-default-themes] [--colors-256] [--keybindings] [--] [<directory>]
+Usage: filectrl [-c <config>] [-i <include...>] [--no-truecolor] [--print-keybindings] [--write-default-config] [--write-default-themes] [--force] [-V] [--] [<directory>]
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -54,15 +54,30 @@ Options:
   -c, --config      path to a configuration file
   -i, --include     include a TOML file to merge on top of the config
                     (repeatable; later files take precedence)
+  --no-truecolor    use the 256-color theme instead of detecting truecolor
+                    support
+  --print-keybindings
+                    print the keybindings, then exit
   --write-default-config
-                    write the default config to ~/.config/filectrl/config.toml,
-                    then exit
+                    write the default config to the config path, then exit
   --write-default-themes
-                    write default theme files to ~/.config/filectrl/, then exit
-  --colors-256      force 256-color theme (disables truecolor detection)
-  --keybindings     print the keybindings help, then exit
-  --help, help      display usage information
+                    write the default theme beside the config as theme.toml,
+                    then exit
+  --force           replace an existing file when writing defaults
+  -V, --version     print the version, then exit
+  -h, --help, help  display usage information
 ```
+
+`--print-keybindings`, `--write-default-config`, `--write-default-themes` and
+`--version` each do one thing and exit. At most one may be given, and each
+accepts only the arguments that change what it does: `--config` names the file
+to read or to write, `--include` applies to `--print-keybindings`, and
+`--force` applies to the two that write. Anything else is reported rather than
+ignored.
+
+Both write flags refuse to replace an existing file unless `--force` is given,
+and both print the path they wrote. That path follows `$XDG_CONFIG_HOME` when
+it is set, so it is not always under `~/.config`.
 
 ### Bookmarks
 
@@ -203,7 +218,7 @@ The configuration is drawn from the first of the following:
 1. The default path, if it exists: `~/.config/filectrl/config.toml`
 1. The built-in [default configuration](./src/app/config/default_config.toml)
 
-Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`.
+Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`, or to the path given by `--config`. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
 
 You can also override only the properties you want to change:
 
@@ -275,7 +290,7 @@ Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_t
 
 ### Theming
 
-FileCTRL supports two theme sections: `[theme]` for truecolor terminals and `[theme256]` for 256-color terminals. At startup, FileCTRL detects truecolor support via the `$COLORTERM` environment variable. Use `--colors-256` to force the 256 color theme.
+FileCTRL supports two theme sections: `[theme]` for truecolor terminals and `[theme256]` for 256-color terminals. At startup, FileCTRL detects truecolor support via the `$COLORTERM` environment variable. Use `--no-truecolor` to select the 256-color theme regardless.
 
 #### Style properties
 

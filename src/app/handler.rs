@@ -17,8 +17,11 @@ impl CommandHandler for Handlers {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::SetClipboardEntry(None) | Command::ResetView => {
-                if let Err(e) = self.clipboard.clear() {
-                    return Command::AlertError(format!("Failed to clear clipboard: {e}")).into();
+                if let Err(error) = self.clipboard.clear() {
+                    return Command::AlertError(format!(
+                        "Failed to clear the clipboard: {error:#}"
+                    ))
+                    .into();
                 }
                 CommandResult::Handled
             }
@@ -50,15 +53,19 @@ impl CommandHandler for Handlers {
                     Command::AlertWarn("Cannot paste: no system clipboard available".into()).into()
                 }
                 Ok(None) => CommandResult::Handled,
-                Err(e) => Command::AlertWarn(format!("Cannot paste: {e}")).into(),
+                Err(error) => {
+                    Command::AlertWarn(format!("Failed to read the clipboard: {error:#}")).into()
+                }
             },
-            Command::SetClipboardEntry(Some(entry)) => match self
-                .clipboard
-                .set_clipboard_entry(entry)
-            {
-                Ok(()) => CommandResult::Handled,
-                Err(e) => Command::AlertError(format!("Failed to update clipboard: {e}")).into(),
-            },
+            Command::SetClipboardEntry(Some(entry)) => {
+                match self.clipboard.set_clipboard_entry(entry) {
+                    Ok(()) => CommandResult::Handled,
+                    Err(error) => {
+                        Command::AlertError(format!("Failed to update the clipboard: {error:#}"))
+                            .into()
+                    }
+                }
+            }
             Command::GetClipboardText => {
                 if let Some(text) = self.clipboard.get_text() {
                     Command::ClipboardText(text).into()

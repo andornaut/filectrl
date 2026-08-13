@@ -272,7 +272,10 @@ impl Command {
 
 impl From<Error> for Command {
     fn from(value: Error) -> Self {
-        Self::AlertError(value.to_string())
+        // `{:#}` flattens the cause chain onto one line, joined by ": ". An
+        // alert is a single line, so `to_string` would show only the outermost
+        // message and drop the cause that names what actually went wrong.
+        Self::AlertError(format!("{value:#}"))
     }
 }
 

@@ -44,10 +44,14 @@ assert_status() {
         _fail "expected the status bar to match: $1 (status: $(status_line))"
 }
 
+_status_does_not_match() { ! _status_matches "$1"; }
+
+# Polls, like every other absence assertion here. The status bar is written
+# field by field, so a single read taken the moment the item count lands can
+# catch the frame before the selected detail has cleared.
 assert_not_status() {
-    if _status_matches "$1"; then
+    wait_until _status_does_not_match "$1" ||
         _fail "expected the status bar NOT to match: $1 (status: $(status_line))"
-    fi
 }
 
 # Filtering is how a test lands on a named entry without counting rows. The

@@ -34,7 +34,7 @@
 #   assert_run_succeeded / assert_run_failed / assert_run_output REGEX
 #
 # Set COLORS_256=1 in a test before app_start to run the app with
-# --colors-256; the marker theme covers that palette too. Set EXTRA_INCLUDES
+# --no-truecolor; the marker theme covers that palette too. Set EXTRA_INCLUDES
 # to a list of TOML paths to merge on top of the config.
 #
 # Each test is a shell function named test_*; run_tests discovers and runs
@@ -66,7 +66,7 @@ TIMEOUT="${FILECTRL_IT_TIMEOUT:-5}"
 # Set by a test before app_start to override config or keybindings.
 EXTRA_INCLUDES=()
 
-# Set to 1 by a test before app_start to run the app with --colors-256. The
+# Set to 1 by a test before app_start to run the app with --no-truecolor. The
 # marker theme carries a [theme256] section too, so selected_row/marked_rows
 # work in both modes; only the SGR fragment they look for differs.
 COLORS_256=0
@@ -146,7 +146,7 @@ app_start() {
     local dir="${1:-$SANDBOX/fixtures}"
     local color_args=()
     if ((COLORS_256)); then
-        color_args=(--colors-256)
+        color_args=(--no-truecolor)
         MARKER="$MARKER_256"
         MARKED_MARKER="$MARKED_MARKER_256"
         ALERT_WARN="$ALERT_WARN_256"

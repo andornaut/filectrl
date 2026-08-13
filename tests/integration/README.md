@@ -45,7 +45,7 @@ those makes it itself.
   escape sequences, and `resize_window` exercises the responsive layout.
 - `run_filectrl` runs the binary to completion outside tmux and captures its
   output and exit status, for the flags that print or write something and exit
-  (`--keybindings`, `--write-default-config`). `test_config_cli.sh` uses it to
+  (`--print-keybindings`, `--write-default-config`). `test_config_cli.sh` uses it to
   resolve the config chain and read back which layer won, without a terminal.
 - Assertions poll `tmux capture-pane` until they match or time out, so tests
   wait exactly as long as the app takes. `app_start` returns only once the

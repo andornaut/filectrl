@@ -176,7 +176,7 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
     let command_str = &parts[0];
     let paths: Vec<_> = parts[1..]
         .iter()
-        .map(|p| PathInfo::try_from(p.as_str()).with_context(|| format!("Cannot access '{p}'")))
+        .map(|p| PathInfo::try_from(p.as_str()).with_context(|| format!("Failed to access {p}")))
         .collect::<Result<Vec<_>, _>>()?;
     match command_str.as_str() {
         "cp" => Ok(ClipboardEntry::Copy(paths)),

@@ -150,9 +150,10 @@ impl PromptView {
                 } else {
                     match PathInfo::try_from(&path) {
                         Ok(info) => Command::Open(info),
-                        Err(error) => {
-                            Command::AlertWarn(format!("Cannot access {}: {error}", path.display()))
-                        }
+                        Err(error) => Command::AlertWarn(format!(
+                            "Failed to access {}: {error}",
+                            path.display()
+                        )),
                     }
                 }
             }
