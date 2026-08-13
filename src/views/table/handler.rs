@@ -79,30 +79,17 @@ impl CommandHandler for TableView {
                 if self.content.is_showing_bookmarks() {
                     return Command::GetBookmarks.into();
                 }
-                // Same directory reloaded: keep the filter, and let
-                // begin_directory restore the selection once the stream
-                // completes.
+                // Same directory reloaded: keep the filter, the marks and the
+                // selection, and let begin_directory/finish_directory restore
+                // the last two once the stream completes. Nothing is announced
+                // here: the count does not change, and the post-load snapshot
+                // carries whatever the reload could not find again. A load
+                // cancelled before then is cancelled by a search or the
+                // bookmarks view, each of which clears the marks and announces
+                // it itself.
                 self.stream_generation = *generation;
-                let had_marks = self.has_marks();
-                // Captured before begin_directory drops the selection.
-                let selected = self.selected_path().cloned();
                 self.begin_directory(directory.clone(), Reselect::Keep);
-                // The reload invalidates the index-based marks, so the notice
-                // must be reset in this same broadcast: the post-load snapshot
-                // never arrives if the load is cancelled first (by a search or
-                // the bookmarks view). The mark count is the only field that
-                // changes; `selection_snapshot` cannot be used here because it
-                // would read the selection `begin_directory` just dropped and
-                // clear StatusView's panel for the length of the reload.
-                if had_marks {
-                    Command::SelectionChanged {
-                        selected,
-                        mark_count: 0,
-                    }
-                    .into()
-                } else {
-                    CommandResult::Handled
-                }
+                CommandResult::Handled
             }
             Command::ListingBatch { items, generation } => {
                 // Only an in-flight load or search accepts batches; stale

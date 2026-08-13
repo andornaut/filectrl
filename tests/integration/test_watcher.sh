@@ -61,16 +61,30 @@ test_deleting_the_selected_entry_holds_the_cursor_position() {
     assert_screen '# Items:19'
 }
 
-# Marks are row indices, and a reload can renumber every row, so it drops them.
-test_an_external_change_clears_the_marks() {
+# Marks are stored as row indices, but they name entries: a reload finds those
+# entries again, so a file appearing from outside does not drop a selection the
+# user is part way through making.
+test_an_external_change_keeps_the_marks() {
     app_start
     send v j v
     assert_marked_count '2 items'
     assert_marked "documents/"
     touch "$(FX)/zz_appeared.txt"
     assert_screen 'zz_appeared\.txt'
-    assert_gone '\[Selected\]'
-    [ -z "$(marked_rows)" ] || _fail "marked rows survived the reload: $(marked_rows | tr '\n' '|')"
+    assert_marked_count '2 items'
+    assert_marked "documents/"
+    assert_selected "executables/"
+}
+
+# The entry a mark named is gone, so the mark goes with it, and only it.
+test_an_external_delete_drops_only_that_mark() {
+    app_start
+    send v j v # documents/ and executables/
+    assert_marked_count '2 items'
+    rm -rf "$(FX)/documents"
+    assert_gone 'documents/'
+    assert_marked_count '1 item'
+    assert_selected "executables/"
 }
 
 # The clipboard holds paths rather than positions, so a reload leaves it alone

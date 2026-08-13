@@ -23,6 +23,10 @@ pub(super) struct PendingLoad {
     prev_directory: Option<PathInfo>,
     prev_selected: Option<PathInfo>,
     prev_selected_index: Option<usize>,
+    /// The marked entries, to be found again once the new listing is sorted.
+    /// Only populated for a reload of the same directory; a navigation leaves
+    /// it empty, because a mark on an entry of another directory means nothing.
+    prev_marked: Vec<PathInfo>,
 }
 
 impl TableView {
@@ -37,8 +41,18 @@ impl TableView {
             prev_directory: self.content.directory().cloned(),
             prev_selected: self.selected_path().cloned(),
             prev_selected_index: self.table_state.selected(),
+            // Reselect::Keep is exactly the reload of the same directory, so it
+            // is also what says the marks describe entries the new listing will
+            // hold again.
+            prev_marked: match reselect {
+                Reselect::Keep => self.marked_paths(),
+                Reselect::Top => Vec::new(),
+            },
         };
 
+        // The listing is emptied and streams back in, so the indices these
+        // marks are stored as would land on whatever rows arrive first.
+        // finish_directory finds the entries again once it is sorted.
         self.clear_marks();
         self.table_state.select(None);
         self.first_visible_item = 0;
@@ -50,8 +64,21 @@ impl TableView {
     pub(super) fn finish_directory(&mut self) -> CommandResult {
         self.content
             .finalize_listing(self.columns.sort_column(), self.columns.sort_direction());
-        // Marks are stored by index, so the new listing invalidates them.
+        // Marks are stored by index and the listing has just been rebuilt, so
+        // they are re-derived from the entries they named. A reload is not a
+        // reorder the user asked for: an unrelated file appearing in the
+        // directory must not drop a selection they are part way through making.
+        // An entry renamed or removed while the listing reloaded loses its
+        // mark, which is the honest answer for an entry that is no longer
+        // there. By path rather than inode: two hard links to one file share a
+        // device and inode, so inode identity would spread one mark across
+        // every name the file has.
         self.clear_marks();
+        let marked = std::mem::take(&mut self.pending_load.prev_marked);
+        for index in self.content.find_all_by_path(&marked) {
+            self.marks.insert(index);
+        }
+        // Ends in `select`, whose snapshot then carries the restored count.
         self.restore_selection()
     }
 
@@ -149,8 +176,8 @@ impl TableView {
 
     /// Reorder the visible items, carrying the marks across.
     ///
-    /// Every other reorder is one the user asked for (a different sort column,
-    /// a filter, a reload), and dropping index-based marks is the honest answer
+    /// Every other reorder here is one the user asked for (a different sort
+    /// column, a filter), and dropping index-based marks is the honest answer
     /// to those. A search ending is not: results stream so they can be marked
     /// before the walk is done, and neither finishing nor being cancelled is a
     /// request to reorder them. The marks are re-derived from the entries they
@@ -383,35 +410,90 @@ mod tests {
         assert_eq!(result, CommandResult::Handled);
     }
 
-    #[test]
-    fn refreshed_directory_clears_marks_and_resets_the_mark_count_notice() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = table_with_two_marks(&fx);
-
-        // Simulates the watcher-triggered reload after files change on disk.
-        // The snapshot must ride this broadcast: if a search or the bookmarks
-        // view cancels the load, no post-load snapshot ever arrives and the
-        // notice would keep claiming marks that are already gone.
+    /// Drives the reload a watcher event starts, through to its completion.
+    fn reload(table: &mut TableView, fx: &Fixture, children: Vec<PathInfo>) -> CommandResult {
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,
         });
+        // Nothing is announced up front: the marks are still the user's, and
+        // saying otherwise would blank the notice for the length of the reload.
+        assert_eq!(result, CommandResult::Handled);
+        table.handle_command(&Command::ListingBatch {
+            items: children,
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 })
+    }
+
+    #[test]
+    fn a_reload_carries_the_marks_across() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // A file appearing in the directory is not a request to drop what the
+        // user has selected, so the marks come back on the same two entries.
+        reload(
+            &mut table,
+            &fx,
+            vec![
+                fx.file("a", 1),
+                fx.file("b", 1),
+                fx.file("c", 1),
+                fx.file("d", 1),
+            ],
+        );
+
+        assert_eq!(table.marks.len(), 2);
+        let marked: Vec<String> = table
+            .marked_paths()
+            .iter()
+            .map(|info| info.display_name.clone())
+            .collect();
+        assert_eq!(vec!["a".to_string(), "b".to_string()], marked);
+    }
+
+    #[test]
+    fn a_reload_drops_a_mark_on_an_entry_that_is_gone() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // "a" was removed while the listing reloaded. Nothing names it any
+        // more, so its mark goes with it and "b" keeps its own.
+        reload(&mut table, &fx, vec![fx.file("b", 1), fx.file("c", 1)]);
+
+        assert_eq!(table.marks.len(), 1);
+        assert_eq!(
+            vec!["b".to_string()],
+            table
+                .marked_paths()
+                .iter()
+                .map(|info| info.display_name.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn navigating_away_does_not_carry_the_marks() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // A mark names an entry of the directory being left, so it means
+        // nothing in the one being entered, even if a name happens to repeat.
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1), fx.file("b", 1)],
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
 
         assert!(!table.has_marks());
-        assert_mark_reset_snapshot(&result);
-        // The snapshot carries the pre-reload selection so StatusView keeps
-        // showing it instead of blanking until the stream completes.
-        let CommandResult::HandledWith(command) = &result else {
-            panic!("expected a snapshot, got {result:?}");
-        };
-        let Command::SelectionChanged { selected, .. } = &**command else {
-            panic!("expected SelectionChanged, got {command:?}");
-        };
-        assert_eq!(
-            selected.as_ref().map(|info| info.display_name.clone()),
-            Some("b".to_string())
-        );
     }
 
     #[test]
