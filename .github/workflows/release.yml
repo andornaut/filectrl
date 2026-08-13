@@ -105,8 +105,8 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: target/${{ matrix.target }}/release/filectrl
 
-  # Rolling build of main. Ships the bare Linux binary, matching the sibling
-  # tools; the tarballs are reserved for versioned releases.
+  # Rolling build of main. Ships every platform the matrix builds; the tarballs
+  # are reserved for versioned releases.
   dev-release:
     needs: build
     runs-on: ubuntu-latest
@@ -118,11 +118,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
-      - name: Download build artifact
+      # Downloaded unmerged: every artifact holds a file called `filectrl`, so
+      # merging them would have each platform overwrite the one before it.
+      - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
-          name: filectrl-linux
           path: artifacts
+          pattern: filectrl-*
+
+      # An asset whose name does not carry its platform is one a consumer has to
+      # be told about out of band, so each binary takes the name of the
+      # directory its artifact arrived in.
+      - name: Name each binary for its platform
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            mv "$name/filectrl" "$name.bin"
+            rmdir "$name"
+            mv "$name.bin" "$name"
+          done
+
+      # `dev` is a moving tag, so a download that straddles a re-cut would
+      # otherwise install a mixed set silently.
+      - name: Write checksums
+        run: cd artifacts && sha256sum filectrl-* > checksums.txt
 
       # A release follows its tag, and updating one below does not move the tag
       # GitHub already has, so `dev` has to be repointed here or the release's
@@ -148,7 +168,7 @@ jobs:
           name: dev
           body: Latest build from main branch
           make_latest: "false"
-          files: artifacts/filectrl
+          files: artifacts/*
 
   # upload-rust-binary-action uploads to an existing release rather than
   # creating one, so the release has to exist before the matrix fans out.
