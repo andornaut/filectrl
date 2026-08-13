@@ -107,7 +107,9 @@ test_rename_bookmark() {
     send C-a
     type_text "favs"
     send Enter
-    assert_screen 'favs'
+    # The prompt closing, not the name: "favs" is on screen from the moment it
+    # is typed, so asserting it would hold before the rename was submitted.
+    assert_gone 'Rename fixtures'
     wait_until [ -L "$(BM)/favs" ] || _fail "renamed symlink missing"
     [ ! -e "$(BM)/fixtures" ] || _fail "old symlink name still exists"
     [ "$(readlink "$(BM)/favs")" = "$(FX)" ] || _fail "rename changed the target"

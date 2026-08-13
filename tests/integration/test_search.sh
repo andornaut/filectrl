@@ -228,11 +228,17 @@ test_the_cancel_key_does_nothing_once_the_walk_has_finished() {
     app_start
     search_for "readme"
     assert_screen 'scrolling/008_readme\.txt'
+    # The root is read first, so its own readme.txt is the first hit, and the
+    # cursor follows that entry through the ordering the walk's exit applies.
+    # Exactly, not as a substring: all three results end in readme.txt.
+    assert_selected_name "readme.txt"
     send K
-    send j # a key whose effect is visible, so the K above was processed first
-    assert_selected "readme.txt"
+    # The key reached the handler and found nothing to cancel, rather than
+    # relabelling a search that had already announced its exit.
+    assert_alert warn "No active task to cancel"
     assert_not_screen 'Cancelled'
-    assert_screen 'scrolling/008_readme\.txt'
+    send j # a key whose effect is visible, so the K above was processed first
+    assert_selected_name "scrolling/008_readme.txt"
 }
 
 run_tests
