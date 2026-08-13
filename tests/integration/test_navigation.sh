@@ -157,7 +157,8 @@ test_goto_prompt_rejects_nonexistent_path() {
     assert_screen 'Path does not exist: /nonexistent_path_xyz'
     assert_screen 'Go to /nonexistent_path_xyz'
     send_escape # close the prompt
-    send C-a    # clear the alert
+    assert_gone 'Go to /nonexistent'
+    send C-a # clear the alert
     assert_breadcrumbs "$SANDBOX/fixtures"
     assert_running
 }

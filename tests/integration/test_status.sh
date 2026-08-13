@@ -53,7 +53,13 @@ assert_not_status() {
 # Filtering is how a test lands on a named entry without counting rows. The
 # filter stays up while the assertions run: clearing it moves the cursor back.
 pick() {
-    send_escape # drop a filter left by an earlier pick
+    # Only when there is one to drop, and wait for it to go: an escape sent
+    # into a view with nothing to reset has no effect to wait for, and one that
+    # is missed would leave the next key typed into the filter prompt.
+    if screen | grep -q '\[Filtered\]'; then
+        send_escape
+        assert_gone '\[Filtered\]'
+    fi
     send f
     type_text "$1"
     send Enter

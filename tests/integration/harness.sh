@@ -212,6 +212,11 @@ type_text() {
 # returns before the app has read the escape at all. A pause rather than
 # wait_settled, because the screen does not settle while a search spinner is
 # animating.
+#
+# The pause makes the loss unlikely, not impossible: a machine busy enough not
+# to read for that long can still take the two together. Where the next key
+# depends on the escape having landed, follow it with an assertion of what the
+# escape closed, so the wait is on the effect rather than on a duration.
 send_escape() {
     send Escape
     sleep 0.2

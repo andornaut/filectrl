@@ -20,6 +20,11 @@ warn_alert() { # warn_alert SUFFIX
     send Enter
     assert_alert warn "Path does not exist: $(FX)/zz$1"
     send_escape
+    # Wait for the prompt to actually close. The pause in send_escape makes the
+    # escape its own read rather than the head of an Alt sequence, but on a busy
+    # machine it can still be missed, and the next key would then be typed into
+    # a prompt that is still open.
+    assert_gone ' Go to '
 }
 
 # Unlinking needs write permission on the containing directory, so a delete
