@@ -96,6 +96,7 @@ test_backspace_and_left_arrow_go_to_parent() {
     assert_breadcrumbs "$SANDBOX/fixtures/documents"
     send BSpace
     assert_breadcrumbs "$SANDBOX/fixtures"
+    wait_for_selection # Enter opens the selected row, which streams in after
     send Enter
     assert_breadcrumbs "$SANDBOX/fixtures/documents"
     send Left
