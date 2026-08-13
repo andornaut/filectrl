@@ -156,6 +156,13 @@ visible_result_names() { screen | awk '$1 ~ /^d[0-9]+\/hit_/ { print $1 }'; }
 
 _has_results() { [ -n "$(visible_result_names)" ]; }
 
+# The moving indicator is a notice in its own right, on the row above the one
+# naming the query, and only while the walk is running.
+_spinner_is_above_the_search_notice() {
+    screen | tail -3 | head -1 | grep -q '█' &&
+        screen | tail -2 | head -1 | grep -q '\[Searching\.\.\.\]'
+}
+
 _results_are_ordered() {
     local names
     names="$(visible_result_names)"
@@ -181,6 +188,8 @@ start_slow_search() {
     app_start "$SANDBOX/big"
     search_for "hit_"
     assert_screen '\[Searching\.\.\.\]'
+    wait_until _spinner_is_above_the_search_notice ||
+        _fail "expected the spinner on its own row above the search notice"
     # Results stream, so the walk being under way does not mean any have
     # arrived. There is nothing to select or mark until one has.
     wait_until _has_results || _fail "the walk produced no results to act on"
