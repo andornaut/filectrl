@@ -29,6 +29,7 @@
 #   assert_mode OCTAL PATH
 #   write_desktop_entry NAME EXEC [LINE...]   an application for the picker
 #   write_mime_globs "TYPE:GLOB" ...          a minimal MIME database
+#   cleanup_later PATH     remove a path outside the sandbox along with it
 #   run_filectrl ARG...    run the binary outside tmux (RUN_OUTPUT/RUN_STATUS)
 #   assert_run_succeeded / assert_run_failed / assert_run_output REGEX
 #
@@ -478,10 +479,24 @@ assert_run_output() {
 
 # --------------------------------------------------------------------- runner
 
+# cleanup_later PATH : have a path outside the sandbox removed along with it,
+# whether the test passes or fails. Recorded in a file rather than a variable,
+# because each test runs in a subshell and anything it assigns is gone by the
+# time the sandbox is removed.
+cleanup_later() {
+    printf '%s\n' "$1" >> "$SANDBOX/.cleanup_later"
+}
+
 # A test may leave a directory unwritable (the permission-denied cases), which
 # `rm -rf` cannot descend into, so restore the modes we need first.
 remove_sandbox() {
     [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] || return 0
+    if [ -f "$SANDBOX/.cleanup_later" ]; then
+        local path
+        while IFS= read -r path; do
+            [ -n "$path" ] && rm -rf "$path"
+        done < "$SANDBOX/.cleanup_later"
+    fi
     chmod -R u+rwX "$SANDBOX" 2>/dev/null
     rm -rf "$SANDBOX"
 }

@@ -191,6 +191,79 @@ test_paste_conflict_overwrite_key_is_ignored_for_a_directory() {
     assert_screen '\[Copy\]'
 }
 
+# ------------------------------------------------------ across filesystems
+
+# A move within one filesystem is a rename; across two it is a copy followed by
+# a delete of the source, which is a different path entirely (rename fails with
+# EXDEV). /dev/shm is a tmpfs, so it is a different filesystem from wherever
+# the sandbox lives.
+shm_dir() { echo "/dev/shm/filectrl-it-${SANDBOX##*/}"; }
+
+# Fails loudly rather than quietly exercising the rename path if the two turn
+# out to be one filesystem, or if there is no /dev/shm to use.
+start_shm_dir() {
+    cleanup_later "$(shm_dir)" # removed with the sandbox, pass or fail
+    mkdir -p "$(shm_dir)" || _fail "could not create $(shm_dir)"
+    [ "$(stat -c %d "$(shm_dir)")" != "$(stat -c %d "$SANDBOX")" ] ||
+        _fail "$(shm_dir) is on the same filesystem as the sandbox"
+}
+
+test_a_cut_across_filesystems_moves_the_file() {
+    start_shm_dir
+    app_start
+    send G k k k # a.txt
+    assert_selected "a.txt"
+    send x
+    assert_screen '\[Cut\]'
+    send :
+    type_text "$(shm_dir)"
+    send Enter
+    assert_breadcrumbs "$(shm_dir)"
+    send p
+    assert_gone '\[Cut\]' # a clean move clears the clipboard
+    wait_until [ -f "$(shm_dir)/a.txt" ] || _fail "the file did not arrive"
+    wait_until [ ! -e "$(FX)/a.txt" ] || _fail "the source survived a clean move"
+}
+
+test_a_cut_across_filesystems_moves_a_whole_directory() {
+    start_shm_dir
+    app_start
+    send x # documents/ is selected on start
+    assert_screen '\[Cut\]'
+    send :
+    type_text "$(shm_dir)"
+    send Enter
+    assert_breadcrumbs "$(shm_dir)"
+    send p
+    assert_gone '\[Cut\]'
+    wait_until [ -f "$(shm_dir)/documents/notes.md" ] ||
+        _fail "the directory did not arrive with its contents"
+    wait_until [ ! -e "$(FX)/documents" ] || _fail "the source directory survived"
+}
+
+# Each marked path is its own move, so skipping one collision leaves that
+# source in place and the others still move.
+test_a_skipped_collision_keeps_only_that_source() {
+    start_shm_dir
+    printf 'already there\n' > "$(shm_dir)/a.txt"
+    app_start
+    send G k k k # a.txt
+    assert_selected "a.txt"
+    send v j v # mark a.txt and hello.md
+    send x
+    assert_screen '\[Cut\] 2 items'
+    send :
+    type_text "$(shm_dir)"
+    send Enter
+    assert_breadcrumbs "$(shm_dir)"
+    send p
+    assert_screen '"a\.txt" exists: \[s\]kip'
+    send s
+    wait_until [ ! -e "$(FX)/hello.md" ] || _fail "the entry that moved kept its source"
+    [ -f "$(FX)/a.txt" ] || _fail "the skipped entry lost its source"
+    grep -q "already there" "$(shm_dir)/a.txt" || _fail "the skipped entry was overwritten"
+}
+
 test_second_paste_after_clean_paste_alerts() {
     app_start
     send G k k k y # copy a.txt

@@ -47,6 +47,48 @@ test_filename_with_spaces_can_be_deleted() {
         _fail "file with spaces still on disk"
 }
 
+# A file name is bytes, not text, so one that is not valid UTF-8 is legal on
+# disk. It is rendered through a lossy conversion, and the path that reaches
+# the filesystem is still the original bytes: the rename below would fail if
+# the app acted on what it drew.
+test_a_name_that_is_not_valid_utf8_renders_and_can_be_renamed() {
+    local bad
+    bad=$(printf 'bad_\xff_name.txt')
+    printf 'contents\n' > "$(FX)/$bad"
+    app_start
+    assert_screen 'bad_.*_name\.txt'
+    send f
+    type_text "bad_"
+    send Enter
+    assert_screen '\[Filtered\] bad_'
+    send g
+    assert_selected "_name.txt"
+    send r
+    assert_screen 'Rename bad_'
+    send C-a
+    type_text "now_valid.txt"
+    send Enter
+    wait_until [ -f "$(FX)/now_valid.txt" ] || _fail "the renamed file is missing"
+    [ ! -e "$(FX)/$bad" ] || _fail "the original name still exists"
+    grep -q contents "$(FX)/now_valid.txt" || _fail "the rename lost the contents"
+}
+
+test_a_name_that_is_not_valid_utf8_can_be_deleted() {
+    local bad
+    bad=$(printf 'bad_\xff_name.txt')
+    printf 'contents\n' > "$(FX)/$bad"
+    app_start
+    send f
+    type_text "bad_"
+    send Enter
+    assert_screen '\[Filtered\] bad_'
+    send g d
+    assert_screen 'Delete 1 item\? \(y/n\)'
+    send y
+    wait_until [ ! -e "$(FX)/$bad" ] || _fail "the file is still on disk"
+    assert_running
+}
+
 test_parentheses_and_brackets_filename_renders() {
     app_start "$(FX)/special_chars"
     assert_screen '\(parentheses\) and \[brackets\]\.txt'
