@@ -178,8 +178,8 @@ test_delete_from_an_unwritable_directory_is_reported() {
 # fails them rather than passing silently.
 SPARSE_SIZE=2147483648
 
-# Starts copying the sparse file into documents/ and returns once the operation
-# notice is up.
+# Starts copying the sparse file into documents/ and returns once the copy is
+# under way, so that a key sent after this acts on a copy in flight.
 start_big_copy() {
     # Long enough for a slow disk to finish 2 GiB; the assertions themselves
     # settle much sooner than this.
@@ -193,8 +193,16 @@ start_big_copy() {
     assert_breadcrumbs "$(FX)/documents"
     send p
     assert_screen 'Copying .*big\.bin'
+    # The notice goes up when the task starts, which is before the worker has
+    # sized the source and opened the destination. Wait for bytes on disk, so
+    # that a test acting on a running copy is acting on one: a key that lands
+    # in that window cancels a copy that has written nothing, and there is no
+    # partial file to make an assertion about.
+    wait_until _copy_has_bytes ||
+        _fail "the copy wrote nothing to $(FX)/documents/big.bin"
 }
 
+_copy_has_bytes() { [ -s "$(FX)/documents/big.bin" ]; }
 _copy_is_complete() { [ "$(stat -c %s "$(FX)/documents/big.bin" 2>/dev/null)" = "$SPARSE_SIZE" ]; }
 
 # The size once the worker has stopped writing, whether it was cancelled or ran
