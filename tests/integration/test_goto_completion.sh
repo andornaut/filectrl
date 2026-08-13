@@ -50,6 +50,61 @@ test_no_suggestion_for_unmatched_prefix() {
     assert_screen "Path does not exist"
 }
 
+test_a_leading_tilde_expands_to_home() {
+    app_start
+    send :
+    type_text "~"
+    send Enter
+    assert_breadcrumbs "$SANDBOX/home"
+    assert_screen 'home_marker\.txt'
+}
+
+# A path with no leading / or ~ is resolved against the directory being viewed,
+# not the process's working directory.
+test_a_relative_path_resolves_against_the_current_directory() {
+    app_start
+    send :
+    type_text "documents"
+    send Enter
+    assert_breadcrumbs "$(FX)/documents"
+    assert_screen 'notes\.md'
+}
+
+test_a_relative_path_with_no_match_is_rejected_against_that_directory() {
+    app_start "$SANDBOX/home"
+    send :
+    type_text "documents" # exists under fixtures/, not here
+    send Enter
+    assert_alert warn "Path does not exist: $SANDBOX/home/documents"
+    assert_breadcrumbs "$SANDBOX/home"
+}
+
+# The suggestion list is a ring: Up from the first wraps to the last.
+test_the_suggestions_wrap_at_both_ends() {
+    app_start
+    send :
+    type_text "$(FX)/s" # scrolling, special_chars, special_files, symlinks
+    assert_screen 'scrolling/ \(1 of 4\)'
+    send Up
+    assert_screen 'symlinks/ \(4 of 4\)'
+    send Down
+    assert_screen 'scrolling/ \(1 of 4\)'
+    send_escape
+}
+
+# A file is opened with its opener rather than navigated into, the same as
+# pressing Enter on its row.
+test_going_to_a_file_opens_it_without_navigating() {
+    app_start
+    send :
+    type_text "$(FX)/readme.txt"
+    send Enter
+    assert_gone 'Go to '
+    assert_breadcrumbs "$(FX)"
+    assert_not_screen 'Alerts'
+    assert_running
+}
+
 # Reset restores the value the prompt opened with, which for goto is empty.
 test_prompt_reset_clears_a_goto_prompt() {
     app_start
