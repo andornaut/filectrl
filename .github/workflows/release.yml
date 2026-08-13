@@ -22,6 +22,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Publishing waits on the scan as well: a release is a durable artifact, and
+  # taking an attribution back off after one is cut means rewriting history that
+  # has already been published. Called only where a release can follow, since
+  # the scan workflow already runs on every push and pull request of its own
+  # accord.
+  attributions:
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/ai-attributions.yml
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -108,7 +117,7 @@ jobs:
   # Rolling build of main. Ships every platform the matrix builds; the tarballs
   # are reserved for versioned releases.
   dev-release:
-    needs: build
+    needs: [build, attributions]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -173,7 +182,7 @@ jobs:
   # upload-rust-binary-action uploads to an existing release rather than
   # creating one, so the release has to exist before the matrix fans out.
   create-release:
-    needs: [check]
+    needs: [check, attributions]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
