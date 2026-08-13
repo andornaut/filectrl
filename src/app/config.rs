@@ -550,9 +550,11 @@ pub fn merge_toml_values(base: Value, overlay: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
 
-    use super::*;
+    use super::{keybindings::Action, *};
+    use crate::test_support::TempDir;
 
     #[test]
     fn merge_overlay_overrides_base_values() {
@@ -662,5 +664,252 @@ modifiers = ["bold"]
             err.contains("buffer_min_bytes"),
             "error should explain the invariant: {err}"
         );
+    }
+
+    // ── writing the defaults ────────────────────────────────────────────────
+    //
+    // Always through an explicit path: `None` resolves to the real user config
+    // directory, which a test must never write to.
+
+    #[test]
+    fn write_default_writes_the_config_and_reports_where() {
+        let dir = TempDir::reserved("config_write");
+        let path = dir.join("sub").join("config.toml");
+
+        let written = Config::write_default(Some(path.clone()), false).unwrap();
+
+        // The absolute path is reported because the config directory follows
+        // $XDG_CONFIG_HOME, so the user cannot infer it from the flag alone.
+        assert_eq!(path, written);
+        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
+    }
+
+    #[test]
+    fn write_default_themes_writes_the_theme_beside_the_config() {
+        let dir = TempDir::reserved("config_write_theme");
+        let config = dir.join("mine.toml");
+
+        let written = Config::write_default_themes(Some(config), false).unwrap();
+
+        // Beside it, so a relative `include_files` entry resolves.
+        assert_eq!(dir.join(DEFAULT_THEME_FILENAME), written);
+        assert_eq!(DEFAULT_THEME, fs::read_to_string(&written).unwrap());
+    }
+
+    #[test]
+    fn a_written_default_is_a_config_the_loader_accepts() {
+        let dir = TempDir::reserved("config_round_trip");
+        let config = Config::write_default(Some(dir.join("config.toml")), false).unwrap();
+        let theme = Config::write_default_themes(Some(config.clone()), false).unwrap();
+
+        // Both files have to load, separately and together: the theme is
+        // includable precisely because it does not restate the config.
+        Config::load(RuntimeEnv::default(), Some(config.clone()), vec![]).unwrap();
+        Config::load(RuntimeEnv::default(), Some(config), vec![theme]).unwrap();
+    }
+
+    #[test]
+    fn writing_a_default_refuses_to_replace_an_existing_file() {
+        let dir = TempDir::new("config_no_clobber");
+        let path = dir.join("config.toml");
+        fs::write(&path, b"# hand written\n").unwrap();
+
+        let error = Config::write_default(Some(path.clone()), false)
+            .expect_err("an existing config must not be replaced")
+            .to_string();
+
+        assert!(error.contains("already exists; pass --force"), "{error}");
+        assert_eq!("# hand written\n", fs::read_to_string(&path).unwrap());
+    }
+
+    #[test]
+    fn force_replaces_an_existing_file() {
+        let dir = TempDir::new("config_force");
+        let path = dir.join("config.toml");
+        fs::write(&path, b"# hand written\n").unwrap();
+
+        Config::write_default(Some(path.clone()), true).unwrap();
+
+        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
+    }
+
+    #[test]
+    fn writing_a_default_refuses_to_follow_a_symlink() {
+        let dir = TempDir::new("config_symlink");
+        let real = dir.join("real.toml");
+        let link = dir.join("config.toml");
+        fs::write(&real, b"# hand written\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // A config symlinked into a dotfiles repository is a file to refuse,
+        // not one to write through: `create_new` would follow it and replace
+        // the checked-in file instead.
+        assert!(Config::write_default(Some(link), false).is_err());
+        assert_eq!("# hand written\n", fs::read_to_string(&real).unwrap());
+    }
+
+    // ── loading, and what a bad path reports ────────────────────────────────
+
+    /// Load a config that is expected to fail, returning the error message.
+    /// (`Config` is not `Debug`, so `unwrap_err` is unavailable.)
+    fn load_err(config_path: Option<PathBuf>, includes: Vec<PathBuf>) -> String {
+        match Config::load(RuntimeEnv::default(), config_path, includes) {
+            Ok(_) => panic!("expected the load to fail"),
+            Err(error) => format!("{error:#}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_config_path_is_reported_by_name() {
+        let dir = TempDir::reserved("config_missing");
+        let path = dir.join("absent.toml");
+
+        let error = load_err(Some(path.clone()), vec![]);
+
+        assert!(error.starts_with("Failed to read config file"), "{error}");
+        assert!(error.contains(&path.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn a_missing_include_path_is_reported_by_name() {
+        let dir = TempDir::new("config_missing_include");
+        let config = dir.join("config.toml");
+        fs::write(&config, b"").unwrap();
+        let include = dir.join("absent.toml");
+
+        let error = load_err(Some(config), vec![include.clone()]);
+
+        // Named as an include rather than as the config, so the user knows
+        // which of the two files to go and look at.
+        assert!(error.starts_with("Failed to read include file"), "{error}");
+        assert!(error.contains(&include.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn malformed_toml_is_reported() {
+        assert!(
+            parse_err("this is not toml =\n").starts_with("Failed to parse TOML"),
+            "{}",
+            parse_err("this is not toml =\n")
+        );
+    }
+
+    // ── precedence, lowest to highest ───────────────────────────────────────
+    //
+    // `select_next` defaults to `j`, and `e`, `i` and `u` are unbound, so
+    // whichever key ends up on SelectNext names the layer that won.
+
+    fn binds_select_next(dir: &TempDir, name: &str, key: char) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, format!("[keybindings]\nselect_next = \"{key}\"\n")).unwrap();
+        path
+    }
+
+    fn select_next_key(config: &Config, key: char) -> bool {
+        config
+            .keybindings
+            .normal_action(&KeyCode::Char(key), &KeyModifiers::NONE)
+            == Some(Action::SelectNext)
+    }
+
+    #[test]
+    fn a_cli_include_overrides_the_config_it_is_merged_onto() {
+        let dir = TempDir::new("config_precedence_cli");
+        let config = binds_select_next(&dir, "config.toml", 'u');
+        let include = binds_select_next(&dir, "over.toml", 'e');
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![include]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
+        assert!(!select_next_key(&merged, 'u'));
+    }
+
+    #[test]
+    fn the_last_cli_include_wins() {
+        let dir = TempDir::new("config_precedence_order");
+        let config = binds_select_next(&dir, "config.toml", 'u');
+        let first = binds_select_next(&dir, "first.toml", 'e');
+        let second = binds_select_next(&dir, "second.toml", 'i');
+
+        let merged =
+            Config::load(RuntimeEnv::default(), Some(config), vec![first, second]).unwrap();
+
+        assert!(select_next_key(&merged, 'i'));
+    }
+
+    #[test]
+    fn a_configs_own_include_files_override_the_config_that_lists_them() {
+        let dir = TempDir::new("config_precedence_listed");
+        let listed = binds_select_next(&dir, "listed.toml", 'e');
+        let config = dir.join("config.toml");
+        // `include_files` is a top-level key, so it precedes the first table.
+        fs::write(
+            &config,
+            format!(
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"u\"\n",
+                listed.display()
+            ),
+        )
+        .unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
+    }
+
+    #[test]
+    fn a_cli_include_overrides_the_configs_own_include_files() {
+        let dir = TempDir::new("config_precedence_both");
+        let listed = binds_select_next(&dir, "listed.toml", 'e');
+        let cli = binds_select_next(&dir, "cli.toml", 'i');
+        let config = dir.join("config.toml");
+        fs::write(
+            &config,
+            format!("include_files = [\"{}\"]\n", listed.display()),
+        )
+        .unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![cli]).unwrap();
+
+        assert!(select_next_key(&merged, 'i'));
+    }
+
+    #[test]
+    fn an_explicit_config_replaces_the_default_rather_than_merging_with_it() {
+        let dir = TempDir::new("config_explicit");
+        let config = dir.join("other.toml");
+        fs::write(&config, b"[keybindings]\nselect_previous = \"e\"\n").unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![]).unwrap();
+
+        // Only the built-in defaults sit under it, so `select_next` keeps `j`.
+        assert!(select_next_key(&merged, 'j'));
+        assert_eq!(
+            Some(Action::SelectPrevious),
+            merged
+                .keybindings
+                .normal_action(&KeyCode::Char('e'), &KeyModifiers::NONE)
+        );
+    }
+
+    #[test]
+    fn an_include_cycle_is_broken_rather_than_recursing_forever() {
+        let dir = TempDir::new("config_cycle");
+        let a = dir.join("a.toml");
+        let b = dir.join("b.toml");
+        // Each file includes the other; the visited set is what ends this.
+        fs::write(
+            &a,
+            format!(
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"e\"\n",
+                b.display()
+            ),
+        )
+        .unwrap();
+        fs::write(&b, format!("include_files = [\"{}\"]\n", a.display())).unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(a), vec![]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
     }
 }

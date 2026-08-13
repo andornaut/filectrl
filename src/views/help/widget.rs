@@ -229,7 +229,8 @@ pub(super) fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)
 mod tests {
     use test_case::test_case;
 
-    use super::annotate_uppercase;
+    use super::{annotate_uppercase, keybindings_help_text};
+    use crate::app::config::Config;
 
     #[test_case("End",     "End"                 ; "multi-char key is unchanged")]
     #[test_case("G",       "G (Uppercase)"       ; "single uppercase letter is annotated")]
@@ -240,5 +241,41 @@ mod tests {
     #[test_case("g/G",     "g/G (Uppercase)"     ; "annotates the uppercase half of a pair")]
     fn annotate_uppercase_cases(input: &str, expected: &str) {
         assert_eq!(annotate_uppercase(input), expected);
+    }
+
+    /// What `--print-keybindings` writes. The flag exists to be read, so the
+    /// two mode sections and the resolved keys have to reach the output.
+    fn help_text(bold: bool) -> String {
+        keybindings_help_text(&Config::builtin().keybindings, bold)
+    }
+
+    #[test]
+    fn keybindings_help_lists_both_modes_and_their_resolved_keys() {
+        let text = help_text(false);
+
+        assert!(text.contains("Normal Mode"), "{text}");
+        assert!(text.contains("Prompt Mode"), "{text}");
+        // A configurable binding, and one that merges a hardcoded key with a
+        // configurable one; both are what the printed list is for.
+        assert!(text.contains("Quit:"), "{text}");
+        assert!(text.contains("Select next, previous row:"), "{text}");
+        assert!(text.contains("\u{2193}/j"), "{text}");
+    }
+
+    #[test]
+    fn only_the_bold_flag_adds_escape_codes() {
+        // Bold is used when stdout is a terminal; a redirected run must stay
+        // plain, or the codes end up in whatever the output was piped into.
+        assert!(!help_text(false).contains('\u{1b}'));
+
+        let bold = help_text(true);
+        assert!(bold.contains("\u{1b}[1mNormal Mode"), "{bold}");
+        assert!(bold.contains("\u{1b}[1mPrompt Mode"), "{bold}");
+        // Only the headers are bold: a binding line carries no codes.
+        let line = bold
+            .lines()
+            .find(|line| line.starts_with("Quit:"))
+            .expect("a Quit line");
+        assert!(!line.contains('\u{1b}'), "{line}");
     }
 }

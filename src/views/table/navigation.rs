@@ -454,6 +454,36 @@ mod tests {
         assert_eq!(vec!["a".to_string(), "b".to_string()], marked);
     }
 
+    /// Why the cursor is restored by inode rather than by path: a reload can
+    /// rename, and the entry the user was on is the same entry under its new
+    /// name. Restoring by path would drop to the fallback and move the cursor.
+    #[test]
+    fn a_reload_follows_a_renamed_entry_to_its_new_name() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            Reselect::Top,
+        );
+        table.select(1); // "b"
+
+        // Renamed on disk rather than recreated, so the entry keeps the device
+        // and inode it was selected under.
+        std::fs::rename(fx.dir.join("b"), fx.dir.join("z_renamed")).unwrap();
+        let renamed = PathInfo::try_from(&fx.dir.join("z_renamed")).unwrap();
+        reload(
+            &mut table,
+            &fx,
+            vec![fx.file("a", 1), fx.file("c", 1), renamed],
+        );
+
+        // Sorted last, so a cursor left on index 1 would land on "c".
+        assert_eq!(Some(2), table.table_state.selected());
+        assert_eq!(selected_basename(&table).as_deref(), Some("z_renamed"));
+    }
+
     #[test]
     fn a_reload_drops_a_mark_on_an_entry_that_is_gone() {
         Config::init_test();

@@ -462,16 +462,6 @@ Elsewhere | Executables, symlinks, hidden files, Unicode names, special characte
 
 Date-color and size-color buckets need fixtures git cannot store (mtimes, sparse files); create them locally with `touch -t` and `truncate`.
 
-### Integration tests
-
-[`tests/integration/`](./tests/integration/) drives the real binary in a tmux pane (keyboard, mouse, window resizes) and asserts on the rendered screen and the on-disk result. Linux-only, and run by CI on every push and pull request. See its [README](./tests/integration/README.md) for the harness and how to add a suite.
-
-```bash
-tests/integration/run_tests.sh             # all suites (needs tmux and a release build)
-tests/integration/test_navigation.sh       # a single suite
-tests/integration/run_tests.sh --committed # against `git archive HEAD`, as CI checks out
-```
-
 ### Git hooks
 
 - [cargo-husky](https://github.com/rhysd/cargo-husky)

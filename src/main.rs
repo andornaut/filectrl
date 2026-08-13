@@ -282,6 +282,20 @@ mod tests {
     }
 
     #[test]
+    fn a_run_only_flag_is_rejected_by_an_acting_flag() {
+        // --no-truecolor only changes how the TUI renders, so it cannot
+        // change what --print-keybindings prints.
+        let args = Args {
+            print_keybindings: true,
+            no_truecolor: true,
+            ..args()
+        };
+        let error = usage_error(&args);
+        assert!(error.contains("--no-truecolor"), "{error}");
+        assert!(error.contains("--print-keybindings"), "{error}");
+    }
+
+    #[test]
     fn a_directory_the_action_ignores_is_rejected() {
         let args = Args {
             print_keybindings: true,

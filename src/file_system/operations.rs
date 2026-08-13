@@ -319,6 +319,8 @@ fn join_parent(left: &Path, right: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use test_case::test_case;
 
     use super::*;
@@ -400,5 +402,138 @@ mod tests {
         let info = PathInfo::try_from(a.as_path()).unwrap();
         assert!(rename(&info, "A.TXT").is_ok());
         assert!(upper.exists());
+    }
+
+    // ── chmod ───────────────────────────────────────────────────────────────
+
+    fn mode_of(path: &Path) -> u32 {
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[test]
+    fn chmod_sets_the_mode() {
+        let dir = TempDir::new("ops_chmod");
+        let file = dir.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        let info = PathInfo::try_from(file.as_path()).unwrap();
+
+        chmod(&info, 0o600).unwrap();
+
+        assert_eq!(0o600, mode_of(&file));
+    }
+
+    #[test]
+    fn chmod_on_a_directory_leaves_its_contents_alone() {
+        let dir = TempDir::new("ops_chmod_dir");
+        let target = dir.join("sub");
+        fs::create_dir(&target).unwrap();
+        let inner = target.join("inner.txt");
+        fs::write(&inner, b"x").unwrap();
+        fs::set_permissions(&inner, fs::Permissions::from_mode(0o644)).unwrap();
+        let info = PathInfo::try_from(target.as_path()).unwrap();
+
+        // Deliberately not recursive: it applies to exactly the marked
+        // entries, so a two-keystroke prompt cannot rewrite a whole subtree.
+        chmod(&info, 0o700).unwrap();
+
+        assert_eq!(0o700, mode_of(&target));
+        assert_eq!(0o644, mode_of(&inner));
+    }
+
+    // ── create_directory ────────────────────────────────────────────────────
+
+    #[test]
+    fn create_directory_creates_it_inside_the_parent() {
+        let dir = TempDir::new("ops_mkdir");
+        let parent = PathInfo::try_from(dir.path()).unwrap();
+
+        create_directory(&parent, "brand_new").unwrap();
+
+        assert!(dir.join("brand_new").is_dir());
+    }
+
+    #[test]
+    fn create_directory_refuses_a_name_already_taken() {
+        let dir = TempDir::new("ops_mkdir_exists");
+        let parent = PathInfo::try_from(dir.path()).unwrap();
+        fs::write(dir.join("taken"), b"x").unwrap();
+
+        // `create_dir` rather than `create_dir_all`, so an existing entry is
+        // an error instead of silently adopting whatever is already there.
+        assert!(create_directory(&parent, "taken").is_err());
+        assert!(dir.join("taken").is_file());
+    }
+
+    // ── add_bookmark ────────────────────────────────────────────────────────
+
+    #[test]
+    fn add_bookmark_symlinks_the_named_directory() {
+        let base = TempDir::new("ops_bookmark");
+        let bookmarks = base.join("bookmarks");
+        let target = PathInfo::try_from(base.path()).unwrap();
+
+        // The bookmarks directory does not exist yet; adding one creates it.
+        add_bookmark(&bookmarks, &target, "favs").unwrap();
+
+        assert_eq!(base.path(), fs::read_link(bookmarks.join("favs")).unwrap());
+    }
+
+    #[test]
+    fn add_bookmark_trims_the_name_it_is_given() {
+        let base = TempDir::new("ops_bookmark_trim");
+        let bookmarks = base.join("bookmarks");
+        let target = PathInfo::try_from(base.path()).unwrap();
+
+        add_bookmark(&bookmarks, &target, "  favs  ").unwrap();
+
+        assert!(bookmarks.join("favs").symlink_metadata().is_ok());
+    }
+
+    #[test_case("" ; "empty")]
+    #[test_case("   " ; "only whitespace, which trims to empty")]
+    #[test_case("nested/name" ; "a path rather than a name")]
+    #[test_case("/tmp/absolute" ; "absolute")]
+    fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) {
+        let base = TempDir::new("ops_bookmark_bad_name");
+        let bookmarks = base.join("bookmarks");
+        let target = PathInfo::try_from(base.path()).unwrap();
+
+        assert!(add_bookmark(&bookmarks, &target, name).is_err());
+        assert!(!Path::new("/tmp/absolute").exists());
+    }
+
+    #[test]
+    fn add_bookmark_refuses_a_name_already_taken() {
+        let base = TempDir::new("ops_bookmark_dup");
+        let bookmarks = base.join("bookmarks");
+        let target = PathInfo::try_from(base.path()).unwrap();
+        add_bookmark(&bookmarks, &target, "favs").unwrap();
+
+        let error = add_bookmark(&bookmarks, &target, "favs")
+            .expect_err("a duplicate name must be refused")
+            .to_string();
+
+        assert!(error.contains("already exists"), "{error}");
+    }
+
+    #[test]
+    fn add_bookmark_refuses_a_name_held_by_a_broken_symlink() {
+        let base = TempDir::new("ops_bookmark_broken");
+        let bookmarks = base.join("bookmarks");
+        fs::create_dir_all(&bookmarks).unwrap();
+        // What a bookmark becomes once its target is removed. `exists()`
+        // follows the link and reports false, so the check has to be
+        // `symlink_metadata` or the name is silently reused.
+        std::os::unix::fs::symlink(base.join("gone"), bookmarks.join("favs")).unwrap();
+        let target = PathInfo::try_from(base.path()).unwrap();
+
+        let error = add_bookmark(&bookmarks, &target, "favs")
+            .expect_err("a name held by a broken symlink must be refused")
+            .to_string();
+
+        // filectrl's own refusal, not the EEXIST `symlink` would raise a line
+        // later: asserting only `is_err` cannot tell the two apart, and the
+        // errno one means the duplicate check let it through.
+        assert!(error.contains("already exists"), "{error}");
     }
 }
