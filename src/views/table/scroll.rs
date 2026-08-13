@@ -59,69 +59,47 @@ pub(super) fn previous_page(
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::{LineItemMap, next_page, previous_page};
 
     fn map(heights: Vec<usize>, visible: usize, first: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, first)
     }
 
-    // --- next_page ---
-
-    #[test]
-    fn next_page_at_last_item_is_a_noop() {
-        let m = map(vec![1; 5], 3, 0);
-        assert_eq!(None, next_page(&m, 4, 5));
+    // Five single-line items in a viewport of three, so the window shows items
+    // 0-2. The first press lands on the last visible item; only once the cursor
+    // is already there does a press advance a whole page.
+    #[test_case(vec![1; 5], 3, 0, 4 => None ; "at the last item")]
+    #[test_case(vec![1; 5], 3, 0, 0 => Some(2) ; "jumps to the last visible item")]
+    #[test_case(vec![1; 5], 3, 0, 2 => Some(4) ; "pages once already at the last visible item")]
+    // Item 3 is four lines tall, taller than the viewport. Selecting it would
+    // make ratatui scroll until it fits, carrying the window past the item the
+    // page was measured from, so the target backs off by one.
+    #[test_case(vec![1, 1, 1, 4, 1], 3, 2, 3 => Some(2) ; "backs off when the new last item overflows")]
+    fn next_page_target(
+        heights: Vec<usize>,
+        visible: usize,
+        first: usize,
+        selected: usize,
+    ) -> Option<usize> {
+        next_page(&map(heights, visible, first), selected, 5)
     }
 
-    #[test]
-    fn next_page_jumps_to_last_visible_when_not_already_there() {
-        // viewport shows items 0-2; selected=0: should jump to item 2, not a full page
-        let m = map(vec![1; 5], 3, 0);
-        assert_eq!(Some(2), next_page(&m, 0, 5));
-    }
-
-    #[test]
-    fn next_page_advances_a_full_page_when_at_last_visible() {
-        // viewport shows items 0-2; selected=2 (last visible): pages to item 4
-        let m = map(vec![1; 5], 3, 0);
-        assert_eq!(Some(4), next_page(&m, 2, 5));
-    }
-
-    #[test]
-    fn next_page_backs_off_when_new_last_item_overflows_viewport() {
-        // item 3 is 4 lines tall (> viewport 3); selecting it causes ratatui to scroll
-        // beyond the intended position, so the result is adjusted back by one item
-        let m = map(vec![1, 1, 1, 4, 1], 3, 2);
-        assert_eq!(Some(2), next_page(&m, 3, 5));
-    }
-
-    // --- previous_page ---
-
-    #[test]
-    fn previous_page_at_first_item_is_a_noop() {
-        let m = map(vec![1; 5], 3, 0);
-        assert_eq!(None, previous_page(&m, 0, 0));
-    }
-
-    #[test]
-    fn previous_page_jumps_to_first_visible_when_not_already_there() {
-        // first visible item = 2; selected=4: should jump to item 2, not a full page
-        let m = map(vec![1; 5], 3, 2);
-        assert_eq!(Some(2), previous_page(&m, 4, 2));
-    }
-
-    #[test]
-    fn previous_page_retreats_a_full_page_when_at_first_visible() {
-        // viewport shows items 2-4; selected=2 (first visible): retreats to item 0
-        let m = map(vec![1; 5], 3, 2);
-        assert_eq!(Some(0), previous_page(&m, 2, 2));
-    }
-
-    #[test]
-    fn previous_page_advances_when_new_first_item_overflows_viewport() {
-        // item 0 is 4 lines tall (> viewport 3); selecting it causes ratatui to scroll
-        // beyond the intended position, so the result is adjusted forward by one item
-        let m = map(vec![4, 1, 1], 3, 2);
-        assert_eq!(Some(1), previous_page(&m, 2, 2));
+    // The mirror of the above: the first press lands on the first visible item.
+    #[test_case(vec![1; 5], 3, 0, 0, 0 => None ; "at the first item")]
+    #[test_case(vec![1; 5], 3, 2, 4, 2 => Some(2) ; "jumps to the first visible item")]
+    #[test_case(vec![1; 5], 3, 2, 2, 2 => Some(0) ; "pages once already at the first visible item")]
+    // Item 0 is four lines tall, so a window anchored on it would scroll past
+    // the item the page was measured from; the snap moves forward instead.
+    #[test_case(vec![4, 1, 1], 3, 2, 2, 2 => Some(1) ; "advances when the new first item overflows")]
+    fn previous_page_target(
+        heights: Vec<usize>,
+        visible: usize,
+        first: usize,
+        selected: usize,
+        viewport_offset: usize,
+    ) -> Option<usize> {
+        previous_page(&map(heights, visible, first), selected, viewport_offset)
     }
 }

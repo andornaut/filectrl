@@ -240,79 +240,46 @@ fn layout(area: Rect) -> (Rect, Rect, Rect) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::{scrollbar_position, visible_window};
 
-    // heights [1, 1, 3, 1, 1] with a viewport of 3: the drag scale is 0..=4
-    // (total - visible). Dragging to line 3 snaps the window top past the
-    // wrapped row (first visible line 5); the thumb must stay on the cursor.
-    #[test]
-    fn thumb_tracks_the_cursor_while_dragging_across_a_wrapped_row() {
-        assert_eq!(3, scrollbar_position(Some(3), 5, 4));
+    // While a drag is live the thumb tracks the pointer, so it stays under the
+    // cursor even where the window top snaps past a wrapped row. On release it
+    // settles on the first visible line, clamped to the scale's end.
+    #[test_case(Some(3), 5, 4 => 3 ; "a live drag tracks the cursor")]
+    #[test_case(None, 5, 4 => 4 ; "after release, clamped to the end of the scale")]
+    #[test_case(None, 2, 4 => 2 ; "with no drag, follows the first visible line")]
+    fn scrollbar_position_cases(
+        drag_line: Option<usize>,
+        first_visible_line: usize,
+        max_position: usize,
+    ) -> usize {
+        scrollbar_position(drag_line, first_visible_line, max_position)
     }
 
-    #[test]
-    fn thumb_settles_on_the_clamped_first_visible_line_after_release() {
-        assert_eq!(4, scrollbar_position(None, 5, 4));
-    }
-
-    #[test]
-    fn thumb_follows_the_first_visible_line_without_a_drag() {
-        assert_eq!(2, scrollbar_position(None, 2, 4));
-    }
-
-    #[test]
-    fn empty_or_zero_viewport_is_empty_window() {
-        assert_eq!((0, 0), visible_window(&[], 5, 0, 0));
-        assert_eq!((0, 0), visible_window(&[1, 1, 1], 0, 0, 0));
-    }
-
-    #[test]
-    fn window_fills_from_top_when_everything_fits() {
-        // 3 single-line items, viewport of 5 → show all, starting at 0.
-        assert_eq!((0, 3), visible_window(&[1, 1, 1], 5, 0, 0));
-    }
-
-    #[test]
-    fn stable_window_is_kept_when_selection_already_visible() {
-        // Window anchored at item 2, viewport 3, selection 3 is within it.
-        let heights = vec![1; 10];
-        assert_eq!((2, 5), visible_window(&heights, 3, 3, 2));
-    }
-
-    #[test]
-    fn scrolls_up_to_keep_selection_visible() {
-        // Selection moved above the previous top (5) → anchor at the selection.
-        let heights = vec![1; 10];
-        assert_eq!((1, 4), visible_window(&heights, 3, 1, 5));
-    }
-
-    #[test]
-    fn scrolls_down_to_keep_selection_at_the_bottom() {
-        // Previous top 0, selection 7, viewport 3 → place 7 at the bottom: 5..8.
-        let heights = vec![1; 10];
-        assert_eq!((5, 8), visible_window(&heights, 3, 7, 0));
-    }
-
-    #[test]
-    fn jump_to_bottom_anchors_window_at_the_end() {
-        let heights = vec![1; 100];
-        assert_eq!((97, 100), visible_window(&heights, 3, 99, 0));
-    }
-
-    #[test]
-    fn item_taller_than_viewport_is_shown_from_its_top() {
-        // Item 1 is 5 lines tall, viewport only 3; selecting it shows its top.
-        let heights = vec![1, 5, 1];
-        let (start, end) = visible_window(&heights, 3, 1, 0);
-        assert_eq!(1, start);
-        assert_eq!(2, end);
-    }
-
-    #[test]
-    fn narrowing_increases_heights_and_reclamps_window() {
-        // After a resize, an earlier item wraps to 3 lines; with viewport 3 and
-        // selection on the tall item, it anchors there.
-        let heights = vec![1, 1, 3, 1];
-        assert_eq!((2, 3), visible_window(&heights, 3, 2, 0));
+    // The window is a half-open range of items. It holds still while the
+    // selection is already inside it, and otherwise moves the shortest distance
+    // that brings the selection back into view.
+    #[test_case(&[], 5, 0, 0 => (0, 0) ; "no items")]
+    #[test_case(&[1, 1, 1], 0, 0, 0 => (0, 0) ; "no viewport")]
+    #[test_case(&[1, 1, 1], 5, 0, 0 => (0, 3) ; "everything fits, filled from the top")]
+    #[test_case(&[1; 10], 3, 3, 2 => (2, 5) ; "the selection is already visible")]
+    #[test_case(&[1; 10], 3, 1, 5 => (1, 4) ; "the selection moved above the window")]
+    #[test_case(&[1; 10], 3, 7, 0 => (5, 8) ; "the selection moved below, so it sits at the bottom")]
+    #[test_case(&[1; 100], 3, 99, 0 => (97, 100) ; "a jump to the end anchors at the end")]
+    // A row taller than the viewport can never fit whole, so the window shows
+    // its top rather than scrolling past it.
+    #[test_case(&[1, 5, 1], 3, 1, 0 => (1, 2) ; "an item taller than the viewport")]
+    // After a resize an earlier row wraps, so the window reclamps around the
+    // selection rather than keeping a top that no longer fits.
+    #[test_case(&[1, 1, 3, 1], 3, 2, 0 => (2, 3) ; "narrowing grows the heights")]
+    fn visible_window_cases(
+        heights: &[usize],
+        viewport_lines: usize,
+        selected: usize,
+        prev_first: usize,
+    ) -> (usize, usize) {
+        visible_window(heights, viewport_lines, selected, prev_first)
     }
 }

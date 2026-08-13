@@ -1719,27 +1719,19 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn parse_octal_mode_accepts_valid_modes() {
-        assert_eq!(Some(0o644), parse_octal_mode("644"));
-        assert_eq!(Some(0o755), parse_octal_mode("755"));
-        assert_eq!(Some(0o0), parse_octal_mode("0"));
-        assert_eq!(Some(0o7777), parse_octal_mode("7777"));
-        assert_eq!(Some(0o4755), parse_octal_mode("4755"));
-    }
-
-    #[test]
-    fn parse_octal_mode_rejects_out_of_range() {
-        assert_eq!(None, parse_octal_mode("10000"));
-        assert_eq!(None, parse_octal_mode("77777"));
-    }
-
-    #[test]
-    fn parse_octal_mode_rejects_non_octal() {
-        assert_eq!(None, parse_octal_mode("888"));
-        assert_eq!(None, parse_octal_mode("0o644"));
-        assert_eq!(None, parse_octal_mode("rwx"));
-        assert_eq!(None, parse_octal_mode(""));
-        assert_eq!(None, parse_octal_mode("-1"));
+    #[test_case("644" => Some(0o644) ; "three digits")]
+    #[test_case("755" => Some(0o755) ; "three digits with the execute bit")]
+    #[test_case("0" => Some(0o0) ; "a single zero")]
+    #[test_case("7777" => Some(0o7777) ; "the largest accepted value")]
+    #[test_case("4755" => Some(0o4755) ; "a setuid bit")]
+    #[test_case("10000" => None ; "one past the largest")]
+    #[test_case("77777" => None ; "five digits")]
+    #[test_case("888" => None ; "digits outside octal")]
+    #[test_case("0o644" => None ; "a rust literal prefix")]
+    #[test_case("rwx" => None ; "symbolic notation")]
+    #[test_case("" => None ; "empty")]
+    #[test_case("-1" => None ; "negative")]
+    fn parse_octal_mode_accepts_only_a_mode(mode: &str) -> Option<u32> {
+        parse_octal_mode(mode)
     }
 }

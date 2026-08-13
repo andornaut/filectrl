@@ -98,101 +98,72 @@ impl LineItemMap {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     fn map(heights: Vec<usize>, visible: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, 0)
     }
 
-    #[test]
-    fn single_line_items_map_each_line_to_its_own_item() {
-        let m = map(vec![1, 1, 1], 3);
-        assert_eq!(0, m.item(0));
-        assert_eq!(1, m.item(1));
-        assert_eq!(2, m.item(2));
-        assert_eq!(3, m.total_lines_count());
+    // Every line of a wrapped row belongs to the one item that row renders.
+    // heights [2, 1, 3]: item 0 owns lines 0-1, item 1 line 2, item 2 lines 3-5.
+    #[test_case(vec![1, 1, 1], 0 => 0 ; "single-line item")]
+    #[test_case(vec![1, 1, 1], 2 => 2 ; "the last single-line item")]
+    #[test_case(vec![2, 1, 3], 1 => 0 ; "the second line of a wrapped row")]
+    #[test_case(vec![2, 1, 3], 2 => 1 ; "the row after a wrapped one")]
+    #[test_case(vec![2, 1, 3], 5 => 2 ; "the last line of a trailing wrapped row")]
+    fn item_owns_every_line_of_its_row(heights: Vec<usize>, line: usize) -> usize {
+        map(heights, 6).item(line)
     }
 
-    #[test]
-    fn multi_line_items_map_all_their_lines_to_the_same_item() {
-        // item 0: lines 0-1, item 1: line 2, item 2: lines 3-5
+    #[test_case(vec![1, 1, 1] => 3 ; "one line per item")]
+    #[test_case(vec![2, 1, 3] => 6 ; "wrapped rows are counted in full")]
+    fn total_lines_count_sums_the_heights(heights: Vec<usize>) -> usize {
+        map(heights, 6).total_lines_count()
+    }
+
+    // heights [2, 1, 3]: the rows start at lines 0, 2 and 3 and end at 1, 2
+    // and 5. The last item has no successor, so its end is the final line.
+    #[test_case(0 => (0, 1) ; "a wrapped row")]
+    #[test_case(1 => (2, 2) ; "a single-line row")]
+    #[test_case(2 => (3, 5) ; "the trailing row, whose end falls back to the total")]
+    fn first_and_last_line_bound_each_row(item: usize) -> (usize, usize) {
         let m = map(vec![2, 1, 3], 6);
-        assert_eq!(0, m.item(0));
-        assert_eq!(0, m.item(1));
-        assert_eq!(1, m.item(2));
-        assert_eq!(2, m.item(3));
-        assert_eq!(2, m.item(5));
-        assert_eq!(6, m.total_lines_count());
+        (m.first_line(item), m.last_line(item))
     }
 
     #[test]
-    fn first_line_returns_the_starting_line_of_each_item() {
-        let m = map(vec![2, 1, 3], 6);
-        assert_eq!(0, m.first_line(0));
-        assert_eq!(2, m.first_line(1));
-        assert_eq!(3, m.first_line(2));
+    fn last_line_of_a_lone_wrapped_item_is_the_final_line() {
+        assert_eq!(3, map(vec![4], 3).last_line(0));
     }
 
-    #[test]
-    fn snap_keeps_a_line_at_an_item_boundary() {
-        let m = map(vec![1, 1, 3, 1, 1], 3);
-        assert_eq!(0, m.snap_to_item_start(0));
-        assert_eq!(2, m.snap_to_item_start(2));
+    // Returns an item, not a line. heights [1, 1, 3, 1, 1]: item 2 spans lines
+    // 2-4, so a line inside it snaps forward to item 3 rather than pinning the
+    // wrapped row to the top, which would leave the trailing items unreachable.
+    #[test_case(vec![1, 1, 3, 1, 1], 0 => 0 ; "a line already at a row start")]
+    #[test_case(vec![1, 1, 3, 1, 1], 2 => 2 ; "the first line of a wrapped row")]
+    #[test_case(vec![1, 1, 3, 1, 1], 3 => 3 ; "inside a wrapped row snaps to the next")]
+    #[test_case(vec![1, 1, 3, 1, 1], 4 => 3 ; "the last line of a wrapped row")]
+    #[test_case(vec![1, 5], 3 => 1 ; "past the last row start clamps to the last item")]
+    fn snap_to_item_start(heights: Vec<usize>, line: usize) -> usize {
+        map(heights, 3).snap_to_item_start(line)
     }
 
-    #[test]
-    fn snap_moves_a_line_inside_a_wrapped_row_to_the_next_item() {
-        // Item 2 spans lines 2..=4.
-        let m = map(vec![1, 1, 3, 1, 1], 3);
-        assert_eq!(3, m.snap_to_item_start(3));
-        assert_eq!(3, m.snap_to_item_start(4));
+    // The viewport is `visible` lines tall and cannot run past either end.
+    #[test_case(3, 4 => 2 ; "a full viewport ending at line 4 starts at 2")]
+    #[test_case(10, 2 => 0 ; "a viewport taller than the content starts at 0")]
+    fn first_visible_line_ending_at(visible: usize, last_line: usize) -> usize {
+        map(vec![1; 5], visible).first_visible_line_ending_at(last_line)
     }
 
-    #[test]
-    fn snap_clamps_to_the_last_item() {
-        // The trailing item spans lines 1..=5.
-        let m = map(vec![1, 5], 3);
-        assert_eq!(1, m.snap_to_item_start(3));
-    }
-
-    #[test]
-    fn last_line_returns_the_ending_line_of_each_item() {
-        let m = map(vec![2, 1, 3], 6);
-        assert_eq!(1, m.last_line(0));
-        assert_eq!(2, m.last_line(1));
-        assert_eq!(5, m.last_line(2)); // last item: falls back to total_lines - 1
-    }
-
-    #[test]
-    fn last_line_of_single_item_is_total_lines_minus_one() {
-        let m = map(vec![4], 3);
-        assert_eq!(3, m.last_line(0));
-    }
-
-    #[test]
-    fn first_visible_line_ending_at_calculates_viewport_start() {
-        // viewport of 3 lines, last visible is line 4 → first visible is line 2
-        let m = map(vec![1; 5], 3);
-        assert_eq!(2, m.first_visible_line_ending_at(4));
-    }
-
-    #[test]
-    fn first_visible_line_ending_at_saturates_when_viewport_exceeds_last_line() {
-        // viewport of 10, last line is 2 → cannot start before 0
-        let m = map(vec![1; 5], 10);
-        assert_eq!(0, m.first_visible_line_ending_at(2));
-    }
-
-    #[test]
-    fn last_visible_line_starting_at_advances_by_viewport_height() {
-        let m = map(vec![1; 5], 3);
-        assert_eq!(3, m.last_visible_line_starting_at(1));
-    }
-
-    #[test]
-    fn last_visible_line_starting_at_clamps_to_total_lines() {
-        // viewport is larger than total content
-        let m = map(vec![1, 1, 1], 10);
-        assert_eq!(2, m.last_visible_line_starting_at(0));
+    #[test_case(vec![1; 5], 3, 1 => 3 ; "a full viewport starting at line 1 ends at 3")]
+    #[test_case(vec![1, 1, 1], 10, 0 => 2 ; "a viewport taller than the content clamps to the last line")]
+    fn last_visible_line_starting_at(
+        heights: Vec<usize>,
+        visible: usize,
+        first_line: usize,
+    ) -> usize {
+        map(heights, visible).last_visible_line_starting_at(first_line)
     }
 }

@@ -47,9 +47,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde::Deserialize;
     use test_case::test_case;
+
+    use super::*;
 
     #[derive(Deserialize)]
     struct ColorHolder {
@@ -63,67 +64,44 @@ mod tests {
         modifiers: Modifier,
     }
 
-    fn color(toml: &str) -> Option<Color> {
-        toml::from_str::<ColorHolder>(toml).unwrap().color
+    fn color(value: &str) -> Option<Color> {
+        toml::from_str::<ColorHolder>(&format!("color = {value}"))
+            .unwrap()
+            .color
     }
 
-    fn modifier(toml: &str) -> Modifier {
-        toml::from_str::<ModifierHolder>(toml).unwrap().modifiers
+    fn try_modifier(list: &str) -> Result<Modifier, toml::de::Error> {
+        toml::from_str::<ModifierHolder>(&format!("modifiers = {list}")).map(|h| h.modifiers)
     }
 
-    fn try_modifier(toml: &str) -> Result<Modifier, toml::de::Error> {
-        toml::from_str::<ModifierHolder>(toml).map(|h| h.modifiers)
+    // An empty string means "unset", so the style inherits from its parent
+    // rather than resolving to a color of its own.
+    #[test_case(r#""""# => None ; "empty string inherits")]
+    #[test_case(r#""Red""# => Some(Color::Red) ; "named")]
+    #[test_case(r##""#FF0000""## => Some(Color::Rgb(0xFF, 0x00, 0x00)) ; "hex")]
+    fn color_deserializes(value: &str) -> Option<Color> {
+        color(value)
     }
 
-    #[test]
-    fn empty_string_is_treated_as_no_color_so_it_inherits_from_parent() {
-        assert_eq!(None, color(r#"color = """#));
-    }
-
-    #[test]
-    fn named_color_deserializes() {
-        assert_eq!(Some(Color::Red), color(r#"color = "Red""#));
-    }
-
-    #[test]
-    fn hex_color_deserializes() {
-        assert_eq!(
-            Some(Color::Rgb(0xFF, 0x00, 0x00)),
-            color(r##"color = "#FF0000""##)
-        );
-    }
-
-    #[test]
-    fn empty_modifier_list_produces_no_modifiers() {
-        assert_eq!(Modifier::empty(), modifier("modifiers = []"));
+    #[test_case("[]" => Modifier::empty() ; "empty list")]
+    #[test_case(r#"["bold"]"# => Modifier::BOLD ; "one modifier")]
+    #[test_case(r#"["bold", "italic"]"# => Modifier::BOLD | Modifier::ITALIC ; "combined")]
+    #[test_case(r#"["BOLD"]"# => Modifier::BOLD ; "all caps")]
+    #[test_case(r#"["Italic"]"# => Modifier::ITALIC ; "title case")]
+    fn modifier_deserializes(list: &str) -> Modifier {
+        try_modifier(list).unwrap()
     }
 
     #[test]
-    fn single_modifier_deserializes() {
-        assert_eq!(Modifier::BOLD, modifier(r#"modifiers = ["bold"]"#));
-    }
-
-    #[test]
-    fn multiple_modifiers_are_combined() {
-        let result = modifier(r#"modifiers = ["bold", "italic"]"#);
-        assert_eq!(Modifier::BOLD | Modifier::ITALIC, result);
-    }
-
-    #[test_case("BOLD"   => Modifier::BOLD   ; "all caps")]
-    #[test_case("Italic" => Modifier::ITALIC ; "title case")]
-    fn modifier_name_is_case_insensitive(name: &str) -> Modifier {
-        modifier(&format!(r#"modifiers = ["{name}"]"#))
-    }
-
-    #[test]
-    fn unknown_modifier_is_an_error() {
-        // "hidden" is not supported; the whole config load must fail rather than
+    fn an_unknown_modifier_fails_the_load() {
+        // "hidden" is not supported, and the whole config must fail rather than
         // silently dropping it.
-        let result = try_modifier(r#"modifiers = ["bold", "hidden"]"#);
-        let err = result.unwrap_err().to_string();
+        let error = try_modifier(r#"["bold", "hidden"]"#)
+            .expect_err("an unknown modifier should be rejected")
+            .to_string();
         assert!(
-            err.contains("hidden"),
-            "error should name the bad modifier: {err}"
+            error.contains("hidden"),
+            "error should name the bad modifier: {error}"
         );
     }
 }
