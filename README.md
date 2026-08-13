@@ -6,28 +6,28 @@ FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User I
 
 ## Features
 
-- Simple interface with good defaults - works out of the box with [sensible settings](#configuration)
-- [Bookmarks](#bookmarks) - save and quickly return to frequently-used folders
-- [Customizable colors](#theming) - full truecolor and 256 color theme support with LS_COLORS integration
-- [Rebindable keys](#customizing-keybindings) - customize all keybindings via TOML config
-- [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select) - hjkl movement, marks, range mode
-- File operations: chmod, create directory, and [copy/cut/paste across instances/windows](#copy--paste)
-- "Go to" feature with path completion suggestions
-- [Filtering](#filtering), [Searching](#searching), [Sorting](#sorting)
-- Responsive layout: adapts columns and content to small and large terminal windows
+- Simple interface with [sensible defaults](#configuration)
+- [Bookmarks](#bookmarks): save and return to frequently-used folders
+- [Customizable colors](#theming): truecolor and 256 color themes, with `LS_COLORS` integration
+- [Rebindable keys](#customizing-keybindings) via TOML config
+- [Vim-like navigation](#default-keybindings) and [multi-select](#multi-select): hjkl movement, marks, range mode
+- File operations: chmod, create directory, and [copy/cut/paste across windows](#copy--paste)
+- "Go to" with path completion
+- [Filtering](#filtering), [searching](#searching), and [sorting](#sorting)
+- Responsive layout: adapts columns and content to the terminal size
 
 ## Installation
 
-[Download a pre-built binary](https://github.com/andornaut/filectrl/releases). Releases publish `filectrl_{system}_{arch}.tar.gz` archives for `linux_x86_64`, `linux_arm64`, and `darwin_arm64` (macOS is Apple Silicon only), each with a `.sha256` checksum:
+[Download a pre-built binary](https://github.com/andornaut/filectrl/releases). Each release publishes `filectrl_{system}_{arch}.tar.gz` and a `.sha256` checksum for `linux_x86_64`, `linux_arm64`, and `darwin_arm64` (macOS is Apple Silicon only).
 
 ```bash
 curl -sL https://github.com/andornaut/filectrl/releases/latest/download/filectrl_linux_x86_64.tar.gz | tar -xz filectrl
 sudo mv filectrl /usr/local/bin/
 ```
 
-The archives also contain `LICENSE` and `README.md`; the `tar -xz filectrl` above extracts only the binary.
+The archives also contain `LICENSE` and `README.md`; `tar -xz filectrl` extracts only the binary.
 
-On macOS, allow the _unsigned_ binary to be executed:
+On macOS, allow the _unsigned_ binary to run:
 
 ```bash
 xattr -d com.apple.quarantine filectrl
@@ -35,69 +35,59 @@ xattr -d com.apple.quarantine filectrl
 
 ## Building
 
-1. `git clone` and `cd` into this repository
-1. Run ```cargo build --release && sudo cp target/release/filectrl /usr/local/bin/```
+```bash
+cargo build --release && sudo cp target/release/filectrl /usr/local/bin/
+```
 
 ## Usage
 
-Run `filectrl --help` to view the available command line arguments and options:
-
-```text
-Usage: filectrl [-c <config>] [-i <include...>] [--no-truecolor] [--print-keybindings] [--write-default-config] [--write-default-themes] [--force] [-V] [--] [<directory>]
-
-FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
-
-Positional Arguments:
-  directory         path to a directory to navigate to
-
-Options:
-  -c, --config      path to a configuration file
-  -i, --include     include a TOML file to merge on top of the config
-                    (repeatable; later files take precedence)
-  --no-truecolor    use the 256-color theme instead of detecting truecolor
-                    support
-  --print-keybindings
-                    print the keybindings, then exit
-  --write-default-config
-                    write the default config to the config path, then exit
-  --write-default-themes
-                    write the default theme beside the config as theme.toml,
-                    then exit
-  --force           replace an existing file when writing defaults
-  -V, --version     print the version, then exit
-  -h, --help, help  display usage information
+```bash
+filectrl [OPTIONS] [DIRECTORY]
 ```
 
-`--print-keybindings`, `--write-default-config`, `--write-default-themes` and
-`--version` each do one thing and exit. At most one may be given, and each
-accepts only the arguments that change what it does: `--config` names the file
-to read or to write, `--include` applies to `--print-keybindings`, and
-`--force` applies to the two that write. Anything else is reported rather than
-ignored.
+Option | Description
+--- | ---
+`-c`, `--config <PATH>` | Read the config from `PATH`, or write it there when combined with a `--write-default-*` flag
+`-i`, `--include <PATH>` | Merge a TOML file on top of the config. Repeatable; later files take precedence
+`--no-truecolor` | Use the 256-color theme instead of detecting truecolor support
+`--force` | Replace an existing file when writing defaults
+`--print-keybindings` | Print the keybindings, then exit
+`--write-default-config` | Write the default config, then exit
+`--write-default-themes` | Write the default theme as `theme.toml` beside the config, then exit
+`-V`, `--version` | Print the version, then exit
+`-h`, `--help` | Print usage, then exit
 
-Both write flags refuse to replace an existing file unless `--force` is given,
-and both print the path they wrote. That path follows `$XDG_CONFIG_HOME` when
-it is set, so it is not always under `~/.config`.
+The four flags that act and exit are mutually exclusive, and each accepts only the arguments that change what it does:
+
+Flag | Also accepts
+--- | ---
+`--print-keybindings` | `--config`, `--include`
+`--write-default-config` | `--config`, `--force`
+`--write-default-themes` | `--config`, `--force`
+`--version` | nothing
+
+Anything else is reported rather than ignored. Both write flags print the path they wrote and refuse to replace an existing file unless `--force` is given. That path follows `$XDG_CONFIG_HOME`, so it is not always under `~/.config`.
 
 ### Bookmarks
 
-Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside
-the config file (e.g. `~/.config/filectrl/bookmarks/`).
+Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside the config file (e.g. `~/.config/filectrl/bookmarks/`).
 
-- <kbd>B</kbd> adds a bookmark for the current directory. A prompt asks for
-  the bookmark name, defaulting to the current directory's name. Names must be
-  unique, cannot be empty, and cannot contain a path separator.
-- <kbd>'</kbd> or <kbd>&#96;</kbd> shows all bookmarks in the table.
-- Opening a bookmark navigates to the linked folder.
-- Bookmarks can be renamed (<kbd>r</kbd>) or deleted (<kbd>d</kbd>)
+Key | Action
+--- | ---
+<kbd>B</kbd> | Bookmark the current directory. The prompt defaults to the directory's name
+<kbd>'</kbd> or <kbd>&#96;</kbd> | Show all bookmarks in the table
+<kbd>Enter</kbd> | Navigate to the linked folder
+<kbd>r</kbd>, <kbd>d</kbd> | Rename or delete the bookmark
+
+Names must be unique, cannot be empty, and cannot contain a path separator.
 
 ### Copy / paste
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
 
-Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting when there is nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
+Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
-When the destination directory already contains an entry with the same name, the paste stops and asks what to do with it:
+When the destination already contains an entry with the same name, the paste stops and asks:
 
 Key | Action
 --- | ---
@@ -107,41 +97,56 @@ Key | Action
 <kbd>O</kbd> | Replace this and every later collision in the same paste
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
-An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste rather than replacing anything.
-
-An <kbd>S</kbd> or <kbd>O</kbd> answer also covers copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. A directory is the exception, since it is never replaced, so only <kbd>S</kbd> settles one. Anything left unsettled is reported when the copy finishes, rather than interrupting it to ask about a name you have not seen.
-
-A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
-
-Whatever is not pasted (collisions you abandon and entries that failed) stays on the clipboard, so pasting again retries exactly those; entries you skip deliberately are not. If nothing was pasted at all, the clipboard is left unchanged.
+- An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
+- <kbd>S</kbd> and <kbd>O</kbd> also cover copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. Only <kbd>S</kbd> settles a directory. Anything left unsettled is reported when the copy finishes.
+- A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
+- Whatever is not pasted (collisions you abandon, entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately do not. If nothing was pasted at all, the clipboard is unchanged.
 
 ### Multi-select
 
-Mark files to apply bulk operations (chmod, copy, cut, delete) to multiple items at once.
+Mark entries to apply chmod, copy, cut, or delete to several at once.
 
-- <kbd>v</kbd> toggles a mark on the current item
-- <kbd>V</kbd> enters **range mode**: the current row becomes the anchor, and moving the cursor (arrow keys or clicking) extends the marked range from the anchor to the cursor
-- Press <kbd>V</kbd> again to exit range mode (marks are kept)
-- In range mode, clicking extends the range from the anchor to the clicked row; outside range mode, clicking only moves the cursor
-- <kbd>Esc</kbd> clears all marks and exits range mode
-- Marks and clipboard are mutually exclusive - marking clears the clipboard
-- Marks track row positions, so re-sorting, filtering, or reloading the listing clears them
+Key | Action
+--- | ---
+<kbd>v</kbd>/<kbd>Space</kbd> | Toggle a mark on the current row
+<kbd>V</kbd> | Enter range mode: the current row becomes the anchor. Press again to exit, keeping the marks
+<kbd>Esc</kbd> | Clear all marks and exit range mode
+
+In range mode, moving the cursor or clicking extends the marked range from the anchor to the cursor. Outside range mode, clicking only moves the cursor. Marking clears the clipboard.
+
+Marks name entries but are stored as row positions, so what becomes of them depends on why the listing changed:
+
+Change | Marks
+--- | ---
+Sorting, filtering, toggling hidden files | Cleared
+Reload (<kbd>Ctrl</kbd>+<kbd>r</kbd> or a watcher refresh) | Kept, re-found by path. An entry that is gone loses its mark
+A search finishing or being cancelled | Kept
+Navigating to another directory | Cleared
+chmod, copy, cut, delete | Consumed by the operation
 
 ### Filtering
 
-The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the name shown in the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. Directories are shown with a trailing `/` outside the bookmarks view, so `/` filters a normal listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
+The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view.
+
+Directories carry a trailing `/` outside the bookmarks view, so `/` filters a listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
 
 ### Searching
 
-Search (<kbd>/</kbd>) walks the current directory recursively and matches a case-insensitive substring against each entry's name. Symlinked directories are not descended into. The walk is bounded by `search_max_depth` and `search_max_results` in the `[file_system]` section of the [configuration](#configuration); when either bound is reached, FileCTRL keeps the results it has and says so.
+Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so.
 
-Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. Marks made while it was still running are kept.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled.
 
 ### Sorting
 
-<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; clicking a column header does the same. Each column starts with the direction it is usually reached for - name A-Z, modified newest first, size largest first - and sorting by the same column again reverses it.
+<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; clicking a column header does the same. Sorting by the same column again reverses it. Each column starts in the direction it is usually reached for:
 
-The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section of the [configuration](#configuration) groups directories first, for the Name column only.
+Column | Default direction
+--- | ---
+Name | A-Z
+Modified | Newest first
+Size | Largest first
+
+The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section groups directories first, for the Name column only.
 
 ### Default keybindings
 
@@ -199,8 +204,8 @@ Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
-Accept path suggestion (while the cursor is at the end of the input) | <kbd>Tab</kbd>
-Cycle path suggestions (while the cursor is at the end of the input) | <kbd>↓</kbd>/<kbd>↑</kbd>
+Accept path suggestion (cursor at end of input) | <kbd>Tab</kbd>
+Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keybindings require a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty). tmux users must also add the following to `~/.tmux.conf`:
@@ -212,36 +217,36 @@ Cycle path suggestions (while the cursor is at the end of the input) | <kbd>↓<
 
 ## Configuration
 
-The configuration is drawn from the first of the following:
+The configuration is drawn from the first of:
 
-1. The path specified by the command line option: `--config`
-1. The default path, if it exists: `~/.config/filectrl/config.toml`
+1. The path given by `--config`
+1. `~/.config/filectrl/config.toml`, if it exists
 1. The built-in [default configuration](./src/app/config/default_config.toml)
 
-Run `filectrl --write-default-config` to write the [default configuration](./src/app/config/default_config.toml) to `~/.config/filectrl/config.toml`, or to the path given by `--config`. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
+`filectrl --write-default-config` writes the defaults to that path. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
 
-You can also override only the properties you want to change:
+Override only what you want to change:
 
-```bash
-cat ~/.config/filectrl/config.toml
+```toml
+# ~/.config/filectrl/config.toml
 [openers.linux]
 open_directory = "alacritty --working-directory %s"
 open_filectrl_window = "alacritty --command filectrl %s"
 ```
 
-The configuration is validated strictly: an unrecognized key (for example a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) causes FileCTRL to exit with an error rather than silently ignoring it.
+Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) makes FileCTRL exit with an error rather than ignore it.
 
 ### Opening in other applications
 
 - [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
 - [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
-Keyboard key | Description
+Key | Opens with
 --- | ---
-<kbd>l</kbd> | Open the selected file using the program configured by: `openers.open_file`
-<kbd>t</kbd> | Open the current directory in the program configured by: `openers.open_directory`
-<kbd>w</kbd> | Open a new `filectrl` window in the terminal configured by: `openers.open_filectrl_window`
-<kbd>o</kbd> | Choose from the applications that can open the selected file or directory
+<kbd>l</kbd> | `openers.open_file`
+<kbd>t</kbd> | `openers.open_directory`, for the current directory
+<kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
+<kbd>o</kbd> | A picker of the applications that can open the selection
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -265,9 +270,9 @@ run_in_terminal = ""
 
 #### Open with...
 
-Pressing <kbd>o</kbd> replaces the file table with a list of the applications that can open the selected file or directory, leaving the breadcrumbs and status bar visible. The default application is listed first and marked `(default)`.
+<kbd>o</kbd> replaces the file table with the applications that can open the selection, leaving the breadcrumbs and status bar visible. The default application is listed first and marked `(default)`.
 
-Keyboard key | Description
+Key | Action
 --- | ---
 <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd> | Move between applications
 <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd> | Open with the selected application
@@ -279,41 +284,29 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types (a `.rs` file also offers plain text editors), then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/).
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types (a `.rs` file also offers plain text editors), then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux the application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
-
-Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
-
-`openers.open_file` (or `openers.open_directory` for a directory) is offered last when it is set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
+- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
+- `openers.open_file` (or `openers.open_directory` for a directory) is offered last when set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
 
 ### Theming
 
-FileCTRL supports two theme sections: `[theme]` for truecolor terminals and `[theme256]` for 256-color terminals. At startup, FileCTRL detects truecolor support via the `$COLORTERM` environment variable. Use `--no-truecolor` to select the 256-color theme regardless.
+`[theme]` applies to truecolor terminals and `[theme256]` to 256-color terminals. FileCTRL detects truecolor support via `$COLORTERM`; `--no-truecolor` selects the 256-color theme regardless.
 
 #### Style properties
 
-Each theme entry is a style with three optional properties:
+Each theme entry is a style. All three properties are optional; set `fg` or `bg` to `""` to inherit the parent widget's color.
 
-Property | Format | Default | Description
---- | --- | --- | ---
-`fg` | Color string | Inherited | Foreground color
-`bg` | Color string | Inherited | Background color
-`modifiers` | Array of strings | `[]` | Text modifiers
-
-All properties are optional. Omit any property to use its default. Set `fg` or `bg` to `""` to explicitly inherit the parent widget's color.
-
-**Color formats:**
+Property | Format | Default
+--- | --- | ---
+`fg` | Color string | Inherited
+`bg` | Color string | Inherited
+`modifiers` | Array of strings | `[]`
 
 - **Truecolor** (`[theme]`): hex strings like `"#FF0000"`, or named colors like `"Red"`
 - **256 color** (`[theme256]`): decimal indexes `"0"` through `"255"`
-
-**Available modifiers:** `"bold"`, `"dim"`, `"italic"`, `"underlined"`, `"blink"`, `"rapid_blink"`, `"reversed"`, `"crossed_out"`
-
-#### Example: minimal custom theme
-
-You only need to specify the properties you want to change:
+- **Modifiers:** `"bold"`, `"dim"`, `"italic"`, `"underlined"`, `"blink"`, `"rapid_blink"`, `"reversed"`, `"crossed_out"`
 
 ```toml
 [theme.table.selected]
@@ -332,8 +325,8 @@ Section | Description
 `alert` | Alert bar (`base`, `error`, `info`, `warn`)
 `breadcrumbs` | Path breadcrumbs (`base`, `ancestor`, `basename`, `separator`)
 `clipboard` | Clipboard status indicators (`copy`, `cut`, `delete`)
-`file_modified_date` | Date column colors by age (`less_than_minute`, `less_than_hour`, `less_than_day`, `less_than_month`, `less_than_year`, `greater_than_year`)
-`file_size` | Size column colors by magnitude (`bytes`, `kib`, `mib`, `gib`, `tib`, `pib`)
+`file_modified_date` | Date column by age (`less_than_minute`, `less_than_hour`, `less_than_day`, `less_than_month`, `less_than_year`, `greater_than_year`)
+`file_size` | Size column by magnitude (`bytes`, `kib`, `mib`, `gib`, `tib`, `pib`)
 `file_type` | Row colors by file type (`directory`, `executable`, `symlink`, `regular_file`, etc.)
 `help` | Help panel (`base`, `header`, `actions`, `shortcuts`)
 `notice` | Notice bar (`filter`, `progress`)
@@ -345,7 +338,7 @@ Section | Description
 
 #### LS_COLORS integration
 
-The `file_type` section has a `ls_colors_take_precedence` boolean. When `true`, colors from the `$LS_COLORS` environment variable are applied on top of the configured file type colors, including extension-based patterns (e.g. `*.tar=01;31`).
+With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`.
 
 ```toml
 [theme.file_type]
@@ -354,41 +347,30 @@ ls_colors_take_precedence = true
 
 #### External theme files
 
-You can split themes into separate files using `include_files`:
+`include_files` merges other TOML files on top of the config:
 
 ```toml
-include_files = ["my-theme.toml"]
+include_files = ["theme.toml"]
 ```
 
-- **Relative paths** are resolved from the directory containing the config file (e.g. `~/.config/filectrl/`)
-- **Absolute paths** are used as-is
-- Included files are **merged on top** of the base config - keys in included files override the base
-- Multiple files are merged in order; later files override earlier ones
-- The value must be an array of strings; if it is any other type, or if any element is not a string, FileCTRL exits with an error
-- If a file doesn't exist or can't be parsed, FileCTRL exits with an error
+- Relative paths resolve from the directory containing the config file; absolute paths are used as-is
+- Files merge in order, later ones taking precedence over the base config and over earlier files
+- The value must be an array of strings, and every listed file must exist and parse, or FileCTRL exits with an error
 
-Export the built-in defaults, then copy and edit:
+Export the defaults, then copy and edit:
 
 ```bash
 filectrl --write-default-themes  # writes ~/.config/filectrl/theme.toml
 cp ~/.config/filectrl/theme.toml ~/.config/filectrl/solarized.toml
 ```
 
-Include it from your config:
-
-```toml
-include_files = ["solarized.toml"]
-```
-
-Or apply themes without editing the config. `--include`/`-i` is repeatable and files merge in order, later ones taking precedence. Unlike `include_files`, relative paths here resolve against the current directory, not the config directory:
+`--include`/`-i` applies a theme without editing the config. It is repeatable and merges in order, later ones taking precedence. Unlike `include_files`, relative paths resolve against the current directory:
 
 ```bash
 filectrl -i ~/.config/filectrl/solarized.toml -i overrides.toml
 ```
 
 #### Bundled themes
-
-FileCTRL includes the following themes in the [`themes/`](themes/) directory:
 
 Theme | Inspired by | Screenshot
 ----- | ----------- | ----------
@@ -401,11 +383,7 @@ filectrl --include themes/42km.toml
 
 ### Customizing keybindings
 
-Keybindings are configured in the `[keybindings]` section of `config.toml`. Edit the values to change any binding. Values can be a single key string or an array of key strings.
-
-Binding one key to two actions is a configuration error that prevents startup. This includes a collision between a key you configured and a default you did not override.
-
-Some keys are hardcoded and always work in addition to any configured keys. In normal mode: arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, and <kbd>Esc</kbd>. In prompt mode: <kbd>Esc</kbd> (cancel), <kbd>Tab</kbd> (accept suggestion), and <kbd>↓</kbd>/<kbd>↑</kbd> (cycle suggestions). Hardcoded keys are scoped to their mode, so <kbd>Tab</kbd> is configurable in normal mode (the default `goto` binding uses it). Binding a hardcoded key to a different action in the same mode is a configuration error that prevents startup; binding a hardcoded key to its own action is allowed.
+Keybindings live in the `[keybindings]` section of `config.toml`. A value is a single key string or an array of them.
 
 ```toml
 [keybindings]
@@ -421,23 +399,34 @@ prompt_reset = ["Ctrl+u", "Ctrl+z"]
 
 Key strings support:
 
-- Single characters: `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
-- Uppercase characters (implies Shift): `"G"`, `"V"`, `"N"`
-- Named keys: `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
-- Function keys: `"F2"`, `"F5"`
-- Modifier prefixes: `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
+Form | Examples
+--- | ---
+Single characters | `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
+Uppercase (implies Shift) | `"G"`, `"V"`, `"N"`
+Named keys | `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
+Function keys | `"F2"`, `"F5"`
+Modifier prefixes | `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
 
-`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` is equivalent to `"BackTab"`.
+`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`.
 
-Duplicate keybindings (the same key assigned to two different actions within the same mode) are detected at startup and cause an error. Assigning the same key to one action more than once is allowed.
+Binding one key to two actions in the same mode prevents startup, including a collision between a key you configured and a default you did not override. Assigning the same key to one action more than once is allowed.
 
-The help view (<kbd>?</kbd>) always reflects the currently configured keybindings.
+Some keys are hardcoded and always work alongside any configured keys, scoped to their mode:
+
+Mode | Hardcoded
+--- | ---
+Normal | Arrow keys, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>PageUp</kbd>/<kbd>PageDown</kbd>, <kbd>Esc</kbd>
+Prompt | <kbd>Esc</kbd> (cancel), <kbd>Tab</kbd> (accept suggestion), <kbd>↓</kbd>/<kbd>↑</kbd> (cycle suggestions)
+
+Because the scoping is per mode, <kbd>Tab</kbd> is still configurable in normal mode, where the default `goto` binding uses it. Binding a hardcoded key to a different action in the same mode prevents startup; binding it to its own action is allowed.
+
+The help view (<kbd>?</kbd>) reflects the configured keybindings.
 
 ### Desktop entry
 
 - ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html)
 
-You can make `filectrl` the default application for opening directories. Start by copying the [`filectrl.desktop` file](./filectrl.desktop) to `~/.local/share/applications/`:
+To make `filectrl` the default application for opening directories:
 
 ```bash
 cp filectrl.desktop ~/.local/share/applications/
@@ -451,35 +440,31 @@ update-desktop-database ~/.local/share/applications/
 - See [Cargo.toml](./Cargo.toml) for dependencies.
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
 
-The [`fixtures/`](./fixtures/) directory contains a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
-
-- **`file_types/`** - named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
-- **`no_delete/`** - `chmod 555 fixtures/no_delete` (git does not track the read-only bit), then navigate here to trigger delete/rename permission errors
-- **`scrolling/`** - 48 entries with long filenames interspersed to exercise scrolling and multi-row truncation
-- Plus: executables, symlinks, hidden files, Unicode names, special characters, and long filenames
-
-Date-colour and size-colour buckets need fixtures git cannot store (mtimes, sparse files); create files locally with `touch -t`/`truncate` to exercise those.
-
 ```bash
 cargo clippy
 cargo fix --allow-dirty --allow-staged
 cargo test
 cargo run
 cargo build --release
-./target/release/filectrl
-sudo cp ./target/release/filectrl /usr/local/bin/
 
 # Log to ./err
 RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
 ```
 
+[`fixtures/`](./fixtures/) is a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
+
+Path | Covers
+--- | ---
+`file_types/` | Named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
+`no_delete/` | Delete and rename permission errors. Needs `chmod 555 fixtures/no_delete` first; git does not track the read-only bit
+`scrolling/` | 48 entries with long filenames interspersed, for scrolling and multi-row truncation
+Elsewhere | Executables, symlinks, hidden files, Unicode names, special characters, long filenames
+
+Date-color and size-color buckets need fixtures git cannot store (mtimes, sparse files); create them locally with `touch -t` and `truncate`.
+
 ### Integration tests
 
-[`tests/integration/`](./tests/integration/) drives the real binary in a tmux
-pane - keyboard, mouse, and window resizes - and asserts on the rendered
-screen and the on-disk results. They are Linux-only, and CI runs them on every
-push and pull request. See its [README](./tests/integration/README.md) for how
-the harness works and how to add a suite.
+[`tests/integration/`](./tests/integration/) drives the real binary in a tmux pane (keyboard, mouse, window resizes) and asserts on the rendered screen and the on-disk result. Linux-only, and run by CI on every push and pull request. See its [README](./tests/integration/README.md) for the harness and how to add a suite.
 
 ```bash
 tests/integration/run_tests.sh             # all suites (needs tmux and a release build)

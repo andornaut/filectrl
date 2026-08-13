@@ -64,7 +64,7 @@ fn annotate_uppercase(display: &str) -> String {
         .join("/")
 }
 
-/// Build the plain-text keybindings help content for the `--keybindings` CLI flag.
+/// Build the plain-text keybindings help content for the `--print-keybindings` CLI flag.
 /// Section headers are emitted with ANSI bold when `bold` is true (i.e. stdout is a terminal).
 pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
     const BOLD: &str = "\x1b[1m";
