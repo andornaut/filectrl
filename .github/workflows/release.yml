@@ -52,16 +52,19 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: filectrl-linux
+            archive: filectrl_linux_x86_64
           # cross builds in a container that supplies the aarch64 glibc
           # sysroot; the crate graph needs no other native libraries.
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact_name: filectrl-linux-arm64
+            archive: filectrl_linux_arm64
             cross: true
           # macOS is Apple Silicon only.
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: filectrl-macos-arm64
+            archive: filectrl_darwin_arm64
 
     steps:
       - name: Checkout code
@@ -92,6 +95,32 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: target/${{ matrix.target }}/release/filectrl
+
+      # The archive a versioned release ships, built from the same binary the
+      # dev release ships rather than from a second compile of the same target.
+      # The layout is what the README's install one-liner expects: `filectrl` at
+      # the archive root, and a checksum in `sha256sum -c` format beside it.
+      - name: Archive for release
+        run: |
+          stage="$(mktemp -d)"
+          cp "target/${{ matrix.target }}/release/filectrl" LICENSE README.md "$stage/"
+          tar -czf "${{ matrix.archive }}.tar.gz" -C "$stage" filectrl LICENSE README.md
+          # macOS runners carry shasum rather than sha256sum.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${{ matrix.archive }}.tar.gz" > "${{ matrix.archive }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.archive }}.tar.gz" > "${{ matrix.archive }}.sha256"
+          fi
+
+      # Named without a hyphen after `filectrl`, so the dev release's
+      # `filectrl-*` download pattern collects only the bare binaries.
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}.tar.gz
+            ${{ matrix.archive }}.sha256
 
   # A matrix leg reports as `build-platform (ubuntu-latest, x86_64-unknown-linux-gnu,
   # filectrl-linux)`, a name that changes whenever the matrix does, and a required
@@ -178,12 +207,10 @@ jobs:
           make_latest: "false"
           files: artifacts/*
 
-  # upload-rust-binary-action uploads to an existing release rather than
-  # creating one, so the release has to exist before the matrix fans out. It
-  # waits on `build` as well: the release is created before a single asset is
-  # uploaded, so a target that only fails to compile in the matrix below would
-  # otherwise leave a published release short of the platforms it claims.
-  create-release:
+  # Versioned releases. Ships the archives build-platform already produced,
+  # so each target is compiled once per tag rather than once for the gate and
+  # again for the assets.
+  release:
     needs: [build, test, attributions]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -191,58 +218,22 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
+      # Merged: every artifact holds differently named files, so nothing
+      # collides, and the release wants them all in one directory.
+      - name: Download release archives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          pattern: filectrl_*
+          merge-multiple: true
 
-      - name: Create release
-        # Tolerate an existing release so the workflow can be re-run.
-        run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
-            || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+      - name: Publish release
+        uses: softprops/action-gh-release@v3.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Versioned releases. The action builds, archives as
-  # {name}_{system}_{arch}.tar.gz, emits a sha256 per archive, and uploads.
-  # It selects and installs cross itself for non-host targets.
-  release:
-    needs: create-release
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
-    strategy:
-      # Surface every failing target instead of stopping at the first, so a
-      # broken leg cannot leave the release silently missing an asset.
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            archive: filectrl_linux_x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            archive: filectrl_linux_arm64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            archive: filectrl_darwin_arm64
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install XCB dependencies
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
-      - name: Build and upload release assets
-        uses: taiki-e/upload-rust-binary-action@v1.30.2
         with:
-          bin: filectrl
-          target: ${{ matrix.target }}
-          archive: ${{ matrix.archive }}
-          include: LICENSE,README.md
-          checksum: sha256
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: "true"
+          files: artifacts/*
