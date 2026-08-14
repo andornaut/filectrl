@@ -29,9 +29,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
+  # macOS as well as Linux, because the release builds an aarch64-apple-darwin
+  # binary and the crate carries `cfg(target_os = "macos")` branches in
+  # open_with.rs, tasks.rs and config.rs. Compiling that target at release time
+  # says the branches build; only running the suite here says they work.
+  test-platform:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -43,11 +51,35 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2.9.2
 
+      # The XCB libraries are how the clipboard reaches X11, so they are a Linux
+      # build dependency. macOS reaches its pasteboard through the system
+      # framework and has nothing to install.
       - name: Install XCB dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Run tests
         run: cargo test
+
+  # A matrix leg reports as `Test (ubuntu-latest)`, a name that changes whenever
+  # the matrix does, and a required check that stops reporting blocks every pull
+  # request forever. This job reports under one stable name, so branch
+  # protection has a single check to require no matter which platforms are
+  # added.
+  #
+  # `always()` and not `!cancelled()`, which looks tidier and is a hole: a
+  # cancelled run would skip this job, and GitHub counts a skipped required
+  # check as passing, so an unverified commit becomes mergeable. Failing closed
+  # costs a red check on runs that were cancelled anyway.
+  test:
+    name: Test
+    needs: test-platform
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check that every platform passed
+        run: '[ "${{ needs.test-platform.result }}" = success ]'
 
   lint:
     name: Lint
