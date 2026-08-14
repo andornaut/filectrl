@@ -34,61 +34,17 @@ jobs:
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/ai-attributions.yml
 
+  # Publishing waits on the same checks that guard main. Called only where a
+  # release can follow, since the Test workflow already runs on every push and
+  # pull request of its own accord, and the jobs below are gated the same way.
   test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.2
-
-      - name: Install XCB dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
-      - name: Run tests
-        run: cargo test
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.2
-
-      # clippy compiles the crate, so it needs what a build needs.
-      - name: Install XCB dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Lint
-        run: cargo clippy -- -D warnings
-
-      - name: Check dependencies
-        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/test.yml
 
   # Validates that every published target still compiles, and produces the
-  # binary the dev release ships. Skipped on tags, where `release` builds the
-  # same targets.
+  # binary the dev release ships. Runs on tags too, so that a release is only
+  # created once all three targets are known to compile.
   build-platform:
-    needs: [test, lint]
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -146,12 +102,11 @@ jobs:
   # `always()` and not `!cancelled()`, which looks tidier and is a hole: a
   # cancelled run would skip this job, and GitHub counts a skipped required
   # check as passing, so an unverified commit becomes mergeable. Failing closed
-  # costs a red check on runs that were cancelled anyway. Tags carry the same
-  # skip the matrix does, since `release` builds those targets instead.
+  # costs a red check on runs that were cancelled anyway.
   build:
     name: Build
     needs: build-platform
-    if: always() && !startsWith(github.ref, 'refs/tags/v')
+    if: always()
     runs-on: ubuntu-latest
 
     steps:
@@ -161,7 +116,7 @@ jobs:
   # Rolling build of main. Ships every platform the matrix builds; the tarballs
   # are reserved for versioned releases.
   dev-release:
-    needs: [build, attributions]
+    needs: [build, test, attributions]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -224,9 +179,12 @@ jobs:
           files: artifacts/*
 
   # upload-rust-binary-action uploads to an existing release rather than
-  # creating one, so the release has to exist before the matrix fans out.
+  # creating one, so the release has to exist before the matrix fans out. It
+  # waits on `build` as well: the release is created before a single asset is
+  # uploaded, so a target that only fails to compile in the matrix below would
+  # otherwise leave a published release short of the platforms it claims.
   create-release:
-    needs: [test, lint, attributions]
+    needs: [build, test, attributions]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
