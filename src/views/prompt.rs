@@ -551,8 +551,10 @@ mod tests {
 
     // ── Goto type-ahead ──────────────────────────────────────────────────────
 
-    /// A temp directory populated with entries that exercise prefix matching,
-    /// sort order, and case sensitivity.
+    /// A temp directory populated with entries that exercise prefix matching
+    /// and sort order. Names differ by more than case, so the fixture builds on
+    /// a case-insensitive filesystem as well; the test that needs a case-only
+    /// pair adds it itself.
     struct GotoFixture {
         dir: TempDir,
     }
@@ -562,7 +564,6 @@ mod tests {
             let dir = TempDir::new("goto");
             std::fs::create_dir_all(dir.join("Apple")).unwrap();
             std::fs::create_dir_all(dir.join("Apricot")).unwrap();
-            std::fs::write(dir.join("apple"), b"").unwrap();
             std::fs::write(dir.join("Banana"), b"").unwrap();
             Self { dir }
         }
@@ -580,9 +581,14 @@ mod tests {
         }
     }
 
+    // Linux only: proving that matching is case-sensitive needs "Apple" and
+    // "apple" to exist side by side, which a case-insensitive filesystem cannot
+    // represent. The matching itself carries no platform-specific code.
+    #[cfg(target_os = "linux")]
     #[test]
     fn goto_suggestions_are_prefix_matched_sorted_and_case_sensitive() {
         let fixture = GotoFixture::new();
+        std::fs::write(fixture.dir.join("apple"), b"").unwrap();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         let names: Vec<&str> = view.suggestions.iter().map(|(n, _)| n.as_str()).collect();

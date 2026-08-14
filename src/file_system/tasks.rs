@@ -1641,6 +1641,9 @@ mod tests {
         active
     }
 
+    // Linux only: recreating a socket goes through mknod, which macOS refuses
+    // to an unprivileged process with EPERM.
+    #[cfg(target_os = "linux")]
     #[test]
     fn copy_path_recreates_socket() {
         let fx = TempDir::new("tasks");

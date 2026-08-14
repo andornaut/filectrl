@@ -443,6 +443,10 @@ mod tests {
             .collect()
     }
 
+    // Linux only: the fixture needs a directory "Apple" and a file "apple" as
+    // distinct entries, which a case-insensitive filesystem cannot represent.
+    // The comparison under test is pure and platform-independent.
+    #[cfg(target_os = "linux")]
     #[test]
     fn sort_by_name_ascending_groups_directories_first_then_case_insensitive() {
         Config::init_test();
@@ -468,6 +472,8 @@ mod tests {
         );
     }
 
+    // Linux only, for the same case-only fixture pair as the ascending case.
+    #[cfg(target_os = "linux")]
     #[test]
     fn sort_by_name_descending_reverses_within_the_directory_grouping() {
         Config::init_test();
@@ -574,6 +580,8 @@ mod tests {
         assert_eq!(r3, content.revision());
     }
 
+    // Linux only, for the same case-only fixture pair as the sort cases.
+    #[cfg(target_os = "linux")]
     #[test]
     fn streamed_listing_matches_set_items_then_sort() {
         Config::init_test();

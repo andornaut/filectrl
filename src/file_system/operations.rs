@@ -388,6 +388,10 @@ mod tests {
         assert!(b.exists());
     }
 
+    // Linux only: the case-variant hard link this builds is what stands in for
+    // a case-insensitive filesystem, and it cannot be created on one, where
+    // "A.TXT" already resolves to "a.txt".
+    #[cfg(target_os = "linux")]
     #[test]
     fn rename_allows_case_only_change_to_same_file() {
         let dir = TempDir::new("ops_casechange");
