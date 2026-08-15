@@ -17,7 +17,7 @@ use ratatui::Frame;
 use self::{
     clipboard::Clipboard,
     config::Config,
-    events::{receive_commands, spawn_command_sender},
+    events::{receive_commands, spawn_command_sender, spawn_signal_watcher},
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
@@ -98,6 +98,9 @@ impl App {
         self.render()?;
 
         spawn_command_sender(self.tx.clone());
+        // Answers termination signals when the reader thread cannot, which is
+        // the case whenever the terminal itself is what went away.
+        spawn_signal_watcher(self.tx.clone());
 
         loop {
             let commands = receive_commands(&self.rx);
