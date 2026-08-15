@@ -110,5 +110,9 @@ jobs:
       - name: Lint
         run: cargo clippy -- -D warnings
 
+      # Fetches the RustSec advisory database on every run, which a required
+      # check normally has no business doing. Kept here because that database
+      # is a GitHub-hosted repository, the same host the checkout above already
+      # depends on, so requiring it adds no failure mode this job did not have.
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@v2.1.1

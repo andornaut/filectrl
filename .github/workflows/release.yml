@@ -12,6 +12,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Write access is granted only to the jobs that create releases
 permissions:
   contents: read
 
