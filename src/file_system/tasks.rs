@@ -9,6 +9,7 @@ use std::{
         mpsc::{self, Sender},
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -58,6 +59,10 @@ struct CopyOutcome {
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
+/// Shortest gap between two progress updates for one task. The percentage above
+/// bounds updates per unit of work, which for a fast copy is a hundred of them
+/// inside a second or two, each one a redraw; this bounds them per unit of time.
+const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
 /// Floor for the per-file copy read buffer. `buffer_bytes` can yield a very
 /// small (even zero) size when a directory's scanned total is tiny or stale; a
 /// file that appears or grows between the size scan and the copy must still be
@@ -873,7 +878,11 @@ fn copy_file(
         }
     };
 
-    let mut debouncer = debounce::CountDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, total_size);
+    let mut debouncer = debounce::ProgressDebouncer::new(
+        PROGRESS_DEBOUNCE_PERCENTAGE,
+        PROGRESS_MIN_INTERVAL,
+        total_size,
+    );
 
     loop {
         if active.is_cancelled() {
@@ -896,7 +905,7 @@ fn copy_file(
             Ok(bytes) => match new_file.write_all(&context.buffer[..bytes]) {
                 Ok(()) => {
                     active.increment(bytes as u64);
-                    if debouncer.should_trigger(bytes as u64) {
+                    if debouncer.should_trigger(Instant::now(), bytes as u64) {
                         active.send_progress();
                     }
                 }
@@ -1055,8 +1064,11 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
     // One unit of progress per entry removed, against the total counted by
     // `dir_total_entries` before the walk. Debounced so a wide tree does not
     // put one progress command per entry ahead of terminal input.
-    let mut debouncer =
-        debounce::CountDebouncer::new(PROGRESS_DEBOUNCE_PERCENTAGE, active.total_size());
+    let mut debouncer = debounce::ProgressDebouncer::new(
+        PROGRESS_DEBOUNCE_PERCENTAGE,
+        PROGRESS_MIN_INTERVAL,
+        active.total_size(),
+    );
     while let Some(top) = stack.last_mut() {
         if active.is_cancelled() {
             active.cancelled();
@@ -1087,7 +1099,7 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
             }
         }
         active.increment(1);
-        if debouncer.should_trigger(1) {
+        if debouncer.should_trigger(Instant::now(), 1) {
             active.send_progress();
         }
     }
@@ -2581,7 +2593,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_path_advances_progress_once_per_removed_entry() {
+    fn remove_path_advances_progress_from_the_removals() {
         let fx = TempDir::new("tasks");
         let root = fx.join("doomed");
         std::fs::create_dir_all(root.join("sub")).unwrap();
@@ -2608,10 +2620,16 @@ mod tests {
             .collect();
         active.done();
 
-        // The bar must reach the total from the removals themselves rather
-        // than from `done` filling it in at the end, so a long delete shows
-        // motion instead of sitting at 0%.
-        assert_eq!(vec![1, 2, 3], completed);
+        // The bar must advance from the removals themselves rather than from
+        // `done` filling it in at the end, so a long delete shows motion
+        // instead of sitting at 0%.
+        assert_eq!(Some(&1), completed.first());
+        // How many of the three arrive depends on how much of
+        // `PROGRESS_MIN_INTERVAL` this tree takes to remove, which on any
+        // machine fast enough is none of it. What must hold either way is that
+        // each update reports more than the last and none overshoots the total.
+        assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(completed.iter().all(|completed| *completed <= 3));
     }
 
     #[test]
