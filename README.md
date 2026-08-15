@@ -53,7 +53,7 @@ Option | Description
 `-c`, `--config <PATH>` | Read the config from `PATH`, or write it there when combined with a `--write-default-*` flag
 `-i`, `--include <PATH>` | Merge a TOML file on top of the config. Repeatable; later files take precedence
 `--no-truecolor` | Use the 256-color theme instead of detecting truecolor support
-`--force` | Replace an existing file when writing defaults
+`--force` | Replace an existing file when writing defaults, which fails without it
 `--print-keybindings` | Print the keybindings, then exit
 `--write-default-config` | Write the default config, then exit
 `--write-default-themes` | Write the default theme as `theme.toml` beside the config, then exit
@@ -69,7 +69,7 @@ Flag | Also accepts
 `--write-default-themes` | `--config`, `--force`
 `--version` | nothing
 
-Anything else is reported rather than ignored. Both write flags print the path they wrote and refuse to replace an existing file unless `--force` is given. That path follows `$XDG_CONFIG_HOME`, so it is not always under `~/.config`.
+Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` and so is not always under `~/.config`.
 
 ### Bookmarks
 
@@ -162,7 +162,7 @@ Actions | Keys
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, middle, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>z</kbd>, <kbd>End</kbd>/<kbd>G</kbd> (Uppercase)/<kbd>$</kbd>
 Select top, middle, bottom visible row | <kbd>H</kbd> (Uppercase), <kbd>M</kbd> (Uppercase), <kbd>L</kbd> (Uppercase)
-Page down, up | <kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>/<kbd>PgDn</kbd>, <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>PgUp</kbd>
+Page down, up | <kbd>PgDn</kbd>/<kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>, <kbd>PgUp</kbd>/<kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
 Go to previous dir | <kbd>-</kbd>
 Go to home dir | <kbd>~</kbd>
@@ -253,22 +253,20 @@ Key | Opens with
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
-# %s is replaced by the relevant path at runtime.
+# %s is replaced at runtime: the current directory, the selected entry, or a
+# new window's directory. In run_in_terminal alone it is a command line
+# rather than a path (see "Open with..." below).
 [openers.linux]
-# %s will be replaced by the path to the current working directory:
 open_directory = "alacritty --working-directory %s"
-# %s will be replaced by the path to the selected file or directory:
 open_file = "pcmanfm %s"
 open_filectrl_window = "alacritty --command filectrl %s"
-# %s will be replaced by a command line, not a path (see "Open with..." below):
 run_in_terminal = "alacritty --command %s"
 
 [openers.macos]
 open_directory = "open %s"
 open_file = "open %s"
 open_filectrl_window = "open -a Terminal %s"
-# run_in_terminal is Linux only and is ignored here
-run_in_terminal = ""
+run_in_terminal = "" # Linux only, ignored here
 ```
 
 #### Open with...
@@ -287,11 +285,13 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types (a `.rs` file also offers plain text editors), then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line rather than a path: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. Set it to `""` to leave them out.
-- `openers.open_file` (or `openers.open_directory` for a directory) is offered last when set, showing its command template alongside the setting name, so the picker works without an application database. Set it to `""` to leave it out, in which case a path with no matching application shows "No applications found".
+Two `openers` settings shape the list, and setting either to `""` drops its effect:
+
+- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`.
+- `openers.open_file` (or `openers.open_directory` for a directory) is offered last, showing its command template beside the setting name, so the picker still works with no application database. Without it, a path that matches nothing shows "No applications found".
 
 ### Theming
 
@@ -444,14 +444,12 @@ update-desktop-database ~/.local/share/applications/
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
 
 ```bash
-cargo clippy
-cargo fix --allow-dirty --allow-staged
-cargo test
-cargo run
-cargo build --release
-
-# Log to ./err
+# Run against a directory, logging to ./err
 RUST_LOG=debug,notify=info cargo run -- fixtures/ 2>err
+
+# Typecheck the macOS-only code without a Mac
+rustup target add aarch64-apple-darwin
+cargo check --target aarch64-apple-darwin
 ```
 
 [`fixtures/`](./fixtures/) is a committed file tree for manual UI testing. Navigate into it with `cargo run` to exercise rendering edge cases:
