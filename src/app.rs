@@ -104,6 +104,7 @@ impl App {
 
         loop {
             let commands = receive_commands(&self.rx);
+            let received = commands.len();
 
             let remaining_commands = self.broadcast_commands(commands);
 
@@ -112,6 +113,9 @@ impl App {
             }
 
             must_not_contain_unhandled(&remaining_commands)?;
+            if changed_nothing_visible(received, &remaining_commands) {
+                continue;
+            }
             self.render()?;
         }
     }
@@ -258,6 +262,25 @@ fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Whether a batch can be drained without redrawing, because nothing in it
+/// reached a handler: `received` commands went out and the same number came
+/// back unclaimed, and every one is an input event.
+///
+/// A command a handler claims may have changed what is on screen, so any batch
+/// with one in it redraws. An unclaimed input event cannot have: `handle_key`
+/// and `handle_mouse` return `NotHandled` only from arms that touch no state,
+/// which is what an unbound keystroke or a click that lands on no view hits.
+///
+/// `Resize` is excluded even though it too goes unhandled, because it is the
+/// notification that the terminal's dimensions changed and exists to redraw.
+fn changed_nothing_visible(received: usize, remaining: &[Command]) -> bool {
+    !remaining.is_empty()
+        && remaining.len() == received
+        && remaining
+            .iter()
+            .all(|command| matches!(command, Command::Key(_, _) | Command::Mouse(_)))
 }
 
 fn should_quit(commands: &[Command]) -> bool {
@@ -476,6 +499,28 @@ mod tests {
         );
         assert!(must_not_contain_unhandled(&[]).is_ok());
         assert!(must_not_contain_unhandled(&[Command::AlertInfo("x".into())]).is_err());
+    }
+
+    #[test]
+    fn a_batch_of_unclaimed_input_skips_the_render() {
+        let key = Command::Key(KeyCode::Char('~'), KeyModifiers::NONE);
+        let click = Command::Mouse(mouse(MouseEventKind::Down(MouseButton::Left)));
+
+        assert!(changed_nothing_visible(2, &[key.clone(), click]));
+        assert!(!changed_nothing_visible(0, &[]));
+        // One of the two was claimed, so the batch may have changed the screen.
+        assert!(!changed_nothing_visible(2, std::slice::from_ref(&key)));
+        // A resize is unhandled by design and is precisely a reason to redraw.
+        assert!(!changed_nothing_visible(
+            2,
+            &[
+                key,
+                Command::Resize {
+                    width: 1,
+                    height: 1
+                }
+            ]
+        ));
     }
 
     #[test]
