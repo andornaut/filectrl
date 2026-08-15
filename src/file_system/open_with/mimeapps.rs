@@ -135,12 +135,11 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
         // `ordered` and `seen` do not: an id already ranked for a more specific
         // type keeps its rank.
         //
-        // `[Removed Associations]` cancels an id outright, so it applies to
-        // every later source. Desktop ids already defined by a higher
-        // precedence applications directory are excluded only from the
-        // directory scan, so that the same file is not added twice; the spec
-        // does not let that cancel an association a lower level states
-        // explicitly.
+        // `[Removed Associations]` cancels an id outright and so applies to every
+        // later source. An id already defined by a higher precedence applications
+        // directory is excluded from the directory scan alone, to avoid adding
+        // the same file twice; the spec does not let that cancel an association a
+        // lower level states explicitly.
         let mut removed: HashSet<&DesktopId> = HashSet::new();
         let mut shadowed: HashSet<&DesktopId> = HashSet::new();
 
@@ -176,14 +175,14 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
         }
     }
 
-    // The most specific type's highest precedence default wins, and is offered
-    // first whatever position the directory scan gave it. Only a default whose
-    // desktop file exists counts, so that an entry left behind by an
-    // uninstalled application does not take the marker with it.
+    // The most specific type's highest precedence default wins and is offered
+    // first, whatever position the directory scan gave it. Only a default whose
+    // desktop file exists counts, so an entry left by an uninstalled application
+    // does not take the marker with it.
     //
     // The spec also requires the default to be an associated application, but
-    // every desktop honours an explicit default regardless, so promote one that
-    // is not associated rather than skipping it.
+    // every desktop honours an explicit default anyway, so one that is not
+    // associated is promoted rather than skipped.
     let default = default_candidates
         .into_iter()
         .find(|id| resolve(levels, id).is_some());

@@ -111,16 +111,13 @@ impl Config {
     /// the host's `~/.config/filectrl/config.toml`: a developer who changes a
     /// `[ui]` default there would otherwise see unrelated tests fail.
     ///
-    /// `config_dir` exists only so that paths derived from it (notably
-    /// `bookmarks_dir`) resolve somewhere inert instead of the real config
-    /// directory. The `TempDir` guard is deliberately dropped rather than
-    /// held: the path is reserved and never created, so there is nothing for
-    /// it to remove. Reserving keeps it unique per call, so concurrent runs
-    /// cannot collide on it.
+    /// `config_dir` exists only so paths derived from it (notably
+    /// `bookmarks_dir`) resolve somewhere inert. The `TempDir` guard is dropped
+    /// rather than held: the path is reserved, never created, so there is
+    /// nothing to remove, and reserving keeps it unique across concurrent runs.
     ///
     /// A test that needs a config directory on disk should own a `TempDir` and
-    /// set `config_dir` from it, as `app::claims` does, rather than letting
-    /// anything create this one.
+    /// set `config_dir` from it, as `app::claims` does.
     #[cfg(test)]
     pub(crate) fn builtin() -> Self {
         let config_dir = crate::test_support::TempDir::reserved("config")
@@ -254,13 +251,11 @@ impl Config {
         self.config_dir.join("bookmarks")
     }
 
-    /// Resolves the config's `include_files` array into absolute-or-relative
-    /// paths. Relative entries are resolved against `config_dir`, falling back
-    /// to the default config directory. Errors if neither is available rather
-    /// than silently resolving relative entries against the CWD (consistent
-    /// with `parse_value`). This is defensive: the fallback is currently
-    /// unreachable because `config_dir == None` is only produced after
-    /// `default_config_dir()` has already succeeded in the same run.
+    /// Resolves the config's `include_files` array. Relative entries resolve
+    /// against `config_dir`, falling back to the default config directory, and
+    /// error if neither is available rather than silently resolving against the
+    /// CWD, as `parse_value` does. Defensive: the fallback is unreachable, since
+    /// `config_dir == None` only follows a successful `default_config_dir()`.
     fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
         let Some(include_value) = value.get("include_files") else {
             return Ok(Vec::new());
@@ -487,10 +482,9 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
 }
 
 /// Style properties that may appear on any style table. The embedded default
-/// omits these where they are unset (e.g. `[theme.alert]` lists only `fg`), so
-/// they are permitted everywhere rather than validated against the default's
-/// shape; otherwise a user adding `bg`/`modifiers` to such an entry would be
-/// wrongly rejected. Misplaced occurrences are harmless and rare.
+/// omits them where they are unset (`[theme.alert]` lists only `fg`), so they
+/// are permitted everywhere rather than validated against the default's shape,
+/// which would wrongly reject a user adding `bg` there.
 const STYLE_KEYS: &[&str] = &["fg", "bg", "modifiers"];
 
 /// Recursively rejects any key in `value` that is absent from the embedded

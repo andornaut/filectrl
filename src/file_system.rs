@@ -42,10 +42,9 @@ use crate::{
 };
 
 /// How often a running search wakes the event loop to redraw its loading
-/// indicator. Only a heartbeat: the indicator's position comes from elapsed
-/// time, so this bounds how coarse its motion gets during a stretch of the walk
-/// that produces no results, and matters not at all while results are arriving,
-/// since each batch already redraws.
+/// indicator. Only a heartbeat: the position comes from elapsed time, so this
+/// bounds how coarse the motion gets over a stretch of the walk that finds
+/// nothing, and does nothing at all while batches are arriving to redraw.
 const SEARCH_TICK_INTERVAL: Duration = Duration::from_millis(150);
 
 /// A cancellable in-flight action. File operations and searches share one list,
@@ -78,10 +77,10 @@ struct PendingPaste {
     /// being copied.
     conflicts: Conflicts,
     /// Destination names already spoken for by sources queued earlier in this
-    /// paste. Their work is queued but may not have run, so the filesystem does
-    /// not show them yet; without this, two marked sources sharing a basename
-    /// (which search results make easy) would both see a free name and the
-    /// second would fail at the copy instead of being asked about.
+    /// paste, whose work may not have run yet, so the filesystem does not show
+    /// them. Without this, two marked sources sharing a basename (which search
+    /// results make easy) would both see a free name, and the second would fail
+    /// at the copy instead of being asked about.
     claimed: HashMap<OsString, Occupant>,
 }
 
@@ -135,8 +134,7 @@ impl PendingPaste {
     }
 
     /// What to do with the source at the front of the queue, given what is
-    /// already at its destination. Pure, so the whole answer matrix can be
-    /// exercised without a filesystem or a worker.
+    /// already at its destination.
     fn step(&self, occupant: Option<Occupant>) -> PasteStep {
         step(self.conflicts.standing(), occupant)
     }
@@ -411,11 +409,10 @@ impl FileSystem {
     }
 
     /// Full search teardown (Esc / `ResetView`): cancel and drop every search
-    /// entry. No-op if the search was already cancelled via `cancel_task`.
-    /// The cancelled thread still emits one final `ExitedSearch`: when a newer
-    /// search has superseded it, the stale generation makes every consumer
-    /// ignore it; otherwise it arrives with the current generation and the
-    /// handlers process it as a no-op (entry and notice state already cleared).
+    /// entry. No-op if `cancel_task` already cancelled it. The thread still
+    /// emits one last `ExitedSearch`, which a superseded generation makes every
+    /// consumer ignore, and which is otherwise a no-op because the entry and
+    /// notice state is already cleared.
     fn cancel_search(&mut self) {
         self.cancellables.retain(|c| match c {
             Cancellable::Search(token) => {
@@ -438,11 +435,10 @@ impl FileSystem {
     /// The entry a cancel keypress targets, so it always aims at work that is
     /// actually running rather than at whatever was registered last.
     ///
-    /// A search runs alongside everything else, so when one is the most recent
-    /// thing started it is what the keypress means. File operations share a
-    /// single worker and run in the order they were queued, so the *oldest*
-    /// registered one is the one running: a batch registers every source at
-    /// once, and cancelling the newest would stop work that has not started
+    /// A search runs alongside everything else, so the most recent one started
+    /// is what the keypress means. File operations share a single worker and run
+    /// in queue order, so the *oldest* registered one is the one running:
+    /// cancelling the newest of a batch would stop work that has not started
     /// while the copy the user is watching carries on.
     fn cancel_target(&self) -> Option<usize> {
         match self.cancellables.last()? {
@@ -460,13 +456,11 @@ impl FileSystem {
         };
         match self.cancellables.remove(index) {
             Cancellable::Task(info) => {
-                // A task that can no longer be cancelled stays on the stack
-                // until its terminal Progress prunes it, and the user is told
-                // nothing happened. `uncancellable` covers two cases: a task
-                // still finishing a stage that cannot be interrupted, and one
-                // already finished whose terminal Progress is still in flight.
-                // The "Cannot cancel" wording fits the former; for the latter
-                // (a sub-frame race) it is momentarily imprecise.
+                // Stays on the stack until its terminal Progress prunes it,
+                // and the user is told nothing happened. `uncancellable` covers
+                // both a task in an uninterruptible stage and one already
+                // finished whose terminal Progress is in flight; the wording
+                // fits the first and is momentarily imprecise for the second.
                 if info.uncancellable.load(Ordering::Relaxed) {
                     let message = format!("Cannot cancel: {}", info.kind.message());
                     self.cancellables.insert(index, Cancellable::Task(info));
@@ -606,10 +600,9 @@ impl FileSystem {
     fn refresh(&mut self) -> CommandResult {
         // A load for this directory is already streaming and will pick the
         // change up. Restarting it would cancel it before it can finalize, and
-        // under sustained churn (a build writing into the directory being
-        // viewed) it would never finalize at all: both the sort and the end of
-        // the loading state hang off the completion. The refresh is re-issued
-        // when the load reports in.
+        // under sustained churn (a build writing into the viewed directory) it
+        // never would: the sort and the end of the loading state both hang off
+        // that completion. The refresh is re-issued when the load reports in.
         if self.current_load.is_some() {
             self.reload_pending = true;
             return CommandResult::Handled;
@@ -712,9 +705,9 @@ impl FileSystem {
     /// skipping was a choice, not a failure.
     ///
     /// Every dismissed prompt arrives here, so a paste is abandoned only when
-    /// one is actually waiting on an answer: dismissing a rename or a filter
-    /// leaves a running paste alone. The standing answer is left as it is, so
-    /// an `*All` already given still covers the sources already handed out.
+    /// one is waiting on an answer: dismissing a rename or a filter leaves a
+    /// running paste alone. The standing answer stands, so an `*All` already
+    /// given still covers the sources already handed out.
     fn cancel_paste(&mut self) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::NotHandled;
@@ -730,10 +723,9 @@ impl FileSystem {
     /// Runs one source of a paste, recording whether it started so the
     /// clipboard follow-up can tell a clean run from a partial one.
     ///
-    /// The destination name is claimed only once the task is running. A source
-    /// that failed validation writes nothing, so claiming its name would make a
-    /// later source of the same name collide with something that is never going
-    /// to be there.
+    /// The name is claimed only once the task is running: a source that failed
+    /// validation writes nothing, so claiming it would make a later source of
+    /// the same name collide with something that will never be there.
     fn run_paste_task(
         &mut self,
         pending: &mut PendingPaste,
@@ -756,14 +748,13 @@ impl FileSystem {
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
-        // Backstop for a StartSearch("") that bypasses the prompt (the
-        // prompt, the only producer, resolves an empty submit to
-        // CancelPrompt, so this should be unreachable). An empty needle would
-        // match every entry, so spawn no walk; emit the started/exited pair
-        // so NoticesView and TableView drop back out of search state. This is
-        // a guard, not a clean no-result search: BreadcrumbsView only leaves
-        // search state on ResetView/navigation, so it is not unwound here.
-        // Returning both keeps started-before-exited ordering explicit.
+        // Backstop for a StartSearch("") that bypasses the prompt, which
+        // resolves an empty submit to CancelPrompt and is the only producer, so
+        // this should be unreachable. An empty needle matches every entry, so
+        // spawn no walk and emit the started/exited pair to drop NoticesView and
+        // TableView back out of search state. A guard, not a clean no-result
+        // search: BreadcrumbsView leaves search state only on
+        // ResetView/navigation and is not unwound here.
         if query.is_empty() {
             self.cancel_search();
             let generation = self.bump_generation();
@@ -831,9 +822,9 @@ impl FileSystem {
 
 /// Read every entry in the bookmarks directory, creating it if absent.
 /// Synchronous: one small directory of symlinks, no streaming. Returns the
-/// failure message rather than a command so the caller can tell success from
-/// failure before cancelling the listing the bookmarks would replace.
-/// Unreadable individual entries are skipped, not fatal.
+/// failure message rather than a command, so the caller can tell success from
+/// failure before cancelling the listing the bookmarks would replace. An
+/// unreadable entry is skipped, not fatal.
 pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
     if let Err(error) = fs::create_dir_all(dir) {
         return Err(format!(
@@ -869,12 +860,11 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
     let destination = dest.path.join(name);
     let metadata = destination.symlink_metadata().ok()?;
-    // Pasting into the source's own directory finds the source itself. That is
-    // not a collision to ask about: the operation is refused outright, so
-    // offering to replace it would promise something that cannot happen and
-    // would let an "overwrite all" answer stand on a collision that was never
-    // real. Compared canonically, since either path may reach the entry
-    // through a symlinked parent.
+    // Pasting into the source's own directory finds the source itself, which is
+    // no collision to ask about: the operation is refused outright, so offering
+    // to replace it would promise what cannot happen and let an "overwrite all"
+    // stand on a collision that was never real. Compared canonically, since
+    // either path may reach the entry through a symlinked parent.
     if is_same_entry(&destination, &src.path) {
         return None;
     }
@@ -1184,9 +1174,9 @@ mod tests {
 
         pending.claim(&source);
 
-        // The claim carries the source's kind, so this is the same collision
-        // as a directory already on disk: replacing it would mean removing the
-        // one the earlier source is busy creating.
+        // The claim carries the source's kind, making this the same collision
+        // as a directory on disk: replacing it would remove the one the earlier
+        // source is busy creating.
         assert_eq!(Some(Occupant::Directory), pending.occupant(&twin));
         assert_eq!(
             PasteStep::Ask {
@@ -1202,11 +1192,10 @@ mod tests {
 
         pending.answer(ConflictChoice::SkipAll);
 
-        // Deliberate: "skip all" is answered for the whole batch, so it
-        // supersedes an earlier "overwrite all". A directory collision is the
-        // way this comes up, since it reopens the prompt with only the skip
-        // choices; answering it with the single-entry `s` leaves the standing
-        // answer alone.
+        // Deliberate: "skip all" answers for the whole batch, so it supersedes
+        // an earlier "overwrite all". A directory collision is how this comes
+        // up, reopening the prompt with only the skip choices; the single-entry
+        // `s` leaves the standing answer alone.
         assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
         pending.answer(ConflictChoice::Skip);
         assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
@@ -1276,9 +1265,9 @@ mod tests {
         let src_dir = PathInfo::try_from(fx.src.path.parent().unwrap()).unwrap();
 
         // The destination name resolves to the source itself, which the
-        // operation refuses outright. Reporting a collision would offer to
-        // replace the very file being pasted, and an "overwrite all" answer
-        // would then stand for the rest of the batch on the strength of it.
+        // operation refuses outright. A reported collision would offer to
+        // replace the file being pasted, and an "overwrite all" would then stand
+        // for the rest of the batch on the strength of it.
         assert_eq!(None, existing_destination(&src_dir, &fx.src));
     }
 

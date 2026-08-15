@@ -1,18 +1,15 @@
 use std::time::{Duration, Instant};
 
-/// Debounces progress updates on both units processed and elapsed time, where a
-/// unit is whatever the caller counts: bytes copied, or entries removed.
+/// Debounces progress updates on units processed and on elapsed time, a unit
+/// being whatever the caller counts: bytes copied, or entries removed.
 ///
-/// The count rule alone bounds updates per unit of work rather than per unit of
-/// time, so a copy fast enough to finish in a second sends its whole percentage
-/// ladder within that second, and each update redraws the screen. The time floor
-/// bounds the rate; the count keeps an operation that is making no progress from
-/// sending anything at all.
+/// Count alone bounds updates per unit of work, so a copy fast enough to finish
+/// in a second sends its whole percentage ladder inside that second, each one a
+/// redraw. The floor bounds the rate; the count keeps an operation making no
+/// progress from sending at all.
 ///
-/// At least one update is sent for any total, whatever the rules say: the first
-/// call always triggers, so an operation that finishes in one chunk still
-/// reports. For an empty total the threshold is 0, and every call that clears
-/// the floor triggers.
+/// The first call always triggers, so any total reports at least once. For an
+/// empty total the threshold is 0 and every call past the floor triggers.
 pub struct ProgressDebouncer {
     current_count: u64,
     has_triggered: bool,
@@ -50,20 +47,16 @@ impl ProgressDebouncer {
                 return false;
             }
         }
-        self.current_count = 0; // Reset for next threshold
+        self.current_count = 0;
         self.has_triggered = true;
         self.last_triggered = Some(at);
         true
     }
 }
 
-/// Debounces events based on time intervals
-///
-/// This debouncer ensures we don't process events too frequently by enforcing a minimum time interval
-/// between triggers. When an event arrives:
-/// 1. If enough time has passed since the last trigger, it triggers immediately
-/// 2. If not enough time has passed, the event is delayed and will trigger after the debounce period
-/// 3. Multiple events within the debounce period will only result in one delayed trigger
+/// Enforces a minimum interval between triggers. An event arriving after the
+/// window triggers at once; one arriving inside it is delayed to the end of the
+/// window, and several inside it produce that one delayed trigger.
 pub struct TimeDebouncer {
     last_triggered: Option<Instant>,
     threshold: Duration,
@@ -84,7 +77,6 @@ impl TimeDebouncer {
             .last_triggered
             .map(|last_triggered| at.duration_since(last_triggered));
 
-        // If we've never triggered or enough time has passed
         if time_since_last_trigger.is_none_or(|d| d >= self.threshold) {
             self.last_triggered = Some(at);
             self.has_delayed_event = false;

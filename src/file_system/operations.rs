@@ -21,11 +21,10 @@ use crate::command::{Command, progress::CancellationToken};
 const CD_BATCH_SIZE: usize = 256;
 
 /// Spawns a background thread that reads `directory` and streams its entries as
-/// `Command::ListingBatch` batches, finishing with a
-/// `Command::DirectoryListingComplete`. `generation` tags every message so a
-/// superseded load (the user navigated away) can be ignored; `cancel` stops the
-/// walk early when that happens. Reading off the UI thread keeps navigation into
-/// very large directories responsive.
+/// `Command::ListingBatch`es, finishing with `Command::DirectoryListingComplete`.
+/// `generation` tags every message so a superseded load (the user navigated away)
+/// can be ignored, and `cancel` stops the walk when that happens. Off the UI
+/// thread, so navigating into a very large directory stays responsive.
 pub(super) fn stream_cd(
     directory: PathInfo,
     generation: u64,
@@ -245,11 +244,10 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
             if !is_same_file(old_path, &new_path) {
                 return Err(anyhow!("{} already exists", compact(&new_path)));
             }
-            // Same underlying file. A case-only change of the name is a real
-            // rename on a case-insensitive filesystem (where the destination
-            // path resolves to the source itself), so let it through.
-            // Renaming onto another hard link of the same inode is a POSIX
-            // no-op that would silently change nothing, so report it instead.
+            // Same underlying file. A case-only change is a real rename on a
+            // case-insensitive filesystem, where the destination resolves to the
+            // source, so it is let through. Renaming onto another hard link of
+            // the same inode is a POSIX no-op, so it is reported instead.
             if !is_case_only_change(old_path, &new_path) {
                 return Err(anyhow!(
                     "{} and {} are the same file",

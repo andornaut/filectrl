@@ -392,13 +392,11 @@ mod tests {
         assert_eq!(1, exits(&commands));
     }
 
-    /// The depth and truncation warnings both describe the walk rather than a
-    /// result, so a search that has been superseded mid-walk must stay silent:
-    /// its warning would be read as describing the search now on screen.
-    ///
-    /// Cancellation lands between the walk's own cancel checks, which a
-    /// synchronous test cannot schedule, so the rule is pinned here on the
-    /// helper both call sites route through.
+    /// Both warnings describe the walk rather than a result, so a search
+    /// superseded mid-walk must stay silent: its warning would read as
+    /// describing the search now on screen. Cancellation lands between the walk's
+    /// own checks, which a synchronous test cannot schedule, so the rule is
+    /// pinned on the helper both call sites route through.
     #[test]
     fn a_superseded_search_announces_no_warning() {
         let (tx, rx) = mpsc::channel();

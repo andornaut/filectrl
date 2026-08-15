@@ -66,12 +66,10 @@ impl DirectoryWatcher {
             return Ok(());
         };
         // Rewatch even when the path is unchanged: an external delete and
-        // recreate of the directory invalidates the watch on the old inode,
-        // and a refresh must re-register on the new one.
-        //
-        // Clear the bookkeeping before unwatching and set it only after a
-        // successful watch, so `watched_directory` never names a path
-        // without an active watch.
+        // recreate invalidates the watch on the old inode, and a refresh has to
+        // re-register on the new one. The bookkeeping is cleared before
+        // unwatching and set only after a successful watch, so
+        // `watched_directory` never names a path without an active watch.
         if let Some(old_path) = self.watched_directory.take()
             && let Err(e) = watcher.unwatch(old_path.as_path())
         {
@@ -97,17 +95,10 @@ impl Drop for DirectoryWatcher {
     }
 }
 
-/// Watches for file system events and debounces them to prevent too frequent refreshes
-///
-/// This function runs in a background thread and handles file system events:
-/// 1. When a file system event arrives, it checks if enough time has passed since the last refresh
-/// 2. If enough time has passed, it triggers a refresh immediately
-/// 3. If not enough time has passed, it schedules a delayed refresh after the debounce period
-/// 4. Multiple events within the debounce period will only result in one delayed refresh
-///
-/// The debouncing is implemented using a timer thread that sleeps out the remainder of the
-/// debounce period before sending the refresh command. This ensures we don't miss the last
-/// update in a series of rapid changes.
+/// Debounces file system events into refreshes, on a background thread. An event
+/// arriving after the debounce window refreshes at once; one arriving inside it
+/// schedules a single delayed refresh, so a burst produces one refresh at the
+/// front and one at the end rather than one per event.
 fn watch_for_notify_events(
     command_tx: Sender<Command>,
     delayed_tx: Sender<Duration>,
@@ -150,12 +141,10 @@ fn watch_for_notify_events(
     }
 }
 
-/// Dispatches delayed refreshes. Each queued entry carries the remaining
-/// debounce delay; after sleeping it out, the dispatch is routed through the
-/// shared debouncer so it counts as a trigger (clearing the delayed flag and
-/// resetting the window). `should_trigger` returns false if an event already
-/// triggered a refresh while this thread was sleeping, in which case the
-/// delayed refresh is redundant and skipped.
+/// Dispatches delayed refreshes. Each queued entry carries the remaining debounce
+/// delay; once slept out, the dispatch goes through the shared debouncer so it
+/// counts as a trigger. `should_trigger` returns false when an event already
+/// refreshed while this thread slept, making the delayed one redundant.
 fn watch_for_delayed_commands(
     command_tx: Sender<Command>,
     delayed_rx: Receiver<Duration>,

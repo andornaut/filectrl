@@ -5,13 +5,12 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-/// A unique temp directory that is removed when it is dropped.
+/// A unique temp directory, removed when dropped.
 ///
-/// Starting from a clean directory matters as much as uniqueness: several
-/// tests assert that an operation refuses an existing destination, so a
-/// directory left behind by an earlier run would make them fail until it was
-/// deleted by hand. `Drop` cannot be the only guard, because a run killed by a
-/// signal never runs it and the path is only unique per process id, which the
+/// Starting clean matters as much as being unique: tests that assert an
+/// operation refuses an existing destination would fail against a directory an
+/// earlier run left behind. `Drop` cannot be the only guard, since a run killed
+/// by a signal never runs it and the path is unique only per pid, which the
 /// kernel reuses.
 pub(crate) struct TempDir {
     path: PathBuf,

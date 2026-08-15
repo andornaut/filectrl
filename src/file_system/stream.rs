@@ -22,15 +22,14 @@ pub(super) fn batch_sender(
     move |items| tx.send(Command::ListingBatch { items, generation }).is_ok()
 }
 
-/// Accumulates `PathInfo`s and flushes them as batches through a caller-supplied
-/// sender. Background producers (the directory loader and the recursive search)
-/// stream results this way rather than sending one command per item: a flood of
-/// individual commands would sit ahead of terminal input in the single FIFO
-/// command channel and make the UI unresponsive. A batch is sent once it reaches
-/// `max_size` or `interval` has elapsed, whichever comes first.
+/// Accumulates `PathInfo`s and flushes them in batches through a caller-supplied
+/// sender, once one reaches `max_size` or `interval` elapses. The directory
+/// loader and the recursive search stream this way rather than sending one
+/// command per item, which would sit ahead of terminal input in the single FIFO
+/// channel and make the UI unresponsive.
 ///
 /// The `send` closure builds and sends the per-batch command, returning `false`
-/// if the channel is closed (the producer should then stop).
+/// once the channel is closed, at which point the producer stops.
 pub(super) struct Batcher {
     batch: Vec<PathInfo>,
     last_flush: Instant,

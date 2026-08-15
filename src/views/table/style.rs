@@ -78,7 +78,6 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
         return theme.door();
     }
 
-    // Executable files
     if path.is_executable() {
         return theme.executable();
     }

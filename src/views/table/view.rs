@@ -72,11 +72,10 @@ impl TableView {
 
         let items = self.content.items_sorted();
 
-        // Per-item heights drive the scroll/window math and the absolute
-        // line<->item mapper that the scrollbar and mouse code rely on. They
-        // depend only on the name column width and the listing, so cache them
-        // (and the mapper) across frames: a height for every item plus the
-        // mapper's full line map would otherwise be O(items) on every keystroke.
+        // Per-item heights drive the window math and the line<->item mapper the
+        // scrollbar and mouse code use. They depend only on the name column
+        // width and the listing, so caching them across frames keeps a height
+        // per item plus the mapper's line map off every keystroke.
         let key = (name_width, self.content.revision());
         if self.height_cache_key != Some(key) {
             self.cached_heights = items

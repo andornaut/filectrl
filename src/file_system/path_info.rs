@@ -27,13 +27,10 @@ const KEPT_TAIL_COMPONENTS: usize = 2;
 /// ellipsis would replace no more than it costs.
 const MAX_PATH_COMPONENTS: usize = 4;
 
-/// A path rendered for a user-facing message: quoted, with the home directory
-/// as `~`, and a long middle elided down to the first component and the last
-/// two.
-///
-/// Messages naming two paths are otherwise long enough to wrap across several
-/// rows of the alerts view, which pushes everything else off screen; the middle
-/// of a path is the part that costs the most and says the least.
+/// A path rendered for a user-facing message: quoted, home directory as `~`, and
+/// a long middle elided to the first component and the last two. A message naming
+/// two paths otherwise wraps across several rows of the alerts view and pushes
+/// everything else off screen; a path's middle costs the most and says least.
 pub struct Compact<'a>(&'a Path);
 
 pub fn compact(path: &Path) -> Compact<'_> {
@@ -253,11 +250,10 @@ impl PathInfo {
     }
 
     /// Whether this is a symlink whose target does not exist, as of when the
-    /// entry was read. Answering it means following the link, so it is resolved
-    /// once at construction rather than on demand: the renderer asks for every
-    /// visible symlink on every frame, which would be a `stat` per row per
-    /// frame for an answer that only a change on disk can invalidate, and a
-    /// change on disk is what the watcher reloads the listing for.
+    /// entry was read. Answering means following the link, so it is resolved once
+    /// at construction: the renderer asks for every visible symlink on every
+    /// frame, and only a change on disk can invalidate the answer, which is what
+    /// the watcher reloads the listing for.
     pub fn is_symlink_broken(&self) -> bool {
         self.symlink_broken
     }
@@ -398,17 +394,16 @@ pub enum DateTimeAge {
     GreaterThanYear,
 }
 
-/// The Name column's ordering rule: case is ignored, and leading dots are
-/// ignored so a dot file sorts next to its undotted neighbours. This is what
-/// `ls -a` does under a UTF-8 locale, whose collation drops the dot rather
-/// than hoisting every hidden entry to the top the way `LC_ALL=C` does.
+/// The Name column's ordering rule: case and leading dots are ignored, so a dot
+/// file sorts next to its undotted neighbours. What `ls -a` does under a UTF-8
+/// locale, whose collation drops the dot rather than hoisting every hidden entry
+/// to the top the way `LC_ALL=C` does.
 ///
-/// Takes the name rather than a `PathInfo` because the column does not always
-/// show the entry's own name: in a search it shows the path relative to the
-/// search root, and the order has to follow what is on screen. The rule is
-/// applied per path segment for the same reason the locale's is, so a dot
-/// file deep in the tree sorts next to its own neighbours rather than at the
-/// top of its subtree.
+/// Takes the name rather than a `PathInfo` because the column shows the path
+/// relative to the search root while searching, and the order has to follow what
+/// is on screen. Applied per segment for the same reason the locale's is, so a
+/// dot file deep in the tree sorts next to its neighbours rather than at the top
+/// of its subtree.
 pub fn name_comparator(name: &str) -> String {
     let mut key = String::with_capacity(name.len());
     for (index, segment) in name.split(MAIN_SEPARATOR).enumerate() {
@@ -516,14 +511,6 @@ mod tests {
     }
 
     // datetime_age boundary tests
-    //
-    // The match arms are:
-    //   num_minutes() == 0  → LessThanMinute
-    //   num_hours()   == 0  → LessThanHour
-    //   num_days()    == 0  → LessThanDay
-    //   num_days()    < 30  → LessThanMonth
-    //   num_days()    < 365 → LessThanYear
-    //   _                   → GreaterThanYear
 
     fn age(seconds_ago: i64) -> DateTimeAge {
         let now = to_local_datetime("2024-06-15 12:00:00");

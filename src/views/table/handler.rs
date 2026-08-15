@@ -67,26 +67,25 @@ impl CommandHandler for TableView {
                 if self.content.is_searching() {
                     return CommandResult::Handled;
                 }
-                // While showing bookmarks the listing is the bookmarks dir, not
-                // this directory. A rename of a bookmark triggers a CWD refresh;
-                // reload the bookmarks list instead of showing the CWD.
+                // The listing is the bookmarks dir, not this directory, and
+                // renaming a bookmark triggers a CWD refresh; reload the
+                // bookmarks instead of showing the CWD.
                 //
-                // Leave the marks for the Bookmarks handler to clear against
-                // the new listing. Clearing them here would drop marks that are
-                // still valid whenever the reload does not arrive: a failed
-                // bookmarks read broadcasts an alert and no Bookmarks command,
-                // leaving the current listing on screen.
+                // The marks are left for the Bookmarks handler to clear against
+                // the new listing. Clearing here would drop still valid marks
+                // whenever the reload never arrives: a failed bookmarks read
+                // broadcasts an alert and no Bookmarks command, leaving the
+                // current listing on screen.
                 if self.content.is_showing_bookmarks() {
                     return Command::GetBookmarks.into();
                 }
-                // Same directory reloaded: keep the filter, the marks and the
+                // Same directory reloaded: keep the filter, marks and
                 // selection, and let begin_directory/finish_directory restore
-                // the last two once the stream completes. Nothing is announced
-                // here: the count does not change, and the post-load snapshot
-                // carries whatever the reload could not find again. A load
-                // cancelled before then is cancelled by a search or the
-                // bookmarks view, each of which clears the marks and announces
-                // it itself.
+                // the last two when the stream completes. Nothing is announced
+                // here, since the count does not change and the post-load
+                // snapshot carries whatever the reload could not find again.
+                // Only a search or the bookmarks view cancels a load before
+                // then, and each announces its own clearing.
                 self.stream_generation = *generation;
                 self.begin_directory(directory.clone(), Reselect::Keep);
                 CommandResult::Handled
@@ -111,12 +110,11 @@ impl CommandHandler for TableView {
                 }
             }
             Command::DirectoryListingComplete { generation } => {
-                // A cancelled load that had already drained the directory
-                // still sends its completion, and the bookmarks view does not
-                // bump the generation, so match the ListingBatch guard and
-                // require an in-flight load. Without this, a late completion
-                // re-sorts the bookmarks listing and moves the cursor off the
-                // bookmark the user selected.
+                // A cancelled load that had already drained the directory still
+                // reports completion, and the bookmarks view does not bump the
+                // generation, so require an in-flight load as the ListingBatch
+                // guard does. Without it a late completion re-sorts the
+                // bookmarks and moves the cursor off the selected one.
                 if *generation != self.stream_generation || !self.content.is_loading() {
                     return CommandResult::Handled;
                 }
@@ -155,19 +153,17 @@ impl CommandHandler for TableView {
                 CommandResult::Handled
             }
             Command::ExitedSearch { generation } => {
-                // Results are appended in walk order so partial ones show up
-                // immediately, but the header advertises a sort column and
-                // direction the whole time, so apply it once the walk is done.
-                // This is what `DirectoryListingComplete` does for a listing;
-                // a search never reaches it, because `set_mode` clears the
-                // loading flag its guard requires.
+                // Results append in walk order so partial ones show up at once,
+                // but the header advertises a sort column throughout, so apply
+                // it when the walk ends. `DirectoryListingComplete` does this
+                // for a listing; a search never reaches it, because `set_mode`
+                // clears the loading flag its guard requires.
                 //
-                // A cancelled search arrives here too: `run_search` announces
-                // its exit whether it finished or was stopped, and cancelling
-                // keeps the partial results and stays in search mode. They are
-                // sorted for the same reason, and more so: nothing further is
-                // coming, so leaving them in walk order would leave the header
-                // describing an order the listing never takes.
+                // A cancelled search arrives here too, since `run_search`
+                // announces its exit either way and cancelling keeps the partial
+                // results in search mode. Sorting matters more for those:
+                // nothing further is coming, so walk order would leave the
+                // header describing an order the listing never takes.
                 //
                 // A superseded search exits with its own generation, which no
                 // longer matches, so it cannot reorder its replacement.

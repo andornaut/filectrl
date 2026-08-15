@@ -162,11 +162,9 @@ fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
     }
 }
 
-/// True when the parsed tokens are shaped like an entry filectrl itself
-/// writes: a "cp"/"mv" command token followed by absolute paths. The
-/// absolute-path requirement keeps ordinary copied shell lines (e.g. an
-/// indented "cp build dist" from a script) from raising alerts: filectrl
-/// always writes absolute paths.
+/// True when the tokens are shaped like an entry filectrl writes: a "cp"/"mv"
+/// token followed by absolute paths. Requiring absolute paths keeps an ordinary
+/// copied shell line ("cp build dist") from raising an alert.
 fn is_entry_shaped(parts: &[String]) -> bool {
     matches!(parts.first().map(String::as_str), Some("cp" | "mv"))
         && parts[1..].iter().all(|part| part.starts_with('/'))
@@ -187,11 +185,9 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
 
 struct ClipboardBackend {
     clipboard: ArboardClipboard,
-    /// The last text this process wrote to the system clipboard, if any.
-    /// Used by `clear` so a window only clears the clipboard when it was the
-    /// last writer (its written content still matches the current content).
-    /// Multiple filectrl windows are separate processes, each with its own
-    /// tracker, so only the most recent writer will clear.
+    /// The last text this process wrote to the system clipboard. `clear` uses it
+    /// so a window clears only what it wrote itself. Each filectrl window is its
+    /// own process with its own tracker, so only the most recent writer clears.
     last_written: Option<String>,
 }
 

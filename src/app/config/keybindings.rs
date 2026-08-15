@@ -372,12 +372,10 @@ pub fn hardcoded_normal_action(code: &KeyCode, modifiers: &KeyModifiers) -> Opti
     None
 }
 
-/// Build the key→action HashMap, detecting duplicate key mappings.
-/// Hardcoded keys are inserted first for actions present in this mode's
-/// binding list. A config binding may repeat one of its own action's keys,
-/// but binding a key that belongs to a different action (hardcoded or not)
-/// is an error: hardcoded keys always stay active, so such a binding could
-/// never take effect.
+/// Build the key→action HashMap, detecting duplicate key mappings. Hardcoded
+/// keys go in first, for actions this mode binds. A config binding may repeat
+/// one of its own action's keys; binding a key belonging to another action is an
+/// error, because hardcoded keys stay active and it could never take effect.
 fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyCombo, Action>> {
     let mut map = HashMap::new();
 
@@ -434,12 +432,11 @@ fn parse_key_spec(spec: &KeySpec) -> Result<Vec<KeyCombo>> {
     }
 }
 
-/// Parse a key string like "q", "Ctrl+c", "Shift+G", "F5", "Enter" into a KeyCombo.
+/// Parse a key string like "q", "Ctrl+c", "Shift+G", "F5", "Enter".
 ///
 /// Modifier prefixes (`Ctrl+`, `Shift+`, `Alt+`, case-insensitive) are stripped
-/// from the front one at a time; whatever remains is the key name. This means
-/// `+` itself is a valid key (`"+"`, `"Ctrl++"`) rather than being mistaken for
-/// a separator.
+/// one at a time from the front; what remains is the key name. So `+` is itself
+/// a valid key (`"+"`, `"Ctrl++"`) rather than a separator.
 fn parse_key_combo(s: &str) -> Result<KeyCombo> {
     const PREFIXES: &[(&str, KeyModifiers)] = &[
         ("ctrl+", KeyModifiers::CONTROL),
@@ -874,10 +871,9 @@ mod tests {
     }
 
     /// The hardcoded-only actions have no TOML field, so they reach the action
-    /// maps solely through the placeholder entries `to_bindings` seeds. Drop a
-    /// placeholder and its keys resolve to nothing: Esc would stop resetting
-    /// the view and stop cancelling a prompt, Tab would stop accepting a
-    /// suggestion, and Up/Down would stop cycling them.
+    /// maps only through the placeholders `to_bindings` seeds. Drop one and its
+    /// keys resolve to nothing: Esc would stop resetting the view and cancelling
+    /// a prompt, Tab would stop accepting a suggestion.
     #[test]
     fn hardcoded_only_actions_resolve_through_the_action_maps() {
         let kb = default_keybindings();

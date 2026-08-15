@@ -112,11 +112,9 @@ fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
 }
 
 /// The `file://` URI of an absolute path, for the `%u` and `%U` field codes.
-/// Everything outside the RFC 3986 unreserved set is percent encoded.
-///
-/// Encoded from the raw bytes: a lossy conversion would turn a name that is
-/// not valid UTF-8 into replacement characters, and the URI would then be
-/// percent encoding those rather than the name.
+/// Everything outside the RFC 3986 unreserved set is percent encoded, from the
+/// raw bytes: a lossy conversion would percent encode replacement characters
+/// rather than the name they stood in for.
 pub(super) fn file_uri(path: &Path) -> String {
     let mut uri = String::from("file://");
     for &byte in path.as_os_str().as_bytes() {

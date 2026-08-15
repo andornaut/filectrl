@@ -33,12 +33,11 @@ pub fn supports_truecolor() -> bool {
     }
 }
 
-/// Process-wide "already restored" guard shared by every cleanup path:
-/// whichever runs first performs the restore, the rest become no-ops.
-/// A second `PopKeyboardEnhancementFlags` after leaving the alternate screen
-/// would pop an entry from the main screen's stack that this program never
-/// pushed. A static is required because the panic hook is a `'static`
-/// closure that cannot reference instance state; `try_new` re-arms it.
+/// Process-wide "already restored" guard: whichever cleanup path runs first
+/// restores, the rest are no-ops. A second `PopKeyboardEnhancementFlags` after
+/// leaving the alternate screen would pop an entry from the main screen's stack
+/// that this program never pushed. Static because the panic hook is a `'static`
+/// closure that cannot reach instance state; `try_new` re-arms it.
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 
 /// Restores the terminal at most once per acquisition (see
@@ -65,22 +64,13 @@ fn restore_terminal() {
 
 /// A terminal wrapper that restores the terminal state on drop.
 ///
-/// # Cleanup strategy
+/// Two cleanup paths, each covering what the other cannot: `Drop` runs on normal
+/// exit and on a debug-build panic, which unwinds; the panic hook (installed in
+/// `try_new`) covers a release-build panic, where `panic = "abort"` never calls
+/// `Drop` and would leave the shell in raw mode.
 ///
-/// Two cleanup paths exist, each covering scenarios the other cannot:
-///
-/// 1. **`Drop`**: runs on normal exit and on panics in debug builds (which
-///    unwind the stack). This is the primary path for the happy path and for
-///    development-time crashes.
-///
-/// 2. **Panic hook** (installed in `try_new`): runs on panics in *release*
-///    builds, where `panic = "abort"` skips unwinding entirely and therefore
-///    never calls `Drop`. Without the hook, a release-build panic would leave
-///    the shell in raw mode / alternate screen.
-///
-/// In debug builds a panic triggers *both* paths (hook fires, then `Drop`
-/// runs as the stack unwinds); `TERMINAL_RESTORED` makes whichever runs
-/// first the only one to emit escape sequences.
+/// A debug panic fires both, and `TERMINAL_RESTORED` leaves whichever runs first
+/// the only one to emit escape sequences.
 pub struct CleanupOnDropTerminal {
     terminal: CrosstermTerminal,
 }

@@ -179,12 +179,11 @@ impl DirectoryContent {
     /// the same predicate, so finalizing a stream can skip the re-filter and
     /// re-clone of every entry.
     fn sort_in_place(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
-        // The Name column does not always show the entry's own name: in a
-        // search it shows the path relative to the search root. Order by that
-        // same string, or the listing looks unsorted to the person reading it
-        // (`z/apple.txt` above `a/zebra.txt`). The filter already matches the
-        // displayed name for the same reason. Read before the sort borrows
-        // `items_sorted` mutably.
+        // The Name column shows the path relative to the search root while
+        // searching, not the entry's own name. Order by that same string, or the
+        // listing looks unsorted (`z/apple.txt` above `a/zebra.txt`). The filter
+        // matches the displayed name for the same reason. Read before the sort
+        // borrows `items_sorted` mutably.
         let is_bookmarks = self.is_showing_bookmarks();
         let search_root = self.search_root.clone();
         let name_key = |item: &PathInfo| {
@@ -214,7 +213,6 @@ impl DirectoryContent {
 
     pub(super) fn start_search(&mut self) {
         self.set_mode(ListingMode::Search);
-        // The search root is always the current directory.
         self.search_root = self.directory.as_ref().map(|d| PathBuf::from(&d.path));
         self.items.clear();
         self.items_sorted.clear();
@@ -259,11 +257,9 @@ impl DirectoryContent {
     /// result of a large search stays linear. An entry the reorder dropped
     /// (filtered out, or gone from the listing) simply has no index.
     ///
-    /// By path, not by inode: a reorder does not change what an entry is, and
-    /// two hard links to one file share a device and inode, so identity by
-    /// inode would spread one mark onto every name the file has in the
-    /// listing. A path appears at most once, which is exactly the identity a
-    /// mark needs.
+    /// By path, not inode: two hard links share a device and inode, so inode
+    /// identity would spread one mark onto every name the file has. A path
+    /// appears at most once, which is the identity a mark needs.
     pub(super) fn find_all_by_path(&self, paths: &[PathInfo]) -> Vec<usize> {
         let wanted: HashSet<&Path> = paths.iter().map(PathInfo::as_path).collect();
         self.items_sorted
@@ -281,14 +277,13 @@ impl DirectoryContent {
     }
 }
 
-/// The name the table shows for `item` in its name column: the entry's own
-/// name in a plain listing, the path relative to the search root while
-/// searching, and the bookmark name in the bookmarks view. Directories outside
-/// the bookmarks view carry a trailing separator.
+/// The name the table shows in its name column: the entry's own name in a plain
+/// listing, the path relative to the search root while searching, the bookmark
+/// name in the bookmarks view. Directories outside that view carry a trailing
+/// separator.
 ///
 /// Shared by the name column and the filter so the two cannot disagree about
-/// what a row is called. Borrowed wherever possible: rendering and filtering
-/// both run over every item.
+/// what a row is called. Borrowed where possible: both run over every item.
 pub(super) fn displayed_name<'a>(
     item: &'a PathInfo,
     is_bookmarks: bool,
@@ -342,16 +337,14 @@ impl Visibility {
         (self.show_hidden || !path.is_hidden()) && self.matches_filter(path)
     }
 
-    /// Case-insensitive substring match on the displayed name (see
-    /// `displayed_name`), so the filter acts on what the row says: the
-    /// entry's own name in a plain listing, the search-root-relative path
-    /// while searching, the bookmark name in the bookmarks view.
+    /// Case-insensitive substring match on the displayed name, so the filter
+    /// acts on what the row says (see `displayed_name`).
     ///
     /// Matched against the stem plus a rule for the trailing separator rather
-    /// than the joined name, which would allocate for every directory entry
-    /// on every keystroke. A match that reaches the trailing separator has to
-    /// end there, so the separator is the filter's last character and the
-    /// rest of the filter is a suffix of the stem.
+    /// than the joined name, which would allocate for every directory entry on
+    /// every keystroke. A match reaching the separator has to end there, so the
+    /// separator is the filter's last character and the rest is a suffix of the
+    /// stem.
     fn matches_filter(&self, path: &PathInfo) -> bool {
         if self.filter_lowercase.is_empty() {
             return true;
@@ -798,9 +791,8 @@ mod tests {
     }
 
     /// Search rows render the path relative to the search root, so the filter
-    /// has to reach the directory part, not just the basename.
-    ///
-    /// The property test above builds its `Visibility` by hand, so this and
+    /// has to reach the directory part, not just the basename. The property test
+    /// above builds its `Visibility` by hand, so this and
     /// `filter_finds_no_separator_in_bookmark_rows` are what pin `visibility()`
     /// threading the mode through from the content's own state.
     #[test]

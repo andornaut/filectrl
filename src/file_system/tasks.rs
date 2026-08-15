@@ -60,15 +60,13 @@ struct CopyOutcome {
 const BUFFER_SIZE_DIVISOR: u64 = 20;
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 /// Shortest gap between two progress updates for one task. The percentage above
-/// bounds updates per unit of work, which for a fast copy is a hundred of them
-/// inside a second or two, each one a redraw; this bounds them per unit of time.
+/// bounds them per unit of work, which for a fast copy is a hundred redraws
+/// inside a second; this bounds them per unit of time.
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
 /// Floor for the per-file copy read buffer. `buffer_bytes` can yield a very
-/// small (even zero) size when a directory's scanned total is tiny or stale; a
-/// file that appears or grows between the size scan and the copy must still be
-/// read in reasonable chunks rather than a zero-length buffer that would read
-/// `Ok(0)` immediately and write an empty destination. 8 KiB matches std's
-/// default I/O buffer size.
+/// small (even zero) size from a tiny or stale scanned total, and a zero-length
+/// buffer reads `Ok(0)` at once and writes an empty destination. 8 KiB matches
+/// std's default I/O buffer size.
 const MIN_COPY_BUFFER_BYTES: usize = 8 * 1024;
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -219,14 +217,10 @@ fn run_copy_task(
     });
 
     let is_directory = path.is_directory();
-    // Pre-flight: if the directory's top level cannot even be read, fail fast
-    // *before* the task is registered (no progress notice is created). The
-    // expensive part (the recursive size walk) still runs off the UI thread
-    // below.
-    //
-    // A symlink (even to a directory) has `is_directory == false`, so it skips
-    // this check and is later recreated as a link by `copy_symlink` rather than
-    // followed.
+    // Fail before the task is registered, so an unreadable directory creates no
+    // progress notice. The recursive size walk still runs off the UI thread.
+    // A symlink has `is_directory == false` even when it points at a directory,
+    // so it skips this and is recreated as a link by `copy_symlink`.
     if is_directory && let Err(error) = fs::read_dir(&old_path) {
         return TaskRunResult::failed(
             Command::AlertError(format!(
@@ -237,14 +231,11 @@ fn run_copy_task(
         );
     }
 
-    // Seed with the entry's own size; for a directory the real total is
-    // computed in the worker thread (the scan can be slow and must not block
-    // the UI event loop) and applied via `active.set_total`.
+    // Seed with the entry's own size; a directory's real total is scanned in
+    // the worker, off the UI thread, and applied via `active.set_total`.
     let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let file_size = path.size;
     let source_mode = path.mode();
-    // Send the initial snapshot before spawning the worker so it always
-    // precedes any terminal update on the channel.
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
@@ -287,8 +278,6 @@ fn run_move_task(
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
     let conflicts = conflicts.cloned();
-    // Re-stat first: `validate_paths` decides whether the subtree check applies
-    // from the source's type, so it must not read selection-time metadata.
     let path = match restat_source("move", &path.path) {
         Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
@@ -307,8 +296,6 @@ fn run_move_task(
     let size = path.size;
     let source_mode = path.mode();
     let is_directory = path.is_directory();
-    // Send the initial snapshot before spawning the worker so it always
-    // precedes any terminal update on the channel.
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
@@ -377,14 +364,11 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     // Delete progress counts entries, not bytes: a directory's own size says
     // nothing about how much work removing it is. Seed with the single entry a
     // non-directory delete removes; a directory's real total is scanned in the
-    // worker (the scan can be slow and must not block the UI event loop) and
-    // applied via `active.set_total`.
+    // worker, off the UI thread, and applied via `active.set_total`.
     let (mut active, initial, token) = ActiveTask::new(tx, kind, 1);
     let is_directory = path.is_directory();
     let path = path.path.clone();
     info!("Deleting {path:?}");
-    // Send the initial snapshot before spawning the worker so it always
-    // precedes any terminal update on the channel.
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
@@ -405,13 +389,6 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
-    // 1) For files ≤ buffer_min_bytes:
-    //    Use len of the file as the buffer size
-    // 2) For files ≥ (buffer_max_bytes * 20):
-    //    Use buffer_max_bytes buffer
-    // 3) For files > buffer_min_bytes and < (buffer_max_bytes * 20):
-    //    Use the maximum of buffer_min_bytes or len / 20
-    //    This ensures we never go below buffer_min_bytes
     if len <= buffer_min_bytes {
         len as usize
     } else if len >= (buffer_max_bytes * BUFFER_SIZE_DIVISOR) {
@@ -496,10 +473,9 @@ fn copy_with_progress(
 /// Best-effort recursive size for the progress total. Entries that cannot be
 /// read are skipped here; the copy itself reports them as errors.
 ///
-/// Returns `None` when the task was cancelled. The scan runs for as long as the
-/// tree is large, and it runs before any bytes are copied, so it has to observe
-/// the token itself: otherwise a cancel keypress is acknowledged in the UI while
-/// the walk keeps running to completion.
+/// Returns `None` when the task was cancelled. The walk runs before any bytes
+/// are copied and takes as long as the tree is large, so it observes the token
+/// itself rather than leaving a cancel acknowledged but still running.
 fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
     let mut total = 0;
     let mut stack = vec![root.to_path_buf()];
@@ -608,11 +584,10 @@ fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandRe
 /// Finishes a cross-device move once the copy stage is done, removing the
 /// source only when the destination holds every entry of it, like `mv`.
 ///
-/// An entry that failed leaves the whole source in place, even the entries that
-/// copied fine, and keeps the partial destination. A skipped entry does the
-/// same: skipping is a choice rather than a failure, but the entry is no more
-/// at the destination than a failed one, so removing the source would delete
-/// what nothing else holds.
+/// A failed entry keeps the whole source, including the entries that copied,
+/// and the partial destination. A skipped one does the same: it is no more at
+/// the destination than a failed one, so removing the source would delete what
+/// nothing else holds.
 fn finish_cross_device_move(
     active: ActiveTask,
     outcome: CopyOutcome,
@@ -650,10 +625,9 @@ fn finish_cross_device_move(
     }
 }
 
-/// Finalizes a copy/move task following coreutils semantics: success when no
-/// per-entry errors were recorded, otherwise a single error alert summarizing
-/// them. Skipped entries are not failures, so they do not appear here. Every
-/// recorded error is also logged.
+/// Finalizes a copy/move task the way coreutils does: success when no per-entry
+/// error was recorded, otherwise one alert summarizing them. Skipped entries are
+/// not failures and do not appear. Every error is also logged.
 fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
     if errors.is_empty() {
         active.done();
@@ -713,12 +687,10 @@ fn copy_directory(
         }
     }
 
-    // Capture the source's mode now, but apply it only on every non-cancel
-    // exit, after the contents are copied. Applying it up front would, for a
-    // source mode without owner-write (e.g. 0o555), stop us from creating this
-    // directory's own children. Matches `cp`, which sets directory permissions
-    // last. The mode comes from the source's metadata, not from reading its
-    // entries, so it is applied even when the read below fails.
+    // Applied on every non-cancel exit, after the contents: a source mode
+    // without owner-write (e.g. 0o555) would otherwise stop us creating this
+    // directory's own children. Matches `cp`. Read from the source's metadata
+    // rather than its entries, so it applies even when the read below fails.
     let preserve_times = context.preserve_times;
     let source_mode = fs::symlink_metadata(old_path)
         .ok()
@@ -777,9 +749,8 @@ fn copy_directory(
             }
         };
 
-        // `metadata` comes from `symlink_metadata`, so its mode carries
-        // `S_IFLNK` for a symlink; `copy_path` dispatches links, directories,
-        // and files uniformly off that mode.
+        // `symlink_metadata`, so the mode carries `S_IFLNK` for a symlink and
+        // `copy_path` dispatches links, directories, and files off it alike.
         if !copy_path(
             &src,
             &dst,
@@ -797,11 +768,10 @@ fn copy_directory(
     true
 }
 
-/// Recreates the symlink at `old_path` as a new symlink at `new_path` pointing
-/// to the same (possibly relative, possibly dangling) target. The link itself
-/// is copied; its target is never followed, so no bytes are transferred and no
-/// permissions are applied (`fs::set_permissions` would follow the link and
-/// chmod the target instead of the link).
+/// Recreates the symlink at `old_path` at `new_path`, pointing at the same
+/// (possibly relative, possibly dangling) target. The target is never followed,
+/// so no bytes are transferred and no permissions are applied:
+/// `fs::set_permissions` would chmod the target rather than the link.
 fn copy_symlink(
     old_path: &Path,
     new_path: &Path,
@@ -820,8 +790,7 @@ fn copy_symlink(
     };
     match std::os::unix::fs::symlink(&target, new_path) {
         Ok(()) => {}
-        // Raced, like the other kinds: settled from the paste's standing
-        // answer, and recorded when nothing settles it.
+        // Raced; settled from the standing answer, or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             if !resolve_nested(context, errors, new_path) {
                 return;
@@ -1001,8 +970,7 @@ fn copy_special(
     let permissions = Mode::from_bits_truncate(source_mode as nix::libc::mode_t);
     match mknod(new_path, kind, permissions, rdev) {
         Ok(()) => {}
-        // Raced, like the other kinds: settled from the paste's standing
-        // answer, and recorded when nothing settles it.
+        // Raced; settled from the standing answer, or recorded.
         Err(nix::errno::Errno::EEXIST) => {
             if !resolve_nested(context, errors, new_path) {
                 return;
@@ -1048,16 +1016,13 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
         return Some(active);
     }
 
-    // Post-order walk. Each directory is drained into a Vec before anything
-    // is deleted: the directory fd closes immediately (depth is not bounded
-    // by the fd limit) and nothing is unlinked while a ReadDir stream is
-    // open (mutating a directory mid-iteration can skip entries on some
-    // filesystems, e.g. NFS). The trade is peak memory: each level's
-    // not-yet-visited entries stay held on the stack, so memory is
-    // proportional to the widest root-to-leaf path rather than O(1) per
-    // level. A directory is removed once its collected entries are done, so
-    // a cancelled or failed delete leaves each subtree either fully removed
-    // or still intact.
+    // Post-order walk, each directory drained into a Vec before anything is
+    // deleted: the fd closes at once (depth is not bounded by the fd limit) and
+    // nothing is unlinked while a ReadDir stream is open, which on some
+    // filesystems (NFS) can skip entries. The trade is peak memory, which is
+    // proportional to the widest root-to-leaf path rather than O(1) per level.
+    // A directory is removed once its entries are done, so a cancelled or
+    // failed delete leaves each subtree either fully removed or intact.
     let root = path.to_path_buf();
     let entries = list_or_abort!(active, &root);
     let mut stack = vec![(root, entries.into_iter())];
@@ -1108,10 +1073,9 @@ fn remove_path(path: &Path, is_directory: bool, mut active: ActiveTask) -> Optio
 
 /// Collects `(path, is_directory)` for each entry of `directory`, closing the
 /// directory's fd before the caller deletes anything. `file_type()` does not
-/// follow symlinks, so a link to a directory reports `false` and is later
-/// unlinked rather than descended into. Checks `active` for cancellation once
-/// per entry (matching the per-entry cadence of the delete loop) so a huge
-/// directory does not delay a cancel; returns `Ok(None)` when cancelled.
+/// follow symlinks, so a link to a directory reports `false` and is unlinked
+/// rather than descended into. Checked for cancellation once per entry, so a
+/// huge directory does not delay a cancel; returns `Ok(None)` when cancelled.
 fn list_entries(
     active: &ActiveTask,
     directory: &Path,
@@ -1161,17 +1125,15 @@ fn apply_permissions(mode: u32, path: &Path) {
     }
 }
 
-/// Renames `old_path` to `new_path`, failing atomically with an
-/// `AlreadyExists` error if `new_path` already exists (unlike `fs::rename`,
-/// which silently replaces it). `validate_paths` already rejects an existing
-/// destination, but that check runs on the UI thread before the worker starts;
-/// this folds the check into the rename so a destination that appears in the
-/// interim is not clobbered.
+/// Renames `old_path` to `new_path`, failing atomically with `AlreadyExists` if
+/// `new_path` is taken, unlike `fs::rename`, which replaces it. `validate_paths`
+/// rejects an existing destination already, but on the UI thread before the
+/// worker starts; folding the check into the rename closes the window where one
+/// appears in between.
 ///
-/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS uses
-/// `renameatx_np(RENAME_EXCL)`, both via rustix's safe `renameat_with` wrapper
-/// (so no `unsafe`, which is forbidden crate-wide). Other targets fall back to
-/// `fs::rename`, retaining only the pre-existing narrow race.
+/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np`, both
+/// through rustix's safe wrapper, since `unsafe` is denied crate-wide. Other
+/// targets fall back to `fs::rename` and keep the narrow race.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
     use rustix::{
@@ -1200,11 +1162,9 @@ fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
 
 fn open_files(source: &Path, target: &Path) -> std::io::Result<(File, File)> {
     let source = File::open(source)?;
-    // `create_new` (O_EXCL|O_CREAT) fails atomically if the target already
-    // exists, folding the check into the open. `validate_paths` already rejects
-    // an existing top-level destination, but that check runs on the UI thread
-    // before the worker starts; this closes the window where a file appears at
-    // the destination in between and would otherwise be truncated.
+    // `create_new` (O_EXCL|O_CREAT) fails atomically if the target exists,
+    // closing the same window as `rename_no_replace`; without it a file that
+    // appeared since `validate_paths` ran would be truncated.
     let target = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1282,8 +1242,8 @@ fn validate_paths(
     // copying, so letting an aliased path through would unlink the source and
     // leave nothing to copy.
     if abs_old == abs_new {
-        // Equal resolved paths mean the destination directory *is* the
-        // source's own directory, so naming the entry once says all of it.
+        // Equal resolved paths mean the destination directory is the source's
+        // own, so the message names the entry once.
         return Err(anyhow!(
             "Cannot {operation} {} into its own directory",
             compact(&old_path)
@@ -1291,14 +1251,12 @@ fn validate_paths(
         .into());
     }
 
-    // Reject copying/moving a directory into its own subtree. Without this, a
-    // copy creates the destination under the source and then recurses into it
-    // forever, filling the disk.
-    //
-    // Only a real directory can recurse: `copy_path` recreates a symlink as a
-    // link and copies a file as bytes, so neither descends into what it is
-    // creating. Restricting the check to directories also keeps it from
-    // refusing a copy of a symlink into the directory that symlink points at.
+    // Without this a copy creates the destination under the source and recurses
+    // into it forever, filling the disk. Only a real directory can: `copy_path`
+    // recreates a symlink as a link and copies a file as bytes, so neither
+    // descends into what it is creating. Restricting the check to directories
+    // also keeps it from refusing a symlink copied into the directory it points
+    // at.
     if source.is_directory() && abs_new.starts_with(&abs_old) {
         return Err(anyhow!(
             "Cannot {operation} {} into its own subdirectory {}",
@@ -1391,16 +1349,14 @@ fn check_cancelled(active: ActiveTask) -> Option<ActiveTask> {
 /// Clears a destination the paste granted permission to replace. Returns `None`
 /// when the task was finalized here and must not continue.
 ///
-/// This runs in the worker rather than the caller, and only once the operation
-/// is about to write. The caller queues every source of an "overwrite all"
-/// paste in one pass, so clearing there would delete every destination up front
-/// and leave a hole wherever a later task is cancelled or fails.
+/// Runs in the worker, once the operation is about to write. The caller queues
+/// every source of an "overwrite all" paste in one pass, so clearing there would
+/// delete every destination up front and leave a hole wherever a later task is
+/// cancelled or fails.
 ///
-/// The source is re-checked first for the same reason: a task can wait behind a
-/// long operation, and removing the destination for a copy that then finds
-/// nothing to read would leave the user with neither entry. That narrows the
-/// window rather than closing it, since the source can still vanish between
-/// this check and the read.
+/// The source is re-checked first for the same reason: removing the destination
+/// for a copy that then finds nothing to read would leave neither entry. It
+/// narrows the window rather than closing it.
 fn clear_destination(
     active: ActiveTask,
     old_path: &Path,
@@ -1428,11 +1384,10 @@ fn clear_destination(
 /// Renames `old_path` onto `new_path`, replacing an existing destination when
 /// `overwrite`.
 ///
-/// Prefers the kernel's atomic replace: it leaves no window in which the
-/// destination is missing, and a rename that fails for an unrelated reason (a
-/// source that vanished while the task was queued, a permission error) leaves
-/// the destination untouched rather than destroying it for nothing. The
-/// destination is cleared only for the one case the kernel refuses outright,
+/// Prefers the kernel's atomic replace: no window with the destination missing,
+/// and a rename that fails for an unrelated reason (a vanished source, a
+/// permission error) leaves it untouched rather than destroyed for nothing. The
+/// destination is cleared only for the case the kernel refuses outright,
 /// replacing a non-directory with a directory.
 fn rename_for_move(old_path: &Path, new_path: &Path, overwrite: bool) -> std::io::Result<()> {
     if !overwrite {

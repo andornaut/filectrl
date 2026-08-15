@@ -306,11 +306,8 @@ mod tests {
         assert_eq!(expected, root.mode());
     }
 
-    /// Mouse events are not mode-gated, so a click on the breadcrumbs or a
-    /// notice reaches the view under an open prompt and closes it. Whoever is
-    /// holding state for that prompt has to be told: a paste waiting on a
-    /// conflict answer would otherwise stall with no clipboard follow-up, and
-    /// its stale answer would land on whatever prompt was opened next.
+    /// A click that closes a prompt from beneath it must still tell whoever
+    /// holds state for that prompt; see `close_prompt`.
     #[test_case(Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
     #[test_case(Command::ResetView ; "a notice click")]
     fn closing_an_open_prompt_from_underneath_announces_it(command: Command) {

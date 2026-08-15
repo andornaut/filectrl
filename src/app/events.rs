@@ -37,28 +37,22 @@ use crate::command::Command;
 // 4. The main event loop picks up `Command::Quit` from either sender, exits
 //    cleanly, and `CleanupOnDropTerminal::Drop` restores the terminal.
 //
-// The watcher is the shutdown route in every case: it is woken by the byte
-// rather than by a timer, so it reaches the signal first and costs nothing
-// while none is pending. The reader's check is the fallback for the one case
-// the watcher cannot cover, a watcher that never started because the pipe or
-// the thread could not be created; its 2 s timeout bounds that fallback alone.
-//
-// The pipe is what makes the watcher free. Reading the flag on a timer meant
-// waking ten times a second for the entire life of the process to answer a
-// question that is almost always "no", and still reacting up to one interval
-// late; a blocking read waits at no cost and returns as soon as the handler
-// writes.
+// The watcher is the shutdown route in every case: woken by the byte rather
+// than by a timer, it reaches the signal first and costs nothing while none is
+// pending. Reading the flag on a timer instead meant waking ten times a second
+// for the life of the process and still reacting up to one interval late. The
+// reader's check is the fallback for the one case the watcher cannot cover, a
+// watcher that never started; its 2 s timeout bounds that fallback alone.
 //
 // SA_RESTART
 // ----------
-// We set SA_RESTART so that the kernel transparently retries interrupted
-// syscalls (poll, read, write) after the signal handler returns. This is
-// the standard approach: we don't want every syscall to fail with EINTR.
+// Set so the kernel retries interrupted syscalls (poll, read, write) after the
+// handler returns, rather than failing them with EINTR.
 //
-// Dropping SA_RESTART would not substitute for the watcher thread. EINTR is
-// only raised for a *blocking* syscall, and the wedge in `event_loop` is a
-// userspace loop over a fd that is permanently readable at EOF, so no call
-// blocks and there is nothing for a signal to interrupt.
+// Dropping it would not substitute for the watcher thread: EINTR is raised only
+// for a *blocking* syscall, and the wedge in `event_loop` is a userspace loop
+// over an fd that is permanently readable at EOF, so nothing blocks and a
+// signal has nothing to interrupt.
 
 static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 
@@ -66,10 +60,9 @@ static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 /// can borrow it. Set once by `install_signal_handlers`.
 static SIGNAL_PIPE_READ: OnceLock<OwnedFd> = OnceLock::new();
 
-/// Write end of the self-pipe, as a raw descriptor because the signal handler
-/// can only reach it through an atomic load. Negative until the pipe exists,
-/// which is the state the handler must tolerate: a signal can be delivered
-/// between `sigaction` and the store.
+/// Write end of the self-pipe, raw because the signal handler can only reach it
+/// through an atomic load. Negative until the pipe exists, which the handler
+/// must tolerate: a signal can arrive between `sigaction` and the store.
 static SIGNAL_PIPE_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 
 /// Terminal input, abstracted so `event_loop` can be driven by fakes in tests.
@@ -101,10 +94,9 @@ extern "C" fn handle_signal(_: i32) {
         // No pipe: only the flag is available, which the reader thread checks.
         return;
     }
-    // The write end is non-blocking, so a pipe filled by a signal storm fails
-    // with EAGAIN rather than blocking inside a handler. Nothing is lost by
-    // that: a full pipe already holds bytes the watcher has not read, and one
-    // is all it takes to wake it.
+    // Non-blocking, so a pipe filled by a signal storm fails with EAGAIN rather
+    // than blocking inside a handler. Nothing is lost: a full pipe already holds
+    // a byte the watcher has not read, and one is all it takes to wake it.
     #[allow(unsafe_code)]
     unsafe {
         let byte: u8 = 0;
@@ -127,9 +119,8 @@ fn install_signal_pipe() -> Result<(), Errno> {
     // read end staying blocking is what lets the watcher wait for free.
     fcntl(&write_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
 
-    // Both ends live as long as the process: the write end is leaked because a
-    // closed descriptor in a signal handler would be a use-after-close, and the
-    // read end is owned by the static the watcher borrows from.
+    // Both ends live as long as the process. The write end is leaked: a closed
+    // descriptor in a signal handler would be a use-after-close.
     SIGNAL_PIPE_WRITE_FD.store(write_fd.into_raw_fd(), Ordering::Relaxed);
     let _ = SIGNAL_PIPE_READ.set(read_fd);
     Ok(())
@@ -141,9 +132,8 @@ pub fn install_signal_handlers() -> Result<(), Errno> {
     // installed finds a pipe to write to.
     install_signal_pipe()?;
 
-    // Safety: sigaction is inherently unsafe but necessary for signal handling.
-    // We pass function pointers that only perform atomic stores, which is
-    // signal-safe. The handlers are installed once at startup and never removed.
+    // Safety: the handler is installed once at startup, never removed, and does
+    // only async-signal-safe work. See `handle_signal`.
     #[allow(unsafe_code)]
     unsafe {
         use nix::sys::signal::{SigAction, SigHandler, Signal, sigaction};
@@ -164,12 +154,9 @@ pub fn install_signal_handlers() -> Result<(), Errno> {
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives
     let Ok(first) = rx.recv() else {
-        // The channel is disconnected: all senders have been dropped. This should
-        // not happen in normal operation because App holds tx for its entire lifetime.
-        // Returning an empty Vec here would cause App::run to loop forever: it would
-        // call receive_commands again immediately (since recv() returns Err instantly
-        // on a disconnected channel), burning 100% CPU re-rendering with no commands.
-        // Returning Quit exits the loop cleanly instead.
+        // Every sender dropped, which App holding tx for its lifetime should
+        // make unreachable. An empty Vec would spin App::run at 100% CPU, since
+        // recv() returns Err instantly once disconnected; Quit exits cleanly.
         log::error!("Command channel disconnected unexpectedly");
         return vec![Command::Quit];
     };
@@ -186,21 +173,18 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
 /// Sends `Command::Quit` once a termination signal has been seen, independently
 /// of the event reader.
 ///
-/// The reader checks the signal flag between polls, which is enough while the
-/// terminal is alive. It is not enough when the terminal dies: `poll` never
-/// returns at EOF (see `event_loop`), so the reader never reaches its next
-/// check and the flag it set is never read. Closing a terminal is precisely
-/// that case, since the kernel sends SIGHUP to the foreground process group as
-/// the pty goes away, so without this thread the process outlives its terminal
-/// as an orphan that answers nothing but SIGKILL.
+/// The reader's own check between polls is enough only while the terminal is
+/// alive. At EOF `poll` never returns (see `event_loop`), so the reader never
+/// reaches its next check and the flag it set is never read. A closing terminal
+/// is exactly that case: the kernel sends SIGHUP as the pty goes away, and
+/// without this thread the process outlives it as an orphan answering nothing
+/// but SIGKILL.
 ///
-/// This does not stop the reader thread from spinning; nothing on this side
-/// can. It bounds the spin by how long the process lives, and the process exits
-/// as soon as the handler's byte arrives, so no orphan is left behind.
+/// Nothing on this side can stop the reader spinning. This bounds the spin by
+/// how long the process lives, which is until the handler's byte arrives.
 pub(super) fn spawn_signal_watcher(tx: Sender<Command>) {
-    // Not fatal, here or below: the reader thread still answers signals for a
-    // live terminal, which is every case except the one this thread exists for.
-    // Losing the fallback is worth logging, not worth refusing to start over.
+    // Not fatal, here or below: the reader still answers signals for a live
+    // terminal, which is every case but the one this thread exists for.
     let Some(read_fd) = SIGNAL_PIPE_READ.get() else {
         log::error!("Cannot watch for signals: the self-pipe was not created");
         return;
@@ -218,10 +202,9 @@ pub(super) fn spawn_signal_watcher(tx: Sender<Command>) {
 }
 
 /// The watcher's body, over a caller-supplied descriptor so tests can drive it
-/// through a pipe of their own rather than the process-wide one.
-///
-/// Blocks until a byte arrives, so a process with no signal pending performs no
-/// work at all. What the byte says does not matter, only that a handler ran.
+/// through a pipe of their own. Blocks until a byte arrives, so a process with
+/// no signal pending does no work. The byte's value says nothing; that a handler
+/// ran is the whole message.
 fn watch_signal_pipe(tx: &Sender<Command>, read_fd: BorrowedFd<'_>) {
     let mut buffer = [0u8; 1];
     loop {
@@ -249,18 +232,16 @@ fn watch_signal_pipe(tx: &Sender<Command>, read_fd: BorrowedFd<'_>) {
 }
 
 pub(super) fn spawn_command_sender(tx: Sender<Command>) {
-    // Only the wait for terminal input, so its length has no effect on how
-    // quickly a keystroke is handled. The timeout exists so the signal flag is
-    // checked at all, and that check matters only when no watcher thread is
-    // running, which leaves nothing to justify waking twice a second.
+    // Only the wait for terminal input, so it does not affect how quickly a
+    // keystroke is handled. The timeout exists so the signal flag is checked at
+    // all, which matters only when no watcher thread is running.
     let poll_interval = Duration::from_secs(2);
 
     let builder = thread::Builder::new().name("filectrl-event-reader".into());
     let reader_tx = tx.clone();
     let spawn_result = builder.spawn(move || {
-        // catch_unwind so a panic in the reader thread is logged instead of
-        // silently terminating only the thread (leaving the main loop blocked
-        // forever on rx.recv()).
+        // Without catch_unwind a panic kills only this thread, silently,
+        // leaving the main loop blocked on rx.recv() forever.
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
             event_loop(&reader_tx, poll_interval, &mut TerminalEventSource);
         }));
@@ -274,51 +255,40 @@ pub(super) fn spawn_command_sender(tx: Sender<Command>) {
 
     if let Err(err) = spawn_result {
         log::error!("Failed to spawn event reader thread: {err}");
-        // Without the reader thread there is no terminal input, so the main
-        // loop would block on rx.recv() until a signal arrives and the watcher
-        // sends Quit. Enqueue Quit now so the app shuts down cleanly instead of
-        // sitting at a screen that answers nothing.
+        // No reader means no terminal input, so the main loop would sit on
+        // rx.recv() at a screen that answers nothing until a signal arrives.
         let _ = tx.send(Command::Quit);
     }
 }
 
 fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, source: &mut S) {
     loop {
-        // Check the signal flag before each poll so that the window between a
-        // signal arriving and us noticing it is bounded by the poll timeout.
-        // The watcher thread normally quits first; this is what answers a
-        // signal when it is not running. Checking first (rather than only after
-        // poll returns) also handles the unlikely case where the signal fires
-        // between poll() returning Ok(false) and the continue jumping back to
-        // the top.
+        // Bounds the window between a signal arriving and this thread noticing
+        // by the poll timeout. The watcher normally quits first; this answers a
+        // signal when it is not running. Checked before the poll rather than
+        // after, which also catches a signal that fires between poll() returning
+        // Ok(false) and the jump back to the top.
         if SIGNAL_RECEIVED.load(Ordering::Relaxed) {
-            // Signal handler fired: ask the main loop to shut down.
             let _ = tx.send(Command::Quit);
             return;
         }
 
-        // poll() with a timeout. Returns Ok(true) if an event is queued
-        // (next read() is non-blocking), Ok(false) on timeout.
-        //
-        // A poll()/read() error means stdin is no longer usable (e.g. the
-        // terminal closed or the fd was revoked), so there is nothing to retry:
-        // continuing would busy-loop on the same error. We send Command::Quit
-        // and exit the reader thread so the main loop wakes from rx.recv(),
-        // shuts down, and CleanupOnDropTerminal::Drop restores the terminal.
-        // Without this, the main loop would block on rx.recv() forever because
+        // An error from poll()/read() means stdin is no longer usable (the
+        // terminal closed, the fd was revoked), so there is nothing to retry and
+        // continuing would busy-loop on it. Quit instead, so the main loop wakes
+        // from rx.recv() and CleanupOnDropTerminal::Drop restores the terminal;
         // this thread is its only command producer.
         //
-        // These error arms depend on crossterm reporting a vanished terminal.
-        // It currently does not: at EOF the mio event source re-reads a
-        // permanently readable fd forever, so poll() never returns and this
-        // thread wedges at 100% CPU. Nothing here can detect that, because
-        // control never comes back. Revisit when the upstream issue is resolved:
+        // Those arms depend on crossterm reporting a vanished terminal, which it
+        // does not: at EOF the mio event source re-reads a permanently readable
+        // fd forever, so poll() never returns and this thread wedges at 100%
+        // CPU. Nothing here can detect that, because control never comes back.
+        // Revisit when the upstream issue is resolved:
         // https://github.com/crossterm-rs/crossterm/issues/793
         //
-        // The process still exits when this happens: the terminal's death
-        // delivers SIGHUP and spawn_signal_watcher acts on it from outside this
-        // thread. What is lost here is only the ability to quit *first* and
-        // skip the spin, not the ability to quit at all.
+        // The process still exits: SIGHUP reaches spawn_signal_watcher from
+        // outside this thread. Only quitting *first*, and skipping the spin, is
+        // lost.
         let event = match source.poll(poll_interval) {
             Ok(true) => match source.read() {
                 Ok(event) => event,
@@ -337,9 +307,8 @@ fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, sou
         };
 
         if let Some(command) = Command::maybe_from(event) {
-            // A send error means the receiver (App) has been dropped, i.e.
-            // the app is shutting down. Exit the thread cleanly instead of
-            // panicking on a late keystroke during teardown.
+            // A dropped receiver means App is shutting down. Exit cleanly
+            // rather than panicking on a late keystroke during teardown.
             if tx.send(command).is_err() {
                 return;
             }

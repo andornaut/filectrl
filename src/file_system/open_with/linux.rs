@@ -46,10 +46,9 @@ fn mime_db() -> &'static SharedMimeInfo {
 
 /// Child type to its direct parents.
 ///
-/// `SharedMimeInfo::get_parents` cannot be used: it resolves the type through
-/// the alias table first and returns `None` when the lookup misses, which it
-/// does for every type that is not itself an alias. Every file would therefore
-/// be cut off from its parents' handlers.
+/// `SharedMimeInfo::get_parents` cannot be used: it resolves through the alias
+/// table first and returns `None` on a miss, which every type that is not itself
+/// an alias produces, cutting those files off from their parents' handlers.
 static SUBCLASSES: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
 
 fn subclasses() -> &'static HashMap<String, Vec<String>> {
@@ -169,11 +168,10 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
 }
 
 /// The name the glob rules are matched against. Lossy, because the rules are
-/// patterns over a string and `guess` drops a name it cannot convert rather
-/// than converting it, which would leave `caf\xe9.txt` unmatched by `*.txt`
-/// and so unopenable by anything. Replacement characters cannot create a false
-/// match: no rule contains one. The conversion stops here, and the path itself
-/// reaches the launched program as the bytes it really is.
+/// patterns over a string and `guess` drops a name it cannot convert, leaving
+/// `caf\xe9.txt` unmatched by `*.txt` and openable by nothing. A replacement
+/// character cannot create a false match, since no rule contains one, and the
+/// conversion stops here: the path reaches the program as its own bytes.
 fn glob_name(path: &Path) -> Option<String> {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -299,11 +297,10 @@ fn to_candidate(
     })
 }
 
-/// Wrap `argv` in the configured terminal. Unlike the path openers, `%s` here
-/// stands for a command line, so it is substituted with the arguments joined
-/// (and individually quoted only where needed) rather than quoted as a whole:
-/// `xterm -e %s` has to become `xterm -e vim '/a b'`, not `xterm -e 'vim /a b'`.
-/// Returns `None` when no terminal is configured.
+/// Wrap `argv` in the configured terminal. Unlike the path openers, `%s` stands
+/// for a command line, so it takes the arguments joined and quoted individually
+/// where needed: `xterm -e %s` becomes `xterm -e vim '/a b'`, not
+/// `xterm -e 'vim /a b'`. `None` when no terminal is configured.
 fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     if template.is_empty() {
         return None;

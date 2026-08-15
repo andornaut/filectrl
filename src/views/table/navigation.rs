@@ -66,13 +66,11 @@ impl TableView {
             .finalize_listing(self.columns.sort_column(), self.columns.sort_direction());
         // Marks are stored by index and the listing has just been rebuilt, so
         // they are re-derived from the entries they named. A reload is not a
-        // reorder the user asked for: an unrelated file appearing in the
-        // directory must not drop a selection they are part way through making.
-        // An entry renamed or removed while the listing reloaded loses its
-        // mark, which is the honest answer for an entry that is no longer
-        // there. By path rather than inode: two hard links to one file share a
-        // device and inode, so inode identity would spread one mark across
-        // every name the file has.
+        // reorder the user asked for: an unrelated file appearing must not drop
+        // a selection they are part way through making. An entry renamed or
+        // removed loses its mark, which is honest for one no longer there. By
+        // path, not inode: two hard links share a device and inode, so inode
+        // identity would spread one mark across every name the file has.
         self.clear_marks();
         let marked = std::mem::take(&mut self.pending_load.prev_marked);
         for index in self.content.find_all_by_path(&marked) {
@@ -137,17 +135,15 @@ impl TableView {
         // Marks are stored by index, so any change to the visible items invalidates them.
         self.clear_marks();
 
-        // Store the currently selected item before reordering, then try to
-        // restore it afterward. The file may have moved position or dropped
+        // Remember the selection across the reorder: the entry may move or drop
         // out of the listing entirely (filtering, show-hidden).
         //
-        // By path: this reorders and refilters the entries already loaded
-        // rather than reloading them, so nothing here can rename an entry,
-        // and a path names exactly one of them. Identity by inode cannot,
-        // because two hard links to one file share a device and inode, and it
-        // would put the cursor on whichever name sorted first. A reload
-        // restores the selection separately, in `restore_selection`, where
-        // inode is the right identity precisely because a rename is possible.
+        // By path, because this reorders entries already loaded rather than
+        // reloading them, so nothing here can rename one and a path names
+        // exactly one entry. Inode cannot: two hard links share one, and the
+        // cursor would land on whichever name sorted first. A reload restores
+        // the selection in `restore_selection`, where inode is right precisely
+        // because a rename is possible.
         let selected = self.selected_path().cloned();
         let selected_index = self.table_state.selected();
 
@@ -176,13 +172,12 @@ impl TableView {
 
     /// Reorder the visible items, carrying the marks across.
     ///
-    /// Every other reorder here is one the user asked for (a different sort
-    /// column, a filter), and dropping index-based marks is the honest answer
-    /// to those. A search ending is not: results stream so they can be marked
-    /// before the walk is done, and neither finishing nor being cancelled is a
-    /// request to reorder them. The marks are re-derived from the entries they
-    /// named, so one the reorder dropped loses its mark. Range mode ends either
-    /// way: its anchor names a position, and the positions have just changed.
+    /// Every other reorder here is one the user asked for (a sort column, a
+    /// filter), and dropping index-based marks answers those honestly. A search
+    /// ending is not one: results stream so they can be marked before the walk
+    /// is done. The marks are re-derived from the entries they named, so one the
+    /// reorder dropped loses its mark. Range mode ends either way, since its
+    /// anchor names a position and the positions have just changed.
     pub(super) fn sort_keeping_marks(&mut self, reselect: Reselect) -> CommandResult {
         // Captured before the sort clears them: an index says nothing about an
         // entry once the order has changed.
@@ -561,11 +556,10 @@ mod tests {
         table.content.start_search();
         assert_eq!(table.marks.len(), 2);
 
-        // A watcher event fires while search results are displayed. The
-        // listing belongs to a different root, so the refresh is ignored and
-        // the marks survive. Emitting a mark-reset snapshot here would blank
-        // the notice while the marks are still live and still operated on by
-        // a subsequent delete/copy/chmod.
+        // A watcher event fires while search results are displayed. The listing
+        // belongs to a different root, so the refresh is ignored and the marks
+        // survive. A mark-reset snapshot would blank the notice while the marks
+        // are still live and still operated on by a later delete/copy/chmod.
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,

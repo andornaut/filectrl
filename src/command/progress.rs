@@ -170,14 +170,12 @@ impl Progress {
 
 /// A handle to an in-progress task.
 ///
-/// Finalization methods (`done`, `cancelled`, `error`) consume `self`, making it a compile-time
-/// error to finalize a task more than once or to report an error after it has already
-/// been marked done. This prevents the class of bugs where an async operation attempts
-/// to update a task that has already been removed from the UI.
+/// Finalization (`done`, `cancelled`, `error`) consumes `self`, so finalizing
+/// twice, or reporting an error after `done`, is a compile-time error rather
+/// than an update to a task the UI has already dropped.
 ///
-/// If dropped without calling `done` or `error` (e.g. via an early `?` return), the
-/// `Drop` impl sends a final progress update marking the task as done, clearing any
-/// phantom progress bar from the UI.
+/// Dropped without either (an early `?` return), `Drop` sends a final update
+/// marking it done, so no phantom progress bar is left behind.
 pub struct ActiveTask {
     cancel_token: CancellationToken,
     /// Set once the task can no longer be meaningfully cancelled: it reached
@@ -370,11 +368,10 @@ impl Task {
         }
     }
 
-    /// Advances byte progress. Never sets a terminal status: byte counts can
-    /// reach a stale total while work remains (e.g. a source that grows after
-    /// the size scan, or a cross-device move that still has to remove the
-    /// source), so only finalization (`done`/`cancelled`/`error`) ends the
-    /// task.
+    /// Advances byte progress. Never sets a terminal status: a byte count can
+    /// reach a stale total with work remaining (a source that grew after the
+    /// size scan, a cross-device move that still has to remove its source), so
+    /// only `done`/`cancelled`/`error` end a task.
     fn increment(&mut self, additional: u64) {
         self.progress.increment(additional);
         self.status = TaskStatus::InProgress;

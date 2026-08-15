@@ -27,18 +27,16 @@ pub enum InputMode {
 
 /// What an open prompt is collecting input for.
 ///
-/// Each variant is opened via `Command::OpenPrompt` and, on submit, resolves
-/// into a corresponding `Command` (see `PromptView::submit`). Some map to a
-/// same-named command (`Rename` -> `Command::Rename`); others to a different
-/// one (`Delete` -> `Command::ConfirmDelete`, `Filter` -> `Command::FilterChanged`,
-/// `Goto` -> `Command::Open`, `Search` -> `Command::StartSearch`).
+/// Each variant is opened via `Command::OpenPrompt` and resolves on submit into
+/// a `Command` (see `PromptView::submit`), sometimes the same-named one
+/// (`Rename`), sometimes not (`Delete` -> `ConfirmDelete`, `Filter` ->
+/// `FilterChanged`, `Goto` -> `Open`, `Search` -> `StartSearch`).
 ///
-/// The payloads differ by lifecycle stage: a `PromptAction` carries the prompt's
-/// *initial* state (e.g. `Rename.name` is the pre-filled text, `Delete(usize)` is
-/// a count for the confirmation message), whereas the resolved `Command` carries
-/// the *submitted* result (e.g. `Rename.name` is the entered text,
-/// `Delete(Vec<PathInfo>)` is the resolved paths). They are intentionally not
-/// merged for this reason.
+/// The payloads differ by lifecycle stage, which is why the two are not merged:
+/// a `PromptAction` carries the prompt's *initial* state (`Rename.name` is the
+/// pre-filled text, `Delete(usize)` a count for the message), and the resolved
+/// `Command` the *submitted* result (`Rename.name` is what was typed,
+/// `Delete(Vec<PathInfo>)` the resolved paths).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptAction {
     Chmod {
@@ -144,11 +142,10 @@ pub enum Command {
         generation: u64,
     },
     // Result: a batch of streamed entries (directory load or search hits),
-    // appended (in read order) by TableView. `generation` matches the command
-    // that started the stream (Navigated/RefreshedDirectory or SearchStarted),
-    // so stale batches from a superseded stream are ignored. Loads and
-    // searches draw from the same monotonic counter, so a generation is never
-    // ambiguous between the two.
+    // appended in read order by TableView. `generation` matches the command that
+    // started the stream (Navigated/RefreshedDirectory or SearchStarted), so a
+    // superseded stream's batches are ignored. Both draw from one counter, so a
+    // generation is never ambiguous.
     ListingBatch {
         items: Vec<PathInfo>,
         generation: u64,

@@ -6,14 +6,13 @@
 //!
 //! Two limitations here are deliberate:
 //!
-//! - **The application database is read, never written.** Nothing writes
-//!   `mimeapps.list`, so the picker cannot set an application as the default
-//!   for a type; it reports the default the desktop already resolves to. Use
-//!   `xdg-mime default` or the desktop's own settings to change one.
-//! - **The index is built once per process and not refreshed.** Installing or
-//!   removing an application while FileCTRL is running is not picked up until
-//!   it restarts (see the `OnceLock`s in `linux.rs`). Rebuilding on every open
-//!   would pay the scan repeatedly to catch something that changes rarely.
+//! - **The application database is read, never written.** The picker reports
+//!   the default the desktop resolves to and cannot set one; use `xdg-mime
+//!   default` or the desktop's own settings for that.
+//! - **The index is built once per process** (the `OnceLock`s in `linux.rs`), so
+//!   an application installed while FileCTRL runs is not picked up until it
+//!   restarts. Rebuilding per open would pay the scan repeatedly to catch
+//!   something that changes rarely.
 
 // The desktop entry and mime-apps specs are Linux only; macOS answers the same
 // question through Launch Services.

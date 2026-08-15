@@ -126,7 +126,6 @@ pub(super) fn progress_widget<'a>(
     width: u16,
     tasks: &'a HashSet<Task>,
 ) -> Block<'a> {
-    // Combine the progress from all the tasks
     let progress = tasks
         .iter()
         .fold(Progress::default(), |acc, task| task.combine_progress(&acc));
@@ -153,11 +152,10 @@ pub(super) fn progress_widget<'a>(
 // truncate_left() panics unless the budget exceeds the ellipsis width (1).
 const MIN_TRUNCATE_WIDTH: usize = 2;
 
-/// The detail text shown after the verb prefix, left-truncated to fit the
-/// width left over after the (always shown in full) prefix. Left-truncation
-/// keeps the tail of the path visible (e.g. `…naut/Downloads/`), which is the
-/// most relevant part for the user. When there is no room for any detail
-/// (budget below the minimum), only an ellipsis is shown (e.g. `Copying …`).
+/// The detail text after the verb prefix, left-truncated into whatever width the
+/// prefix (always shown in full) leaves. Left-truncation keeps the tail of the
+/// path visible (`…naut/Downloads/`), which is the part that identifies it. With
+/// no room for any detail, only an ellipsis shows (`Copying …`).
 fn truncate_detail(prefix: &str, detail: &str, width: u16) -> String {
     let budget = (width as usize).saturating_sub(prefix.cell_width() as usize);
     if budget < MIN_TRUNCATE_WIDTH {
@@ -169,13 +167,11 @@ fn truncate_detail(prefix: &str, detail: &str, width: u16) -> String {
     }
 }
 
-/// The detail string for a single in-progress operation, chosen to keep the
-/// most useful information visible as the width shrinks:
-/// - normally `"<source> to <destination dir>"`
-/// - if the source basename would be truncated at all, switch to
-///   `"to <full destination path including basename>"` so the file name is
-///   still shown in full
-/// - then left-truncated to fit (see [`truncate_detail`])
+/// The detail string for one in-progress operation, keeping the most useful part
+/// visible as the width shrinks: `"<source> to <destination dir>"` normally, or
+/// `"to <full destination path>"` once the source basename would be truncated at
+/// all, so the file name still shows in full. Then left-truncated to fit (see
+/// [`truncate_detail`]).
 fn operation_detail(kind: &TaskKind, width: u16) -> String {
     let prefix = kind.prefix();
     let detail = match (kind.source(), kind.source_basename(), kind.destination()) {

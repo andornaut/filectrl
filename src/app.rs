@@ -26,11 +26,10 @@ use crate::{
     views::{View, root::RootView},
 };
 
-/// Maximum number of broadcast cycles per input command. Each cycle resolves
-/// one link in an intent → result chain; the longest legitimate chain is 6,
-/// which occurs when renaming a bookmark while the bookmarks view is showing
-/// (`Chmod` and `CreateDirectory` submitted from that view follow the same
-/// shape):
+/// Maximum number of broadcast cycles per input command. Each resolves one link
+/// in an intent → result chain, the longest of which is the 6 below, from
+/// renaming a bookmark while the bookmarks view is showing (`Chmod` and
+/// `CreateDirectory` from that view take the same shape):
 ///
 ///   1. `Key`                - terminal input
 ///   2. `Rename`             - submitted by the prompt
@@ -40,13 +39,12 @@ use crate::{
 ///   6. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
 ///
 /// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
-/// entries stream in afterward as `ListingBatch`/`DirectoryListingComplete`,
-/// which arrive as fresh channel sends (each its own short chain, e.g.
-/// `DirectoryListingComplete → SelectionChanged`) rather than extending this one.
+/// entries stream in afterwards as `ListingBatch`/`DirectoryListingComplete`,
+/// fresh channel sends that each start their own short chain rather than
+/// extending this one.
 ///
-/// Also acts as a guard against a handler stuck deriving commands forever.
-/// See `broadcast_command` for what happens when it is exceeded. The bound keeps
-/// one cycle of headroom over the longest real chain.
+/// The bound keeps one cycle of headroom over that, and guards against a handler
+/// stuck deriving forever; see `broadcast_command` for what exceeding it does.
 const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
 
 /// The command-handling half of the app: the whole tree a broadcast visits.
@@ -87,11 +85,10 @@ impl App {
     }
 
     pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
-        // Trigger the initial navigation and handle it synchronously *before*
-        // entering the loop. `run_once` spawns the directory loader, which begins
-        // streaming `ListingBatch`es into the channel immediately; handling
-        // the resulting `NavigatedDirectory` here registers its generation
-        // before those batches are drained, so none are dropped.
+        // Handled synchronously, before the loop: `run_once` spawns the loader,
+        // which starts streaming `ListingBatch`es at once, and handling the
+        // resulting `NavigatedDirectory` here registers its generation before
+        // those batches are drained, so none are dropped.
         let initial = self.handlers.file_system.run_once(initial_directory)?;
         let remaining = self.broadcast_commands(initial);
         must_not_contain_unhandled(&remaining)?;
@@ -158,11 +155,9 @@ impl App {
         }
 
         if !pending.is_empty() {
-            // A non-empty `pending` after the cap means either a chain longer
-            // than expected or a handler stuck deriving in a loop; both bugs.
-            // Fail loudly in dev/test; in release surface an alert (sent through
-            // the channel so it is non-fatal) instead of silently dropping the
-            // user's action.
+            // A chain longer than expected, or a handler stuck deriving in a
+            // loop; both bugs. Loud in dev/test, and in release an alert through
+            // the channel rather than silently dropping the user's action.
             let message = format!(
                 "Broadcast cycle limit ({MAX_BROADCAST_CHAIN_LENGTH}) exceeded; dropped {} derived command(s): {:?}",
                 pending.len(),
@@ -215,14 +210,13 @@ fn recursively_handle_command(
     // several does not lengthen the chain.
     derived.extend(result.into_commands());
 
-    // Short-circuit key dispatch: once one handler claims a key, siblings are skipped.
-    // This prevents, e.g., HelpView's scroll keys from also moving the table selection.
-    // Mouse events are deliberately NOT short-circuited. Positional clicks already reach
-    // at most one handler (visible views occupy disjoint layout regions), but scroll-wheel
-    // events are accepted by TableView regardless of cursor position, so a wheel event over
-    // another view's region must reach both. Short-circuiting would make that depend on
-    // sibling order.
-    // Non-key commands (NavigatedDirectory, ResetView, …) are always broadcast to all handlers.
+    // Once a handler claims a key, siblings are skipped, so HelpView's scroll
+    // keys do not also move the table selection. Mouse events are deliberately
+    // not short-circuited: a positional click already reaches at most one handler
+    // (views occupy disjoint regions), but TableView accepts scroll-wheel events
+    // wherever the cursor is, so a wheel event over another view must reach both,
+    // and short-circuiting would make that depend on sibling order. Non-key
+    // commands are always broadcast to every handler.
     let is_key = matches!(command, Command::Key(_, _));
     let mut key_consumed = is_key && handled;
     handler.visit_command_handlers(&mut |child| {
@@ -264,17 +258,16 @@ fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
     Ok(())
 }
 
-/// Whether a batch can be drained without redrawing, because nothing in it
-/// reached a handler: `received` commands went out and the same number came
-/// back unclaimed, and every one is an input event.
+/// Whether a batch can be drained without redrawing: the same number of commands
+/// came back as went out, all unclaimed, and every one is an input event.
 ///
-/// A command a handler claims may have changed what is on screen, so any batch
-/// with one in it redraws. An unclaimed input event cannot have: `handle_key`
-/// and `handle_mouse` return `NotHandled` only from arms that touch no state,
-/// which is what an unbound keystroke or a click that lands on no view hits.
+/// A claimed command may have changed the screen, so any batch holding one
+/// redraws. An unclaimed input event cannot have: `handle_key` and `handle_mouse`
+/// return `NotHandled` only from arms that touch no state, which is what an
+/// unbound keystroke or a click landing on no view hits.
 ///
-/// `Resize` is excluded even though it too goes unhandled, because it is the
-/// notification that the terminal's dimensions changed and exists to redraw.
+/// `Resize` is excluded, though it too goes unhandled: it is the notification
+/// that the dimensions changed, and exists to redraw.
 fn changed_nothing_visible(received: usize, remaining: &[Command]) -> bool {
     !remaining.is_empty()
         && remaining.len() == received
