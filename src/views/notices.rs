@@ -3,7 +3,10 @@ mod notice;
 mod view;
 mod widget;
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use notice::Notice;
 use ratatui::layout::Rect;
@@ -16,7 +19,9 @@ use crate::{
 
 pub(super) struct NoticesView {
     area: Rect,
-    search_tick: u16,
+    /// When the current search began, which is what the loading indicator's
+    /// position is derived from. `None` whenever no search is loading.
+    search_started_at: Option<Instant>,
     clipboard_entry: Option<ClipboardEntry>,
     hide_marked: bool,
     hint: String,
@@ -49,7 +54,7 @@ impl NoticesView {
         );
         Self {
             area: Rect::default(),
-            search_tick: 0,
+            search_started_at: None,
             clipboard_entry: None,
             hide_marked: false,
             hint,
@@ -112,12 +117,19 @@ impl NoticesView {
         CommandResult::Handled
     }
 
-    /// Reset the search-notice state in full: query, cancelled flag, and
-    /// spinner tick.
+    /// Reset the search-notice state in full: query, cancelled flag, and the
+    /// loading indicator's start time.
     fn clear_search_notice(&mut self) {
         self.search_query = None;
         self.search_cancelled = false;
-        self.search_tick = 0;
+        self.search_started_at = None;
+    }
+
+    /// How long the current search has been loading, which the indicator's
+    /// position is a function of. Zero when none is.
+    fn search_elapsed(&self) -> Duration {
+        self.search_started_at
+            .map_or(Duration::ZERO, |started_at| started_at.elapsed())
     }
 
     fn update_tasks(&mut self, task: Task) -> CommandResult {

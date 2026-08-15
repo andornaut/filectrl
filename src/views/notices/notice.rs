@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use ratatui::widgets::Block;
 
@@ -34,7 +34,7 @@ impl Notice {
         tasks: &'a HashSet<Task>,
         hint: &'a str,
         cancel_hint: &'a str,
-        search_tick: u16,
+        search_elapsed: Duration,
     ) -> Block<'a> {
         match self {
             Notice::Clipboard(clipboard_entry) => {
@@ -48,7 +48,7 @@ impl Notice {
             Notice::SearchCancelled(query) => {
                 search_cancelled_widget(&theme.notice, width, query, hint)
             }
-            Notice::SearchLoading => search_loading_widget(&theme.notice, width, search_tick),
+            Notice::SearchLoading => search_loading_widget(&theme.notice, width, search_elapsed),
         }
     }
 }

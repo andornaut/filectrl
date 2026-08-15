@@ -22,6 +22,7 @@ impl View for NoticesView {
         self.area = area;
         let theme = Config::global().theme();
 
+        let search_elapsed = self.search_elapsed();
         let constraints = vec![Constraint::Length(1); self.notices.len()];
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -38,7 +39,7 @@ impl View for NoticesView {
                     &self.tasks,
                     &self.hint,
                     &self.cancel_hint,
-                    self.search_tick,
+                    search_elapsed,
                 );
                 widget.render(*area, frame.buffer_mut());
             });

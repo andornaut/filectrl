@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use ratatui::buffer::CellWidth;
 use ratatui::{
@@ -30,8 +30,37 @@ const SEARCH_CANCELLED_PREFIX: &str = "Cancelled: [Searching] ";
 
 // Number of terminal columns per unit of search-loading indicator speed.
 // The indicator advances `width / SEARCH_LOADING_SPEED_DIVISOR` cells per
-// tick, so wider screens sweep faster instead of taking longer to cross.
+// step, so wider screens sweep faster instead of taking longer to cross.
 const SEARCH_LOADING_SPEED_DIVISOR: u16 = 32;
+
+/// How long one step of the search-loading indicator lasts. Its position is
+/// derived from elapsed time rather than counted, so this sets how fast the
+/// indicator moves and nothing else. How often it is redrawn is a separate
+/// question, answered by whatever wakes the event loop.
+const SEARCH_LOADING_STEP: Duration = Duration::from_millis(80);
+
+/// Cells the search-loading indicator itself occupies.
+const SEARCH_LOADING_BLOCK_WIDTH: u16 = 3;
+
+/// Where the search-loading indicator sits after `elapsed`, or `None` when the
+/// terminal is too narrow to hold it.
+///
+/// Triangle wave: the position bounces 0 → travel → 0, one step at a time, with
+/// each step scaled by a width-derived speed so the indicator crosses a wider
+/// screen faster rather than taking longer. The modulo is taken at full width,
+/// so a search running long enough to exhaust a `u16` of steps keeps moving
+/// smoothly instead of jumping.
+fn search_loading_position(width: u16, elapsed: Duration) -> Option<u16> {
+    if width <= SEARCH_LOADING_BLOCK_WIDTH {
+        return None;
+    }
+    let travel = width - SEARCH_LOADING_BLOCK_WIDTH;
+    let speed = (width / SEARCH_LOADING_SPEED_DIVISOR).max(1);
+    let cycle = u64::from(travel) * 2;
+    let steps = elapsed.as_millis() as u64 / SEARCH_LOADING_STEP.as_millis() as u64;
+    let t = (steps * u64::from(speed) % cycle) as u16;
+    Some(if t < travel { t } else { travel * 2 - t })
+}
 
 pub(super) fn clipboard_widget<'a>(
     theme: &Clipboard,
@@ -231,26 +260,16 @@ pub(super) fn search_cancelled_widget<'a>(
 pub(super) fn search_loading_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
-    search_tick: u16,
+    elapsed: Duration,
 ) -> Block<'a> {
     let style = theme.search_loading();
-    let block_width: u16 = 3;
-    if width <= block_width {
+    let Some(pos) = search_loading_position(width, elapsed) else {
         return Block::default().borders(Borders::NONE).style(style);
-    }
-
-    // Triangle wave: position bounces 0 → travel → 0.
-    // Scale the tick by a width-derived speed so the indicator crosses
-    // wider screens faster (more cells per tick) instead of taking longer.
-    let travel = width - block_width;
-    let speed = (width / SEARCH_LOADING_SPEED_DIVISOR).max(1);
-    let cycle = travel * 2;
-    let t = (search_tick.wrapping_mul(speed)) % cycle;
-    let pos = if t < travel { t } else { cycle - t };
+    };
 
     let before = " ".repeat(pos as usize);
-    let indicator = block::FULL.repeat(block_width as usize);
-    let after = " ".repeat(width.saturating_sub(pos + block_width) as usize);
+    let indicator = block::FULL.repeat(SEARCH_LOADING_BLOCK_WIDTH as usize);
+    let after = " ".repeat(width.saturating_sub(pos + SEARCH_LOADING_BLOCK_WIDTH) as usize);
 
     let left = Line::from(format!("{before}{indicator}{after}"));
 
@@ -279,10 +298,37 @@ fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a s
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use test_case::test_case;
 
-    use super::{operation_detail, truncate_detail};
+    use super::{operation_detail, search_loading_position, truncate_detail};
     use crate::command::progress::{TaskKind, Transfer};
+
+    // Width 80 gives a travel of 77 cells at 2 cells per 80 ms step, so the
+    // indicator turns around 39 steps (3120 ms) in and completes a cycle after
+    // 77 steps (6160 ms).
+    #[test_case(0, Some(0); "starts at the left edge")]
+    #[test_case(80, Some(2); "advances one step")]
+    #[test_case(120, Some(2); "holds position between steps")]
+    #[test_case(3_120, Some(76); "turns around at the far edge")]
+    #[test_case(3_200, Some(74); "comes back")]
+    #[test_case(6_160, Some(0); "returns to the left edge")]
+    // An hour of steps overflows a u16 many times over; the position is still
+    // just the phase, with no jump where the count would have wrapped.
+    #[test_case(3_600_000, Some(64); "stays continuous after a long search")]
+    fn search_loading_position_bounces(elapsed_ms: u64, expected: Option<u16>) {
+        assert_eq!(
+            expected,
+            search_loading_position(80, Duration::from_millis(elapsed_ms))
+        );
+    }
+
+    #[test]
+    fn search_loading_position_is_none_when_too_narrow() {
+        assert_eq!(None, search_loading_position(3, Duration::ZERO));
+        assert_eq!(Some(0), search_loading_position(4, Duration::ZERO));
+    }
 
     // Left-truncation keeps the tail (destination) visible as the width
     // shrinks, e.g. `…oper/Downloads/` then `…per/Downloads/`.

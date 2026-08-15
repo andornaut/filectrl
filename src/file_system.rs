@@ -41,6 +41,13 @@ use crate::{
     },
 };
 
+/// How often a running search wakes the event loop to redraw its loading
+/// indicator. Only a heartbeat: the indicator's position comes from elapsed
+/// time, so this bounds how coarse its motion gets during a stretch of the walk
+/// that produces no results, and matters not at all while results are arriving,
+/// since each batch already redraws.
+const SEARCH_TICK_INTERVAL: Duration = Duration::from_millis(150);
+
 /// A cancellable in-flight action. File operations and searches share one list,
 /// in registration order; `cancel_target` decides which entry a cancel keypress
 /// aims at.
@@ -787,7 +794,7 @@ impl FileSystem {
         let tick_tx = self.command_tx.clone();
         thread::spawn(move || {
             while !tick_token.is_cancelled() {
-                thread::sleep(Duration::from_millis(80));
+                thread::sleep(SEARCH_TICK_INTERVAL);
                 if tick_token.is_cancelled() {
                     break;
                 }

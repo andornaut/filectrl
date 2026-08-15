@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     prelude::Position,
@@ -36,7 +38,7 @@ impl CommandHandler for NoticesView {
             }
             Command::StartSearch(query) => {
                 self.search_query = Some(query.clone());
-                self.search_tick = 0;
+                self.search_started_at = Some(Instant::now());
                 self.search_cancelled = false;
                 // Search results are unfiltered (`start_search` clears the
                 // filter), so the notice has to clear with it. The table
@@ -51,7 +53,7 @@ impl CommandHandler for NoticesView {
             Command::CancelSearch => {
                 // Keep the search notice visible; relabel it to "Cancelled: ...".
                 self.search_cancelled = true;
-                self.search_tick = 0;
+                self.search_started_at = None;
                 CommandResult::Handled
             }
             Command::SearchStarted { generation } => {
@@ -64,19 +66,15 @@ impl CommandHandler for NoticesView {
                 // keeps the relabeled notice, a natural one clears it.
                 if *generation == self.search_generation && !self.search_cancelled {
                     self.search_query = None;
-                    self.search_tick = 0;
+                    self.search_started_at = None;
                 }
                 CommandResult::Handled
             }
-            // SearchTick only advances the spinner counter (read live in
-            // render) and never changes the notice list, so skip the rebuild
-            // below on this hot path.
-            Command::SearchTick => {
-                if self.search_query.is_some() && !self.search_cancelled {
-                    self.search_tick = self.search_tick.wrapping_add(1);
-                }
-                return CommandResult::Handled;
-            }
+            // The loading indicator's position is a function of elapsed time,
+            // read live in render, so a tick changes no state at all: it exists
+            // only to wake the event loop for the next frame while a search is
+            // running and nothing else is arriving.
+            Command::SearchTick => return CommandResult::Handled,
             Command::Progress(task) => self.update_tasks(task.clone()),
             Command::ResetView => {
                 self.clipboard_entry = None;
