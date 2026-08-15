@@ -105,6 +105,9 @@ pub struct PathInfo {
     device: u64,
     inode: u64,
     mode: u32,
+    /// Whether this is a symlink whose target does not exist, resolved when the
+    /// entry is read. See `is_symlink_broken`.
+    symlink_broken: bool,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
 }
@@ -249,11 +252,14 @@ impl PathInfo {
         unix_mode::is_symlink(self.mode)
     }
 
+    /// Whether this is a symlink whose target does not exist, as of when the
+    /// entry was read. Answering it means following the link, so it is resolved
+    /// once at construction rather than on demand: the renderer asks for every
+    /// visible symlink on every frame, which would be a `stat` per row per
+    /// frame for an answer that only a change on disk can invalidate, and a
+    /// change on disk is what the watcher reloads the listing for.
     pub fn is_symlink_broken(&self) -> bool {
-        // Use `try_exists` so a permission error on the target (or a parent
-        // component) is not misreported as a broken link; only a confirmed
-        // "does not exist" counts as broken.
-        self.is_symlink() && matches!(self.path.try_exists(), Ok(false))
+        self.symlink_broken
     }
 }
 
@@ -301,6 +307,7 @@ impl TryFrom<&Path> for PathInfo {
 
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         let metadata = path.symlink_metadata()?;
+        let mode = metadata.permissions().mode();
 
         Ok(Self {
             accessed: maybe_time(metadata.accessed()),
@@ -309,10 +316,15 @@ impl TryFrom<&Path> for PathInfo {
             display_name: display_name(path),
             gid: metadata.gid(),
             inode: metadata.ino(),
-            mode: metadata.permissions().mode(),
+            mode,
             modified: maybe_time(metadata.modified()),
             path: path.to_path_buf(),
             size: metadata.len(),
+            // Only a symlink can be broken, so nothing else pays for the
+            // second look at the path. `try_exists` follows the link, so a
+            // permission error on the target (or on a parent component) is not
+            // misreported as broken; only a confirmed "does not exist" counts.
+            symlink_broken: unix_mode::is_symlink(mode) && matches!(path.try_exists(), Ok(false)),
             uid: metadata.uid(),
         })
     }
@@ -586,5 +598,55 @@ mod tests {
     #[test_case(".a/.b", "a/b" ; "strips a dot on every segment")]
     fn name_comparator_is_correct(name: &str, expected: &str) {
         assert_eq!(expected, name_comparator(name));
+    }
+
+    #[test]
+    fn a_symlink_is_broken_only_when_its_target_is_missing() {
+        use std::os::unix::fs::symlink;
+
+        use crate::test_support::TempDir;
+
+        let fx = TempDir::new("path_info");
+        let target = fx.join("target.txt");
+        std::fs::write(&target, b"x").unwrap();
+
+        let intact = fx.join("intact");
+        symlink(&target, &intact).unwrap();
+        let broken = fx.join("broken");
+        symlink(fx.join("absent.txt"), &broken).unwrap();
+
+        let intact = PathInfo::try_from(&intact).unwrap();
+        assert!(intact.is_symlink());
+        assert!(!intact.is_symlink_broken());
+
+        let broken = PathInfo::try_from(&broken).unwrap();
+        assert!(broken.is_symlink());
+        assert!(broken.is_symlink_broken());
+
+        // A plain file is neither, and never pays for the second look.
+        let target = PathInfo::try_from(&target).unwrap();
+        assert!(!target.is_symlink());
+        assert!(!target.is_symlink_broken());
+    }
+
+    #[test]
+    fn a_broken_symlink_is_resolved_when_the_entry_is_read() {
+        use std::os::unix::fs::symlink;
+
+        use crate::test_support::TempDir;
+
+        let fx = TempDir::new("path_info");
+        let target = fx.join("target.txt");
+        std::fs::write(&target, b"x").unwrap();
+        let link = fx.join("link");
+        symlink(&target, &link).unwrap();
+
+        let info = PathInfo::try_from(&link).unwrap();
+        std::fs::remove_file(&target).unwrap();
+
+        // Deliberately stale: the answer is a property of the listing, which a
+        // reload replaces. Rendering must not have to look at the disk again.
+        assert!(!info.is_symlink_broken());
+        assert!(PathInfo::try_from(&link).unwrap().is_symlink_broken());
     }
 }
