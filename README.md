@@ -241,7 +241,7 @@ Validation is strict: an unrecognized key (a misspelled setting or theme propert
 
 ### Opening in other applications
 
-- [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/master/docs/ubuntu.md#default-applications)
+- [andornaut@github /til/ubuntu#default-applications](https://github.com/andornaut/til/blob/main/docs/ubuntu.md#default-applications)
 - [XDG MIME Applications](https://wiki.archlinux.org/title/XDG_MIME_Applications)
 
 Key | Opens with
@@ -439,7 +439,7 @@ update-desktop-database ~/.local/share/applications/
 
 ## Developing
 
-- [andornaut@github /til/rust](https://github.com/andornaut/til/blob/master/docs/rust.md)
+- [andornaut@github /til/rust](https://github.com/andornaut/til/blob/main/docs/rust.md)
 - See [Cargo.toml](./Cargo.toml) for dependencies.
 - [Download files and folders of various types to test colors](https://github.com/seebi/dircolors-solarized/raw/refs/heads/master/test-directory.tar.bz2)
 
