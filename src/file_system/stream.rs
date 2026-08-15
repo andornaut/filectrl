@@ -7,8 +7,10 @@ use super::path_info::PathInfo;
 use crate::command::Command;
 
 /// Default interval after which a partial batch is flushed even if not full, so
-/// results still stream visibly when items arrive sparsely.
-pub(super) const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(80);
+/// results still stream visibly when items arrive sparsely. Each flush redraws
+/// the screen, and 100 ms is the shortest interval at which redrawing buys any
+/// perceived responsiveness, so nothing below it is worth the wakeup.
+pub(super) const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
 /// The per-batch send closure shared by the streaming producers: builds a
 /// `ListingBatch` stamped with `generation` and reports whether the channel
