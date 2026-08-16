@@ -71,6 +71,37 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  # Cargo.toml declares rust-version = "1.97", and `@stable` stops testing it the
+  # day 1.98 ships: the claim would go on being made with nothing checking it.
+  # Linux only, because the floor is about the toolchain rather than the
+  # platform, and test-platform already covers macOS at stable.
+  test-floor:
+    name: Test (rust 1.97)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          # Nothing in this job uses the token, so it is not left
+          # in .git/config for a later step to read.
+          persist-credentials: false
+
+      # The floor is spelled here rather than taken from a file: it moves when
+      # rust-version moves, which is rarely and deliberately.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.97
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2.9.2
+
+      - name: Install XCB dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Run tests
+        run: cargo test
+
   # A matrix leg reports as `Test (ubuntu-latest)`, a name that changes whenever
   # the matrix does, and a required check that stops reporting blocks every pull
   # request forever. This job reports under one stable name, so branch
@@ -83,14 +114,16 @@ jobs:
   # costs a red check on runs that were cancelled anyway.
   test:
     name: Test
-    needs: test-platform
+    needs: [test-platform, test-floor]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: Check that every platform passed
-        run: '[ "${{ needs.test-platform.result }}" = success ]'
+      - name: Check that every platform and version passed
+        run: |
+          [ "${{ needs.test-platform.result }}" = success ] \
+            && [ "${{ needs.test-floor.result }}" = success ]
 
   lint:
     name: Lint
