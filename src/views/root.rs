@@ -252,6 +252,7 @@ fn render_resize_message(buf: &mut Buffer, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
 
     use super::*;
@@ -320,8 +321,8 @@ mod tests {
         assert_eq!(InputMode::Normal, root.mode());
     }
 
-    #[test_case(&Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "no prompt was open")]
-    #[test_case(&Command::ResetView ; "no prompt was open either")]
+    #[test_case(&Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
+    #[test_case(&Command::ResetView ; "a notice click")]
     fn closing_nothing_announces_nothing(command: &Command) {
         let mut root = view();
 
@@ -341,6 +342,24 @@ mod tests {
         assert_eq!(None, Command::try_from(result).ok());
     }
 
+    /// What every handler that takes keys in `mode` makes of one keypress.
+    /// A count alone cannot say *which* handler that is, so each caller
+    /// presses a key whose result only the expected view produces.
+    fn press(
+        root: &mut RootView,
+        mode: InputMode,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Vec<CommandResult> {
+        let mut results = Vec::new();
+        root.visit_command_handlers(&mut |handler| {
+            if handler.should_handle_key(mode) {
+                results.push(handler.handle_key(code, modifiers));
+            }
+        });
+        results
+    }
+
     #[test]
     fn only_the_prompt_view_takes_keys_in_prompt_mode() {
         let mut root = view();
@@ -350,13 +369,16 @@ mod tests {
         // rather than to the table.
         root.mode = InputMode::Prompt;
 
-        let mut key_handlers = 0;
-        root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(InputMode::Prompt) {
-                key_handlers += 1;
-            }
-        });
-        assert_eq!(1, key_handlers);
+        // Esc dismisses a prompt, which is PromptView's answer and no other's.
+        assert_eq!(
+            vec![CommandResult::from(Command::CancelPrompt)],
+            press(
+                &mut root,
+                InputMode::Prompt,
+                KeyCode::Esc,
+                KeyModifiers::NONE
+            )
+        );
     }
 
     #[test]
@@ -364,13 +386,17 @@ mod tests {
         let mut root = view();
         root.is_help_visible = true;
 
-        let mut key_handlers = 0;
-        root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(InputMode::Normal) {
-                key_handlers += 1;
-            }
-        });
-        assert_eq!(1, key_handlers); // HelpView only
+        // The delete key: HelpView implements only the scroll actions and
+        // declines it, where the table beneath would open the delete prompt.
+        assert_eq!(
+            vec![CommandResult::NotHandled],
+            press(
+                &mut root,
+                InputMode::Normal,
+                KeyCode::Char('d'),
+                KeyModifiers::NONE
+            )
+        );
     }
 
     fn showing_open_with() -> RootView {
@@ -400,13 +426,17 @@ mod tests {
     fn keys_reach_only_the_open_with_view_while_open_with_is_visible() {
         let mut root = showing_open_with();
 
-        let mut key_handlers = 0;
-        root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(InputMode::Normal) {
-                key_handlers += 1;
-            }
-        });
-        assert_eq!(1, key_handlers); // OpenWithView only
+        // The open-with key closes the picker, which only the picker does.
+        assert_eq!(
+            vec![CommandResult::Handled],
+            press(
+                &mut root,
+                InputMode::Normal,
+                KeyCode::Char('o'),
+                KeyModifiers::NONE
+            )
+        );
+        assert!(!root.open_with.is_visible());
     }
 
     #[test]

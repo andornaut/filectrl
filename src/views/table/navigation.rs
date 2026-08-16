@@ -622,6 +622,84 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_change_clears_the_marks() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // Filtering is a reorder the user asked for, and a mark is held by
+        // index, so the rows those indices address are no longer the ones the
+        // user chose.
+        let result = table.handle_command(&Command::FilterChanged("a".to_string()));
+
+        assert!(!table.has_marks());
+        assert_mark_reset_snapshot(&result);
+    }
+
+    #[test]
+    fn a_filter_change_that_reorders_nothing_keeps_the_marks() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        // Clearing a filter that was never set reorders nothing, so it must not
+        // cost the user their marks. Dismissing the filter prompt sends this.
+        let result = table.handle_command(&Command::FilterChanged(String::new()));
+
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!(2, table.marks.len());
+    }
+
+    #[test]
+    fn a_reorder_ends_range_mode() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+        table.enter_range_mode();
+        assert!(table.marks.in_range_mode());
+
+        table.sort_by(SortColumn::Size);
+
+        // The anchor names a position, and the positions have just changed, so
+        // the next cursor move would sweep a range from somewhere else.
+        assert!(!table.marks.in_range_mode());
+    }
+
+    #[test]
+    fn a_search_ending_keeps_the_marks_but_still_ends_range_mode() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let apple = fx.nested("z", "apple.txt");
+        let zebra = fx.nested("a", "zebra.txt");
+
+        table.handle_command(&Command::StartSearch("txt".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![apple.clone(), zebra],
+            generation: 1,
+        });
+        table.select(0);
+        table.enter_range_mode();
+
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // The reorder that ends a search is the one case that carries marks
+        // across, and the anchor is what it must still drop: it is an index
+        // into the order the sort has just replaced.
+        assert_eq!(
+            vec![apple.path],
+            table
+                .marked_paths()
+                .into_iter()
+                .map(|item| item.path)
+                .collect::<Vec<_>>()
+        );
+        assert!(!table.marks.in_range_mode());
+    }
+
+    #[test]
     fn toggle_show_hidden_snapshot_carries_the_new_selection_and_cleared_marks() {
         Config::init_test();
         let fx = Fixture::new();

@@ -70,7 +70,7 @@ fn usage(message: impl Into<String>) -> anyhow::Error {
 /// The flags that do one thing and exit. At most one may be given, and each
 /// accepts only the arguments that can change what it does; anything else is a
 /// mistake in the invocation rather than something to drop silently.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Action {
     PrintKeybindings,
     PrintVersion,
@@ -258,7 +258,7 @@ mod tests {
             version: true,
             ..args()
         };
-        assert!(selected_action(&args).unwrap() == Some(Action::PrintVersion));
+        assert_eq!(Some(Action::PrintVersion), selected_action(&args).unwrap());
     }
 
     #[test]
@@ -317,7 +317,10 @@ mod tests {
             force: true,
             ..args()
         };
-        assert!(selected_action(&args).unwrap() == Some(Action::WriteDefaultConfig));
+        assert_eq!(
+            Some(Action::WriteDefaultConfig),
+            selected_action(&args).unwrap()
+        );
     }
 
     #[test]
@@ -328,7 +331,10 @@ mod tests {
             include: vec!["theme.toml".to_string()],
             ..args()
         };
-        assert!(selected_action(&args).unwrap() == Some(Action::PrintKeybindings));
+        assert_eq!(
+            Some(Action::PrintKeybindings),
+            selected_action(&args).unwrap()
+        );
     }
 
     #[test]

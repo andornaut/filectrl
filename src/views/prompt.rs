@@ -474,7 +474,7 @@ mod tests {
     // ── handle_key: Esc / Enter dispatch ─────────────────────────────────────
 
     #[test]
-    fn esc_returns_close_prompt() {
+    fn esc_cancels_the_prompt() {
         Config::init_test();
         let mut view = PromptView::default();
         let result = view.handle_key(KeyCode::Esc, KeyModifiers::NONE);
@@ -486,6 +486,39 @@ mod tests {
         let mut view = prompt_with_action(PromptAction::Filter("foo".into()));
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(result, Command::FilterChanged("foo".to_string()).into());
+    }
+
+    #[test]
+    fn submitting_a_search_starts_it_unless_the_query_is_empty() {
+        let mut view = prompt_with_action(PromptAction::Search("txt".into()));
+        assert_eq!(
+            CommandResult::from(Command::StartSearch("txt".to_string())),
+            view.handle_key(KeyCode::Enter, KeyModifiers::NONE)
+        );
+
+        // An empty query matches every entry, so submitting one is a way of
+        // changing your mind: it closes the prompt instead of walking the tree.
+        let mut view = prompt_with_action(PromptAction::Search(String::new()));
+        assert_eq!(
+            CommandResult::from(Command::CancelPrompt),
+            view.handle_key(KeyCode::Enter, KeyModifiers::NONE)
+        );
+    }
+
+    #[test]
+    fn a_shorter_suggestion_list_resets_the_index_rather_than_leaving_it_past_the_end() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(fixture.dir.path());
+        type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
+        view.handle_key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(1, view.suggestion_index);
+
+        // Typing on narrows the list to one entry, so the index the user had
+        // moved to no longer addresses a row.
+        type_str(&mut view, "r"); // ["Apricot"]
+        assert_eq!(1, view.suggestions.len());
+        assert_eq!(0, view.suggestion_index);
+        assert!(view.current_suggestion().is_some());
     }
 
     #[test]
@@ -506,8 +539,6 @@ mod tests {
         );
     }
 
-    // ── open (via handle_command) ─────────────────────────────────────────────
-
     #[test]
     fn open_loads_initial_text_and_positions_cursor_at_end() {
         let view = prompt_with_action(PromptAction::Filter("hello".into()));
@@ -515,25 +546,21 @@ mod tests {
         assert_eq!(view.text_area.cursor(), (0, 5));
     }
 
-    // ── Ctrl+Z resets to initial text ──────────────────────────────────────────
-
     #[test]
     fn ctrl_z_resets_to_initial_text() {
         let mut view = prompt_with_action(PromptAction::Rename {
             path: test_path(),
             name: "original.txt".into(),
         });
-        // Type a character to modify the text
         view.handle_key(KeyCode::Char('x'), KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");
 
-        // Ctrl+Z resets
         view.handle_key(KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(view.text_area.lines()[0], "original.txt");
+        // The cursor returns to the end of the restored text, not to where the
+        // edit left it.
         assert_eq!(view.text_area.cursor(), (0, 12));
     }
-
-    // ── update_scroll_col ────────────────────────────────────────────────────
 
     #[test]
     fn update_scroll_col_tracks_cursor_past_viewport() {

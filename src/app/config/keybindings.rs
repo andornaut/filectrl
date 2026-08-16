@@ -803,12 +803,12 @@ mod tests {
             "#,
         )
         .unwrap();
-        // 'x' should now be Quit
         assert_eq!(
             kb.normal_action(KeyCode::Char('x'), KeyModifiers::NONE),
             Some(Action::Quit)
         );
-        // 'q' should no longer be Quit (overridden)
+        // An override replaces the default binding rather than adding to it,
+        // so the key it displaced is left unbound.
         assert_eq!(
             kb.normal_action(KeyCode::Char('q'), KeyModifiers::NONE),
             None
@@ -833,7 +833,6 @@ mod tests {
     fn hint_for_quotes_each_key() {
         let kb = default_keybindings();
         let hint = kb.hint_for(&[Action::SelectNext]);
-        // Should quote each key individually and join with " or "
         assert!(
             hint.contains("\"↓\""),
             "hint should quote hardcoded ↓: {hint}"

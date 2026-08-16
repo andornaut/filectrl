@@ -110,6 +110,25 @@ pub struct PathInfo {
 }
 
 impl PathInfo {
+    /// An entry whose type and permission bits are set directly, for tests of
+    /// code that dispatches on them. Some cannot be created on disk at all (a
+    /// block device needs root, a door needs Solaris), and for the rest the
+    /// mode is what every predicate reads anyway.
+    #[cfg(test)]
+    pub(crate) fn with_mode(mode: u32) -> Self {
+        let mut info = Self::try_from(Path::new("/")).expect("the root should be readable");
+        info.mode = mode;
+        info.symlink_broken = false;
+        info
+    }
+
+    /// Marks a symlink built by `with_mode` as one whose target is gone.
+    #[cfg(test)]
+    pub(crate) fn broken(mut self) -> Self {
+        self.symlink_broken = true;
+        self
+    }
+
     pub fn as_path(&self) -> &Path {
         &self.path
     }
@@ -504,7 +523,7 @@ mod tests {
     #[test_case("12:30pm", "2023-07-12 12:30:10", "2023-07-12 12:31:10"; "different minute")]
     #[test_case("12:30pm", "2023-07-12 12:30:10", "2023-07-12 11:30:10"; "different hour")]
     #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-07-13 12:30:10"; "different day")]
-    #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-07-13 12:30:10"; "different month")]
+    #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-08-13 12:30:10"; "different month")]
     #[test_case("Jul 12, 2023", "2023-07-12 12:30:10", "2022-07-13 12:30:10"; "different year")]
     #[test_case("Jul 9", "2023-07-09 12:30:10", "2023-07-13 12:30:10"; "single digit day has no leading zero")]
     fn humanize_datetime_is_correct(expected: &str, datetime: &str, relative_to: &str) {
@@ -568,8 +587,6 @@ mod tests {
             compact(&home.join("one/two/three/a.txt")).to_string()
         );
     }
-
-    // name_comparator: strips all leading dots, then lowercases
 
     #[test]
     fn is_same_inode_requires_matching_device() {

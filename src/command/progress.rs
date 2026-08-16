@@ -590,10 +590,12 @@ mod tests {
     }
 
     #[test]
-    fn task_done_marks_progress_complete_and_terminal() {
+    fn task_done_fills_a_bar_that_never_reached_its_total() {
         let mut t = delete_task();
         t.done();
         assert!(t.is_terminal());
+        // The total is an estimate taken before the work started, so a task
+        // that finished under it must still leave the bar full.
         assert_eq!(100, t.progress.percentage());
     }
 
@@ -682,6 +684,22 @@ mod tests {
         let task = only_terminal_task(&rx);
         assert_eq!(Some("disk full".to_string()), task.error_message());
         assert!(!task.is_cancelled());
+    }
+
+    #[test]
+    fn learning_the_total_stops_the_task_reporting_itself_as_new() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (mut active, _initial, _token) =
+            ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 0);
+
+        // The directory scan finishes and the total becomes known. The worker
+        // is already running, so a `New` snapshot sent now would re-add a task
+        // the user had cleared from the notices view.
+        active.set_total(500);
+
+        let update = recv_task(&rx);
+        assert!(!update.is_new());
+        assert_eq!(500, update.progress.total);
     }
 
     #[test]

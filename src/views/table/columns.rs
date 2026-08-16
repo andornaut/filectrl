@@ -143,6 +143,20 @@ mod tests {
         assert_eq!(expected_count, constraints.len());
     }
 
+    /// The name column takes whatever the other columns leave, so it has to
+    /// shrink on the same thresholds that admit them. `column_count_for_width`
+    /// pins when a column appears; this pins that the width is reserved at the
+    /// same moment, which is a second comparison against the same constant.
+    #[test_case(NAME_MIN_LEN, NAME_MIN_LEN ; "no other column, so the name takes it all")]
+    #[test_case(60, 47 ; "at the size threshold only modified is reserved")]
+    #[test_case(61, 40 ; "one above, size is reserved too")]
+    #[test_case(71, 50 ; "at the mode threshold mode is not reserved")]
+    #[test_case(72, 40 ; "one above, mode is reserved too")]
+    fn name_width_for(width: u16, expected: u16) {
+        let (_, name_width) = calculate_constraints(width);
+        assert_eq!(expected, name_width);
+    }
+
     #[test]
     fn at_min_width_name_column_fills_the_full_width() {
         let (constraints, name_width) = calculate_constraints(NAME_MIN_LEN);
@@ -152,9 +166,11 @@ mod tests {
 
     #[test]
     fn modified_column_has_correct_length_and_name_shrinks() {
-        let (constraints, name_width) = calculate_constraints(NAME_MIN_LEN + 1);
+        // A literal rather than the formula the implementation uses, which
+        // would agree with itself however it changed.
+        let (constraints, name_width) = calculate_constraints(40);
         assert_eq!(Constraint::Length(MODIFIED_LEN), constraints[1]);
-        assert_eq!(NAME_MIN_LEN + 1 - MODIFIED_LEN - 1, name_width);
+        assert_eq!(27, name_width);
     }
 
     #[test]

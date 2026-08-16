@@ -567,20 +567,15 @@ mod tests {
     use crate::test_support::TempDir;
 
     #[test]
-    fn merge_overlay_overrides_base_values() {
-        let base = parse_toml("key = \"base\"").unwrap();
-        let overlay = parse_toml("key = \"overlay\"").unwrap();
+    fn merge_overrides_shared_keys_and_preserves_the_rest() {
+        // Nested, so the recursive arm is exercised: a table in the overlay
+        // merges into its counterpart rather than replacing it whole.
+        let base = parse_toml("[t]\na = 1\nb = 2").unwrap();
+        let overlay = parse_toml("[t]\nb = 3").unwrap();
         let merged = merge_toml_values(base, overlay);
-        assert_eq!(merged.get("key").unwrap().as_str().unwrap(), "overlay");
-    }
-
-    #[test]
-    fn merge_preserves_base_keys_not_in_overlay() {
-        let base = parse_toml("a = 1\nb = 2").unwrap();
-        let overlay = parse_toml("b = 3").unwrap();
-        let merged = merge_toml_values(base, overlay);
-        assert_eq!(merged.get("a").unwrap().as_integer().unwrap(), 1);
-        assert_eq!(merged.get("b").unwrap().as_integer().unwrap(), 3);
+        let table = merged.get("t").unwrap();
+        assert_eq!(1, table.get("a").unwrap().as_integer().unwrap());
+        assert_eq!(3, table.get("b").unwrap().as_integer().unwrap());
     }
 
     #[test]
@@ -800,11 +795,8 @@ open_directory = "alacritty --working-directory %s"
 
     #[test]
     fn malformed_toml_is_reported() {
-        assert!(
-            parse_err("this is not toml =\n").starts_with("Failed to parse TOML"),
-            "{}",
-            parse_err("this is not toml =\n")
-        );
+        let error = parse_err("this is not toml =\n");
+        assert!(error.starts_with("Failed to parse TOML"), "{error}");
     }
 
     // ── precedence, lowest to highest ───────────────────────────────────────

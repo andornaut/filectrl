@@ -109,6 +109,26 @@ mod tests {
         assert_eq!(2, v.height(10));
     }
 
+    /// Clicking a breadcrumb navigates to the path its components spell. The
+    /// root's own component is the empty string, so joining it like any other
+    /// yields "" rather than "/", which names nothing.
+    #[test]
+    fn clicking_a_breadcrumb_resolves_the_path_it_spells() {
+        Config::init_test();
+        let view = view(&["", "tmp"], ListingMode::Normal);
+
+        assert_eq!(
+            Some(std::path::PathBuf::from("/")),
+            view.to_path(0).map(|info| info.path)
+        );
+        assert_eq!(
+            Some(std::path::PathBuf::from("/tmp")),
+            view.to_path(1).map(|info| info.path)
+        );
+        // Past the end of the trail: a click that addresses no breadcrumb.
+        assert_eq!(None, view.to_path(2).map(|info| info.path));
+    }
+
     #[test]
     fn search_after_bookmarks_shows_the_search_tag() {
         Config::init_test();

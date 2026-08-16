@@ -1452,6 +1452,9 @@ mod tests {
         );
     }
 
+    /// A source built from `/`, so it reports as a directory: the subdirectory
+    /// check below only applies to one, and every test using this helper is
+    /// about a path rule rather than about the source's type.
     fn path_info(path: &str, basename: &str) -> PathInfo {
         let mut info = PathInfo::try_from(Path::new("/")).unwrap();
         info.path = PathBuf::from(path);
@@ -1459,27 +1462,41 @@ mod tests {
         info
     }
 
+    /// The message a refusal carried. `validate_paths` has five separate
+    /// reasons to refuse, so `is_err` alone cannot tell whether a fixture
+    /// reached the rule it was built for.
+    fn rejection(result: Result<(PathBuf, PathBuf), CommandResult>) -> String {
+        let refusal = result.expect_err("the paths should have been refused");
+        match Command::try_from(refusal) {
+            Ok(Command::AlertError(message)) => message,
+            other => panic!("expected an AlertError, got {other:?}"),
+        }
+    }
+
     #[test]
     fn validate_paths_rejects_identical_source_and_destination() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a", "a");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.ends_with("into its own directory"), "{message}");
     }
 
     #[test]
     fn validate_paths_rejects_destination_inside_source() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/b/c", "c");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
     #[test]
     fn validate_paths_rejects_destination_inside_source_via_parent_dir() {
-        // new_path = "/a/c/../b" must normalize to "/a/b" and be rejected,
-        // even though a raw component-wise prefix check would not catch it.
+        // "/a/c/../b/d" resolves to "/a/b/d", inside the source, which a raw
+        // component-wise prefix check on the path as written would not catch.
         let src = path_info("/a/b", "b");
-        let dest = path_info("/a/c/..", "c");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+        let dest = path_info("/a/c/../b/d", "d");
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
     #[test]
@@ -1495,7 +1512,8 @@ mod tests {
 
         let source = path_info(src.to_str().unwrap(), "src");
         let dest = path_info(link.to_str().unwrap(), "link");
-        assert!(validate_paths(&source, &dest, "copy", false).is_err());
+        let message = rejection(validate_paths(&source, &dest, "copy", false));
+        assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
     #[test]
@@ -1570,7 +1588,8 @@ mod tests {
     fn validate_paths_rejects_source_without_file_name() {
         let src = path_info("/", "");
         let dest = path_info("/x", "x");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.ends_with("path has no file name"), "{message}");
     }
 
     #[test]
@@ -1579,7 +1598,26 @@ mod tests {
         std::fs::write(fx.join("existing.txt"), b"x").unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.ends_with("it already exists there"), "{message}");
+    }
+
+    #[test]
+    fn validate_paths_rejects_a_destination_directory_of_the_same_name() {
+        let fx = TempDir::new("tasks");
+        std::fs::create_dir_all(fx.join("existing.txt")).unwrap();
+        let src = path_info("/elsewhere/existing.txt", "existing.txt");
+        let dest = path_info(fx.path().to_str().unwrap(), "dir");
+
+        // A directory is refused whatever the answer: removing it would take
+        // its contents with it, and merging is not supported.
+        for overwrite in [false, true] {
+            let message = rejection(validate_paths(&src, &dest, "copy", overwrite));
+            assert!(
+                message.ends_with("a directory of that name is already there"),
+                "{message}"
+            );
+        }
     }
 
     #[test]
@@ -1589,7 +1627,11 @@ mod tests {
         std::os::unix::fs::symlink(fx.join("missing"), &link).unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
-        assert!(validate_paths(&src, &dest, "copy", false).is_err());
+
+        // `symlink_metadata` rather than `exists`, which follows the link and
+        // reports a dangling one as absent, silently overwriting it.
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        assert!(message.ends_with("it already exists there"), "{message}");
     }
 
     /// A copy context for a test: no paste behind it, so a nested collision
@@ -1909,7 +1951,9 @@ mod tests {
         (fx, src, dst)
     }
 
-    /// The three pieces every raced-entry test needs.
+    /// The three pieces every raced-entry test needs. The receiver is leaked
+    /// rather than returned as a fourth: nothing here reads it, and it only has
+    /// to outlive the task, whose sends are best-effort anyway.
     fn raced_parts() -> (ActiveTask, Vec<String>, Conflicts) {
         let (tx, rx) = std::sync::mpsc::channel();
         std::mem::forget(rx);
@@ -2293,6 +2337,7 @@ mod tests {
 
     /// A source file holding "src", a destination file holding "dest", and an
     /// `ActiveTask` for the operation that would replace one with the other.
+    /// The receiver is leaked for the same reason as in `raced_parts`.
     fn destination(label: &str) -> (TempDir, PathBuf, PathBuf, ActiveTask, CancellationToken) {
         let fx = TempDir::new(label);
         let src = fx.join("src.txt");
@@ -2522,7 +2567,8 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("a.txt"), b"x").unwrap();
         std::fs::write(root.join("sub").join("b.txt"), b"x").unwrap();
-        let active = new_active_task();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let active = copy_task(tx);
 
         // root, a.txt, sub, sub/b.txt: one unit per removal the delete walk
         // makes, so the bar reaches exactly 100% when the tree is gone.
@@ -2630,19 +2676,6 @@ mod tests {
         assert!(list_entries(&active, fx.path()).unwrap().is_none());
     }
 
-    fn new_active_task() -> ActiveTask {
-        // Leak the receiver so the channel stays open for the task's lifetime;
-        // ActiveTask ignores send errors anyway.
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::mem::forget(rx);
-        let kind = TaskKind::Copy(Transfer {
-            source: String::new(),
-            destination: String::new(),
-        });
-        let (active, _initial, _token) = ActiveTask::new(tx, kind, 0);
-        active
-    }
-
     #[test]
     fn copy_path_recreates_a_symlink_without_following_it() {
         use std::os::unix::fs::PermissionsExt;
@@ -2659,7 +2692,8 @@ mod tests {
         let source_mode = fs::symlink_metadata(&link).unwrap().permissions().mode();
         assert!(unix_mode::is_symlink(source_mode));
 
-        let mut active = new_active_task();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut active = copy_task(tx);
         let mut errors = Vec::new();
         assert!(copy_path(
             &link,

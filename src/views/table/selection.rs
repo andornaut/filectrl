@@ -84,3 +84,95 @@ impl TableView {
             .and_then(|i| self.content.get(i))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{TableView, display_names, marked_table};
+
+    fn marked(table: &TableView) -> Vec<String> {
+        display_names(&table.marked_paths())
+    }
+
+    fn selected(table: &TableView) -> Option<String> {
+        table.selected_path().map(|p| p.display_name.clone())
+    }
+
+    /// The listing is `a`, `b`, `c`; `marked_table` leaves the cursor on `c`.
+    fn table() -> (crate::test_support::TempDir, TableView) {
+        let (dir, mut table) = marked_table();
+        table.clear_marks();
+        (dir, table)
+    }
+
+    #[test]
+    fn moving_the_cursor_in_range_mode_sweeps_the_marks() {
+        let (_dir, mut table) = table();
+        table.select(0);
+        table.enter_range_mode();
+        assert_eq!(vec!["a"], marked(&table));
+
+        table.select_next();
+        table.select_next();
+
+        // Sweeping as the cursor moves is what range mode is for, and `select`
+        // is the one place every cursor move goes through.
+        assert_eq!(vec!["a", "b", "c"], marked(&table));
+    }
+
+    #[test]
+    fn moving_back_toward_the_anchor_shrinks_the_range() {
+        let (_dir, mut table) = table();
+        table.select(0);
+        table.enter_range_mode();
+        table.select_last();
+        assert_eq!(vec!["a", "b", "c"], marked(&table));
+
+        table.select_previous();
+
+        // The range spans anchor to cursor, so overshooting is undone by
+        // moving back rather than leaving the extra entry marked.
+        assert_eq!(vec!["a", "b"], marked(&table));
+    }
+
+    #[test]
+    fn a_cursor_move_outside_range_mode_marks_nothing() {
+        let (_dir, mut table) = table();
+        table.select(0);
+
+        table.select_next();
+
+        assert!(table.marked_paths().is_empty());
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn the_cursor_stops_at_both_ends_of_the_listing() {
+        let (_dir, mut table) = table();
+        table.select_last();
+        assert_eq!(Some("c".to_string()), selected(&table));
+        table.select_next();
+        assert_eq!(Some("c".to_string()), selected(&table));
+
+        table.select_first();
+        table.select_previous();
+        assert_eq!(Some("a".to_string()), selected(&table));
+
+        // Of `a`, `b`, `c`, the middle is `b`.
+        table.select_middle_item();
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn the_cursor_keys_are_safe_on_an_empty_listing() {
+        let mut table = TableView::default();
+
+        // Each of these bounds itself with `saturating_sub` on a length of
+        // zero; a plain `- 1` would panic before anything could be selected.
+        table.select_last();
+        table.select_next();
+        table.select_previous();
+        table.select_middle_item();
+
+        assert_eq!(None, selected(&table));
+    }
+}

@@ -408,6 +408,8 @@ mod tests {
 
     #[test]
     fn apply_ls_colors_skips_empty_colon_separated_entries() {
+        // A trailing or doubled colon leaves an empty entry, which GNU `ls`
+        // accepts, so it must be skipped rather than end the parse.
         let mut ft = FileType::default();
         ft.apply_ls_colors("::di=34::", false);
         assert_eq!(ft.directory().fg, Some(Color::Blue));

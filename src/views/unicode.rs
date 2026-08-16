@@ -83,6 +83,17 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
+    // ── pluralize_items ───────────────────────────────────────────────────────
+
+    /// Reaches the user in the delete confirmation and the chmod prompt, where
+    /// the count is what says how much the keypress is about to affect.
+    #[test_case(0 => "0 items" ; "none")]
+    #[test_case(1 => "1 item" ; "exactly one is the only singular case")]
+    #[test_case(2 => "2 items" ; "more than one")]
+    fn pluralize_items_agrees_with_the_count(count: usize) -> String {
+        pluralize_items(count)
+    }
+
     // ── split_with_ellipsis ───────────────────────────────────────────────────
 
     #[test_case(&["example"],              "example", 7; "fits unchanged at exact width")]
@@ -133,10 +144,8 @@ mod tests {
     }
 
     // A base character followed by a combining accent forms one grapheme cluster
-    // (display width 1) stored as two Unicode scalar values. Splitting between them
-    // produces an orphaned combining character, which is visually broken. The
-    // old char_indices() approach would produce "…\u{0301}f" here; the grapheme-
-    // cluster approach correctly yields "…f".
+    // (display width 1) stored as two Unicode scalar values. Truncating by scalar
+    // value would cut between them and leave an orphaned combining character.
     #[test_case("e\u{0301}f", "e\u{0301}f", 3; "combining char string fits unchanged")]
     #[test_case("…f",         "ae\u{0301}f", 2; "combining char mid-string: not split from base")]
     fn truncate_left_combining_chars(expected: &str, text: &str, width: usize) {
@@ -147,5 +156,51 @@ mod tests {
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn truncate_left_panics_when_width_equals_ellipsis_width() {
         truncate_left("example", 1);
+    }
+
+    /// Both functions cut at grapheme-cluster boundaries, so pin it at every
+    /// width rather than at the handful a table would list.
+    ///
+    /// The fixture is a Devanagari consonant followed by its spacing vowel
+    /// sign, which extended clustering keeps together and legacy clustering
+    /// splits. A combining accent cannot tell the two apart: it is one cluster
+    /// under either rule.
+    #[test]
+    fn neither_cut_splits_a_grapheme_cluster() {
+        let text = "ab\u{0915}\u{093F}cd";
+        let boundaries: Vec<usize> = text
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .chain(std::iter::once(text.len()))
+            .collect();
+
+        for width in 2..=text.cell_width() as usize + 2 {
+            // What survives a left truncation is a suffix, so its start offset
+            // is what has to land on a boundary.
+            let truncated = truncate_left(text, width);
+            let tail = truncated
+                .strip_prefix(ELLIPSIS)
+                .unwrap_or(truncated.as_str());
+            assert!(
+                boundaries.contains(&(text.len() - tail.len())),
+                "truncate_left at width {width} cut inside a cluster: {truncated:?}"
+            );
+
+            // Each wrapped line starts where the previous one ended, so
+            // walking the offsets checks every cut and that none is lost.
+            let mut offset = 0;
+            for part in split_with_ellipsis(text, width) {
+                assert!(
+                    boundaries.contains(&offset),
+                    "split_with_ellipsis at width {width} cut inside a cluster"
+                );
+                offset += part.strip_suffix(ELLIPSIS).unwrap_or(&part).len();
+            }
+            assert_eq!(
+                text.len(),
+                offset,
+                "split_with_ellipsis at {width} lost text"
+            );
+        }
     }
 }

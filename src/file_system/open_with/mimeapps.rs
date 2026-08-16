@@ -232,11 +232,17 @@ mod tests {
     }
 
     fn app_dir(entries: &[(&str, &[&str])]) -> AppDirIndex {
+        app_dir_in("/apps", entries)
+    }
+
+    /// An index whose entries resolve inside `dir`, so two levels defining the
+    /// same id can be told apart by the path `resolve` returns.
+    fn app_dir_in(dir: &str, entries: &[(&str, &[&str])]) -> AppDirIndex {
         let mut index = AppDirIndex::default();
         for (id, mime_types) in entries {
             index
                 .by_id
-                .insert(id.to_string(), PathBuf::from(format!("/apps/{id}")));
+                .insert(id.to_string(), PathBuf::from(format!("{dir}/{id}")));
             index.mime_types.insert(id.to_string(), ids(mime_types));
         }
         index
@@ -316,6 +322,36 @@ mod tests {
         ];
         assert_eq!(
             Vec::<DesktopId>::new(),
+            associations(&levels, &ids(&[TEXT])).ordered
+        );
+    }
+
+    #[test]
+    fn a_removed_association_suppresses_a_lower_precedence_lists_addition() {
+        // The existing removal test has the addition come from a directory
+        // scan. This one has a lower-precedence *list* add the id back, which
+        // is the other way it can arrive and a separate check.
+        let levels = vec![
+            level(
+                vec![MimeAppsList::parse(
+                    false,
+                    "[Removed Associations]\ntext/plain=a.desktop",
+                )],
+                None,
+            ),
+            level(
+                vec![MimeAppsList::parse(
+                    false,
+                    "[Added Associations]\ntext/plain=a.desktop;b.desktop",
+                )],
+                Some(app_dir(&[("a.desktop", &[]), ("b.desktop", &[])])),
+            ),
+        ];
+
+        // Only the id the user removed is suppressed; its neighbour in the
+        // same list is untouched.
+        assert_eq!(
+            ids(&["b.desktop"]),
             associations(&levels, &ids(&[TEXT])).ordered
         );
     }
@@ -515,19 +551,25 @@ mod tests {
 
     #[test]
     fn resolve_returns_the_highest_precedence_definition() {
+        // Distinct directories, or the two definitions of a.desktop would
+        // resolve to the same path and the precedence could not be observed.
         let levels = vec![
-            level(vec![], Some(app_dir(&[("a.desktop", &[])]))),
+            level(vec![], Some(app_dir_in("/user", &[("a.desktop", &[])]))),
             level(
                 vec![],
-                Some(app_dir(&[("a.desktop", &[]), ("b.desktop", &[])])),
+                Some(app_dir_in(
+                    "/system",
+                    &[("a.desktop", &[]), ("b.desktop", &[])],
+                )),
             ),
         ];
         assert_eq!(
-            Some(Path::new("/apps/a.desktop")),
+            Some(Path::new("/user/a.desktop")),
             resolve(&levels, "a.desktop")
         );
+        // Defined only lower down, so the search continues past the first level.
         assert_eq!(
-            Some(Path::new("/apps/b.desktop")),
+            Some(Path::new("/system/b.desktop")),
             resolve(&levels, "b.desktop")
         );
         assert_eq!(None, resolve(&levels, "missing.desktop"));

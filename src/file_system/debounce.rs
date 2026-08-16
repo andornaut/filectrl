@@ -229,18 +229,11 @@ mod tests {
         }
 
         #[test]
-        fn delayed_event_roundtrip() {
-            let mut d = TimeDebouncer::new(Duration::from_millis(100));
-            assert!(!d.has_delayed_event());
-            d.set_delayed_event();
-            assert!(d.has_delayed_event());
-        }
-
-        #[test]
         fn triggering_clears_delayed_event() {
             let mut d = TimeDebouncer::new(Duration::from_millis(100));
             let now = Instant::now();
             d.should_trigger(now);
+            assert!(!d.has_delayed_event());
             d.set_delayed_event();
             assert!(d.has_delayed_event());
             d.should_trigger(now + Duration::from_millis(100));

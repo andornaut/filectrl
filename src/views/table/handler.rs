@@ -315,3 +315,113 @@ impl TableView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{display_names, marked_table};
+    use super::*;
+    use crate::command::progress::{ActiveTask, Task, TaskKind};
+
+    /// The delete prompt is a confirmation: `delete` stashes what it resolved,
+    /// and only the answer decides whether that stash is acted on. The stash
+    /// outlives the prompt, so what clears it is a safety property rather than
+    /// bookkeeping.
+    #[test]
+    fn confirming_a_delete_acts_on_what_the_prompt_asked_about() {
+        let (_dir, mut table) = marked_table();
+        table.delete();
+
+        let result = table.handle_command(&Command::ConfirmDelete);
+
+        let Ok(Command::Delete(paths)) = Command::try_from(result) else {
+            panic!("expected a Delete");
+        };
+        assert_eq!(vec!["a", "b"], display_names(&paths));
+    }
+
+    #[test]
+    fn dismissing_the_prompt_drops_what_the_delete_had_resolved() {
+        let (_dir, mut table) = marked_table();
+        table.delete();
+
+        table.handle_command(&Command::CancelPrompt);
+
+        // Every prompt broadcasts CancelPrompt on Esc, and any later
+        // ConfirmDelete would otherwise delete entries the user had already
+        // declined to.
+        assert_eq!(
+            CommandResult::Handled,
+            table.handle_command(&Command::ConfirmDelete)
+        );
+    }
+
+    #[test]
+    fn a_confirmation_is_spent_once() {
+        let (_dir, mut table) = marked_table();
+        table.delete();
+        table.handle_command(&Command::ConfirmDelete);
+
+        // The stash is taken, not copied, so a second confirmation cannot
+        // re-run the delete against paths that are already gone.
+        assert_eq!(
+            CommandResult::Handled,
+            table.handle_command(&Command::ConfirmDelete)
+        );
+    }
+
+    /// A non-terminal update and the terminal one for the same task, taken
+    /// from the channel an `ActiveTask` reports on rather than built by hand.
+    fn task_updates() -> (Task, Task) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, running, _token) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        active.done();
+        let Ok(Command::Progress(finished)) = rx.recv() else {
+            panic!("the task should have reported")
+        };
+        (running, finished)
+    }
+
+    #[test]
+    fn a_finished_task_reloads_only_the_bookmarks_listing() {
+        let (_dir, mut table) = marked_table();
+        let (_running, finished) = task_updates();
+
+        // A directory listing has a watcher to refresh it; the bookmarks view
+        // has none, so deleting a bookmark is only reflected by re-reading it.
+        assert_eq!(
+            CommandResult::NotHandled,
+            table.handle_command(&Command::Progress(finished.clone()))
+        );
+
+        table.handle_command(&Command::Bookmarks {
+            bookmarks: Vec::new(),
+        });
+        assert_eq!(
+            CommandResult::from(Command::GetBookmarks),
+            table.handle_command(&Command::Progress(finished))
+        );
+    }
+
+    #[test]
+    fn a_running_task_does_not_reload_the_bookmarks() {
+        let (_dir, mut table) = marked_table();
+        table.handle_command(&Command::Bookmarks {
+            bookmarks: Vec::new(),
+        });
+        let (running, _finished) = task_updates();
+
+        // Reloading on every progress update would re-read the directory
+        // repeatedly for the length of the operation.
+        assert!(!running.is_terminal());
+        assert_eq!(
+            CommandResult::NotHandled,
+            table.handle_command(&Command::Progress(running))
+        );
+    }
+}

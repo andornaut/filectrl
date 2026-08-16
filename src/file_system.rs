@@ -1640,7 +1640,18 @@ mod tests {
         // opened the directory, so it still has to be re-read; deferring it is
         // not dropping it.
         let command = Command::try_from(result).expect("expected a derived command");
-        assert!(matches!(command, Command::RefreshedDirectory { .. }));
+        let Command::RefreshedDirectory {
+            directory,
+            generation,
+        } = command
+        else {
+            panic!("expected RefreshedDirectory, got {command:?}");
+        };
+        assert_eq!(root.path(), directory.as_path());
+        // A generation of its own. Reusing the one that just completed would
+        // let the finished load's trailing batches stream into the reload.
+        assert_ne!(7, generation);
+        assert_eq!(Some(generation), file_system.current_load.map(|(id, _)| id));
         assert!(!file_system.reload_pending);
         drop(rx);
     }
@@ -1713,6 +1724,97 @@ mod tests {
         assert_eq!(started, exited);
         // Nothing goes out of band on the channel.
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_finished_task_leaves_the_cancel_stack_and_the_rest_of_it_alone() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("tts");
+
+        // A real task, so its terminal update carries the id the stack entry
+        // has to be matched on.
+        let (task_tx, task_rx) = std::sync::mpsc::channel();
+        let (active, initial, _token) = crate::command::progress::ActiveTask::new(
+            task_tx,
+            crate::command::progress::TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        let finished_id = initial.id();
+        active.error("failed".to_string());
+        let Ok(Command::Progress(finished)) = task_rx.recv() else {
+            panic!("the task should have reported")
+        };
+        // `cancellables` gives every entry id 0, so the second takes the real
+        // one and the first stands for an unrelated operation still running.
+        let Cancellable::Task(second) = &mut file_system.cancellables[1] else {
+            panic!("expected a task")
+        };
+        second.id = finished_id;
+
+        file_system.check_progress_for_error(&finished);
+
+        // Only the finished task goes. Dropping the others would leave a
+        // running operation with nothing for the cancel key to target, and the
+        // search entry is not a task at all.
+        assert_eq!(2, file_system.cancellables.len());
+        assert!(matches!(
+            file_system.cancellables[0],
+            Cancellable::Task(CancelInfo { id: 0, .. })
+        ));
+        assert!(matches!(
+            file_system.cancellables[1],
+            Cancellable::Search(_)
+        ));
+    }
+
+    #[test]
+    fn only_the_current_search_exiting_clears_the_search_state() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.current_search_generation = 4;
+        file_system.cancellables = cancellables("s");
+
+        // A superseded search exiting must not drop the entry belonging to the
+        // one that replaced it, or the cancel key would find nothing to stop.
+        file_system.on_search_exited(3);
+        assert_eq!(1, file_system.cancellables.len());
+
+        file_system.on_search_exited(4);
+        assert!(file_system.cancellables.is_empty());
+    }
+
+    #[test]
+    fn navigating_records_where_it_came_from_unless_it_stayed_put() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_previous");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let first = PathInfo::try_from(root.path()).unwrap();
+        let second = PathInfo::try_from(root.join("sub").as_path()).unwrap();
+
+        file_system.cd(first.clone(), true);
+        assert_eq!(None, previous_path(&file_system));
+
+        file_system.cd(second.clone(), true);
+        assert_eq!(Some(first.path.clone()), previous_path(&file_system));
+
+        // Re-entering the directory already shown is not a move, so recording
+        // it would make "-" toggle back to where the user already is.
+        file_system.cd(second, true);
+        assert_eq!(Some(first.path), previous_path(&file_system));
+    }
+
+    fn previous_path(file_system: &FileSystem) -> Option<PathBuf> {
+        file_system
+            .previous_directory
+            .as_ref()
+            .map(|info| info.path.clone())
     }
 
     #[test_case("644" => Some(0o644) ; "three digits")]

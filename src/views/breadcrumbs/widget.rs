@@ -205,15 +205,6 @@ mod tests {
         clicked_index(&positions[0], x, true)
     }
 
-    #[test]
-    fn an_untagged_click_is_not_shifted() {
-        // The same column addresses a different breadcrumb depending on
-        // whether a tag is present, so the shift must key off `has_tag` rather
-        // than the position index alone.
-        let (_, positions) = run_spans(&["", "home", "user"], 80);
-        assert_eq!(Some(1), clicked_index(&positions[0], 1, false));
-    }
-
     // ── row count ─────────────────────────────────────────────────────────────
 
     #[test_case(&[], 80 => 0 ; "empty input yields no rows")]
@@ -250,6 +241,9 @@ mod tests {
 
     // ── click hit-test ────────────────────────────────────────────────────────
     //
+    // The same column addresses a different breadcrumb depending on whether a
+    // tag is present, so `has_tag` is what shifts the index, not the position.
+    //
     // Layout for &["", "home", "user"] at width=80:
     //   col 0       → "" (root, width=0, x_start=0, x_end=0 via saturating_sub) + "/" sep
     //   col 1..=4   → "home" (x_start=1, x_end=4)
@@ -265,12 +259,6 @@ mod tests {
     #[test_case(&["", "home", "user"], 80, 0, 10 => None    ; "click past end")]
     fn click_index(parts: &[&str], width: u16, row: usize, x: u16) -> Option<usize> {
         let positions = run_spans(parts, width).1;
-        positions[row].iter().find_map(|p| {
-            if p.intersects(x) {
-                Some(p.index())
-            } else {
-                None
-            }
-        })
+        clicked_index(&positions[row], x, false)
     }
 }

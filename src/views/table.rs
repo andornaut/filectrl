@@ -59,3 +59,43 @@ pub(super) struct TableView {
     height_cache_key: Option<(u16, u64)>,
     scrollbar_view: ScrollbarView,
 }
+
+/// A listing of `a`, `b` and `c`, with `a` and `b` marked and the cursor left
+/// on `c`, so an action reading the marks and one reading the cursor cannot
+/// produce the same answer. Shared by the sibling modules whose tests are about
+/// which of the two an action reads.
+#[cfg(test)]
+fn marked_table() -> (crate::test_support::TempDir, TableView) {
+    use crate::{app::config::Config, test_support::TempDir};
+
+    Config::init_test();
+    let dir = TempDir::new("table_actions");
+    let items: Vec<PathInfo> = ["a", "b", "c"]
+        .iter()
+        .map(|name| {
+            let path = dir.join(name);
+            std::fs::write(&path, b"x").unwrap();
+            PathInfo::try_from(path.as_path()).unwrap()
+        })
+        .collect();
+
+    let mut table = TableView::default();
+    table.begin_directory(
+        PathInfo::try_from(dir.path()).unwrap(),
+        navigation::Reselect::Top,
+    );
+    table.content.append(&items);
+    table.finish_directory();
+    table.select(0);
+    table.toggle_mark();
+    table.select(1);
+    table.toggle_mark();
+    table.select(2);
+    assert_eq!(2, table.marks.len());
+    (dir, table)
+}
+
+#[cfg(test)]
+fn display_names(paths: &[PathInfo]) -> Vec<String> {
+    paths.iter().map(|p| p.display_name.clone()).collect()
+}

@@ -186,9 +186,8 @@ mod tests {
         watcher.watch_directory(dir.clone()).unwrap();
         assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
 
-        // Re-watching the unchanged path must re-register rather than assume
-        // the existing watch is still valid: an external delete and recreate
-        // of the directory invalidates the watch on the old inode.
+        // Re-watching the unchanged path unwatches and watches again, so it
+        // must not fail on the second registration.
         watcher.watch_directory(dir.clone()).unwrap();
         assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
 

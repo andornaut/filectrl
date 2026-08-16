@@ -154,7 +154,46 @@ fn clamp_scroll(inner_height: usize, selected: usize, scroll: usize) -> usize {
 mod tests {
     use test_case::test_case;
 
-    use super::{clamp_scroll, clamp_selection};
+    use super::{OpenWithView, clamp_scroll, clamp_selection};
+    use crate::{
+        app::config::Config, command::result::CommandResult, file_system::open_with::AppCandidate,
+    };
+
+    fn picker(count: usize) -> OpenWithView {
+        Config::init_test();
+        let mut view = OpenWithView::new();
+        view.candidates = (0..count)
+            .map(|index| AppCandidate {
+                argv: vec!["prog".into()],
+                detail: "prog".to_string(),
+                is_default: false,
+                name: format!("App{index}"),
+                working_dir: None,
+            })
+            .collect();
+        view.inner_height = 5;
+        view
+    }
+
+    #[test]
+    fn selecting_past_the_end_lands_on_the_last_candidate() {
+        let mut view = picker(3);
+
+        // A digit shortcut names a row that a short list may not have, and the
+        // index is used to launch, so it must address a real candidate.
+        view.select(9);
+
+        assert_eq!(2, view.selected);
+    }
+
+    #[test]
+    fn selecting_in_an_empty_list_selects_nothing() {
+        let mut view = picker(0);
+
+        // `len() - 1` would underflow, and there is no row to launch anyway.
+        assert_eq!(CommandResult::Handled, view.select(0));
+        assert_eq!(0, view.selected);
+    }
 
     #[test_case(5, 20, 15, 0, 15 ; "a drag to the bottom carries the selection with it")]
     #[test_case(5, 20, 0, 19, 4 ; "a drag to the top carries the selection with it")]

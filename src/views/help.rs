@@ -92,3 +92,78 @@ impl HelpView {
         CommandResult::Handled
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A help view scrolled to the top of a longer document, with a viewport
+    /// of 4 lines. The two fields are set by the render pass, which no unit
+    /// test runs.
+    fn help() -> HelpView {
+        Config::init_test();
+        let mut view = HelpView::new();
+        view.inner_height = 4;
+        view.max_scroll = 10;
+        view
+    }
+
+    #[test]
+    fn scrolling_stops_at_both_ends_of_the_document() {
+        let mut view = help();
+
+        view.handle_scroll_action(Action::SelectPrevious);
+        assert_eq!(0, view.scroll_offset, "scrolled above the first line");
+
+        view.handle_scroll_action(Action::SelectLast);
+        view.handle_scroll_action(Action::SelectNext);
+        assert_eq!(
+            view.max_scroll, view.scroll_offset,
+            "scrolled past the last line"
+        );
+    }
+
+    #[test]
+    fn a_page_moves_by_the_viewport_and_clamps() {
+        let mut view = help();
+
+        view.handle_scroll_action(Action::PageDown);
+        assert_eq!(4, view.scroll_offset);
+
+        // Two more pages would reach 12, past the end of a 10-line scroll.
+        view.handle_scroll_action(Action::PageDown);
+        view.handle_scroll_action(Action::PageDown);
+        assert_eq!(view.max_scroll, view.scroll_offset);
+
+        view.handle_scroll_action(Action::PageUp);
+        assert_eq!(6, view.scroll_offset);
+    }
+
+    #[test]
+    fn an_action_the_help_does_not_scroll_by_is_declined_and_changes_nothing() {
+        let mut view = help();
+        view.handle_scroll_action(Action::PageDown);
+        let before = view.scroll_offset;
+
+        // Returning NotHandled without mutating is what lets a key the help
+        // ignores leave the screen alone: `changed_nothing_visible` skips the
+        // redraw for a batch nothing claimed.
+        assert_eq!(
+            CommandResult::NotHandled,
+            view.handle_scroll_action(Action::Quit)
+        );
+        assert_eq!(before, view.scroll_offset);
+    }
+
+    #[test]
+    fn toggling_help_open_starts_at_the_top() {
+        let mut view = help();
+        view.handle_scroll_action(Action::SelectLast);
+
+        // `RootView` calls this when help is shown, so reopening it does not
+        // resume half way down where the last visit left off.
+        view.reset_scroll();
+
+        assert_eq!(0, view.scroll_offset);
+    }
+}

@@ -79,6 +79,24 @@ mod tests {
     }
 
     #[test]
+    fn a_context_chain_is_flattened_onto_the_one_line_an_alert_has() {
+        use anyhow::Context;
+
+        // An alert is a single line, so `to_string` would show only the
+        // outermost message and drop the cause that names what went wrong.
+        let error = Err::<(), _>(anyhow!("permission denied"))
+            .context("Failed to copy /a/b")
+            .unwrap_err();
+
+        assert_eq!(
+            CommandResult::HandledWith(Box::new(Command::AlertError(
+                "Failed to copy /a/b: permission denied".to_string()
+            ))),
+            error.into()
+        );
+    }
+
+    #[test]
     fn from_err_result_is_alert_error() {
         assert_eq!(
             CommandResult::HandledWith(Box::new(Command::AlertError("oops".to_string()))),

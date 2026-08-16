@@ -157,6 +157,7 @@ mod tests {
         app::clipboard::ClipboardEntry,
         command::{
             Command,
+            handler::CommandHandler,
             progress::{ActiveTask, Task, TaskKind, Transfer},
         },
         file_system::path_info::PathInfo,
@@ -267,7 +268,6 @@ mod tests {
 
     #[test]
     fn selection_snapshot_updates_the_mark_count() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.handle_command(&Command::SelectionChanged {
             selected: None,
@@ -286,7 +286,6 @@ mod tests {
 
     #[test]
     fn starting_a_search_clears_the_filter_notice() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.filter = "ap".to_string();
         v.rebuild_notices();
@@ -303,7 +302,6 @@ mod tests {
 
     #[test]
     fn an_empty_search_query_keeps_the_filter_notice() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.filter = "ap".to_string();
         v.rebuild_notices();
@@ -318,7 +316,6 @@ mod tests {
 
     #[test]
     fn opening_bookmarks_clears_the_filter_notice() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.filter = "ap".to_string();
         v.rebuild_notices();
@@ -334,7 +331,6 @@ mod tests {
 
     #[test]
     fn unchanged_mark_count_keeps_the_clipboard_and_skips_the_rebuild() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.handle_command(&Command::SelectionChanged {
             selected: None,
@@ -358,7 +354,6 @@ mod tests {
 
     #[test]
     fn marking_derives_a_clipboard_clear() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.clipboard_entry = Some(clipboard_entry());
 
@@ -372,7 +367,6 @@ mod tests {
 
     #[test]
     fn showing_bookmarks_clears_the_search_notice() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.handle_command(&Command::StartSearch("q".into()));
         v.handle_command(&Command::SearchStarted { generation: 1 });
@@ -390,7 +384,6 @@ mod tests {
 
     #[test]
     fn stale_search_exit_does_not_clear_the_current_search() {
-        use crate::command::handler::CommandHandler;
         let mut v = view();
         v.handle_command(&Command::StartSearch("q".into()));
         v.handle_command(&Command::SearchStarted { generation: 2 });

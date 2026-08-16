@@ -341,19 +341,38 @@ mod tests {
         assert_eq!(expected, result.to_string_lossy());
     }
 
+    /// Whether `dir` gained an entry, which is how a name that escaped
+    /// validation shows up: it creates something, just not where it was asked
+    /// to.
+    fn is_empty(dir: &TempDir) -> bool {
+        fs::read_dir(dir.path()).unwrap().next().is_none()
+    }
+
     #[test_case("" ; "empty")]
     #[test_case("." ; "current directory")]
     #[test_case(".." ; "parent directory")]
     #[test_case("nested/name" ; "relative path")]
-    #[test_case("/tmp/absolute" ; "absolute path")]
     fn create_directory_rejects_a_name_that_is_not_a_basename(name: &str) {
         let dir = TempDir::new("ops_create");
         let parent = PathInfo::try_from(dir.path()).unwrap();
 
-        // `Path::join` would drop the parent entirely for an absolute name, so
-        // an unvalidated name creates a directory outside the one on screen.
         assert!(create_directory(&parent, name).is_err());
-        assert!(!Path::new("/tmp/absolute").exists());
+        assert!(is_empty(&dir));
+    }
+
+    #[test]
+    fn create_directory_rejects_an_absolute_name() {
+        let dir = TempDir::new("ops_create_absolute");
+        let parent = PathInfo::try_from(dir.path()).unwrap();
+        // `Path::join` drops the parent entirely for an absolute name, so an
+        // unvalidated one creates a directory outside the one on screen. The
+        // escape target is a reserved fixture path, so its absence is this
+        // call's doing and not another process's.
+        let escape = TempDir::reserved("ops_create_escape");
+
+        assert!(create_directory(&parent, escape.path().to_str().unwrap()).is_err());
+        assert!(!escape.path().exists());
+        assert!(is_empty(&dir));
     }
 
     #[test]
@@ -498,14 +517,26 @@ mod tests {
     #[test_case("" ; "empty")]
     #[test_case("   " ; "only whitespace, which trims to empty")]
     #[test_case("nested/name" ; "a path rather than a name")]
-    #[test_case("/tmp/absolute" ; "absolute")]
     fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) {
         let base = TempDir::new("ops_bookmark_bad_name");
         let bookmarks = base.join("bookmarks");
         let target = PathInfo::try_from(base.path()).unwrap();
 
         assert!(add_bookmark(&bookmarks, &target, name).is_err());
-        assert!(!Path::new("/tmp/absolute").exists());
+    }
+
+    #[test]
+    fn add_bookmark_refuses_an_absolute_name() {
+        let base = TempDir::new("ops_bookmark_absolute");
+        let bookmarks = base.join("bookmarks");
+        let target = PathInfo::try_from(base.path()).unwrap();
+        // Joined onto the bookmarks directory, an absolute name replaces it,
+        // so the symlink would be planted wherever the name pointed. A
+        // reserved fixture path makes its absence attributable to this call.
+        let escape = TempDir::reserved("ops_bookmark_escape");
+
+        assert!(add_bookmark(&bookmarks, &target, escape.path().to_str().unwrap()).is_err());
+        assert!(!escape.path().exists());
     }
 
     #[test]
