@@ -12,7 +12,7 @@ name = "filectrl"
 readme = "README.md"
 repository = "https://github.com/andornaut/filectrl"
 rust-version = "1.93"
-version = "0.6.0"
+version = "0.6.1"
 
 [lints.rust]
 unsafe_code = "deny"
