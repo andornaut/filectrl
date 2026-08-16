@@ -87,7 +87,7 @@ mod tests {
     use super::*;
 
     /// A never-elapsing interval, so only the size rule can flush.
-    const NEVER: Duration = Duration::from_secs(86_400);
+    const NEVER: Duration = Duration::from_hours(24);
 
     fn item() -> PathInfo {
         PathInfo::try_from(Path::new(".")).unwrap()

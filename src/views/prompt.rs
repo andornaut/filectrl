@@ -224,7 +224,7 @@ impl PromptView {
                     .flatten()
                     .map(|entry| {
                         let name = entry.file_name().to_string_lossy().into_owned();
-                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
                         (name, is_dir)
                     })
                     .collect();
