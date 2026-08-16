@@ -15,15 +15,15 @@ use super::{
 use crate::{
     app::{clipboard::ClipboardEntry, config::theme::Theme},
     file_system::path_info::PathInfo,
-    views::unicode::split_with_ellipsis,
+    views::{as_dimension, unicode::split_with_ellipsis},
 };
 
 pub(super) fn table_widget<'a>(
     theme: &'a Theme,
     column_constraints: Vec<Constraint>,
     rows: Vec<Row<'a>>,
-    sort_column: &'a SortColumn,
-    sort_direction: &'a SortDirection,
+    sort_column: SortColumn,
+    sort_direction: SortDirection,
 ) -> Table<'a> {
     let header = header_row_widget(theme, sort_column, sort_direction);
     Table::new(rows, column_constraints)
@@ -32,11 +32,11 @@ pub(super) fn table_widget<'a>(
         .style(theme.table.body())
 }
 
-fn header_row_widget<'a>(
-    theme: &'a Theme,
-    sort_column: &'a SortColumn,
-    sort_direction: &'a SortDirection,
-) -> Row<'a> {
+fn header_row_widget(
+    theme: &Theme,
+    sort_column: SortColumn,
+    sort_direction: SortDirection,
+) -> Row<'_> {
     let mut cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
         .into_iter()
         .map(|column| header_cell_widget(theme, sort_column, sort_direction, column))
@@ -45,13 +45,13 @@ fn header_row_widget<'a>(
     Row::new(cells).style(theme.table.header())
 }
 
-fn header_cell_widget<'a>(
-    theme: &'a Theme,
-    sort_column: &'a SortColumn,
-    sort_direction: &'a SortDirection,
+fn header_cell_widget(
+    theme: &Theme,
+    sort_column: SortColumn,
+    sort_direction: SortDirection,
     column: SortColumn,
-) -> Cell<'a> {
-    let is_sorted = *sort_column == column;
+) -> Cell<'_> {
+    let is_sorted = sort_column == column;
     let text = match column {
         SortColumn::Name => "[N]ame",
         SortColumn::Modified => "[M]odified",
@@ -61,8 +61,8 @@ fn header_cell_widget<'a>(
     // Add direction indicator if this column is sorted
     let text = if is_sorted {
         match sort_direction {
-            SortDirection::Ascending => format!("{}⌃", text),
-            SortDirection::Descending => format!("{}⌄", text),
+            SortDirection::Ascending => format!("{text}⌃"),
+            SortDirection::Descending => format!("{text}⌄"),
         }
     } else {
         text.into()
@@ -75,13 +75,13 @@ fn header_cell_widget<'a>(
         Span::raw(text)
     };
 
-    Cell::from(label.style(header_style(&theme.table, sort_column, &column)))
+    Cell::from(label.style(header_style(&theme.table, sort_column, column)))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn row_widget_and_height<'a>(
     theme: &'a Theme,
-    clipboard_entry: &'a Option<ClipboardEntry>,
+    clipboard_entry: Option<&'a ClipboardEntry>,
     name_column_width: u16,
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
@@ -114,7 +114,7 @@ pub(super) fn row_widget_and_height<'a>(
         .into_iter()
         .map(Line::from)
         .collect::<Vec<_>>();
-    let height = name.len() as u16;
+    let height = as_dimension(name.len());
     let row = Row::new([
         Cell::from(name).style(name_style),
         Cell::from(item.modified(relative_to_datetime).unwrap_or_default()).style(date_style),
@@ -148,7 +148,7 @@ pub(super) fn item_height(
     is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> u16 {
-    name_lines(name_column_width, item, is_bookmarks, search_root).len() as u16
+    as_dimension(name_lines(name_column_width, item, is_bookmarks, search_root).len())
 }
 
 #[cfg(test)]
@@ -174,7 +174,7 @@ mod tests {
 
         let (_, rendered_height) = row_widget_and_height(
             theme,
-            &None,
+            None,
             width,
             Local::now(),
             &item,

@@ -7,7 +7,7 @@ use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR};
 use ratatui::{layout::Rect, style::Style};
 
 use self::widget::{Position, spans};
-use super::ListingMode;
+use super::{ListingMode, as_dimension};
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 #[derive(Default)]
@@ -53,10 +53,10 @@ impl BreadcrumbsView {
             Style::default(),
             Style::default(),
         );
-        container.len() as u16
+        as_dimension(container.len())
     }
 
-    fn set_directory(&mut self, directory: PathInfo) -> CommandResult {
+    fn set_directory(&mut self, directory: &PathInfo) -> CommandResult {
         self.breadcrumbs = directory.breadcrumbs();
         CommandResult::Handled
     }
@@ -86,7 +86,7 @@ mod tests {
 
     fn view(parts: &[&str], mode: ListingMode) -> BreadcrumbsView {
         BreadcrumbsView {
-            breadcrumbs: parts.iter().map(|s| s.to_string()).collect(),
+            breadcrumbs: parts.iter().map(std::string::ToString::to_string).collect(),
             mode,
             ..Default::default()
         }

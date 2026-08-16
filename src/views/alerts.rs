@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use super::{View, bordered};
+use super::{View, as_dimension, bordered};
 use crate::{
     app::config::keybindings::Action,
     app::config::{Config, theme::Theme},
@@ -79,18 +79,18 @@ impl AlertsView {
         CommandResult::Handled
     }
 
-    fn has_border(&self, area: &Rect) -> bool {
+    fn has_border(area: Rect) -> bool {
         area.height >= MIN_HEIGHT_BORDERED
     }
 
-    fn height(&self, area: &Rect) -> u16 {
+    fn height(&self, area: Rect) -> u16 {
         if !self.should_show(area) {
             return 0;
         }
-        let border_size = if self.has_border(area) { 2 } else { 0 };
+        let border_size = if Self::has_border(area) { 2 } else { 0 };
         let inner_width = area.width.saturating_sub(border_size);
         let items = self.alerts(inner_width);
-        items.len() as u16 + border_size
+        as_dimension(items.len()) + border_size
     }
 
     fn alerts(&self, inner_width: u16) -> Vec<(AlertKind, Line<'_>)> {
@@ -111,7 +111,7 @@ impl AlertsView {
             .collect()
     }
 
-    fn should_show(&self, area: &Rect) -> bool {
+    fn should_show(&self, area: Rect) -> bool {
         !self.alerts.is_empty() && area.height >= MIN_HEIGHT_BORDERLESS
     }
 }
@@ -126,20 +126,20 @@ impl CommandHandler for AlertsView {
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ClearAlerts) => self.clear_alerts(),
             _ => CommandResult::NotHandled,
         }
     }
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         if let MouseEventKind::Down(MouseButton::Left) = event.kind {
             return self.clear_alerts();
         }
         CommandResult::Handled
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         self.area.contains(Position {
             x: event.column,
             y: event.row,
@@ -149,18 +149,18 @@ impl CommandHandler for AlertsView {
 
 impl View for AlertsView {
     fn constraint(&self, area: Rect) -> Constraint {
-        Constraint::Length(self.height(&area))
+        Constraint::Length(self.height(area))
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
-        if !self.should_show(&area) {
+        if !self.should_show(area) {
             return;
         }
 
         let theme = Config::global().theme();
         let style = theme.alert.base();
-        let inner_area = if self.has_border(&area) {
+        let inner_area = if Self::has_border(area) {
             bordered(area, frame.buffer_mut(), style, "Alerts", &self.hint)
         } else {
             area

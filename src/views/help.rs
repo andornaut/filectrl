@@ -8,7 +8,7 @@ use self::widget::{
     add_keybinding_lines, add_section_header, build_normal_keybindings, build_prompt_keybindings,
     max_label_width,
 };
-use super::ScrollbarView;
+use super::{ScrollbarView, as_dimension};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::result::CommandResult,
@@ -51,7 +51,7 @@ impl HelpView {
         lines.push(Line::raw(""));
         add_section_header(&mut lines, "Prompt Mode", max_width, help_theme);
         add_keybinding_lines(&mut lines, &prompt_keybindings, max_width, help_theme);
-        let content_height = lines.len() as u16;
+        let content_height = as_dimension(lines.len());
         Self {
             area: Rect::default(),
             content_height,

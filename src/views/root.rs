@@ -36,7 +36,7 @@ impl CommandHandler for CommandOnly<'_> {
             .visit_command_handlers(&mut |child| visitor(&mut CommandOnly(child)));
     }
 
-    fn should_handle_key(&self, _: &InputMode) -> bool {
+    fn should_handle_key(&self, _: InputMode) -> bool {
         false
     }
 }
@@ -159,7 +159,7 @@ impl CommandHandler for RootView {
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         // Rebindable keys
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ToggleHelp) => {
@@ -287,13 +287,13 @@ mod tests {
     /// conflict prompt is the only one opened by a handler that is not a view,
     /// so `FileSystem` depends on both halves of this holding for a command it
     /// cannot observe.
-    #[test_case(Command::OpenPrompt(PromptAction::Conflict {
+    #[test_case(&Command::OpenPrompt(PromptAction::Conflict {
         name: "a.txt".to_string(),
         can_overwrite: true,
     }), InputMode::Prompt ; "opening the conflict prompt takes keys")]
-    #[test_case(Command::ResolveConflict(ConflictChoice::Skip), InputMode::Normal ; "answering it gives them back")]
-    #[test_case(Command::CancelPrompt, InputMode::Normal ; "dismissing it gives them back")]
-    fn a_command_leaves_the_root_in_mode(command: Command, expected: InputMode) {
+    #[test_case(&Command::ResolveConflict(ConflictChoice::Skip), InputMode::Normal ; "answering it gives them back")]
+    #[test_case(&Command::CancelPrompt, InputMode::Normal ; "dismissing it gives them back")]
+    fn a_command_leaves_the_root_in_mode(command: &Command, expected: InputMode) {
         let mut root = view();
         // Start from the opposite mode so a no-op arm cannot pass by accident.
         root.mode = match expected {
@@ -301,31 +301,31 @@ mod tests {
             InputMode::Normal => InputMode::Prompt,
         };
 
-        root.handle_command(&command);
+        root.handle_command(command);
 
         assert_eq!(expected, root.mode());
     }
 
     /// A click that closes a prompt from beneath it must still tell whoever
     /// holds state for that prompt; see `close_prompt`.
-    #[test_case(Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
-    #[test_case(Command::ResetView ; "a notice click")]
-    fn closing_an_open_prompt_from_underneath_announces_it(command: Command) {
+    #[test_case(&Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
+    #[test_case(&Command::ResetView ; "a notice click")]
+    fn closing_an_open_prompt_from_underneath_announces_it(command: &Command) {
         let mut root = view();
         root.mode = InputMode::Prompt;
 
-        let result = root.handle_command(&command);
+        let result = root.handle_command(command);
 
         assert_eq!(Some(Command::CancelPrompt), Command::try_from(result).ok());
         assert_eq!(InputMode::Normal, root.mode());
     }
 
-    #[test_case(Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "no prompt was open")]
-    #[test_case(Command::ResetView ; "no prompt was open either")]
-    fn closing_nothing_announces_nothing(command: Command) {
+    #[test_case(&Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "no prompt was open")]
+    #[test_case(&Command::ResetView ; "no prompt was open either")]
+    fn closing_nothing_announces_nothing(command: &Command) {
         let mut root = view();
 
-        assert_eq!(None, Command::try_from(root.handle_command(&command)).ok());
+        assert_eq!(None, Command::try_from(root.handle_command(command)).ok());
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
 
         let mut key_handlers = 0;
         root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(&InputMode::Prompt) {
+            if handler.should_handle_key(InputMode::Prompt) {
                 key_handlers += 1;
             }
         });
@@ -366,7 +366,7 @@ mod tests {
 
         let mut key_handlers = 0;
         root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(&InputMode::Normal) {
+            if handler.should_handle_key(InputMode::Normal) {
                 key_handlers += 1;
             }
         });
@@ -402,7 +402,7 @@ mod tests {
 
         let mut key_handlers = 0;
         root.visit_command_handlers(&mut |handler| {
-            if handler.should_handle_key(&InputMode::Normal) {
+            if handler.should_handle_key(InputMode::Normal) {
                 key_handlers += 1;
             }
         });

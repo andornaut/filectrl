@@ -7,10 +7,11 @@ use super::HelpView;
 use crate::{
     app::config::{Config, keybindings::hardcoded_normal_action},
     command::{handler::CommandHandler, result::CommandResult},
+    views::as_dimension,
 };
 
 impl CommandHandler for HelpView {
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
         match action {
@@ -19,7 +20,7 @@ impl CommandHandler for HelpView {
         }
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::ScrollDown => {
                 self.scroll_down(1);
@@ -36,7 +37,7 @@ impl CommandHandler for HelpView {
                     .scrollbar_view
                     .handle_mouse(event, self.max_scroll as usize)
                 {
-                    self.scroll_offset = pos as u16;
+                    self.scroll_offset = as_dimension(pos);
                 }
                 CommandResult::Handled
             }
@@ -44,7 +45,7 @@ impl CommandHandler for HelpView {
         }
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         matches!(
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown

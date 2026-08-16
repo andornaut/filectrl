@@ -83,7 +83,7 @@ impl CommandHandler for NoticesView {
                 CommandResult::Handled
             }
             Command::SetClipboardEntry(entry) => {
-                self.clipboard_entry = entry.clone();
+                self.clipboard_entry.clone_from(entry);
                 CommandResult::NotHandled
             }
             Command::FilterChanged(filter) => {
@@ -126,7 +126,7 @@ impl CommandHandler for NoticesView {
         result
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ClearProgress) => {
                 // The only key this view handles, and the only one that mutates
@@ -140,17 +140,19 @@ impl CommandHandler for NoticesView {
         }
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let y = event.row.saturating_sub(self.area.y) as usize;
                 match self.notices.get(y) {
-                    Some(Notice::Clipboard(_))
-                    | Some(Notice::Filter(_))
-                    | Some(Notice::Marked(_))
-                    | Some(Notice::Search(_))
-                    | Some(Notice::SearchCancelled(_))
-                    | Some(Notice::SearchLoading) => Command::ResetView.into(),
+                    Some(
+                        Notice::Clipboard(_)
+                        | Notice::Filter(_)
+                        | Notice::Marked(_)
+                        | Notice::Search(_)
+                        | Notice::SearchCancelled(_)
+                        | Notice::SearchLoading,
+                    ) => Command::ResetView.into(),
                     _ => CommandResult::Handled,
                 }
             }
@@ -158,7 +160,7 @@ impl CommandHandler for NoticesView {
         }
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         self.area.contains(Position {
             x: event.column,
             y: event.row,

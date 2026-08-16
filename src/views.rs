@@ -23,6 +23,14 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
+/// A count as a terminal dimension. Terminal geometry is `u16` throughout, and
+/// a count that does not fit is one the terminal could not draw regardless, so
+/// saturating at the maximum is what an oversized listing should render as. An
+/// `as` cast would wrap instead, turning 65_536 rows into none.
+pub(crate) fn as_dimension(count: usize) -> u16 {
+    u16::try_from(count).unwrap_or(u16::MAX)
+}
+
 /// Draw `lines`, starting at the one `scroll` lines down. Equivalent to an
 /// unwrapped, left-aligned `Paragraph` (see the equivalence test below), but
 /// takes the lines by reference: `Paragraph` owns its text, so handing it
@@ -37,7 +45,7 @@ fn render_lines(lines: &[Line<'_>], area: Rect, buf: &mut Buffer, style: Style, 
         .enumerate()
     {
         let line_area = Rect {
-            y: area.y + row as u16,
+            y: area.y + as_dimension(row),
             height: 1,
             ..area
         };

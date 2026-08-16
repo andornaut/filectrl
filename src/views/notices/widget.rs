@@ -54,12 +54,23 @@ fn search_loading_position(width: u16, elapsed: Duration) -> Option<u16> {
     if width <= SEARCH_LOADING_BLOCK_WIDTH {
         return None;
     }
-    let travel = width - SEARCH_LOADING_BLOCK_WIDTH;
-    let speed = (width / SEARCH_LOADING_SPEED_DIVISOR).max(1);
-    let cycle = u64::from(travel) * 2;
-    let steps = elapsed.as_millis() as u64 / SEARCH_LOADING_STEP.as_millis() as u64;
-    let t = (steps * u64::from(speed) % cycle) as u16;
-    Some(if t < travel { t } else { travel * 2 - t })
+    let travel = u64::from(width - SEARCH_LOADING_BLOCK_WIDTH);
+    let speed = u64::from((width / SEARCH_LOADING_SPEED_DIVISOR).max(1));
+    let cycle = travel * 2;
+    // Durations are u128 milliseconds. Saturating keeps an absurd elapsed time
+    // moving at the end of the cycle rather than wrapping to the start.
+    let step_millis = SEARCH_LOADING_STEP.as_millis().max(1);
+    let steps = u64::try_from(elapsed.as_millis() / step_millis).unwrap_or(u64::MAX);
+    let position = steps.saturating_mul(speed) % cycle;
+    // Out along the first half of the cycle and back along the second, so the
+    // block bounces rather than jumping back to the start.
+    let offset = if position < travel {
+        position
+    } else {
+        cycle - position
+    };
+    // `offset <= travel`, which came from a u16 width.
+    Some(u16::try_from(offset).unwrap_or(0))
 }
 
 pub(super) fn clipboard_widget<'a>(
@@ -131,13 +142,13 @@ pub(super) fn progress_widget<'a>(
         .fold(Progress::default(), |acc, task| task.combine_progress(&acc));
 
     let percentage = progress.percentage();
-    let percentage_text = format!(" {}%", percentage);
+    let percentage_text = format!(" {percentage}%");
     let bar_width = width.saturating_sub(percentage_text.cell_width());
     let progress_width = progress.scaled(bar_width);
 
     let filled = block::FULL.repeat(progress_width.into());
     let empty = " ".repeat(bar_width.saturating_sub(progress_width).into());
-    let progress_bar = format!("{}{}", filled, empty);
+    let progress_bar = format!("{filled}{empty}");
 
     let left = Line::from(progress_bar);
     let right = Line::from(percentage_text).alignment(Alignment::Right);

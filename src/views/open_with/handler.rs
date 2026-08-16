@@ -13,7 +13,7 @@ use crate::{
 };
 
 impl CommandHandler for OpenWithView {
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
         match action {
@@ -35,15 +35,15 @@ impl CommandHandler for OpenWithView {
         // action selects a row instead, which is what a picker should do.
         // Keys claimed higher in the handler tree (quit, cancel task, reset
         // view, toggle help) never reach this point.
-        if *modifiers == KeyModifiers::NONE
+        if modifiers == KeyModifiers::NONE
             && let KeyCode::Char(digit @ '1'..='9') = code
         {
-            return self.launch_row(*digit as usize - '1' as usize);
+            return self.launch_row(digit as usize - '1' as usize);
         }
         CommandResult::NotHandled
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::ScrollDown => self.handle_scroll_action(Action::SelectNext),
             MouseEventKind::ScrollUp => self.handle_scroll_action(Action::SelectPrevious),
@@ -80,7 +80,7 @@ impl CommandHandler for OpenWithView {
         }
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         matches!(
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown

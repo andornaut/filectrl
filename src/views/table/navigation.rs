@@ -219,11 +219,11 @@ impl TableView {
     fn set_directory(
         &mut self,
         directory: PathInfo,
-        children: Vec<PathInfo>,
+        children: &[PathInfo],
         reselect: Reselect,
     ) -> CommandResult {
         self.begin_directory(directory, reselect);
-        self.content.append(&children);
+        self.content.append(children);
         self.finish_directory()
     }
 }
@@ -296,7 +296,7 @@ mod tests {
         let fx = Fixture::new();
         let mut table = TableView::default();
         let children = vec![fx.file("b", 1), fx.file("a", 1), fx.file("c", 1)];
-        table.set_directory(fx.directory(), children, Reselect::Top);
+        table.set_directory(fx.directory(), &children, Reselect::Top);
 
         assert_eq!(table.table_state.selected(), Some(0));
         assert_eq!(selected_basename(&table).as_deref(), Some("a"));
@@ -309,7 +309,7 @@ mod tests {
         let mut table = TableView::default();
         // Name-ascending order: a, b, c
         let children = vec![fx.file("a", 3), fx.file("b", 1), fx.file("c", 2)];
-        table.set_directory(fx.directory(), children, Reselect::Top);
+        table.set_directory(fx.directory(), &children, Reselect::Top);
 
         // Select "b" (index 1 by name).
         table.select(1);
@@ -329,7 +329,7 @@ mod tests {
         let mut table = TableView::default();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
             Reselect::Top,
         );
         table.select(1); // "b"
@@ -337,7 +337,7 @@ mod tests {
         // Same directory reloaded with "b" removed; cursor holds at index 1.
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("c", 1)],
+            &[fx.file("a", 1), fx.file("c", 1)],
             Reselect::Keep,
         );
         assert_eq!(table.table_state.selected(), Some(1));
@@ -351,14 +351,14 @@ mod tests {
         let mut table = TableView::default();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
             Reselect::Top,
         );
         table.select(2); // "c"
 
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("b", 1)],
+            &[fx.file("a", 1), fx.file("b", 1)],
             Reselect::Top,
         );
         assert_eq!(table.table_state.selected(), Some(0));
@@ -370,7 +370,7 @@ mod tests {
         let mut table = TableView::default();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
             Reselect::Top,
         );
         table.select(0);
@@ -398,7 +398,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
 
         let result = table.handle_command(&Command::Delete(vec![]));
 
@@ -459,7 +459,7 @@ mod tests {
         let mut table = TableView::default();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
             Reselect::Top,
         );
         table.select(1); // "b"
@@ -629,7 +629,7 @@ mod tests {
         // Sorted (a leading dot is ignored when comparing names): a, .b
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file(".b", 1)],
+            &[fx.file("a", 1), fx.file(".b", 1)],
             Reselect::Top,
         );
         table.select(1); // ".b"
@@ -658,7 +658,7 @@ mod tests {
         let mut table = TableView::default();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file(".b", 1)],
+            &[fx.file("a", 1), fx.file(".b", 1)],
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
@@ -683,7 +683,7 @@ mod tests {
         table.content.clear_search();
         table.set_directory(
             fx.directory(),
-            vec![fx.file("a", 1), fx.file(".b", 1)],
+            &[fx.file("a", 1), fx.file(".b", 1)],
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
@@ -737,7 +737,7 @@ mod tests {
         let mut table = TableView::default();
         // `start_search` takes the search root from the current directory, and
         // the root is what the column renders names relative to.
-        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        table.set_directory(fx.directory(), &[], Reselect::Top);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -769,7 +769,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        table.set_directory(fx.directory(), &[], Reselect::Top);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -812,7 +812,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        table.set_directory(fx.directory(), &[], Reselect::Top);
         let hidden = fx.nested("projects", ".zzz.txt");
         let plain = fx.nested("projects", "bbb.txt");
 
@@ -843,7 +843,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        table.set_directory(fx.directory(), &[], Reselect::Top);
         let first = fx.nested("a", "obj");
         // A second name for the same file. A recursive search finds both, and
         // they share a device and inode, so identity by inode cannot tell them
@@ -889,7 +889,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), Vec::new(), Reselect::Top);
+        table.set_directory(fx.directory(), &[], Reselect::Top);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -1022,7 +1022,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
         table.handle_command(&Command::StartSearch("a".into()));
         assert!(table.content.is_searching());
 
@@ -1044,7 +1044,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = TableView::default();
-        table.set_directory(fx.directory(), vec![fx.file("a", 1)], Reselect::Top);
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
         table.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert!(table.content.is_showing_bookmarks());
 

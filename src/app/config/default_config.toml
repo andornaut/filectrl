@@ -1,5 +1,8 @@
 # One of: off, error, warn, info, debug, or trace
 # Logs are written to stderr
+# Applies from the end of config loading onward, so it cannot show the messages
+# emitted while this file and its includes are being resolved; use $RUST_LOG for
+# those, which overrides this setting
 log_level = "off"
 
 # Include files are merged on top of this config (later files take precedence)

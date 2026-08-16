@@ -39,9 +39,9 @@ impl DirectoryWatcher {
     }
 
     pub fn run_once(&mut self, command_tx: &Sender<Command>) {
-        let notify_rx = match self.notify_rx.take() {
-            Some(rx) => rx,
-            None => return, // Already running, do nothing
+        // Already running, do nothing
+        let Some(notify_rx) = self.notify_rx.take() else {
+            return;
         };
 
         let (delayed_tx, delayed_rx) = channel();
@@ -54,10 +54,14 @@ impl DirectoryWatcher {
         )));
         let debouncer_for_delayed = Arc::clone(&debouncer);
         self.handles.push(thread::spawn(move || {
-            watch_for_delayed_commands(command_tx_for_delayed, delayed_rx, debouncer_for_delayed)
+            watch_for_delayed_commands(
+                &command_tx_for_delayed,
+                &delayed_rx,
+                &debouncer_for_delayed,
+            );
         }));
         self.handles.push(thread::spawn(move || {
-            watch_for_notify_events(command_tx_for_notify, delayed_tx, notify_rx, debouncer)
+            watch_for_notify_events(&command_tx_for_notify, &delayed_tx, notify_rx, &debouncer);
         }));
     }
 
@@ -73,7 +77,7 @@ impl DirectoryWatcher {
         if let Some(old_path) = self.watched_directory.take()
             && let Err(e) = watcher.unwatch(old_path.as_path())
         {
-            warn!("Failed to unwatch directory: {}", e);
+            warn!("Failed to unwatch directory: {e}");
         }
 
         watcher.watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
@@ -100,10 +104,10 @@ impl Drop for DirectoryWatcher {
 /// schedules a single delayed refresh, so a burst produces one refresh at the
 /// front and one at the end rather than one per event.
 fn watch_for_notify_events(
-    command_tx: Sender<Command>,
-    delayed_tx: Sender<Duration>,
+    command_tx: &Sender<Command>,
+    delayed_tx: &Sender<Duration>,
     notify_rx: Receiver<std::result::Result<Event, notify::Error>>,
-    debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
+    debouncer: &Arc<Mutex<debounce::TimeDebouncer>>,
 ) {
     for result in notify_rx {
         match result {
@@ -114,12 +118,12 @@ fn watch_for_notify_events(
                     let mut debouncer = debouncer.lock().unwrap();
                     if debouncer.should_trigger(Instant::now()) {
                         if let Err(e) = command_tx.send(Command::RefreshDirectory) {
-                            error!("Failed to send refresh command: {}", e);
+                            error!("Failed to send refresh command: {e}");
                         }
                     } else if !debouncer.has_delayed_event() {
                         let delay = debouncer.remaining(Instant::now());
                         if let Err(e) = delayed_tx.send(delay) {
-                            error!("Failed to schedule delayed refresh: {}", e);
+                            error!("Failed to schedule delayed refresh: {e}");
                         } else {
                             debouncer.set_delayed_event();
                         }
@@ -128,13 +132,12 @@ fn watch_for_notify_events(
                 _ => (),
             },
             Err(e) => {
-                error!("File system watcher error: {}", e);
+                error!("File system watcher error: {e}");
                 let error_command = Command::AlertError(format!(
-                    "Failed to run the directory watcher in the background: {}",
-                    e
+                    "Failed to run the directory watcher in the background: {e}"
                 ));
                 if let Err(e) = command_tx.send(error_command) {
-                    error!("Failed to send error command: {}", e);
+                    error!("Failed to send error command: {e}");
                 }
             }
         }
@@ -146,9 +149,9 @@ fn watch_for_notify_events(
 /// counts as a trigger. `should_trigger` returns false when an event already
 /// refreshed while this thread slept, making the delayed one redundant.
 fn watch_for_delayed_commands(
-    command_tx: Sender<Command>,
-    delayed_rx: Receiver<Duration>,
-    debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
+    command_tx: &Sender<Command>,
+    delayed_rx: &Receiver<Duration>,
+    debouncer: &Arc<Mutex<debounce::TimeDebouncer>>,
 ) {
     while let Ok(mut delay) = delayed_rx.recv() {
         // Wait out the remainder on the channel rather than sleeping, so a
@@ -164,7 +167,7 @@ fn watch_for_delayed_commands(
         if debouncer.lock().unwrap().should_trigger(Instant::now())
             && let Err(e) = command_tx.send(Command::RefreshDirectory)
         {
-            debug!("Delayed refresh not sent, likely due to shutdown: {}", e);
+            debug!("Delayed refresh not sent, likely due to shutdown: {e}");
         }
     }
 }

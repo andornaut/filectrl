@@ -295,7 +295,7 @@ Two `openers` settings shape the list, and setting either to `""` drops its effe
 
 ### Theming
 
-`[theme]` applies to truecolor terminals and `[theme256]` to 256-color terminals. FileCTRL detects truecolor support via `$COLORTERM`; `--no-truecolor` selects the 256-color theme regardless.
+`[theme]` applies to truecolor terminals and `[theme256]` to 256-color terminals. FileCTRL detects truecolor support via `$COLORTERM`; `--no-truecolor` selects the 256-color theme regardless. There is no flag for the other direction: a terminal that supports truecolor but does not set `$COLORTERM` (common under tmux, and under some SSH and `sudo` sessions) gets the 256-color theme, so set the variable yourself with `COLORTERM=truecolor filectrl`.
 
 #### Style properties
 

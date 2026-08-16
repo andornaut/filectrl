@@ -101,7 +101,7 @@ fn search(
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) => {
-                warn!("Search: failed to read directory {dir:?}: {e}");
+                warn!("Search: failed to read directory {}: {e}", dir.display());
                 continue;
             }
         };
@@ -120,7 +120,7 @@ fn search(
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    warn!("Search: failed to read entry in {dir:?}: {e}");
+                    warn!("Search: failed to read entry in {}: {e}", dir.display());
                     continue;
                 }
             };

@@ -107,8 +107,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      # --all-targets, so the tests are linted too. Without it clippy checks the
+      # library and the binary only, and `#[cfg(test)]` code is never compiled
+      # for it, leaving the largest part of this repository unlinted.
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       # Fetches the RustSec advisory database on every run, which a required
       # check normally has no business doing. Kept here because that database

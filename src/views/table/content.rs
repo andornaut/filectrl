@@ -132,8 +132,8 @@ impl DirectoryContent {
     /// through `sort`, which re-derives from the unfiltered items.
     pub(super) fn finalize_listing(
         &mut self,
-        sort_column: &SortColumn,
-        sort_direction: &SortDirection,
+        sort_column: SortColumn,
+        sort_direction: SortDirection,
     ) {
         self.loading = false;
         self.sort_in_place(sort_column, sort_direction);
@@ -164,7 +164,7 @@ impl DirectoryContent {
     /// Sort and filter items into `items_sorted`. Visibility is re-derived
     /// from the unfiltered `items`, so a toggled show-hidden setting or filter
     /// change takes effect on the next sort.
-    pub(super) fn sort(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
+    pub(super) fn sort(&mut self, sort_column: SortColumn, sort_direction: SortDirection) {
         let visibility = self.visibility();
         self.items_sorted = self
             .items
@@ -179,7 +179,7 @@ impl DirectoryContent {
     /// Sort `items_sorted` without re-deriving visibility: `append` applies
     /// the same predicate, so finalizing a stream can skip the re-filter and
     /// re-clone of every entry.
-    fn sort_in_place(&mut self, sort_column: &SortColumn, sort_direction: &SortDirection) {
+    fn sort_in_place(&mut self, sort_column: SortColumn, sort_direction: SortDirection) {
         // The Name column shows the path relative to the search root while
         // searching, not the entry's own name. Order by that same string, or the
         // listing looks unsorted (`z/apple.txt` above `a/zebra.txt`). The filter
@@ -200,14 +200,14 @@ impl DirectoryContent {
         // than reversing the sorted listing, so that entries sharing a key keep
         // the order they arrived in whichever way the column points. Every sort
         // here is stable, as the directories-first pass below requires.
-        let descending = *sort_direction == SortDirection::Descending;
+        let descending = sort_direction == SortDirection::Descending;
         match (sort_column, descending) {
             (SortColumn::Name, false) => self.items_sorted.sort_by_cached_key(name_key),
             (SortColumn::Name, true) => self
                 .items_sorted
                 .sort_by_cached_key(|item| Reverse(name_key(item))),
             (SortColumn::Modified, false) => {
-                self.items_sorted.sort_by_key(PathInfo::modified_comparator)
+                self.items_sorted.sort_by_key(PathInfo::modified_comparator);
             }
             (SortColumn::Modified, true) => self
                 .items_sorted
@@ -216,7 +216,7 @@ impl DirectoryContent {
             (SortColumn::Size, true) => self.items_sorted.sort_by_key(|item| Reverse(item.size)),
         }
 
-        if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
+        if sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
             self.items_sorted.sort_by_key(|path| !path.is_directory());
         }
     }
@@ -464,7 +464,7 @@ mod tests {
         ];
         let mut content = DirectoryContent::default();
         content.set_items(fx.directory(), items);
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
 
         // Directories first (config default sort_directories_first = true),
         // then files; comparison is case-insensitive and ignores a leading dot
@@ -489,7 +489,7 @@ mod tests {
         ];
         let mut content = DirectoryContent::default();
         content.set_items(fx.directory(), items);
-        content.sort(&SortColumn::Name, &SortDirection::Descending);
+        content.sort(SortColumn::Name, SortDirection::Descending);
 
         // Descending reverses the name order, but directories are still grouped
         // ahead of files (the directories-first pass runs last and is stable).
@@ -508,10 +508,10 @@ mod tests {
         let mut content = DirectoryContent::default();
         content.set_items(fx.directory(), items);
 
-        content.sort(&SortColumn::Size, &SortDirection::Ascending);
+        content.sort(SortColumn::Size, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["small", "medium", "large"]);
 
-        content.sort(&SortColumn::Size, &SortDirection::Descending);
+        content.sort(SortColumn::Size, SortDirection::Descending);
         assert_eq!(names(&content), vec!["large", "medium", "small"]);
     }
 
@@ -527,12 +527,12 @@ mod tests {
         let mut content = DirectoryContent::default();
         content.set_items(fx.directory(), items);
         content.set_filter("ap".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
 
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
 
         content.clear_filter();
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(content.len(), 3);
     }
 
@@ -545,16 +545,16 @@ mod tests {
         content.set_items(fx.directory(), items);
 
         // Default config has show_hidden_files = true.
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(content.len(), 2);
 
         // First toggle flips the runtime override to false.
         content.toggle_show_hidden();
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["visible"]);
 
         content.toggle_show_hidden();
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(content.len(), 2);
     }
 
@@ -573,7 +573,7 @@ mod tests {
         let r2 = content.revision();
         assert_ne!(r1, r2, "append must bump the revision");
 
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         let r3 = content.revision();
         assert_ne!(r2, r3, "finalize_listing (sort) must bump the revision");
 
@@ -599,14 +599,14 @@ mod tests {
         // Reference: the one-shot path.
         let mut reference = DirectoryContent::default();
         reference.set_items(fx.directory(), items.clone());
-        reference.sort(&SortColumn::Name, &SortDirection::Ascending);
+        reference.sort(SortColumn::Name, SortDirection::Ascending);
 
         // Streamed in two batches, then finalized once.
         let mut streamed = DirectoryContent::default();
         streamed.start_listing(fx.directory());
         streamed.append(&items[..2]);
         streamed.append(&items[2..]);
-        streamed.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        streamed.finalize_listing(SortColumn::Name, SortDirection::Ascending);
 
         assert_eq!(names(&streamed), names(&reference));
     }
@@ -628,7 +628,7 @@ mod tests {
         // Partial results are visible in read order before the final sort.
         assert_eq!(names(&content), vec!["c", "a", "b"]);
 
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert!(!content.is_loading());
         assert_eq!(names(&content), vec!["a", "b", "c"]);
     }
@@ -650,7 +650,7 @@ mod tests {
         // Non-matching entries must not flash into view mid-stream.
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
 
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
     }
 
@@ -668,7 +668,7 @@ mod tests {
         // Hidden entries must not flash into view mid-stream.
         assert_eq!(names(&content), vec!["visible"]);
 
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["visible"]);
     }
 
@@ -687,7 +687,7 @@ mod tests {
         assert_eq!(names(&content), vec![".hidden", "visible"]);
 
         // Re-sorting search results must not drop hidden matches either.
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec![".hidden", "visible"]);
     }
 
@@ -702,10 +702,10 @@ mod tests {
         // A filter arrives mid-stream; `sort` re-derives from the unfiltered
         // items, after which finalize only has to order the survivors.
         content.set_filter("ap".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         content.append(&[fx.file_entry("Apricot", 1), fx.file_entry("Cherry", 1)]);
 
-        content.finalize_listing(&SortColumn::Name, &SortDirection::Ascending);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
     }
 
@@ -822,12 +822,12 @@ mod tests {
         // "reports/" reaches the directory itself through its trailing
         // separator, and the nested file through its rendered path.
         content.set_filter("reports/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["reports", "inner.txt"]);
 
         // A fragment spanning the separator matches only the nested file.
         content.set_filter("orts/inn".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["inner.txt"]);
     }
 
@@ -844,11 +844,11 @@ mod tests {
         ]);
 
         content.set_filter("/".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert!(names(&content).is_empty());
 
         content.set_filter("report".to_string());
-        content.sort(&SortColumn::Name, &SortDirection::Ascending);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["reports", "report.txt"]);
     }
 }

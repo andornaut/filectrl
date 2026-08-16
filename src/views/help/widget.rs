@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use ratatui::buffer::CellWidth;
 use ratatui::text::{Line, Span};
 
@@ -91,7 +93,8 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
         out.push('\n');
         for (label, keys) in bindings {
             let padding = " ".repeat(max_width.saturating_sub(label.cell_width() as usize));
-            out.push_str(&format!("{label}: {padding}{keys}\n"));
+            // Writing to a String is infallible, so the Result cannot be an error.
+            let _ = writeln!(out, "{label}: {padding}{keys}");
         }
     }
 

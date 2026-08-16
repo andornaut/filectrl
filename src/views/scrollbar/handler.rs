@@ -14,7 +14,7 @@ impl ScrollbarView {
         self.is_dragging
     }
 
-    pub fn handle_mouse(&mut self, event: &MouseEvent, max_position: usize) -> Option<usize> {
+    pub fn handle_mouse(&mut self, event: MouseEvent, max_position: usize) -> Option<usize> {
         let x = event.column;
         let y = event.row;
 
@@ -39,13 +39,20 @@ impl ScrollbarView {
             return None;
         }
 
-        let last_relative = self.area.height.saturating_sub(1) as f32;
-        if last_relative == 0.0 {
+        let last_relative = self.area.height.saturating_sub(1);
+        if last_relative == 0 {
             return None;
         }
-        let relative_y = y.saturating_sub(self.area.y);
-        let percentage = (relative_y as f32 / last_relative).min(1.0);
-        Some((percentage * max_position as f32).round() as usize)
+        // Clamped before scaling, so a drag past the end lands on the last
+        // position rather than beyond it.
+        let relative_y = y.saturating_sub(self.area.y).min(last_relative);
+        // Integer arithmetic rather than a float ratio: the numerator is at
+        // most `last_relative * max_position`, and adding half the denominator
+        // before dividing rounds to nearest as the float version did.
+        let denominator = u64::from(last_relative);
+        let numerator = u64::from(relative_y) * u64::try_from(max_position).unwrap_or(u64::MAX)
+            + denominator / 2;
+        Some(usize::try_from(numerator / denominator).unwrap_or(max_position))
     }
 }
 

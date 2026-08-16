@@ -17,7 +17,7 @@ impl View for StatusView {
             return;
         };
         let theme = Config::global().theme();
-        let widget = default_widget(directory, self.directory_len, &self.selected, theme);
+        let widget = default_widget(directory, self.directory_len, self.selected.as_ref(), theme);
         widget.render(area, frame.buffer_mut());
     }
 }

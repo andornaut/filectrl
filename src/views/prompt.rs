@@ -8,7 +8,7 @@ use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui_textarea::{CursorMove, TextArea};
 
-use super::{View, unicode::pluralize_items};
+use super::{View, as_dimension, unicode::pluralize_items};
 use crate::{
     command::{Command, PromptAction, result::CommandResult},
     file_system::path_info::PathInfo,
@@ -74,10 +74,10 @@ impl PromptView {
             | PromptAction::Search(text) => text.clone(),
         };
         self.actions = kind.clone();
-        self.initial_text = text.clone();
+        self.initial_text.clone_from(&text);
         self.reset_text(&text);
         if let PromptAction::Goto { directory } = kind {
-            self.basedir = directory.clone();
+            self.basedir.clone_from(directory);
             self.suggestion_index = 0;
             // Drop any cache from a previous prompt so on-disk changes since
             // it was last open are picked up.
@@ -102,7 +102,7 @@ impl PromptView {
         if width == 0 {
             return;
         }
-        let cursor_display_col = self.text_area.screen_cursor().col as u16;
+        let cursor_display_col = as_dimension(self.text_area.screen_cursor().col);
         self.scroll_col = next_scroll_top(self.scroll_col, cursor_display_col, width);
     }
 
@@ -114,7 +114,7 @@ impl PromptView {
         let mut idx = 0u16;
         let mut chars = line.char_indices().peekable();
         while let Some((start, _)) = chars.next() {
-            let end = chars.peek().map(|(i, _)| *i).unwrap_or(line.len());
+            let end = chars.peek().map_or(line.len(), |(i, _)| *i);
             let w = line[start..end].cell_width();
             if remaining < w {
                 break;
@@ -145,9 +145,7 @@ impl PromptView {
             PromptAction::Filter(_) => Command::FilterChanged(value),
             PromptAction::Goto { .. } => {
                 let path = self.resolve_path(&value);
-                if !path.exists() {
-                    Command::AlertWarn(format!("Path does not exist: {}", path.display()))
-                } else {
+                if path.exists() {
                     match PathInfo::try_from(&path) {
                         Ok(info) => Command::Open(info),
                         Err(error) => Command::AlertWarn(format!(
@@ -155,6 +153,8 @@ impl PromptView {
                             path.display()
                         )),
                     }
+                } else {
+                    Command::AlertWarn(format!("Path does not exist: {}", path.display()))
                 }
             }
             PromptAction::Rename { path, .. } => Command::Rename {
@@ -293,12 +293,15 @@ impl PromptView {
         if !self.cursor_at_end() {
             return;
         }
-        let n = self.suggestions.len() as isize;
-        if n == 0 {
+        let count = self.suggestions.len();
+        if count == 0 {
             return;
         }
-        let i = self.suggestion_index as isize;
-        self.suggestion_index = (((i + delta) % n + n) % n) as usize;
+        // rem_euclid rather than `%`, so stepping back from the first
+        // suggestion wraps to the last instead of going negative.
+        let count = isize::try_from(count).unwrap_or(isize::MAX);
+        let index = isize::try_from(self.suggestion_index).unwrap_or(0);
+        self.suggestion_index = usize::try_from((index + delta).rem_euclid(count)).unwrap_or(0);
     }
 
     /// Whether the text cursor is at the end of the input line.
@@ -309,8 +312,7 @@ impl PromptView {
             .text_area
             .lines()
             .get(row)
-            .map(|line| line.chars().count())
-            .unwrap_or(0);
+            .map_or(0, |line| line.chars().count());
         col >= len
     }
 }
@@ -357,7 +359,7 @@ mod tests {
             name: "a.txt".to_string(),
             can_overwrite,
         });
-        Command::try_from(view.handle_key(&KeyCode::Char(key), &modifiers)).ok()
+        Command::try_from(view.handle_key(KeyCode::Char(key), modifiers)).ok()
     }
 
     fn conflict_key(can_overwrite: bool, key: char) -> Option<Command> {
@@ -369,7 +371,7 @@ mod tests {
             name: "a.txt".to_string(),
             can_overwrite,
         });
-        view.handle_key(&KeyCode::Char(key), &KeyModifiers::NONE)
+        view.handle_key(KeyCode::Char(key), KeyModifiers::NONE)
     }
 
     #[test_case('s' => Some(Command::ResolveConflict(ConflictChoice::Skip))         ; "s skips")]
@@ -475,14 +477,14 @@ mod tests {
     fn esc_returns_close_prompt() {
         Config::init_test();
         let mut view = PromptView::default();
-        let result = view.handle_key(&KeyCode::Esc, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(result, Command::CancelPrompt.into());
     }
 
     #[test]
     fn enter_with_filter_returns_set_filter() {
         let mut view = prompt_with_action(PromptAction::Filter("foo".into()));
-        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(result, Command::FilterChanged("foo".to_string()).into());
     }
 
@@ -493,7 +495,7 @@ mod tests {
             path: path.clone(),
             name: "bar.txt".into(),
         });
-        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
             result,
             Command::Rename {
@@ -522,11 +524,11 @@ mod tests {
             name: "original.txt".into(),
         });
         // Type a character to modify the text
-        view.handle_key(&KeyCode::Char('x'), &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Char('x'), KeyModifiers::NONE);
         assert_ne!(view.text_area.lines()[0], "original.txt");
 
         // Ctrl+Z resets
-        view.handle_key(&KeyCode::Char('z'), &KeyModifiers::CONTROL);
+        view.handle_key(KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(view.text_area.lines()[0], "original.txt");
         assert_eq!(view.text_area.cursor(), (0, 12));
     }
@@ -577,7 +579,7 @@ mod tests {
 
     fn type_str(view: &mut PromptView, text: &str) {
         for c in text.chars() {
-            view.handle_key(&KeyCode::Char(c), &KeyModifiers::NONE);
+            view.handle_key(KeyCode::Char(c), KeyModifiers::NONE);
         }
     }
 
@@ -600,7 +602,7 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
-        view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(view.text_area.lines()[0], "Apple/");
         assert!(view.cursor_at_end());
     }
@@ -611,11 +613,11 @@ mod tests {
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
         assert_eq!(view.suggestion_index, 0);
-        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(view.suggestion_index, 1);
-        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(view.suggestion_index, 0); // wrapped
-        view.handle_key(&KeyCode::Up, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Up, KeyModifiers::NONE);
         assert_eq!(view.suggestion_index, 1); // wrapped backwards
     }
 
@@ -625,9 +627,9 @@ mod tests {
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap"); // ["Apple", "Apricot"]
         view.text_area.move_cursor(CursorMove::Back);
-        view.handle_key(&KeyCode::Down, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(view.suggestion_index, 0);
-        view.handle_key(&KeyCode::Up, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Up, KeyModifiers::NONE);
         assert_eq!(view.suggestion_index, 0);
     }
 
@@ -638,7 +640,7 @@ mod tests {
         type_str(&mut view, "Apple");
         // Enter accepts the directory suggestion (appending `/`, like Tab)
         // and then submits, opening that directory.
-        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         let Command::Open(info) = Command::try_from(result).unwrap() else {
             panic!("expected Command::Open");
         };
@@ -654,7 +656,7 @@ mod tests {
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         view.text_area.move_cursor(CursorMove::Back);
-        view.handle_key(&KeyCode::Tab, &KeyModifiers::NONE);
+        view.handle_key(KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(view.text_area.lines()[0], "Ap");
     }
 
@@ -666,7 +668,7 @@ mod tests {
         view.text_area.move_cursor(CursorMove::Back);
         // "Ap" does not exist, so submitting the typed text (rather than the
         // hidden "Apple/" suggestion) must warn instead of opening a path.
-        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert!(matches!(
             Command::try_from(result).unwrap(),
             Command::AlertWarn(_)
@@ -678,7 +680,7 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Nope");
-        let result = view.handle_key(&KeyCode::Enter, &KeyModifiers::NONE);
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert!(matches!(
             Command::try_from(result).unwrap(),
             Command::AlertWarn(_)

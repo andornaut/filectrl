@@ -81,7 +81,7 @@ impl CommandHandler for Handlers {
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::CancelTask) => Command::CancelTask.into(),
             Some(Action::Quit) => Command::Quit.into(),

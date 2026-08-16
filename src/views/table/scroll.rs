@@ -63,22 +63,22 @@ mod tests {
 
     use super::{LineItemMap, next_page, previous_page};
 
-    fn map(heights: Vec<usize>, visible: usize, first: usize) -> LineItemMap {
+    fn map(heights: &[usize], visible: usize, first: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, first)
     }
 
     // Five single-line items in a viewport of three, so the window shows items
     // 0-2. The first press lands on the last visible item; only once the cursor
     // is already there does a press advance a whole page.
-    #[test_case(vec![1; 5], 3, 0, 4 => None ; "at the last item")]
-    #[test_case(vec![1; 5], 3, 0, 0 => Some(2) ; "jumps to the last visible item")]
-    #[test_case(vec![1; 5], 3, 0, 2 => Some(4) ; "pages once already at the last visible item")]
+    #[test_case(&[1; 5], 3, 0, 4 => None ; "at the last item")]
+    #[test_case(&[1; 5], 3, 0, 0 => Some(2) ; "jumps to the last visible item")]
+    #[test_case(&[1; 5], 3, 0, 2 => Some(4) ; "pages once already at the last visible item")]
     // Item 3 is four lines tall, taller than the viewport. Selecting it would
     // make ratatui scroll until it fits, carrying the window past the item the
     // page was measured from, so the target backs off by one.
-    #[test_case(vec![1, 1, 1, 4, 1], 3, 2, 3 => Some(2) ; "backs off when the new last item overflows")]
+    #[test_case(&[1, 1, 1, 4, 1], 3, 2, 3 => Some(2) ; "backs off when the new last item overflows")]
     fn next_page_target(
-        heights: Vec<usize>,
+        heights: &[usize],
         visible: usize,
         first: usize,
         selected: usize,
@@ -87,14 +87,14 @@ mod tests {
     }
 
     // The mirror of the above: the first press lands on the first visible item.
-    #[test_case(vec![1; 5], 3, 0, 0, 0 => None ; "at the first item")]
-    #[test_case(vec![1; 5], 3, 2, 4, 2 => Some(2) ; "jumps to the first visible item")]
-    #[test_case(vec![1; 5], 3, 2, 2, 2 => Some(0) ; "pages once already at the first visible item")]
+    #[test_case(&[1; 5], 3, 0, 0, 0 => None ; "at the first item")]
+    #[test_case(&[1; 5], 3, 2, 4, 2 => Some(2) ; "jumps to the first visible item")]
+    #[test_case(&[1; 5], 3, 2, 2, 2 => Some(0) ; "pages once already at the first visible item")]
     // Item 0 is four lines tall, so a window anchored on it would scroll past
     // the item the page was measured from; the snap moves forward instead.
-    #[test_case(vec![4, 1, 1], 3, 2, 2, 2 => Some(1) ; "advances when the new first item overflows")]
+    #[test_case(&[4, 1, 1], 3, 2, 2, 2 => Some(1) ; "advances when the new first item overflows")]
     fn previous_page_target(
-        heights: Vec<usize>,
+        heights: &[usize],
         visible: usize,
         first: usize,
         selected: usize,

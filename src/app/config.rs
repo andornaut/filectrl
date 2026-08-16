@@ -93,6 +93,9 @@ pub struct Config {
 }
 
 impl Config {
+    // An assert! here would fire in tests and in release alike, and the point
+    // of the cfg is that it must do neither.
+    #[allow(clippy::manual_assert)]
     pub fn init(config: Config) {
         if CONFIG.set(config).is_err() {
             // Tests share one global Config across parallel cases; the first
@@ -146,7 +149,7 @@ impl Config {
     pub fn load(
         env: RuntimeEnv<'_>,
         config_path: Option<PathBuf>,
-        include_paths: Vec<PathBuf>,
+        include_paths: &[PathBuf],
     ) -> Result<Self> {
         let Some(path) = config_path else {
             return Self::try_from_default_path(env, include_paths);
@@ -163,8 +166,8 @@ impl Config {
             Ok(content) => Self::parse(
                 env,
                 &content,
-                path.parent().map(|p| p.to_path_buf()),
-                &include_paths,
+                path.parent().map(std::path::Path::to_path_buf),
+                include_paths,
             ),
             Err(error) => Err(anyhow!(
                 "Failed to read config file {}: {error}",
@@ -329,6 +332,11 @@ impl Config {
             theme256: raw.theme256,
             ui: raw.ui,
         };
+        // Both themes are built, since only `theme()` decides which one is
+        // read, but the RGB warning is about how this run will actually
+        // render: an RGB entry cannot misrender on a truecolor terminal, whose
+        // `theme256` is never consulted.
+        let warn_on_rgb = !env.is_truecolor;
         config
             .theme
             .file_type
@@ -336,11 +344,11 @@ impl Config {
         config
             .theme256
             .file_type
-            .maybe_apply_ls_colors(env.ls_colors, true);
+            .maybe_apply_ls_colors(env.ls_colors, warn_on_rgb);
         Ok(config)
     }
 
-    fn try_from_default_path(env: RuntimeEnv<'_>, include_paths: Vec<PathBuf>) -> Result<Self> {
+    fn try_from_default_path(env: RuntimeEnv<'_>, include_paths: &[PathBuf]) -> Result<Self> {
         let default_path = Self::default_path()?;
         debug!(
             "Attempting to load the config from the default path: {}",
@@ -351,12 +359,12 @@ impl Config {
             Ok(content) => Self::parse(
                 env,
                 &content,
-                default_path.parent().map(|p| p.to_path_buf()),
-                &include_paths,
+                default_path.parent().map(std::path::Path::to_path_buf),
+                include_paths,
             ),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Self::parse(env, "", None, &include_paths)
+                Self::parse(env, "", None, include_paths)
             }
             Err(error) => Err(anyhow!(
                 "Failed to read config file {}: {error}",
@@ -483,9 +491,17 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
 
 /// Style properties that may appear on any style table. The embedded default
 /// omits them where they are unset (`[theme.alert]` lists only `fg`), so they
-/// are permitted everywhere rather than validated against the default's shape,
-/// which would wrongly reject a user adding `bg` there.
+/// are permitted on any table inside a theme rather than validated against the
+/// default's shape, which would wrongly reject a user adding `bg` there.
 const STYLE_KEYS: &[&str] = &["fg", "bg", "modifiers"];
+
+/// Whether `path` names somewhere inside a theme, which is the only place a
+/// style property belongs. Allowing the names everywhere would let `[ui] bg`
+/// or a bare top-level `fg` load and then be dropped by deserialization, when
+/// every other unrecognized key is an error.
+fn is_theme_path(path: &str) -> bool {
+    matches!(path.split('.').next(), Some("theme" | "theme256"))
+}
 
 /// Recursively rejects any key in `value` that is absent from the embedded
 /// default `schema`, so typo'd or unrecognized config keys fail loudly. The
@@ -500,7 +516,7 @@ fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> 
         if path.is_empty() && key == "include_files" {
             continue;
         }
-        if STYLE_KEYS.contains(&key.as_str()) {
+        if is_theme_path(path) && STYLE_KEYS.contains(&key.as_str()) {
             continue;
         }
         let key_path = if path.is_empty() {
@@ -623,20 +639,23 @@ open_directory = "alacritty --working-directory %s"
     #[test_case("not_a_key = 1", "not_a_key" ; "top-level key")]
     #[test_case("[file_system]\nbuffer_max_byte = 1\n", "file_system.buffer_max_byte" ; "nested key (dotted path)")]
     #[test_case("[keybindings]\nserach = \"/\"\n", "serach" ; "keybinding name")]
+    // A style property is only a style property inside a theme. Elsewhere it
+    // deserializes to nothing, so accepting it would drop it silently while
+    // every neighbouring typo is an error.
+    #[test_case("fg = \"#ff0000\"\n", "fg" ; "style name at the top level")]
+    #[test_case("[ui]\nbg = 42\n", "ui.bg" ; "style name in a non-theme table")]
+    #[test_case("[file_system]\nmodifiers = [\"bold\"]\n", "file_system.modifiers" ; "modifiers in a non-theme table")]
     fn unknown_key_is_rejected(toml: &str, expected: &str) {
         let err = parse_err(toml);
         assert!(err.contains(expected), "error should name the key: {err}");
     }
 
-    #[test]
-    fn style_property_absent_from_default_is_accepted() {
+    #[test_case("[theme.alert]\nbg = \"#000000\"\nmodifiers = [\"bold\"]\n" ; "nested theme table")]
+    #[test_case("[theme256.alert]\nbg = \"#000000\"\n" ; "nested theme256 table")]
+    #[test_case("[theme]\nfg = \"#ffffff\"\n" ; "theme root")]
+    fn style_property_absent_from_default_is_accepted(toml: &str) {
         // The default `[theme.alert]` lists only `fg`; adding `bg`/`modifiers`
         // must not be mistaken for an unknown key.
-        let toml = r##"
-[theme.alert]
-bg = "#000000"
-modifiers = ["bold"]
-"##;
         Config::parse(RuntimeEnv::default(), toml, None, &[]).unwrap();
     }
 
@@ -698,8 +717,8 @@ modifiers = ["bold"]
 
         // Both files have to load, separately and together: the theme is
         // includable precisely because it does not restate the config.
-        Config::load(RuntimeEnv::default(), Some(config.clone()), vec![]).unwrap();
-        Config::load(RuntimeEnv::default(), Some(config), vec![theme]).unwrap();
+        Config::load(RuntimeEnv::default(), Some(config.clone()), &[]).unwrap();
+        Config::load(RuntimeEnv::default(), Some(config), &[theme]).unwrap();
     }
 
     #[test]
@@ -746,7 +765,7 @@ modifiers = ["bold"]
 
     /// Load a config that is expected to fail, returning the error message.
     /// (`Config` is not `Debug`, so `unwrap_err` is unavailable.)
-    fn load_err(config_path: Option<PathBuf>, includes: Vec<PathBuf>) -> String {
+    fn load_err(config_path: Option<PathBuf>, includes: &[PathBuf]) -> String {
         match Config::load(RuntimeEnv::default(), config_path, includes) {
             Ok(_) => panic!("expected the load to fail"),
             Err(error) => format!("{error:#}"),
@@ -758,7 +777,7 @@ modifiers = ["bold"]
         let dir = TempDir::reserved("config_missing");
         let path = dir.join("absent.toml");
 
-        let error = load_err(Some(path.clone()), vec![]);
+        let error = load_err(Some(path.clone()), &[]);
 
         assert!(error.starts_with("Failed to read config file"), "{error}");
         assert!(error.contains(&path.display().to_string()), "{error}");
@@ -771,7 +790,7 @@ modifiers = ["bold"]
         fs::write(&config, b"").unwrap();
         let include = dir.join("absent.toml");
 
-        let error = load_err(Some(config), vec![include.clone()]);
+        let error = load_err(Some(config), std::slice::from_ref(&include));
 
         // Named as an include rather than as the config, so the user knows
         // which of the two files to go and look at.
@@ -802,7 +821,7 @@ modifiers = ["bold"]
     fn select_next_key(config: &Config, key: char) -> bool {
         config
             .keybindings
-            .normal_action(&KeyCode::Char(key), &KeyModifiers::NONE)
+            .normal_action(KeyCode::Char(key), KeyModifiers::NONE)
             == Some(Action::SelectNext)
     }
 
@@ -812,7 +831,7 @@ modifiers = ["bold"]
         let config = binds_select_next(&dir, "config.toml", 'u');
         let include = binds_select_next(&dir, "over.toml", 'e');
 
-        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![include]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[include]).unwrap();
 
         assert!(select_next_key(&merged, 'e'));
         assert!(!select_next_key(&merged, 'u'));
@@ -825,8 +844,7 @@ modifiers = ["bold"]
         let first = binds_select_next(&dir, "first.toml", 'e');
         let second = binds_select_next(&dir, "second.toml", 'i');
 
-        let merged =
-            Config::load(RuntimeEnv::default(), Some(config), vec![first, second]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[first, second]).unwrap();
 
         assert!(select_next_key(&merged, 'i'));
     }
@@ -846,7 +864,7 @@ modifiers = ["bold"]
         )
         .unwrap();
 
-        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
         assert!(select_next_key(&merged, 'e'));
     }
@@ -863,7 +881,7 @@ modifiers = ["bold"]
         )
         .unwrap();
 
-        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![cli]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[cli]).unwrap();
 
         assert!(select_next_key(&merged, 'i'));
     }
@@ -874,7 +892,7 @@ modifiers = ["bold"]
         let config = dir.join("other.toml");
         fs::write(&config, b"[keybindings]\nselect_previous = \"e\"\n").unwrap();
 
-        let merged = Config::load(RuntimeEnv::default(), Some(config), vec![]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
         // Only the built-in defaults sit under it, so `select_next` keeps `j`.
         assert!(select_next_key(&merged, 'j'));
@@ -882,7 +900,7 @@ modifiers = ["bold"]
             Some(Action::SelectPrevious),
             merged
                 .keybindings
-                .normal_action(&KeyCode::Char('e'), &KeyModifiers::NONE)
+                .normal_action(KeyCode::Char('e'), KeyModifiers::NONE)
         );
     }
 
@@ -902,7 +920,7 @@ modifiers = ["bold"]
         .unwrap();
         fs::write(&b, format!("include_files = [\"{}\"]\n", a.display())).unwrap();
 
-        let merged = Config::load(RuntimeEnv::default(), Some(a), vec![]).unwrap();
+        let merged = Config::load(RuntimeEnv::default(), Some(a), &[]).unwrap();
 
         assert!(select_next_key(&merged, 'e'));
     }

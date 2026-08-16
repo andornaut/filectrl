@@ -94,7 +94,7 @@ impl App {
         must_not_contain_unhandled(&remaining)?;
         self.render()?;
 
-        spawn_command_sender(self.tx.clone());
+        spawn_command_sender(&self.tx);
         // Answers termination signals when the reader thread cannot, which is
         // the case whenever the terminal itself is what went away.
         spawn_signal_watcher(self.tx.clone());
@@ -139,7 +139,7 @@ impl App {
             for cmd in pending {
                 let mut derived = Vec::new();
                 let handled =
-                    recursively_handle_command(&mut derived, &cmd, &mode, &mut self.handlers);
+                    recursively_handle_command(&mut derived, &cmd, mode, &mut self.handlers);
                 if handled {
                     // Only derived commands (HandledWith) continue to the next cycle.
                     next_pending.append(&mut derived);
@@ -184,20 +184,20 @@ impl App {
 fn recursively_handle_command(
     derived: &mut Vec<Command>,
     command: &Command,
-    mode: &InputMode,
+    mode: InputMode,
     handler: &mut dyn CommandHandler,
 ) -> bool {
     let result = match command {
         Command::Key(code, modifiers) => {
             if handler.should_handle_key(mode) {
-                handler.handle_key(code, modifiers)
+                handler.handle_key(*code, *modifiers)
             } else {
                 CommandResult::NotHandled
             }
         }
         Command::Mouse(mouse_event) => {
-            if handler.should_handle_mouse(mouse_event) {
-                handler.handle_mouse(mouse_event)
+            if handler.should_handle_mouse(*mouse_event) {
+                handler.handle_mouse(*mouse_event)
             } else {
                 CommandResult::NotHandled
             }
@@ -205,7 +205,7 @@ fn recursively_handle_command(
         _ => handler.handle_command(command),
     };
 
-    let mut handled = !matches!(result, CommandResult::NotHandled);
+    let mut claimed = !matches!(result, CommandResult::NotHandled);
     // Sibling commands are queued for the same next cycle, so deriving
     // several does not lengthen the chain.
     derived.extend(result.into_commands());
@@ -218,19 +218,19 @@ fn recursively_handle_command(
     // and short-circuiting would make that depend on sibling order. Non-key
     // commands are always broadcast to every handler.
     let is_key = matches!(command, Command::Key(_, _));
-    let mut key_consumed = is_key && handled;
+    let mut key_consumed = is_key && claimed;
     handler.visit_command_handlers(&mut |child| {
         if key_consumed {
             return;
         }
         let child_handled = recursively_handle_command(derived, command, mode, child);
-        handled |= child_handled;
+        claimed |= child_handled;
         if is_key && child_handled {
             key_consumed = true;
         }
     });
 
-    handled
+    claimed
 }
 
 // Terminal events that may go unhandled without error:
@@ -337,7 +337,7 @@ mod tests {
             }
         }
 
-        fn handle_key(&mut self, _code: &KeyCode, _modifiers: &KeyModifiers) -> CommandResult {
+        fn handle_key(&mut self, _code: KeyCode, _modifiers: KeyModifiers) -> CommandResult {
             self.log.borrow_mut().push(self.name);
             if self.consume_key {
                 CommandResult::Handled
@@ -370,7 +370,7 @@ mod tests {
         let handled = recursively_handle_command(
             &mut derived,
             &Command::Key(KeyCode::Char('x'), KeyModifiers::NONE),
-            &InputMode::Normal,
+            InputMode::Normal,
             &mut root,
         );
 
@@ -389,7 +389,7 @@ mod tests {
         let handled = recursively_handle_command(
             &mut derived,
             &Command::SearchTick,
-            &InputMode::Normal,
+            InputMode::Normal,
             &mut root,
         );
 
@@ -407,7 +407,7 @@ mod tests {
         let handled = recursively_handle_command(
             &mut derived,
             &Command::SearchTick,
-            &InputMode::Normal,
+            InputMode::Normal,
             &mut root,
         );
 
@@ -425,7 +425,7 @@ mod tests {
         let handled = recursively_handle_command(
             &mut derived,
             &Command::SearchTick,
-            &InputMode::Normal,
+            InputMode::Normal,
             &mut root,
         );
 
@@ -437,7 +437,7 @@ mod tests {
     fn maybe_from_maps_terminal_events() {
         assert_eq!(
             Some(Command::Key(KeyCode::Char('a'), KeyModifiers::CONTROL)),
-            Command::maybe_from(Event::Key(KeyEvent::new(
+            Command::maybe_from(&Event::Key(KeyEvent::new(
                 KeyCode::Char('a'),
                 KeyModifiers::CONTROL
             )))
@@ -447,18 +447,20 @@ mod tests {
                 width: 10,
                 height: 20
             }),
-            Command::maybe_from(Event::Resize(10, 20))
+            Command::maybe_from(&Event::Resize(10, 20))
         );
         assert!(matches!(
-            Command::maybe_from(Event::Mouse(mouse(MouseEventKind::Down(MouseButton::Left)))),
+            Command::maybe_from(&Event::Mouse(mouse(MouseEventKind::Down(
+                MouseButton::Left
+            )))),
             Some(Command::Mouse(_))
         ));
         // Moved is suppressed; non-terminal events are ignored.
         assert_eq!(
             None,
-            Command::maybe_from(Event::Mouse(mouse(MouseEventKind::Moved)))
+            Command::maybe_from(&Event::Mouse(mouse(MouseEventKind::Moved)))
         );
-        assert_eq!(None, Command::maybe_from(Event::FocusGained));
+        assert_eq!(None, Command::maybe_from(&Event::FocusGained));
     }
 
     #[test]

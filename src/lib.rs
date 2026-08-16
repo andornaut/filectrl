@@ -8,7 +8,7 @@ mod views;
 use std::{
     env,
     io::{IsTerminal, Write, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -26,8 +26,8 @@ const MODULE_PREFIX: &str = concat!(env!("CARGO_PKG_NAME"), "::");
 
 pub fn run(
     config_path: Option<PathBuf>,
-    include_paths: Vec<PathBuf>,
-    initial_directory: Option<PathBuf>,
+    include_paths: &[PathBuf],
+    initial_directory: Option<&Path>,
     no_truecolor: bool,
 ) -> Result<()> {
     // Configure logging with a default level before loading config, so that Info+ messages from the
@@ -56,7 +56,7 @@ pub fn run(
     // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP
     // cause a graceful shutdown (terminal restored) rather than leaving the
     // shell in a broken state.
-    install_signal_handlers()?;
+    install_signal_handlers().context("Failed to install the signal handlers")?;
 
     // Checked after everything the user typed has been validated, so that a bad
     // argument or config is reported before the environment is. Crossterm opens
@@ -69,7 +69,7 @@ pub fn run(
     App::new(terminal).run(initial_directory)
 }
 
-pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBuf>) -> Result<()> {
+pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: &[PathBuf]) -> Result<()> {
     configure_logging();
     let config = Config::load(RuntimeEnv::default(), config_path, include_paths)?;
     let bold = std::io::stdout().is_terminal();
@@ -80,7 +80,7 @@ pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: Vec<PathBu
     Ok(())
 }
 
-fn validate_initial_directory(path: PathBuf) -> Result<PathBuf> {
+fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
     if path.as_os_str().is_empty() {
         return Err(anyhow!("Cannot open an empty path"));
     }
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn validate_initial_directory_accepts_a_directory() {
         let dir = env::temp_dir();
-        let result = validate_initial_directory(dir.clone()).unwrap();
+        let result = validate_initial_directory(&dir).unwrap();
         assert_eq!(result, dir.canonicalize().unwrap());
     }
 
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn validate_initial_directory_rejects_a_nonexistent_path() {
         let path = env::temp_dir().join("filectrl-does-not-exist-xyz");
-        let error = validate_initial_directory(path).unwrap_err().to_string();
+        let error = validate_initial_directory(&path).unwrap_err().to_string();
         assert!(error.starts_with("Failed to open "), "{error}");
     }
 
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn validate_initial_directory_rejects_a_regular_file() {
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-        let error = validate_initial_directory(file).unwrap_err().to_string();
+        let error = validate_initial_directory(&file).unwrap_err().to_string();
         assert!(error.starts_with("Cannot open "), "{error}");
         assert!(error.ends_with(": not a directory"), "{error}");
     }
@@ -169,7 +169,7 @@ mod tests {
     /// against a path that renders as nothing at all.
     #[test]
     fn validate_initial_directory_rejects_an_empty_path() {
-        let error = validate_initial_directory(PathBuf::new())
+        let error = validate_initial_directory(&PathBuf::new())
             .unwrap_err()
             .to_string();
         assert_eq!("Cannot open an empty path", error);

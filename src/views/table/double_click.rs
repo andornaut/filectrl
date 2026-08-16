@@ -14,7 +14,7 @@ impl Default for DoubleClick {
         Self {
             last_path: None,
             start: None,
-            threshold: Duration::from_millis(ms as u64),
+            threshold: Duration::from_millis(u64::from(ms)),
         }
     }
 }

@@ -11,7 +11,7 @@ pub(super) struct LineItemMap {
 
 impl LineItemMap {
     pub(super) fn new(
-        item_heights: Vec<usize>,
+        item_heights: &[usize],
         visible_lines_count: usize,
         first_visible_item: usize,
     ) -> Self {
@@ -23,8 +23,8 @@ impl LineItemMap {
         }
         Self {
             first_visible_item,
-            lines_to_items,
             visible_lines_count,
+            lines_to_items,
             item_first_lines,
         }
     }
@@ -59,10 +59,10 @@ impl LineItemMap {
     }
 
     pub(super) fn last_line(&self, item: usize) -> usize {
-        self.item_first_lines
-            .get(item + 1)
-            .map(|&next_first| next_first - 1)
-            .unwrap_or_else(|| self.total_lines_count().saturating_sub(1))
+        self.item_first_lines.get(item + 1).map_or_else(
+            || self.total_lines_count().saturating_sub(1),
+            |&next_first| next_first - 1,
+        )
     }
 
     pub(super) fn first_visible_line(&self) -> usize {
@@ -102,24 +102,24 @@ mod tests {
 
     use super::*;
 
-    fn map(heights: Vec<usize>, visible: usize) -> LineItemMap {
+    fn map(heights: &[usize], visible: usize) -> LineItemMap {
         LineItemMap::new(heights, visible, 0)
     }
 
     // Every line of a wrapped row belongs to the one item that row renders.
     // heights [2, 1, 3]: item 0 owns lines 0-1, item 1 line 2, item 2 lines 3-5.
-    #[test_case(vec![1, 1, 1], 0 => 0 ; "single-line item")]
-    #[test_case(vec![1, 1, 1], 2 => 2 ; "the last single-line item")]
-    #[test_case(vec![2, 1, 3], 1 => 0 ; "the second line of a wrapped row")]
-    #[test_case(vec![2, 1, 3], 2 => 1 ; "the row after a wrapped one")]
-    #[test_case(vec![2, 1, 3], 5 => 2 ; "the last line of a trailing wrapped row")]
-    fn item_owns_every_line_of_its_row(heights: Vec<usize>, line: usize) -> usize {
+    #[test_case(&[1, 1, 1], 0 => 0 ; "single-line item")]
+    #[test_case(&[1, 1, 1], 2 => 2 ; "the last single-line item")]
+    #[test_case(&[2, 1, 3], 1 => 0 ; "the second line of a wrapped row")]
+    #[test_case(&[2, 1, 3], 2 => 1 ; "the row after a wrapped one")]
+    #[test_case(&[2, 1, 3], 5 => 2 ; "the last line of a trailing wrapped row")]
+    fn item_owns_every_line_of_its_row(heights: &[usize], line: usize) -> usize {
         map(heights, 6).item(line)
     }
 
-    #[test_case(vec![1, 1, 1] => 3 ; "one line per item")]
-    #[test_case(vec![2, 1, 3] => 6 ; "wrapped rows are counted in full")]
-    fn total_lines_count_sums_the_heights(heights: Vec<usize>) -> usize {
+    #[test_case(&[1, 1, 1] => 3 ; "one line per item")]
+    #[test_case(&[2, 1, 3] => 6 ; "wrapped rows are counted in full")]
+    fn total_lines_count_sums_the_heights(heights: &[usize]) -> usize {
         map(heights, 6).total_lines_count()
     }
 
@@ -129,24 +129,24 @@ mod tests {
     #[test_case(1 => (2, 2) ; "a single-line row")]
     #[test_case(2 => (3, 5) ; "the trailing row, whose end falls back to the total")]
     fn first_and_last_line_bound_each_row(item: usize) -> (usize, usize) {
-        let m = map(vec![2, 1, 3], 6);
+        let m = map(&[2, 1, 3], 6);
         (m.first_line(item), m.last_line(item))
     }
 
     #[test]
     fn last_line_of_a_lone_wrapped_item_is_the_final_line() {
-        assert_eq!(3, map(vec![4], 3).last_line(0));
+        assert_eq!(3, map(&[4], 3).last_line(0));
     }
 
     // Returns an item, not a line. heights [1, 1, 3, 1, 1]: item 2 spans lines
     // 2-4, so a line inside it snaps forward to item 3 rather than pinning the
     // wrapped row to the top, which would leave the trailing items unreachable.
-    #[test_case(vec![1, 1, 3, 1, 1], 0 => 0 ; "a line already at a row start")]
-    #[test_case(vec![1, 1, 3, 1, 1], 2 => 2 ; "the first line of a wrapped row")]
-    #[test_case(vec![1, 1, 3, 1, 1], 3 => 3 ; "inside a wrapped row snaps to the next")]
-    #[test_case(vec![1, 1, 3, 1, 1], 4 => 3 ; "the last line of a wrapped row")]
-    #[test_case(vec![1, 5], 3 => 1 ; "past the last row start clamps to the last item")]
-    fn snap_to_item_start(heights: Vec<usize>, line: usize) -> usize {
+    #[test_case(&[1, 1, 3, 1, 1], 0 => 0 ; "a line already at a row start")]
+    #[test_case(&[1, 1, 3, 1, 1], 2 => 2 ; "the first line of a wrapped row")]
+    #[test_case(&[1, 1, 3, 1, 1], 3 => 3 ; "inside a wrapped row snaps to the next")]
+    #[test_case(&[1, 1, 3, 1, 1], 4 => 3 ; "the last line of a wrapped row")]
+    #[test_case(&[1, 5], 3 => 1 ; "past the last row start clamps to the last item")]
+    fn snap_to_item_start(heights: &[usize], line: usize) -> usize {
         map(heights, 3).snap_to_item_start(line)
     }
 
@@ -154,13 +154,13 @@ mod tests {
     #[test_case(3, 4 => 2 ; "a full viewport ending at line 4 starts at 2")]
     #[test_case(10, 2 => 0 ; "a viewport taller than the content starts at 0")]
     fn first_visible_line_ending_at(visible: usize, last_line: usize) -> usize {
-        map(vec![1; 5], visible).first_visible_line_ending_at(last_line)
+        map(&[1; 5], visible).first_visible_line_ending_at(last_line)
     }
 
-    #[test_case(vec![1; 5], 3, 1 => 3 ; "a full viewport starting at line 1 ends at 3")]
-    #[test_case(vec![1, 1, 1], 10, 0 => 2 ; "a viewport taller than the content clamps to the last line")]
+    #[test_case(&[1; 5], 3, 1 => 3 ; "a full viewport starting at line 1 ends at 3")]
+    #[test_case(&[1, 1, 1], 10, 0 => 2 ; "a viewport taller than the content clamps to the last line")]
     fn last_visible_line_starting_at(
-        heights: Vec<usize>,
+        heights: &[usize],
         visible: usize,
         first_line: usize,
     ) -> usize {

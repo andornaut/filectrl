@@ -5,13 +5,16 @@ use ratatui::{
 };
 
 use super::NoticesView;
-use crate::{app::config::Config, views::View};
+use crate::{
+    app::config::Config,
+    views::{View, as_dimension},
+};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect) -> Constraint {
         // Read the cached list (rebuilt by the command handler on state change)
         // rather than rebuilding it here; this runs before `render` each frame.
-        Constraint::Length(self.notices.len() as u16)
+        Constraint::Length(as_dimension(self.notices.len()))
     }
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {

@@ -117,10 +117,10 @@ pub(super) fn spawn_argv(
     command_tx: Sender<Command>,
 ) -> Result<()> {
     info!("Opening {label:?} using: {argv:?}");
-    let Some((program, args)) = argv.split_first() else {
+    let Some((program, rest)) = argv.split_first() else {
         return Ok(());
     };
-    let mut command = detached_command(program, args);
+    let mut command = detached_command(program, rest);
     if let Some(working_dir) = working_dir {
         // A desktop entry's `Path=` key names the directory to run in. Check it
         // here so a stale one is reported as what it is: `spawn` would fail
@@ -170,7 +170,7 @@ fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Send
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let p = path.as_path();
-    info!("Changing mode of {p:?} to {mode:o}");
+    info!("Changing mode of {} to {mode:o}", p.display());
     let permissions = fs::Permissions::from_mode(mode);
     fs::set_permissions(p, permissions)?;
     Ok(())
@@ -188,7 +188,11 @@ pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<
     if link.symlink_metadata().is_ok() {
         return Err(anyhow!("A bookmark named {name:?} already exists"));
     }
-    info!("Creating bookmark {link:?} -> {:?}", target.path);
+    info!(
+        "Creating bookmark {} -> {}",
+        link.display(),
+        target.path.display()
+    );
     std::os::unix::fs::symlink(&target.path, &link)?;
     Ok(())
 }
@@ -196,7 +200,7 @@ pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<
 pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
     validate_basename("Directory name", name)?;
     let path = parent.as_path().join(name);
-    info!("Creating directory {path:?}");
+    info!("Creating directory {}", path.display());
     fs::create_dir(&path)?;
     Ok(())
 }
@@ -225,7 +229,7 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     validate_basename("New name", new_basename)?;
     let old_path = path.as_path();
     let new_path = join_parent(old_path, new_basename);
-    info!("Renaming {old_path:?} to {new_path:?}");
+    info!("Renaming {} to {}", old_path.display(), new_path.display());
     if old_path != new_path {
         // Diagnose a vanished source up front; otherwise an existing
         // destination would be misreported as the problem. Only NotFound

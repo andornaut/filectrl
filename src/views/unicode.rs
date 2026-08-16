@@ -8,7 +8,7 @@ pub(super) fn pluralize_items(count: usize) -> String {
     if count == 1 {
         "1 item".into()
     } else {
-        format!("{} items", count)
+        format!("{count} items")
     }
 }
 
@@ -85,10 +85,10 @@ mod tests {
 
     // ── split_with_ellipsis ───────────────────────────────────────────────────
 
-    #[test_case(vec!["example"],              "example", 7; "fits unchanged at exact width")]
-    #[test_case(vec!["examp…", "le"],         "example", 6; "two parts at width minus 1")]
-    #[test_case(vec!["exa…", "mpl…", "e"],   "example", 4; "three parts")]
-    fn split_with_ellipsis_ascii(expected: Vec<&str>, text: &str, width: usize) {
+    #[test_case(&["example"],              "example", 7; "fits unchanged at exact width")]
+    #[test_case(&["examp…", "le"],         "example", 6; "two parts at width minus 1")]
+    #[test_case(&["exa…", "mpl…", "e"],   "example", 4; "three parts")]
+    fn split_with_ellipsis_ascii(expected: &[&str], text: &str, width: usize) {
         assert_eq!(expected, split_with_ellipsis(text, width));
     }
 

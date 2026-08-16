@@ -13,11 +13,11 @@ pub(super) struct Marks {
 impl Marks {
     /// Toggle a mark on `item`. Returns true if the item is now marked.
     pub(super) fn toggle(&mut self, item: usize) -> bool {
-        if !self.set.remove(&item) {
+        if self.set.remove(&item) {
+            false
+        } else {
             self.set.insert(item);
             true
-        } else {
-            false
         }
     }
 
@@ -69,8 +69,8 @@ impl Marks {
         self.set.iter()
     }
 
-    pub(super) fn contains(&self, item: &usize) -> bool {
-        self.set.contains(item)
+    pub(super) fn contains(&self, item: usize) -> bool {
+        self.set.contains(&item)
     }
 }
 
@@ -138,9 +138,9 @@ mod tests {
     fn toggle_adds_and_removes() {
         let mut marks = Marks::default();
         assert!(marks.toggle(3));
-        assert!(marks.contains(&3));
+        assert!(marks.contains(3));
         assert!(!marks.toggle(3));
-        assert!(!marks.contains(&3));
+        assert!(!marks.contains(3));
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
         let mut marks = Marks::default();
         assert!(marks.enter_range(2));
         assert!(marks.in_range_mode());
-        assert!(marks.contains(&2));
+        assert!(marks.contains(2));
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod tests {
         marks.update_range(5);
         assert_eq!(marks.len(), 4);
         for i in 2..=5 {
-            assert!(marks.contains(&i));
+            assert!(marks.contains(i));
         }
     }
 
@@ -176,8 +176,8 @@ mod tests {
         marks.toggle(1);
         marks.update_range(9);
         assert_eq!(marks.len(), 1);
-        assert!(marks.contains(&1));
-        assert!(!marks.contains(&9));
+        assert!(marks.contains(1));
+        assert!(!marks.contains(9));
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
         marks.update_range(2);
         assert_eq!(marks.len(), 4);
         for i in 2..=5 {
-            assert!(marks.contains(&i));
+            assert!(marks.contains(i));
         }
     }
 
@@ -198,9 +198,9 @@ mod tests {
         marks.update_range(5);
         marks.update_range(3);
         assert_eq!(marks.len(), 2);
-        assert!(marks.contains(&2));
-        assert!(marks.contains(&3));
-        assert!(!marks.contains(&4));
+        assert!(marks.contains(2));
+        assert!(marks.contains(3));
+        assert!(!marks.contains(4));
     }
 
     #[test]

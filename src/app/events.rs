@@ -219,7 +219,7 @@ fn watch_signal_pipe(tx: &Sender<Command>, read_fd: BorrowedFd<'_>) {
             // SA_RESTART covers our own handlers, so this is only reachable for
             // a signal installed elsewhere. Resume the wait rather than
             // treating it as a shutdown.
-            Err(Errno::EINTR) => continue,
+            Err(Errno::EINTR) => (),
             Err(err) => {
                 log::error!("Failed to read the signal self-pipe: {err}");
                 return;
@@ -231,7 +231,7 @@ fn watch_signal_pipe(tx: &Sender<Command>, read_fd: BorrowedFd<'_>) {
     let _ = tx.send(Command::Quit);
 }
 
-pub(super) fn spawn_command_sender(tx: Sender<Command>) {
+pub(super) fn spawn_command_sender(tx: &Sender<Command>) {
     // Only the wait for terminal input, so it does not affect how quickly a
     // keystroke is handled. The timeout exists so the signal flag is checked at
     // all, which matters only when no watcher thread is running.
@@ -306,7 +306,7 @@ fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, sou
             }
         };
 
-        if let Some(command) = Command::maybe_from(event) {
+        if let Some(command) = Command::maybe_from(&event) {
             // A dropped receiver means App is shutting down. Exit cleanly
             // rather than panicking on a late keystroke during teardown.
             if tx.send(command).is_err() {

@@ -228,21 +228,21 @@ impl KeyBindings {
     }
 
     /// Look up an action for a key press in normal mode.
-    pub fn normal_action(&self, code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
+    pub fn normal_action(&self, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
         Self::lookup(&self.normal, code, modifiers)
     }
 
     /// Look up an action for a key press in prompt mode.
-    pub fn prompt_action(&self, code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
+    pub fn prompt_action(&self, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
         Self::lookup(&self.prompt, code, modifiers)
     }
 
     fn lookup(
         map: &HashMap<KeyCombo, Action>,
-        code: &KeyCode,
-        modifiers: &KeyModifiers,
+        code: KeyCode,
+        modifiers: KeyModifiers,
     ) -> Option<Action> {
-        let combo = KeyCombo::new(*code, *modifiers);
+        let combo = KeyCombo::new(code, modifiers);
         if let Some(action) = map.get(&combo) {
             return Some(*action);
         }
@@ -250,8 +250,8 @@ impl KeyBindings {
         if let KeyCode::Char(c) = code
             && c.is_uppercase()
         {
-            let toggled = *modifiers ^ KeyModifiers::SHIFT;
-            return map.get(&KeyCombo::new(*code, toggled)).copied();
+            let toggled = modifiers ^ KeyModifiers::SHIFT;
+            return map.get(&KeyCombo::new(code, toggled)).copied();
         }
         None
     }
@@ -362,8 +362,8 @@ fn hardcoded_keys(action: Action) -> &'static [KeyCombo] {
 /// bindings. Returns `None` if the key combo is not hardcoded in normal mode.
 /// Prompt-mode hardcoded keys (e.g. Tab) are excluded so they cannot shadow
 /// configurable normal-mode bindings such as the default `goto = "Tab"`.
-pub fn hardcoded_normal_action(code: &KeyCode, modifiers: &KeyModifiers) -> Option<Action> {
-    let combo = KeyCombo::new(*code, *modifiers);
+pub fn hardcoded_normal_action(code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
+    let combo = KeyCombo::new(code, modifiers);
     for (action, keys) in HARDCODED_NORMAL {
         if keys.contains(&combo) {
             return Some(*action);
@@ -759,7 +759,7 @@ mod tests {
         );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("j"), "Error should mention the key: {err}");
+        assert!(err.contains('j'), "Error should mention the key: {err}");
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            kb.normal_action(&KeyCode::Down, &KeyModifiers::NONE),
+            kb.normal_action(KeyCode::Down, KeyModifiers::NONE),
             Some(Action::SelectNext)
         );
     }
@@ -805,12 +805,12 @@ mod tests {
         .unwrap();
         // 'x' should now be Quit
         assert_eq!(
-            kb.normal_action(&KeyCode::Char('x'), &KeyModifiers::NONE),
+            kb.normal_action(KeyCode::Char('x'), KeyModifiers::NONE),
             Some(Action::Quit)
         );
         // 'q' should no longer be Quit (overridden)
         assert_eq!(
-            kb.normal_action(&KeyCode::Char('q'), &KeyModifiers::NONE),
+            kb.normal_action(KeyCode::Char('q'), KeyModifiers::NONE),
             None
         );
     }
@@ -855,7 +855,7 @@ mod tests {
         let kb = default_keybindings();
         // SelectLast is bound to "G", so this is Char('G') + SHIFT in the map.
         assert_eq!(
-            kb.normal_action(&KeyCode::Char('G'), &KeyModifiers::NONE),
+            kb.normal_action(KeyCode::Char('G'), KeyModifiers::NONE),
             Some(Action::SelectLast)
         );
     }
@@ -865,7 +865,7 @@ mod tests {
         let kb = default_keybindings();
         // RangeMark is bound to "V", which parses to Char('V') + SHIFT.
         assert_eq!(
-            kb.normal_action(&KeyCode::Char('V'), &KeyModifiers::SHIFT),
+            kb.normal_action(KeyCode::Char('V'), KeyModifiers::SHIFT),
             Some(Action::RangeMark)
         );
     }
@@ -879,23 +879,23 @@ mod tests {
         let kb = default_keybindings();
         assert_eq!(
             Some(Action::ResetView),
-            kb.normal_action(&KeyCode::Esc, &KeyModifiers::NONE)
+            kb.normal_action(KeyCode::Esc, KeyModifiers::NONE)
         );
         assert_eq!(
             Some(Action::PromptCancel),
-            kb.prompt_action(&KeyCode::Esc, &KeyModifiers::NONE)
+            kb.prompt_action(KeyCode::Esc, KeyModifiers::NONE)
         );
         assert_eq!(
             Some(Action::PromptAcceptSuggestion),
-            kb.prompt_action(&KeyCode::Tab, &KeyModifiers::NONE)
+            kb.prompt_action(KeyCode::Tab, KeyModifiers::NONE)
         );
         assert_eq!(
             Some(Action::PromptNextSuggestion),
-            kb.prompt_action(&KeyCode::Down, &KeyModifiers::NONE)
+            kb.prompt_action(KeyCode::Down, KeyModifiers::NONE)
         );
         assert_eq!(
             Some(Action::PromptPreviousSuggestion),
-            kb.prompt_action(&KeyCode::Up, &KeyModifiers::NONE)
+            kb.prompt_action(KeyCode::Up, KeyModifiers::NONE)
         );
     }
 
@@ -904,12 +904,12 @@ mod tests {
         // Tab is hardcoded only in prompt mode, so it must not shadow the
         // configurable normal-mode binding (default: goto = [":", "Tab"]).
         assert_eq!(
-            hardcoded_normal_action(&KeyCode::Tab, &KeyModifiers::NONE),
+            hardcoded_normal_action(KeyCode::Tab, KeyModifiers::NONE),
             None
         );
         let kb = default_keybindings();
         assert_eq!(
-            kb.normal_action(&KeyCode::Tab, &KeyModifiers::NONE),
+            kb.normal_action(KeyCode::Tab, KeyModifiers::NONE),
             Some(Action::Goto)
         );
     }
@@ -932,11 +932,11 @@ mod tests {
     fn prompt_action_lookup() {
         let kb = default_keybindings();
         assert_eq!(
-            kb.prompt_action(&KeyCode::Enter, &KeyModifiers::NONE),
+            kb.prompt_action(KeyCode::Enter, KeyModifiers::NONE),
             Some(Action::PromptSubmit)
         );
         assert_eq!(
-            kb.prompt_action(&KeyCode::Char('z'), &KeyModifiers::CONTROL),
+            kb.prompt_action(KeyCode::Char('z'), KeyModifiers::CONTROL),
             Some(Action::PromptReset)
         );
     }

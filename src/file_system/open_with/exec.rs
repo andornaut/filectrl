@@ -2,7 +2,7 @@
 //!
 //! <https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html>
 
-use std::{ffi::OsString, os::unix::ffi::OsStrExt, path::Path};
+use std::{ffi::OsString, fmt::Write as _, os::unix::ffi::OsStrExt, path::Path};
 
 use anyhow::{Result, anyhow};
 
@@ -120,9 +120,13 @@ pub(super) fn file_uri(path: &Path) -> String {
     for &byte in path.as_os_str().as_bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                uri.push(byte as char)
+                uri.push(byte as char);
             }
-            _ => uri.push_str(&format!("%{byte:02X}")),
+            // Writing into the string rather than formatting a new one per byte.
+            // Writing to a String is infallible, so the Result cannot be an error.
+            _ => {
+                let _ = write!(uri, "%{byte:02X}");
+            }
         }
     }
     uri
@@ -146,12 +150,13 @@ fn unescape_value(value: &str) -> String {
             Some('n') => unescaped.push('\n'),
             Some('t') => unescaped.push('\t'),
             Some('r') => unescaped.push('\r'),
-            Some('\\') => unescaped.push('\\'),
+            // An escaped backslash, and a trailing one at the end of the
+            // value, both yield a single backslash.
+            Some('\\') | None => unescaped.push('\\'),
             Some(other) => {
                 unescaped.push('\\');
                 unescaped.push(other);
             }
-            None => unescaped.push('\\'),
         }
     }
     unescaped

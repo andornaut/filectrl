@@ -19,7 +19,7 @@ impl TableView {
         Command::OpenPrompt(PromptAction::Delete(count)).into()
     }
 
-    pub(super) fn navigate_to_home_directory(&mut self) -> CommandResult {
+    pub(super) fn navigate_to_home_directory() -> CommandResult {
         match directories::BaseDirs::new() {
             Some(base_dirs) => match PathInfo::try_from(base_dirs.home_dir()) {
                 Ok(path) => Command::Open(path).into(),
@@ -61,7 +61,7 @@ impl TableView {
         .into()
     }
 
-    pub(super) fn open_create_directory_prompt(&self) -> CommandResult {
+    pub(super) fn open_create_directory_prompt() -> CommandResult {
         Command::OpenPrompt(PromptAction::CreateDirectory).into()
     }
 
@@ -101,11 +101,11 @@ impl TableView {
         }
     }
 
-    pub(super) fn get_bookmarks(&self) -> CommandResult {
+    pub(super) fn get_bookmarks() -> CommandResult {
         Command::GetBookmarks.into()
     }
 
-    pub(super) fn open_search_prompt(&self) -> CommandResult {
+    pub(super) fn open_search_prompt() -> CommandResult {
         Command::OpenPrompt(PromptAction::Search(String::new())).into()
     }
 

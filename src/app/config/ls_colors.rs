@@ -1,5 +1,9 @@
 use ratatui::style::{Color, Modifier};
 
+// "08" is listed with an empty body on purpose: the table runs in code order,
+// and a silent gap between 07 and 09 would read as an oversight rather than as
+// a code that is recognised and deliberately unsupported.
+#[allow(clippy::match_same_arms)]
 pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     let mut fg: Option<Color> = None;
     let mut bg: Option<Color> = None;

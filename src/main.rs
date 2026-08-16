@@ -7,6 +7,9 @@ use filectrl::{app::config::Config, print_keybindings, run};
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help", "help"))]
+// Every bool here is an `#[argh(switch)]`, so the count is the number of
+// command-line flags rather than state that a richer type could model.
+#[allow(clippy::struct_excessive_bools)]
 /// FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 struct Args {
     /// path to a configuration file
@@ -102,12 +105,12 @@ impl Action {
 
 fn main() -> ExitCode {
     let args: Args = argh::from_env();
-    match dispatch(args) {
+    match dispatch(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             match error.downcast_ref::<UsageError>() {
                 Some(usage) => {
-                    eprintln!("{usage}\n\nRun filectrl --help for more information.")
+                    eprintln!("{usage}\n\nRun filectrl --help for more information.");
                 }
                 // `{error:#}` flattens the cause chain onto one line, so a
                 // failure here reads the same as the alert the app would show
@@ -119,8 +122,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn dispatch(args: Args) -> Result<()> {
-    let action = selected_action(&args)?;
+fn dispatch(args: &Args) -> Result<()> {
+    let action = selected_action(args)?;
     let config = args.config.as_deref().map(PathBuf::from);
     let include: Vec<PathBuf> = args.include.iter().map(PathBuf::from).collect();
 
@@ -129,17 +132,19 @@ fn dispatch(args: Args) -> Result<()> {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(Action::PrintKeybindings) => print_keybindings(config, include),
+        Some(Action::PrintKeybindings) => print_keybindings(config, &include),
         Some(Action::WriteDefaultConfig) => {
-            report_written(&Config::write_default(config, args.force)?)
+            report_written(&Config::write_default(config, args.force)?);
+            Ok(())
         }
         Some(Action::WriteDefaultThemes) => {
-            report_written(&Config::write_default_themes(config, args.force)?)
+            report_written(&Config::write_default_themes(config, args.force)?);
+            Ok(())
         }
         None => run(
             config,
-            include,
-            args.directory.as_deref().map(PathBuf::from),
+            &include,
+            args.directory.as_deref().map(PathBuf::from).as_deref(),
             args.no_truecolor,
         ),
     }
@@ -148,9 +153,8 @@ fn dispatch(args: Args) -> Result<()> {
 /// Names the file on stdout, resolved rather than as it was written, because
 /// the config directory follows `$XDG_CONFIG_HOME` and need not be the
 /// `~/.config` path the documentation names.
-fn report_written(path: &std::path::Path) -> Result<()> {
+fn report_written(path: &std::path::Path) {
     println!("Wrote {}", path.display());
-    Ok(())
 }
 
 fn selected_action(args: &Args) -> Result<Option<Action>> {

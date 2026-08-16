@@ -65,8 +65,8 @@ impl Columns {
         self.name_width
     }
 
-    pub(super) fn sort_column(&self) -> &SortColumn {
-        &self.sort_column
+    pub(super) fn sort_column(&self) -> SortColumn {
+        self.sort_column
     }
 
     pub(super) fn sort_column_for_click(&self, x: u16) -> Option<SortColumn> {
@@ -81,8 +81,8 @@ impl Columns {
         }
     }
 
-    pub(super) fn sort_direction(&self) -> &SortDirection {
-        &self.sort_direction
+    pub(super) fn sort_direction(&self) -> SortDirection {
+        self.sort_direction
     }
 
     pub(super) fn sort_by(&mut self, column: SortColumn) {
@@ -176,11 +176,11 @@ mod tests {
     #[test]
     fn clicking_same_column_twice_toggles_sort_direction() {
         let mut cols = Columns::default();
-        assert_eq!(&SortDirection::Ascending, cols.sort_direction());
+        assert_eq!(SortDirection::Ascending, cols.sort_direction());
         cols.sort_by(SortColumn::Name);
-        assert_eq!(&SortDirection::Descending, cols.sort_direction());
+        assert_eq!(SortDirection::Descending, cols.sort_direction());
         cols.sort_by(SortColumn::Name);
-        assert_eq!(&SortDirection::Ascending, cols.sort_direction());
+        assert_eq!(SortDirection::Ascending, cols.sort_direction());
     }
 
     #[test_case(SortColumn::Modified, SortDirection::Descending; "modified starts newest first")]
@@ -191,8 +191,8 @@ mod tests {
     ) {
         let mut cols = Columns::default();
         cols.sort_by(column);
-        assert_eq!(&column, cols.sort_column());
-        assert_eq!(&expected, cols.sort_direction());
+        assert_eq!(column, cols.sort_column());
+        assert_eq!(expected, cols.sort_direction());
     }
 
     #[test]
@@ -200,7 +200,7 @@ mod tests {
         let mut cols = Columns::default();
         cols.sort_by(SortColumn::Size); // Descending
         cols.sort_by(SortColumn::Name);
-        assert_eq!(&SortDirection::Ascending, cols.sort_direction());
+        assert_eq!(SortDirection::Ascending, cols.sort_direction());
     }
 
     // --- sort_column_for_click ---

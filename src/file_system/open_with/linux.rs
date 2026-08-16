@@ -141,8 +141,9 @@ pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     let started = Instant::now();
     let candidates = candidates_from(sources(), path);
     debug!(
-        "Found {} application(s) for {path:?} in {:?}",
+        "Found {} application(s) for {} in {:?}",
         candidates.len(),
+        path.display(),
         started.elapsed()
     );
     candidates
@@ -150,7 +151,7 @@ pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
 
 fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
     let chain = mime_chain(path);
-    debug!("Resolved {path:?} to MIME types: {chain:?}");
+    debug!("Resolved {} to MIME types: {chain:?}", path.display());
     let associations = mimeapps::associations(&sources.levels, &chain);
     let locales = get_languages_from_env();
     associations
@@ -159,7 +160,7 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
         .filter_map(|id| {
             let file = mimeapps::resolve(&sources.levels, id)?;
             let entry = DesktopEntry::from_path(file, None::<&[&str]>)
-                .inspect_err(|error| debug!("Skipping {file:?}: {error}"))
+                .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
                 .ok()?;
             let is_default = associations.default.as_deref() == Some(id);
             to_candidate(&locales, path, is_default, &entry)
@@ -237,8 +238,7 @@ fn canonical(mime: &mime::Mime) -> String {
 /// be canonical or an entry that declares an alias never matches.
 fn canonical_str(mime: &str) -> String {
     mime.parse::<mime::Mime>()
-        .map(|parsed| canonical(&parsed))
-        .unwrap_or_else(|_| mime.to_string())
+        .map_or_else(|_| mime.to_string(), |parsed| canonical(&parsed))
 }
 
 fn to_candidate(
@@ -257,12 +257,15 @@ fn to_candidate(
     if let Some(try_exec) = entry.try_exec()
         && !is_installed(try_exec)
     {
-        debug!("Skipping {file:?}: TryExec {try_exec:?} is not installed");
+        debug!(
+            "Skipping {}: TryExec {try_exec:?} is not installed",
+            file.display()
+        );
         return None;
     }
     let name = entry
         .name(locales)
-        .map_or_else(|| entry.appid.clone(), |name| name.into_owned());
+        .map_or_else(|| entry.appid.clone(), std::borrow::Cow::into_owned);
     let context = ExecContext {
         desktop_file: file,
         icon: entry.icon(),
@@ -271,14 +274,17 @@ fn to_candidate(
         uri: &file_uri(path),
     };
     let mut argv = expand(&context, entry.exec()?)
-        .inspect_err(|error| debug!("Skipping {file:?}: {error}"))
+        .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
         .ok()?;
     if entry.terminal() {
         // A terminal application launched with null stdio does nothing at all,
         // so it is only worth offering when a terminal is configured to host it.
         let template = &Config::global().openers.run_in_terminal;
         argv = in_terminal(template, &argv).or_else(|| {
-            debug!("Skipping {file:?}: Terminal=true and openers.run_in_terminal is empty");
+            debug!(
+                "Skipping {}: Terminal=true and openers.run_in_terminal is empty",
+                file.display()
+            );
             None
         })?;
     }
@@ -500,7 +506,12 @@ mod tests {
         // converted has to be converted lossily rather than dropped: dropping
         // it leaves `*.txt` unmatched and the picker offers nothing.
         let name = glob_name(&path).expect("a file name");
-        assert!(name.ends_with(".txt"), "{name}");
+        // The assertion is over the glob string this builds, not over a
+        // path's extension, so the case-insensitive Path::extension check
+        // the lint suggests would test something else.
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
+        let ends_with_txt = name.ends_with(".txt");
+        assert!(ends_with_txt, "{name}");
     }
 
     #[test]

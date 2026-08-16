@@ -32,12 +32,12 @@ impl View for TableView {
         self.render_table_and_init_mapper(table_area, frame.buffer_mut());
         // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
         self.render_scrollbar(scrollbar_area, frame.buffer_mut());
-        self.render_1x1_block(block_area, frame.buffer_mut());
+        Self::render_1x1_block(block_area, frame.buffer_mut());
     }
 }
 
 impl TableView {
-    fn render_1x1_block(&self, area: Rect, buf: &mut Buffer) {
+    fn render_1x1_block(area: Rect, buf: &mut Buffer) {
         let theme = Config::global().theme();
         // Extend the table header above the scrollbar as a 1x1 block
         Fill::new(" ")
@@ -82,7 +82,7 @@ impl TableView {
                 .iter()
                 .map(|item| item_height(name_width, item, is_bookmarks, search_root) as usize)
                 .collect();
-            self.mapper = LineItemMap::new(self.cached_heights.clone(), visible_lines_count, 0);
+            self.mapper = LineItemMap::new(&self.cached_heights.clone(), visible_lines_count, 0);
             self.height_cache_key = Some(key);
         }
 
@@ -107,11 +107,11 @@ impl TableView {
                     has_pending_delete && self.pending_delete.iter().any(|p| p == item);
                 let (row, _height) = row_widget_and_height(
                     theme,
-                    &self.clipboard_entry,
+                    self.clipboard_entry.as_ref(),
                     name_width,
                     relative_to_datetime,
                     item,
-                    self.marks.contains(&i),
+                    self.marks.contains(i),
                     is_pending_delete,
                     is_bookmarks,
                     search_root,

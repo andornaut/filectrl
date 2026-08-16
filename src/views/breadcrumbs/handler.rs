@@ -29,14 +29,14 @@ impl CommandHandler for BreadcrumbsView {
             self.mode = mode;
         }
         match command {
-            Command::NavigatedDirectory { directory, .. } => self.set_directory(directory.clone()),
+            Command::NavigatedDirectory { directory, .. } => self.set_directory(&directory.clone()),
             Command::RefreshedDirectory { directory, .. } => {
                 // In bookmarks mode the listing reloads via a follow-up
                 // Bookmarks command; keep the bookmarks breadcrumbs meanwhile.
                 if self.mode == ListingMode::Bookmarks {
                     return CommandResult::Handled;
                 }
-                self.set_directory(directory.clone())
+                self.set_directory(&directory.clone())
             }
             Command::StartSearch(_) | Command::ResetView => CommandResult::Handled,
             Command::Bookmarks { .. } => {
@@ -49,7 +49,7 @@ impl CommandHandler for BreadcrumbsView {
         }
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let x = event.column.saturating_sub(self.area.x);
@@ -71,7 +71,7 @@ impl CommandHandler for BreadcrumbsView {
         }
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         self.area.contains(ratatui::layout::Position {
             x: event.column,
             y: event.row,

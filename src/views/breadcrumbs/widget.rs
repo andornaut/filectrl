@@ -74,7 +74,7 @@ pub(super) fn spans<'a>(
         let name_len = display_name.cell_width();
         // Tags and the last entry have no trailing separator. Path components
         // between them occupy name_len + 1 columns (name + separator).
-        let entry_len = name_len + if is_last || is_tag { 0 } else { 1 };
+        let entry_len = name_len + u16::from(!(is_last || is_tag));
 
         if container.is_empty() || (row_len + entry_len > width && row_len > 0) {
             row_len = 0;
@@ -115,7 +115,7 @@ mod tests {
     use super::{Position, clicked_index, spans};
 
     fn bc(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|s| s.to_string()).collect()
+        parts.iter().map(std::string::ToString::to_string).collect()
     }
 
     const SEP: &str = if MAIN_SEPARATOR == '/' { "/" } else { "\\" };
@@ -232,13 +232,13 @@ mod tests {
     )]
     #[test_case(
         &["", "home", "user"], 80
-        => vec![vec!["".to_string(), SEP.to_string(), "home".to_string(), SEP.to_string(), "user".to_string()]]
+        => vec![vec![String::new(), SEP.to_string(), "home".to_string(), SEP.to_string(), "user".to_string()]]
         ; "single row: root sep home sep user, no trailing separator"
     )]
     #[test_case(
         &["", "home", "user"], 3
         => vec![
-            vec!["".to_string(), SEP.to_string()],
+            vec![String::new(), SEP.to_string()],
             vec!["home".to_string(), SEP.to_string()],
             vec!["user".to_string()],
         ]

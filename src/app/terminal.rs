@@ -112,7 +112,7 @@ impl CleanupOnDropTerminal {
         build().inspect_err(|_| restore_terminal_once())
     }
 
-    fn cleanup(&mut self) {
+    fn cleanup() {
         restore_terminal_once();
     }
 }
@@ -133,6 +133,6 @@ impl DerefMut for CleanupOnDropTerminal {
 
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
-        self.cleanup();
+        Self::cleanup();
     }
 }

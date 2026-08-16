@@ -119,11 +119,11 @@ impl PathInfo {
     }
 
     pub fn accessed(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(&self.accessed, relative_to)
+        maybe_time_to_string(self.accessed.as_ref(), relative_to)
     }
 
     pub fn created(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(&self.created, relative_to)
+        maybe_time_to_string(self.created.as_ref(), relative_to)
     }
 
     pub fn mode(&self) -> u32 {
@@ -135,11 +135,11 @@ impl PathInfo {
     }
 
     pub fn modified(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(&self.modified, relative_to)
+        maybe_time_to_string(self.modified.as_ref(), relative_to)
     }
 
     pub fn modified_comparator(&self) -> i64 {
-        self.modified.map(|dt| dt.timestamp()).unwrap_or(0)
+        self.modified.map_or(0, |dt| dt.timestamp())
     }
 
     pub fn name(&self) -> Cow<'_, str> {
@@ -194,6 +194,9 @@ impl PathInfo {
         unix_mode::is_dir(self.mode)
     }
 
+    // `self.mode` is read on Solaris; every other target answers false, so
+    // the receiver only looks unused where the cfg below compiles it out.
+    #[allow(clippy::unused_self)]
     pub fn is_door(&self) -> bool {
         #[cfg(target_os = "solaris")]
         {
@@ -352,20 +355,25 @@ impl TryFrom<String> for PathInfo {
     }
 }
 
+// Display-only scaling. f64 carries 53 bits of integer precision, so a size
+// would have to exceed 8 exabytes before the rendered figure moved, and the
+// unit index is bounded by UNITS.
+#[allow(clippy::cast_precision_loss)]
 fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     if bytes == 0 {
         return "0".to_string();
     }
 
-    let divisor = FACTOR.pow(unit_index as u32) as f64;
+    let exponent = u32::try_from(unit_index).unwrap_or(0);
+    let divisor = FACTOR.pow(exponent) as f64;
     let value = (bytes as f64) / divisor;
 
     // Show one decimal place only for fractional values below 10; otherwise
     // round to a whole number.
     let formatted_value = if value < 10.0 && value.fract() != 0.0 {
-        format!("{:.1}", value)
+        format!("{value:.1}")
     } else {
-        format!("{:.0}", value)
+        format!("{value:.0}")
     };
 
     format!("{}{}", formatted_value, UNITS[unit_index])
@@ -380,11 +388,11 @@ fn unit_index(bytes: u64) -> usize {
     // For larger values, group by decimal-digit count. This deliberately
     // promotes to the next unit slightly before it is numerically full (e.g.
     // 1e9 bytes renders as "0.9G"), which is the intended display style.
-    let index = bytes.ilog10() / FACTOR.ilog10();
-    cmp::min(index, (UNITS.len() - 1) as u32) as usize
+    let index = (bytes.ilog10() / FACTOR.ilog10()) as usize;
+    cmp::min(index, UNITS.len() - 1)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DateTimeAge {
     LessThanMinute,
     LessThanHour,
@@ -435,10 +443,10 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
         DateTimeAge::LessThanHour | DateTimeAge::LessThanDay => "%I:%M%P",
         DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
             // Show year if dates are from different calendar years
-            if datetime.year() != relative_to.year() {
-                "%b %-d, %Y"
-            } else {
+            if datetime.year() == relative_to.year() {
                 "%b %-d"
+            } else {
+                "%b %-d, %Y"
             }
         }
         DateTimeAge::GreaterThanYear => "%b %-d, %Y",
@@ -456,10 +464,10 @@ fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
 }
 
 fn maybe_time_to_string(
-    time: &Option<DateTime<Local>>,
+    time: Option<&DateTime<Local>>,
     relative_to: DateTime<Local>,
 ) -> Option<String> {
-    time.map(|time| humanize_datetime(time, relative_to))
+    time.map(|time| humanize_datetime(*time, relative_to))
 }
 
 #[cfg(test)]

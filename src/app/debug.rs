@@ -33,12 +33,12 @@ fn debug_command(ch: char) -> Option<Command> {
 }
 
 impl CommandHandler for DebugHandler {
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
-        if *modifiers != KeyModifiers::NONE {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+        if modifiers != KeyModifiers::NONE {
             return CommandResult::NotHandled;
         }
         match code {
-            KeyCode::Char(ch) => match debug_command(*ch) {
+            KeyCode::Char(ch) => match debug_command(ch) {
                 Some(command) => command.into(),
                 None => CommandResult::NotHandled,
             },

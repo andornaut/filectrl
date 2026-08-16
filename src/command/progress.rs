@@ -140,6 +140,14 @@ pub struct Progress {
 }
 
 impl Progress {
+    // Both ratios are bounded: `is_done` has already returned for
+    // `completed >= total`, so the quotient is below 1 and the scaled result
+    // below the factor. A float-to-integer `as` saturates rather than wrapping,
+    // and `.min(factor)` bounds the second one again. The arithmetic stays in
+    // f64 because the rounding is half-away-from-zero, which integer division
+    // does not reproduce: 2 of 3 is 67%, not 66%.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn percentage(&self) -> u32 {
         if self.is_done() {
             return 100;
@@ -147,11 +155,13 @@ impl Progress {
         ((self.completed as f64 / self.total as f64) * 100.0).round() as u32
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn scaled(&self, factor: u16) -> u16 {
         if self.is_done() {
             return factor;
         }
-        ((self.completed as f64 / self.total as f64 * factor as f64).round() as u16).min(factor)
+        ((self.completed as f64 / self.total as f64 * f64::from(factor)).round() as u16).min(factor)
     }
 
     fn done(&mut self) {
@@ -275,12 +285,12 @@ impl ActiveTask {
 
     /// Marks the task as successfully completed. Consumes `self`.
     pub fn done(mut self) {
-        self.finalize(|task| task.done());
+        self.finalize(Task::done);
     }
 
     /// Marks the task as cancelled by the user. Consumes `self`.
     pub fn cancelled(mut self) {
-        self.finalize(|task| task.cancelled());
+        self.finalize(Task::cancelled);
     }
 
     /// Marks the task as failed with an error message. Consumes `self`.
@@ -351,7 +361,7 @@ impl Task {
     }
 
     fn error(&mut self, message: impl Into<String>) {
-        self.status = TaskStatus::Error(message.into())
+        self.status = TaskStatus::Error(message.into());
     }
 
     /// Transitions a `New` task to `InProgress`; no-op in any other state.

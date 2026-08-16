@@ -199,6 +199,10 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
 /// fall behind: adding a `Command` variant fails to compile here until it is
 /// either listed above or explicitly exempted.
 #[allow(dead_code)]
+// The empty arms are two different statements: one lists what is exempt, the
+// other what must be claimed. Merging them would erase the distinction this
+// function exists to record.
+#[allow(clippy::match_same_arms)]
 fn every_variant_is_accounted_for(command: &Command) {
     match command {
         // Exempt (see `claimable_commands`).
@@ -263,7 +267,7 @@ fn every_command_variant_is_claimed_by_a_handler() {
         let mode = handlers.root.mode();
         let mut derived = Vec::new();
         assert!(
-            recursively_handle_command(&mut derived, &command, &mode, &mut handlers),
+            recursively_handle_command(&mut derived, &command, mode, &mut handlers),
             "no handler claims {command:?}, which `App::run` treats as fatal"
         );
     }
@@ -279,7 +283,7 @@ fn quit_is_deliberately_unclaimed() {
     let handled = recursively_handle_command(
         &mut derived,
         &Command::Quit,
-        &InputMode::Normal,
+        InputMode::Normal,
         &mut handlers,
     );
 

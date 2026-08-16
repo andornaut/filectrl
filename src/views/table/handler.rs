@@ -10,6 +10,7 @@ use crate::{
         keybindings::{Action, hardcoded_normal_action},
     },
     command::{Command, handler::CommandHandler, result::CommandResult},
+    file_system::path_info::PathInfo,
     views::ListingMode,
 };
 
@@ -23,13 +24,15 @@ impl CommandHandler for TableView {
             self.content.set_mode(mode);
         }
         match command {
-            Command::Copy { .. } | Command::Move { .. } => {
+            Command::Copy { .. }
+            | Command::Move { .. }
+            | Command::Chmod { .. }
+            | Command::Delete(_) => {
                 // The operation consumes the marks; the FileSystem handler clears
                 // the clipboard for these same commands. Reset the mark-count
                 // notice here so it doesn't reappear once the clipboard is gone.
                 self.clear_marks_notifying()
             }
-            Command::Chmod { .. } => self.clear_marks_notifying(),
             Command::CancelPrompt => {
                 self.pending_delete.clear();
                 CommandResult::NotHandled
@@ -42,9 +45,8 @@ impl CommandHandler for TableView {
                     Command::Delete(paths).into()
                 }
             }
-            Command::Delete(_) => self.clear_marks_notifying(),
             Command::SetClipboardEntry(entry) => {
-                self.clipboard_entry = entry.clone();
+                self.clipboard_entry.clone_from(entry);
                 CommandResult::NotHandled
             }
             Command::NavigatedDirectory {
@@ -60,55 +62,8 @@ impl CommandHandler for TableView {
             Command::RefreshedDirectory {
                 directory,
                 generation,
-            } => {
-                // While searching, the listing holds results from a different
-                // root, not this directory. Ignore watcher/refresh events so a
-                // background file change doesn't clobber the search results.
-                if self.content.is_searching() {
-                    return CommandResult::Handled;
-                }
-                // The listing is the bookmarks dir, not this directory, and
-                // renaming a bookmark triggers a CWD refresh; reload the
-                // bookmarks instead of showing the CWD.
-                //
-                // The marks are left for the Bookmarks handler to clear against
-                // the new listing. Clearing here would drop still valid marks
-                // whenever the reload never arrives: a failed bookmarks read
-                // broadcasts an alert and no Bookmarks command, leaving the
-                // current listing on screen.
-                if self.content.is_showing_bookmarks() {
-                    return Command::GetBookmarks.into();
-                }
-                // Same directory reloaded: keep the filter, marks and
-                // selection, and let begin_directory/finish_directory restore
-                // the last two when the stream completes. Nothing is announced
-                // here, since the count does not change and the post-load
-                // snapshot carries whatever the reload could not find again.
-                // Only a search or the bookmarks view cancels a load before
-                // then, and each announces its own clearing.
-                self.stream_generation = *generation;
-                self.begin_directory(directory.clone(), Reselect::Keep);
-                CommandResult::Handled
-            }
-            Command::ListingBatch { items, generation } => {
-                // Only an in-flight load or search accepts batches; stale
-                // generations (superseded streams) are ignored.
-                if *generation != self.stream_generation
-                    || !(self.content.is_loading() || self.content.is_searching())
-                    || items.is_empty()
-                {
-                    return CommandResult::Handled;
-                }
-                let was_empty = self.content.len() == 0;
-                self.content.append(items);
-                // The batch may filter down to nothing; select only once an
-                // item survives the filter.
-                if was_empty && self.content.len() > 0 {
-                    self.select(0)
-                } else {
-                    CommandResult::Handled
-                }
-            }
+            } => self.refreshed_directory(directory, *generation),
+            Command::ListingBatch { items, generation } => self.listing_batch(items, *generation),
             Command::DirectoryListingComplete { generation } => {
                 // A cancelled load that had already drained the directory still
                 // reports completion, and the bookmarks view does not bump the
@@ -120,21 +75,7 @@ impl CommandHandler for TableView {
                 }
                 self.finish_directory()
             }
-            Command::ResetView => {
-                self.clipboard_entry = None;
-                self.clear_marks();
-                let had_filter = !self.content.filter().is_empty();
-                self.content.clear_filter();
-                match previous_mode {
-                    // The search/bookmarks index is meaningless in the directory.
-                    ListingMode::Search | ListingMode::Bookmarks => {
-                        self.table_state.select(None);
-                        Command::RefreshDirectory.into()
-                    }
-                    ListingMode::Normal if had_filter => self.sort(Reselect::Top),
-                    ListingMode::Normal => CommandResult::Handled,
-                }
-            }
+            Command::ResetView => self.reset_view(previous_mode),
             Command::StartSearch(query) => {
                 if query.is_empty() {
                     return CommandResult::Handled;
@@ -152,31 +93,7 @@ impl CommandHandler for TableView {
                 }
                 CommandResult::Handled
             }
-            Command::ExitedSearch { generation } => {
-                // Results append in walk order so partial ones show up at once,
-                // but the header advertises a sort column throughout, so apply
-                // it when the walk ends. `DirectoryListingComplete` does this
-                // for a listing; a search never reaches it, because `set_mode`
-                // clears the loading flag its guard requires.
-                //
-                // A cancelled search arrives here too, since `run_search`
-                // announces its exit either way and cancelling keeps the partial
-                // results in search mode. Sorting matters more for those:
-                // nothing further is coming, so walk order would leave the
-                // header describing an order the listing never takes.
-                //
-                // A superseded search exits with its own generation, which no
-                // longer matches, so it cannot reorder its replacement.
-                if *generation != self.stream_generation || !self.content.is_searching() {
-                    return CommandResult::Handled;
-                }
-                // Marks carry across: results stream so they can be marked
-                // while the walk is still running, and the walk finishing is
-                // not a reorder the user asked for.
-                self.sort_keeping_marks(Reselect::Top)
-            }
-            // FileSystem resolves GetBookmarks into Bookmarks.
-            Command::GetBookmarks => CommandResult::NotHandled,
+            Command::ExitedSearch { generation } => self.exited_search(*generation),
             Command::Bookmarks { bookmarks } => {
                 self.clear_marks();
                 self.content.set_bookmarks(bookmarks.clone());
@@ -199,11 +116,12 @@ impl CommandHandler for TableView {
             // self.handle_key() and PromptView may emit FilterChanged()
             Command::FilterChanged(filter) => self.set_filter(filter.clone()),
 
+            // GetBookmarks included: FileSystem resolves it into Bookmarks.
             _ => CommandResult::NotHandled,
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         // Hardcoded bindings take precedence, then config bindings.
         let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
@@ -224,7 +142,7 @@ impl CommandHandler for TableView {
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
             Some(Action::OpenWith) => self.open_with(),
-            Some(Action::GoHome) => self.navigate_to_home_directory(),
+            Some(Action::GoHome) => Self::navigate_to_home_directory(),
             Some(Action::Goto) => self.open_goto_prompt(),
             // Selection
             Some(Action::SelectNext) => self.select_next(),
@@ -240,13 +158,13 @@ impl CommandHandler for TableView {
             Some(Action::RangeMark) => self.enter_range_mode(),
             // File operations
             Some(Action::AddBookmark) => self.open_add_bookmark_prompt(),
-            Some(Action::GetBookmarks) => self.get_bookmarks(),
+            Some(Action::GetBookmarks) => Self::get_bookmarks(),
             Some(Action::Chmod) => self.open_chmod_prompt(),
-            Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
+            Some(Action::CreateDirectory) => Self::open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),
             Some(Action::Rename) => self.open_rename_prompt(),
             Some(Action::Filter) => self.open_filter_prompt(),
-            Some(Action::Search) => self.open_search_prompt(),
+            Some(Action::Search) => Self::open_search_prompt(),
             // Sort
             Some(Action::SortByName) => self.sort_by(SortColumn::Name),
             Some(Action::SortByModified) => self.sort_by(SortColumn::Modified),
@@ -256,7 +174,7 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         let x = event.column.saturating_sub(self.table_area.x);
         let y = event.row.saturating_sub(self.table_area.y);
 
@@ -286,7 +204,7 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         let is_scroll = matches!(
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
@@ -300,5 +218,100 @@ impl CommandHandler for TableView {
                 y: event.row,
             })
             || self.scrollbar_view.is_clicked(event.column, event.row)
+    }
+}
+
+// The bodies of the longest `handle_command` arms. They live here rather than
+// inline so the match stays a dispatch table that can be read in one screen.
+impl TableView {
+    fn refreshed_directory(&mut self, directory: &PathInfo, generation: u64) -> CommandResult {
+        // While searching, the listing holds results from a different
+        // root, not this directory. Ignore watcher/refresh events so a
+        // background file change doesn't clobber the search results.
+        if self.content.is_searching() {
+            return CommandResult::Handled;
+        }
+        // The listing is the bookmarks dir, not this directory, and
+        // renaming a bookmark triggers a CWD refresh; reload the
+        // bookmarks instead of showing the CWD.
+        //
+        // The marks are left for the Bookmarks handler to clear against
+        // the new listing. Clearing here would drop still valid marks
+        // whenever the reload never arrives: a failed bookmarks read
+        // broadcasts an alert and no Bookmarks command, leaving the
+        // current listing on screen.
+        if self.content.is_showing_bookmarks() {
+            return Command::GetBookmarks.into();
+        }
+        // Same directory reloaded: keep the filter, marks and
+        // selection, and let begin_directory/finish_directory restore
+        // the last two when the stream completes. Nothing is announced
+        // here, since the count does not change and the post-load
+        // snapshot carries whatever the reload could not find again.
+        // Only a search or the bookmarks view cancels a load before
+        // then, and each announces its own clearing.
+        self.stream_generation = generation;
+        self.begin_directory(directory.clone(), Reselect::Keep);
+        CommandResult::Handled
+    }
+
+    fn listing_batch(&mut self, items: &[PathInfo], generation: u64) -> CommandResult {
+        // Only an in-flight load or search accepts batches; stale
+        // generations (superseded streams) are ignored.
+        if generation != self.stream_generation
+            || !(self.content.is_loading() || self.content.is_searching())
+            || items.is_empty()
+        {
+            return CommandResult::Handled;
+        }
+        let was_empty = self.content.len() == 0;
+        self.content.append(items);
+        // The batch may filter down to nothing; select only once an
+        // item survives the filter.
+        if was_empty && self.content.len() > 0 {
+            self.select(0)
+        } else {
+            CommandResult::Handled
+        }
+    }
+
+    fn exited_search(&mut self, generation: u64) -> CommandResult {
+        // Results append in walk order so partial ones show up at once,
+        // but the header advertises a sort column throughout, so apply
+        // it when the walk ends. `DirectoryListingComplete` does this
+        // for a listing; a search never reaches it, because `set_mode`
+        // clears the loading flag its guard requires.
+        //
+        // A cancelled search arrives here too, since `run_search`
+        // announces its exit either way and cancelling keeps the partial
+        // results in search mode. Sorting matters more for those:
+        // nothing further is coming, so walk order would leave the
+        // header describing an order the listing never takes.
+        //
+        // A superseded search exits with its own generation, which no
+        // longer matches, so it cannot reorder its replacement.
+        if generation != self.stream_generation || !self.content.is_searching() {
+            return CommandResult::Handled;
+        }
+        // Marks carry across: results stream so they can be marked
+        // while the walk is still running, and the walk finishing is
+        // not a reorder the user asked for.
+        self.sort_keeping_marks(Reselect::Top)
+    }
+
+    fn reset_view(&mut self, previous_mode: ListingMode) -> CommandResult {
+        self.clipboard_entry = None;
+        self.clear_marks();
+        let had_filter = !self.content.filter().is_empty();
+        self.content.clear_filter();
+        match previous_mode {
+            // The search/bookmarks index is meaningless in the directory.
+            ListingMode::Search | ListingMode::Bookmarks => {
+                self.table_state.select(None);
+                Command::RefreshDirectory.into()
+            }
+            ListingMode::Normal if had_filter => self.sort(Reselect::Top),
+            ListingMode::Normal => CommandResult::Handled,
+        }
     }
 }

@@ -6,7 +6,7 @@ use ratatui::{
 use super::{MIN_HEIGHT, OpenWithView, widget::build_rows};
 use crate::{
     app::config::Config,
-    views::{View, bordered, render_lines},
+    views::{View, as_dimension, bordered, render_lines},
 };
 
 impl View for OpenWithView {
@@ -57,7 +57,7 @@ impl View for OpenWithView {
             content_area,
             frame.buffer_mut(),
             style,
-            self.scroll_offset as u16,
+            as_dimension(self.scroll_offset),
         );
         self.scrollbar_view.render(
             scrollbar_area,

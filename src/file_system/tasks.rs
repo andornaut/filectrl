@@ -130,7 +130,7 @@ impl TaskRunResult {
     /// The initial progress snapshot has already been sent through the task's
     /// channel (before the worker thread was spawned, so it always precedes
     /// any terminal update), so no command is returned here.
-    fn started(initial: Task, token: CancellationToken, uncancellable: Arc<AtomicBool>) -> Self {
+    fn started(initial: &Task, token: CancellationToken, uncancellable: Arc<AtomicBool>) -> Self {
         Self {
             cancel_info: Some(CancelInfo {
                 id: initial.id(),
@@ -168,18 +168,18 @@ impl TaskCommand {
         match self {
             TaskCommand::Copy(path, dir, overwrite) => run_copy_task(
                 tx,
-                path,
-                dir,
+                &path,
+                &dir,
                 overwrite,
                 conflicts,
                 buffer_min_bytes,
                 buffer_max_bytes,
             ),
-            TaskCommand::Delete(path) => run_delete_task(tx, path),
+            TaskCommand::Delete(path) => run_delete_task(tx, &path),
             TaskCommand::Move(path, dir, overwrite) => run_move_task(
                 tx,
-                path,
-                dir,
+                &path,
+                &dir,
                 overwrite,
                 conflicts,
                 buffer_min_bytes,
@@ -191,8 +191,8 @@ impl TaskCommand {
 
 fn run_copy_task(
     tx: Sender<Command>,
-    path: PathInfo,
-    dir: PathInfo,
+    path: &PathInfo,
+    dir: &PathInfo,
     overwrite: bool,
     conflicts: Option<&Conflicts>,
     buffer_min_bytes: u64,
@@ -205,12 +205,12 @@ fn run_copy_task(
         Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let (old_path, new_path) = match validate_paths(&path, &dir, "copy", overwrite) {
+    let (old_path, new_path) = match validate_paths(&path, dir, "copy", overwrite) {
         Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
 
-    info!("Copying {old_path:?} to {new_path:?}");
+    info!("Copying {} to {}", old_path.display(), new_path.display());
     let kind = TaskKind::Copy(Transfer {
         source: display_path(&old_path),
         destination: display_path(&new_path),
@@ -265,13 +265,13 @@ fn run_copy_task(
         }
     });
 
-    TaskRunResult::started(initial, token, uncancellable)
+    TaskRunResult::started(&initial, token, uncancellable)
 }
 
 fn run_move_task(
     tx: Sender<Command>,
-    path: PathInfo,
-    dir: PathInfo,
+    path: &PathInfo,
+    dir: &PathInfo,
     overwrite: bool,
     conflicts: Option<&Conflicts>,
     buffer_min_bytes: u64,
@@ -282,12 +282,12 @@ fn run_move_task(
         Ok(fresh) => fresh,
         Err(result) => return TaskRunResult::failed(result),
     };
-    let (old_path, new_path) = match validate_paths(&path, &dir, "move", overwrite) {
+    let (old_path, new_path) = match validate_paths(&path, dir, "move", overwrite) {
         Ok(paths) => paths,
         Err(result) => return TaskRunResult::failed(result),
     };
 
-    info!("Moving {old_path:?} to {new_path:?}");
+    info!("Moving {} to {}", old_path.display(), new_path.display());
     let kind = TaskKind::Move(Transfer {
         source: display_path(&old_path),
         destination: display_path(&new_path),
@@ -304,7 +304,7 @@ fn run_move_task(
             return;
         };
         match rename_for_move(&old_path, &new_path, overwrite) {
-            Ok(_) => {
+            Ok(()) => {
                 active.increment(size);
                 active.done();
             }
@@ -347,10 +347,10 @@ fn run_move_task(
         }
     });
 
-    TaskRunResult::started(initial, token, uncancellable)
+    TaskRunResult::started(&initial, token, uncancellable)
 }
 
-fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
+fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     // Same staleness class as copy/move: the selection-time metadata may be
     // outdated. A directory replaced by a symlink must be unlinked as a
     // link, not followed into its target.
@@ -368,7 +368,7 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
     let (mut active, initial, token) = ActiveTask::new(tx, kind, 1);
     let is_directory = path.is_directory();
     let path = path.path.clone();
-    info!("Deleting {path:?}");
+    info!("Deleting {}", path.display());
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
 
@@ -385,17 +385,21 @@ fn run_delete_task(tx: Sender<Command>, path: PathInfo) -> TaskRunResult {
         }
     });
 
-    TaskRunResult::started(initial, token, uncancellable)
+    TaskRunResult::started(&initial, token, uncancellable)
 }
 
 fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
-    if len <= buffer_min_bytes {
-        len as usize
+    let bytes = if len <= buffer_min_bytes {
+        len
     } else if len >= (buffer_max_bytes * BUFFER_SIZE_DIVISOR) {
-        buffer_max_bytes as usize
+        buffer_max_bytes
     } else {
-        std::cmp::max(buffer_min_bytes, len / BUFFER_SIZE_DIVISOR) as usize
-    }
+        std::cmp::max(buffer_min_bytes, len / BUFFER_SIZE_DIVISOR)
+    };
+    // The sizes are u64 from the config and from a scanned total, so on a
+    // 32-bit target one can exceed what a buffer could be allocated at.
+    // Saturating asks for the largest buffer the address space can express.
+    usize::try_from(bytes).unwrap_or(usize::MAX)
 }
 
 /// The read-buffer size for a copy: `buffer_bytes` floored at
@@ -404,7 +408,7 @@ fn buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize
 /// `buffer_max_bytes`, which a user may configure below the floor.
 fn copy_buffer_bytes(len: u64, buffer_min_bytes: u64, buffer_max_bytes: u64) -> usize {
     buffer_bytes(len, buffer_min_bytes, buffer_max_bytes)
-        .max(MIN_COPY_BUFFER_BYTES.min(buffer_max_bytes as usize))
+        .max(MIN_COPY_BUFFER_BYTES.min(usize::try_from(buffer_max_bytes).unwrap_or(usize::MAX)))
 }
 
 /// The byte-copy stage shared by copy and cross-device move: for a directory
@@ -617,7 +621,7 @@ fn finish_cross_device_move(
         fs::remove_file(old_path)
     };
     match removed {
-        Ok(_) => active.done(),
+        Ok(()) => active.done(),
         Err(error) => active.error(format!(
             "Copy succeeded, but failed to delete original {}: {error}",
             compact(old_path)
@@ -1441,8 +1445,11 @@ mod tests {
         // The floor must not override a user-configured buffer_max_bytes set
         // below MIN_COPY_BUFFER_BYTES.
         let max = 4_000;
-        assert!((MIN_COPY_BUFFER_BYTES as u64) > max);
-        assert_eq!(max as usize, copy_buffer_bytes(0, max, max));
+        assert!(u64::try_from(MIN_COPY_BUFFER_BYTES).unwrap() > max);
+        assert_eq!(
+            usize::try_from(max).unwrap(),
+            copy_buffer_bytes(0, max, max)
+        );
     }
 
     fn path_info(path: &str, basename: &str) -> PathInfo {
@@ -1587,7 +1594,7 @@ mod tests {
 
     /// A copy context for a test: no paste behind it, so a nested collision
     /// records an error rather than asking.
-    fn context<'a>(preserve_times: bool, buffer: &'a mut [u8]) -> CopyContext<'a> {
+    fn context(preserve_times: bool, buffer: &mut [u8]) -> CopyContext<'_> {
         CopyContext {
             buffer,
             conflicts: None,
@@ -2475,20 +2482,17 @@ mod tests {
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dst").unwrap();
 
-        match rename_no_replace(&src, &dst) {
-            Err(error) => {
-                assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
-                // Both files must be untouched.
-                assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
-                assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
-            }
+        if let Err(error) = rename_no_replace(&src, &dst) {
+            assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
+            // Both files must be untouched.
+            assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
+            assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
+        } else {
             // The filesystem lacks an atomic no-replace rename, so the call
             // fell back to fs::rename. Assert the fallback's semantics rather
             // than passing vacuously, so this test cannot rot into a no-op.
-            Ok(()) => {
-                assert!(!src.exists());
-                assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
-            }
+            assert!(!src.exists());
+            assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
         }
     }
 

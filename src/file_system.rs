@@ -575,14 +575,14 @@ impl FileSystem {
     fn add_bookmark(&mut self, target: &PathInfo, name: &str) -> CommandResult {
         match operations::add_bookmark(&self.bookmarks_dir, target, name) {
             Err(error) => Command::AlertError(error.to_string()).into(),
-            Ok(_) => Command::AlertInfo(format!("Bookmark {name:?} added")).into(),
+            Ok(()) => Command::AlertInfo(format!("Bookmark {name:?} added")).into(),
         }
     }
 
     fn create_directory(&mut self, name: &str) -> CommandResult {
         match operations::create_directory(self.current_directory(), name) {
             Err(error) => anyhow!("Failed to create directory {name:?}: {error}").into(),
-            Ok(_) => self.refresh(),
+            Ok(()) => self.refresh(),
         }
     }
 
@@ -593,7 +593,7 @@ impl FileSystem {
                 compact(&path.path)
             )
             .into(),
-            Ok(_) => self.refresh(),
+            Ok(()) => self.refresh(),
         }
     }
 
@@ -845,7 +845,7 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
             match PathInfo::try_from(&path) {
                 Ok(info) => Some(info),
                 Err(error) => {
-                    warn!("Skipping unreadable bookmark {path:?}: {error}");
+                    warn!("Skipping unreadable bookmark {}: {error}", path.display());
                     None
                 }
             }

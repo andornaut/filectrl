@@ -241,13 +241,13 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn maybe_from(event: Event) -> Option<Self> {
+    pub fn maybe_from(event: &Event) -> Option<Self> {
         match event {
             Event::Key(key) => {
                 let KeyEvent {
                     code, modifiers, ..
                 } = key;
-                Some(Self::Key(code, modifiers))
+                Some(Self::Key(*code, *modifiers))
             }
             Event::Mouse(mouse_event) => {
                 // Suppress Move events: they are too noisy and no handler uses them.
@@ -255,12 +255,12 @@ impl Command {
                 if mouse_event.kind == MouseEventKind::Moved {
                     None
                 } else {
-                    Some(Self::Mouse(mouse_event))
+                    Some(Self::Mouse(*mouse_event))
                 }
             }
             Event::Resize(w, h) => Some(Self::Resize {
-                width: w,
-                height: h,
+                width: *w,
+                height: *h,
             }),
             _ => None,
         }

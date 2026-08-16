@@ -102,7 +102,7 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
         ("open_file", &openers.open_file)
     };
     if template.is_empty() {
-        debug!("No configured opener for {path:?}");
+        debug!("No configured opener for {}", path.display());
         return None;
     }
     let command = shell::template(template, &shell::quote(path.as_os_str()));

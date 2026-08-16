@@ -29,7 +29,7 @@ impl TableView {
         self.select(item)
     }
 
-    pub(super) fn handle_scroll(&mut self, event: &MouseEvent) -> CommandResult {
+    pub(super) fn handle_scroll(&mut self, event: MouseEvent) -> CommandResult {
         // Use the same scale as the rendered thumb (line offset over
         // `total - visible`, see `render_scrollbar`). The dragged-to line
         // becomes the top of the window, snapped forward across wrapped rows

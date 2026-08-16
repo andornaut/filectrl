@@ -29,7 +29,7 @@ impl CommandHandler for PromptView {
         }
     }
 
-    fn handle_key(&mut self, code: &KeyCode, modifiers: &KeyModifiers) -> CommandResult {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         // Delete confirmation: single-keypress y/Y confirms, anything else cancels
         if matches!(self.actions, PromptAction::Delete(_)) {
             return match code {
@@ -116,7 +116,7 @@ impl CommandHandler for PromptView {
         }
 
         self.text_area
-            .input(Input::from(KeyEvent::new(*code, *modifiers)));
+            .input(Input::from(KeyEvent::new(code, modifiers)));
 
         if matches!(self.actions, PromptAction::Goto { .. }) {
             self.refresh_suggestions();
@@ -124,14 +124,14 @@ impl CommandHandler for PromptView {
 
         // Copy/Cut must be checked after textarea processes the key, because
         // ratatui-textarea populates yank_text from the current selection during input().
-        if matches!(action, Some(Action::PromptCopy) | Some(Action::PromptCut)) {
+        if matches!(action, Some(Action::PromptCopy | Action::PromptCut)) {
             return Command::SetClipboardText(self.text_area.yank_text()).into();
         }
 
         CommandResult::Handled
     }
 
-    fn handle_mouse(&mut self, event: &MouseEvent) -> CommandResult {
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         let visual_col = event.column.saturating_sub(self.render_area.x);
         let char_idx = self.display_col_to_char_idx(visual_col.saturating_add(self.scroll_col));
         match event.kind {
@@ -146,17 +146,17 @@ impl CommandHandler for PromptView {
                 self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
             }
             _ => {
-                self.text_area.input(Input::from(*event)); // handles scroll wheel
+                self.text_area.input(Input::from(event)); // handles scroll wheel
             }
         }
         CommandResult::Handled
     }
 
-    fn should_handle_key(&self, mode: &InputMode) -> bool {
+    fn should_handle_key(&self, mode: InputMode) -> bool {
         matches!(mode, InputMode::Prompt)
     }
 
-    fn should_handle_mouse(&self, event: &MouseEvent) -> bool {
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
         self.render_area.contains(Position {
             x: event.column,
             y: event.row,

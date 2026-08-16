@@ -10,7 +10,7 @@ use crate::{
 
 pub(super) fn clipboard_style(
     clipboard: &Clipboard,
-    clipboard_entry: &Option<ClipboardEntry>,
+    clipboard_entry: Option<&ClipboardEntry>,
     item: &PathInfo,
 ) -> Option<Style> {
     let entry = clipboard_entry.as_ref()?;
@@ -23,7 +23,7 @@ pub(super) fn clipboard_style(
     })
 }
 
-pub(super) fn header_style(table: &Table, sort_column: &SortColumn, column: &SortColumn) -> Style {
+pub(super) fn header_style(table: &Table, sort_column: SortColumn, column: SortColumn) -> Style {
     if sort_column == column {
         table.header_sorted()
     } else {

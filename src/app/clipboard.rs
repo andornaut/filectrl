@@ -19,7 +19,7 @@ impl Default for Clipboard {
         let backend = match ClipboardBackend::try_new() {
             Ok(backend) => Some(backend),
             Err(err) => {
-                warn!("Failed to initialize clipboard: {}", err);
+                warn!("Failed to initialize clipboard: {err}");
                 None
             }
         };
@@ -73,9 +73,8 @@ impl Clipboard {
     }
 
     pub fn get_text(&mut self) -> Option<String> {
-        let backend = match &mut self.backend {
-            Some(b) => b,
-            None => return self.fallback.clone(),
+        let Some(backend) = &mut self.backend else {
+            return self.fallback.clone();
         };
         match backend.get_string() {
             Ok(t) => Some(t),
@@ -202,13 +201,13 @@ impl ClipboardBackend {
     fn get_string(&mut self) -> Result<String, Error> {
         self.clipboard
             .get_text()
-            .map_err(|e| anyhow!("Failed to get clipboard contents: {}", e))
+            .map_err(|e| anyhow!("Failed to get clipboard contents: {e}"))
     }
 
     fn set_string(&mut self, text: &str) -> Result<(), Error> {
         self.clipboard
             .set_text(text.to_string())
-            .map_err(|e| anyhow!("Failed to set clipboard contents: {}", e))?;
+            .map_err(|e| anyhow!("Failed to set clipboard contents: {e}"))?;
         self.last_written = Some(text.to_string());
         Ok(())
     }
