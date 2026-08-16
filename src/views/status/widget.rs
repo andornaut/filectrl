@@ -70,14 +70,19 @@ fn kind_field(selected: &PathInfo) -> String {
         kind.push("Socket");
     }
 
-    // Special flags (can be combined)
+    // A symlink's permission bits are 0777 by convention and the kernel
+    // ignores them, so the flags below would put two words on every link that
+    // describe nothing. The link's own type is the whole answer.
     if selected.is_symlink() {
         kind.push(if selected.is_symlink_broken() {
             "Broken Symlink"
         } else {
             "Symlink"
         });
+        return kind.join(",");
     }
+
+    // Special flags (can be combined)
     if selected.is_setgid() {
         kind.push("SetGID");
     }
@@ -113,4 +118,56 @@ fn to_entries(
             ]
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::kind_field;
+    use crate::file_system::path_info::PathInfo;
+
+    // The mode bits each case stands for. A door is Solaris-only and cannot be
+    // built here, which is also why `kind_field` leaves it out.
+    const REGULAR: u32 = 0o100_644;
+    const EXECUTABLE: u32 = 0o100_755;
+    const SETUID_SETGID: u32 = 0o106_755;
+    const DIRECTORY: u32 = 0o040_755;
+    const DIRECTORY_STICKY_OTHER_WRITABLE: u32 = 0o041_757;
+    const SYMLINK: u32 = 0o120_777;
+    const FIFO: u32 = 0o010_644;
+    const SOCKET: u32 = 0o140_644;
+    const BLOCK_DEVICE: u32 = 0o060_644;
+    const CHARACTER_DEVICE: u32 = 0o020_644;
+
+    /// One base type, then whichever flags also apply, comma-joined with no
+    /// space: the status bar is one line and this field competes with the rest
+    /// of it for width.
+    #[test_case(REGULAR => "File" ; "a plain file")]
+    #[test_case(DIRECTORY => "Directory,Executable" ; "a directory carries its execute bit")]
+    #[test_case(EXECUTABLE => "File,Executable" ; "an executable file")]
+    #[test_case(FIFO => "FIFO" ; "a fifo")]
+    #[test_case(SOCKET => "Socket" ; "a socket")]
+    #[test_case(BLOCK_DEVICE => "Block" ; "a block device")]
+    #[test_case(CHARACTER_DEVICE => "Character" ; "a character device")]
+    // The flags accumulate where the base types do not: unlike `name_style`,
+    // this field reports every property rather than the highest-ranked one.
+    #[test_case(SETUID_SETGID => "File,SetGID,SetUID,Executable" ; "both special bits and the execute bit they imply")]
+    #[test_case(DIRECTORY_STICKY_OTHER_WRITABLE => "Directory,Sticky,Other Writable,Executable" ; "a sticky, other-writable directory")]
+    fn kind_field_reports(mode: u32) -> String {
+        kind_field(&PathInfo::with_mode(mode))
+    }
+
+    #[test]
+    fn a_symlink_reports_its_type_and_nothing_else() {
+        // The fixture mode is 0777, which is what a link carries on disk. The
+        // kernel ignores those bits, so none of them reach the field: the
+        // status bar is one line and "Other Writable,Executable" on every link
+        // would spend it saying nothing.
+        assert_eq!("Symlink", kind_field(&PathInfo::with_mode(SYMLINK)));
+        assert_eq!(
+            "Broken Symlink",
+            kind_field(&PathInfo::with_mode(SYMLINK).broken())
+        );
+    }
 }
