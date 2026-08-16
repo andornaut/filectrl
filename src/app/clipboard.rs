@@ -213,30 +213,81 @@ impl ClipboardBackend {
     }
 
     fn clear(&mut self) -> Result<(), Error> {
-        let Some(prev) = self.last_written.clone() else {
-            // This window never wrote to the clipboard; leave it untouched so
-            // we don't clobber content set by another app or filectrl window.
-            return Ok(());
-        };
-        if prev.is_empty() {
-            // This window already cleared the clipboard; nothing to do (and
-            // avoids a redundant empty write that would make arboard reacquire
-            // X11 selection ownership).
-            return Ok(());
+        // Cloned so the closure below can borrow `self` mutably for the read.
+        let last_written = self.last_written.clone();
+        if should_clear(last_written.as_deref(), || self.get_string().ok()) {
+            return self.set_string("");
         }
-        // Only clear if the clipboard still holds exactly what this window
-        // wrote. If it differs (or is empty/unreadable), another window or app
-        // owns it now and we must not overwrite it.
-        match self.get_string() {
-            Ok(current) if current == prev => self.set_string(""),
-            _ => Ok(()),
-        }
+        Ok(())
     }
+}
+
+/// Whether `clear` should blank the system clipboard, given what this window
+/// last wrote to it and (only where that can decide it) what it holds now.
+///
+/// `read_current` is a closure rather than a value because reading the
+/// clipboard blocks on whichever application owns the selection, and the first
+/// two cases answer without it.
+fn should_clear(last_written: Option<&str>, read_current: impl FnOnce() -> Option<String>) -> bool {
+    let Some(previous) = last_written else {
+        // This window never wrote to the clipboard, so blanking it would
+        // discard whatever another application or filectrl window put there.
+        return false;
+    };
+    if previous.is_empty() {
+        // Already cleared by this window. A second empty write would make
+        // arboard reacquire the X11 selection for no change.
+        return false;
+    }
+    // Clear only what this window still owns. Anything else there now (or a
+    // read that failed) means another window or application took it over.
+    read_current().as_deref() == Some(previous)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reports whether the clipboard was read, so the cases that must decide
+    /// without reading can say so.
+    fn should_clear_reading(last_written: Option<&str>, current: Option<&str>) -> (bool, bool) {
+        let mut was_read = false;
+        let clear = should_clear(last_written, || {
+            was_read = true;
+            current.map(ToString::to_string)
+        });
+        (clear, was_read)
+    }
+
+    #[test]
+    fn the_clipboard_is_cleared_only_while_this_window_still_owns_it() {
+        // Still holding what this window wrote, so clearing it discards only
+        // this window's own entry.
+        assert_eq!(
+            (true, true),
+            should_clear_reading(Some("cp /a"), Some("cp /a"))
+        );
+
+        // Another window or application has written since. Blanking now would
+        // throw away someone else's clipboard.
+        assert_eq!(
+            (false, true),
+            should_clear_reading(Some("cp /a"), Some("other"))
+        );
+        // A read that failed says nothing about ownership, so it is not a
+        // licence to overwrite either.
+        assert_eq!((false, true), should_clear_reading(Some("cp /a"), None));
+    }
+
+    #[test]
+    fn a_window_that_wrote_nothing_clears_nothing_and_does_not_read() {
+        // Reading blocks on whichever application owns the selection, so these
+        // two cases must answer without touching it.
+        assert_eq!((false, false), should_clear_reading(None, Some("someone")));
+        // Already cleared by this window: a second empty write would reacquire
+        // the X11 selection for no change.
+        assert_eq!((false, false), should_clear_reading(Some(""), Some("")));
+    }
 
     #[test]
     fn parse_clipboard_text_ignores_unrelated_text() {
@@ -252,6 +303,32 @@ mod tests {
         let text = format!("cp {}", shell_words::quote(&path.to_string_lossy()));
         let entry = parse_clipboard_text(&text).unwrap().unwrap();
         assert!(matches!(entry, ClipboardEntry::Copy(_)));
+    }
+
+    /// The clipboard is the cross-window contract, so an entry this process
+    /// wrote has to parse back to the same paths in another window. Quoting is
+    /// what carries a name a shell would otherwise split or expand.
+    #[test]
+    fn an_entry_round_trips_through_its_serialized_form() {
+        use crate::test_support::TempDir;
+
+        let dir = TempDir::new("clipboard_round_trip");
+        let awkward = ["my report.txt", "it's here", "a;b$c", "two  spaces"];
+        let paths: Vec<PathInfo> = awkward
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                std::fs::write(&path, b"x").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect();
+
+        let entry = ClipboardEntry::Move(paths.clone());
+        let parsed = parse_clipboard_text(&entry.to_string())
+            .expect("a filectrl-written entry must parse")
+            .expect("a filectrl-written entry is not unrelated text");
+
+        assert_eq!(ClipboardEntry::Move(paths), parsed);
     }
 
     #[test]
