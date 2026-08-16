@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
@@ -193,18 +194,27 @@ impl DirectoryContent {
                 search_root.as_deref(),
             ))
         };
-        self.items_sorted.sort_by(|a, b| {
-            let ord = match sort_column {
-                SortColumn::Name => name_key(a).cmp(&name_key(b)),
-                SortColumn::Modified => a.modified_comparator().cmp(&b.modified_comparator()),
-                SortColumn::Size => a.size.cmp(&b.size),
-            };
-            if *sort_direction == SortDirection::Descending {
-                ord.reverse()
-            } else {
-                ord
+        // Sorted by key rather than by comparator: the name key allocates twice
+        // to build, and a comparator builds one per side of every comparison,
+        // which a listing of any size pays n log n times over. `Reverse` rather
+        // than reversing the sorted listing, so that entries sharing a key keep
+        // the order they arrived in whichever way the column points. Every sort
+        // here is stable, as the directories-first pass below requires.
+        let descending = *sort_direction == SortDirection::Descending;
+        match (sort_column, descending) {
+            (SortColumn::Name, false) => self.items_sorted.sort_by_cached_key(name_key),
+            (SortColumn::Name, true) => self
+                .items_sorted
+                .sort_by_cached_key(|item| Reverse(name_key(item))),
+            (SortColumn::Modified, false) => {
+                self.items_sorted.sort_by_key(PathInfo::modified_comparator)
             }
-        });
+            (SortColumn::Modified, true) => self
+                .items_sorted
+                .sort_by_key(|item| Reverse(item.modified_comparator())),
+            (SortColumn::Size, false) => self.items_sorted.sort_by_key(|item| item.size),
+            (SortColumn::Size, true) => self.items_sorted.sort_by_key(|item| Reverse(item.size)),
+        }
 
         if *sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
             self.items_sorted.sort_by_key(|path| !path.is_directory());
