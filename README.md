@@ -269,7 +269,7 @@ open_filectrl_window = "open -a Terminal %s"
 run_in_terminal = "" # Linux only, ignored here
 ```
 
-#### Open with...
+#### Open with…
 
 <kbd>o</kbd> replaces the file table with the applications that can open the selection, leaving the breadcrumbs and status bar visible. The default application is listed first and marked `(default)`.
 
