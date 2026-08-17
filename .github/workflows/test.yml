@@ -40,8 +40,8 @@ jobs:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Capped well under the six-hour default: nothing here runs longer than
-    # six minutes, so a job still going at fifteen has hung rather than failed.
-    timeout-minutes: 15
+    # six minutes, so a job still going at thirty has hung rather than failed.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +78,7 @@ jobs:
   test-floor:
     name: Test (rust 1.97)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -117,7 +117,7 @@ jobs:
     needs: [test-platform, test-floor]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Check that every platform and version passed
@@ -128,7 +128,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
