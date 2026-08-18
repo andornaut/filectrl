@@ -91,7 +91,7 @@ jobs:
       # The floor is spelled here rather than taken from a file: it moves when
       # rust-version moves, which is rarely and deliberately.
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.97
+        uses: dtolnay/rust-toolchain@1.100
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2.9.2
