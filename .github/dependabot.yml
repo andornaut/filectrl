@@ -12,3 +12,11 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    # The ref on dtolnay/rust-toolchain is a Rust toolchain version, not a
+    # release of the action: it carries rust-version from Cargo.toml, which the
+    # Test (rust 1.97) job exists to check the crate still builds under.
+    # Dependabot reads it as a tag and proposes toolchains that were never
+    # released, which fail at install with a 404 from static.rust-lang.org.
+    # Raise the floor by editing Cargo.toml, the job name and the ref together.
+    ignore:
+      - dependency-name: "dtolnay/rust-toolchain"
