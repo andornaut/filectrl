@@ -206,9 +206,8 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-
+      # No checkout: the assets come from build-platform, and the notes below
+      # are generated from the tag by GitHub rather than read out of the tree.
       # Merged: every artifact holds differently named files, so nothing
       # collides, and the release wants them all in one directory.
       - name: Download release archives
