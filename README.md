@@ -60,7 +60,7 @@ Option | Description
 `-V`, `--version` | Print the version, then exit
 `-h`, `--help` | Print usage, then exit
 
-The four flags that act and exit are mutually exclusive, and each accepts only the arguments that change what it does:
+The four flags below act and exit. They are mutually exclusive, and each accepts only the arguments that change what it does:
 
 Flag | Also accepts
 --- | ---
@@ -226,13 +226,14 @@ A suggestion is shown with its position as `(N of M)`, and cycling wraps in both
 
 ## Configuration
 
-The configuration is drawn from the first of:
+The built-in [default configuration](./src/app/config/default_config.toml) is always the base. A config file merges on top of it, read from the first of:
 
 1. The path given by `--config`
 1. `~/.config/filectrl/config.toml`, if it exists
-1. The built-in [default configuration](./src/app/config/default_config.toml)
 
-`filectrl --write-default-config` writes the defaults to that path. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
+`--config` replaces the user config rather than adding to it, so a key the given file leaves out falls back to the built-in default, not to `~/.config/filectrl/config.toml`.
+
+`filectrl --write-default-config` writes the defaults to whichever of those two paths applies. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
 
 Override only what you want to change:
 
@@ -277,7 +278,7 @@ open_filectrl_window = "open -a Terminal %s"
 run_in_terminal = "" # Linux only, ignored here
 ```
 
-#### Open with…
+#### The "Open with" picker
 
 <kbd>o</kbd> replaces the file table with the applications that can open the selection, leaving the breadcrumbs and status bar visible. The default application is listed first and marked `(default)`.
 
