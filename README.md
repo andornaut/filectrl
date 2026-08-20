@@ -122,10 +122,12 @@ Marks name entries but are stored as row positions, so what becomes of them depe
 Change | Marks
 --- | ---
 Sorting, filtering, toggling hidden files | Cleared
+Starting a search | Cleared
 Reload (<kbd>Ctrl</kbd>+<kbd>r</kbd> or a watcher refresh) | Kept, re-found by path. An entry that is gone loses its mark
 A search finishing or being cancelled | Kept
 Navigating to another directory | Cleared
-chmod, copy, cut, delete | Consumed by the operation
+Copying or cutting | Kept, so what is on the clipboard stays marked
+chmod, delete, or pasting | Consumed by the operation
 
 ### Filtering
 
@@ -232,9 +234,11 @@ Override only what you want to change:
 
 ```toml
 # ~/.config/filectrl/config.toml
-[openers.linux]
-open_directory = "alacritty --working-directory %s"
-open_filectrl_window = "alacritty --command filectrl %s"
+log_level = "warn"
+
+[ui]
+show_hidden_files = false
+sort_directories_first = false
 ```
 
 Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) makes FileCTRL exit with an error rather than ignore it.
