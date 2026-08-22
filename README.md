@@ -1,7 +1,7 @@
 # FileCTRL
 
 [![CI](https://github.com/andornaut/filectrl/actions/workflows/release.yml/badge.svg)](https://github.com/andornaut/filectrl/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/license/MIT)
 
 FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 
@@ -436,7 +436,7 @@ The help view (<kbd>?</kbd>) reflects the configured keybindings.
 
 ### Desktop entry
 
-- ["Desktop Entry" specification](http://specifications.freedesktop.org/desktop-entry/desktop-entry-spec-latest.html)
+- ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry/desktop-entry-spec-latest.html)
 
 To make `filectrl` the default application for opening directories:
 
