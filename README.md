@@ -436,7 +436,7 @@ The help view (<kbd>?</kbd>) reflects the configured keybindings.
 
 ### Desktop entry
 
-- ["Desktop Entry" specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html)
+- ["Desktop Entry" specification](http://specifications.freedesktop.org/desktop-entry/desktop-entry-spec-latest.html)
 
 To make `filectrl` the default application for opening directories:
 
