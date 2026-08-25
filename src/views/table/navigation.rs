@@ -31,9 +31,9 @@ pub(super) struct PendingLoad {
 
 impl TableView {
     /// Begin a streamed directory load. Captures what to reselect once the load
-    /// completes (in `finish_directory`) and clears the visible listing. The
-    /// command handlers reset filter/search/bookmarks beforehand; `reselect`
-    /// controls only how the selection is restored.
+    /// completes (in `finish_directory`). The command handlers reset
+    /// filter/search/bookmarks beforehand; `reselect` controls how the
+    /// selection is restored, and whether the load is staged.
     pub(super) fn begin_directory(&mut self, new_directory: PathInfo, reselect: Reselect) {
         // Capture the pre-load state BEFORE clearing the listing.
         self.pending_load = PendingLoad {
@@ -50,13 +50,23 @@ impl TableView {
             },
         };
 
-        // The listing is emptied and streams back in, so the indices these
-        // marks are stored as would land on whatever rows arrive first.
-        // finish_directory finds the entries again once it is sorted.
-        self.clear_marks();
-        self.table_state.select(None);
-        self.first_visible_item = 0;
-        self.content.start_listing(new_directory);
+        // Reselect::Keep is the reload of a directory whose listing is still
+        // on screen and still correct, so the load is staged: nothing visible
+        // changes until `finish_directory` swaps the new entries in. A
+        // directory written to many times a second would otherwise blank,
+        // repaint in read order, and repaint again sorted, once per refresh.
+        //
+        // A navigation has nothing valid to show, so it empties the listing and
+        // streams it back in. The indices the marks are stored as would then
+        // land on whatever rows arrive first, and the selection and scroll
+        // offset name rows that are gone.
+        let staged = matches!(reselect, Reselect::Keep);
+        if !staged {
+            self.clear_marks();
+            self.table_state.select(None);
+            self.first_visible_item = 0;
+        }
+        self.content.start_listing(new_directory, staged);
     }
 
     /// Finish a streamed directory load: sort the accumulated entries once and
@@ -272,6 +282,15 @@ mod tests {
         }
     }
 
+    fn visible_names(table: &TableView) -> Vec<String> {
+        table
+            .content
+            .items_sorted()
+            .iter()
+            .map(|item| item.display_name.clone())
+            .collect()
+    }
+
     fn selected_basename(table: &TableView) -> Option<String> {
         table.selected_path().map(|p| p.display_name.clone())
     }
@@ -419,6 +438,43 @@ mod tests {
             generation: 1,
         });
         table.handle_command(&Command::DirectoryListingComplete { generation: 1 })
+    }
+
+    #[test]
+    fn a_reload_keeps_the_listing_and_the_cursor_until_it_completes() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            &[fx.file("a", 1), fx.file("b", 1)],
+            Reselect::Top,
+        );
+        table.select(1);
+
+        table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+
+        // A directory being written to reloads at the watcher's rate. Emptying
+        // the listing and the cursor here, then repainting them as the entries
+        // arrive, is what makes that look like the screen flashing.
+        assert_eq!(vec!["a", "b"], visible_names(&table));
+        assert_eq!(Some("b".to_string()), selected_basename(&table));
+
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("c", 1), fx.file("b", 1)],
+            generation: 1,
+        });
+
+        // Batches arrive in read order, which is not the order the header
+        // advertises; showing them would reorder the rows mid-reload.
+        assert_eq!(vec!["a", "b"], visible_names(&table));
+
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+        assert_eq!(vec!["b", "c"], visible_names(&table));
+        assert_eq!(Some("b".to_string()), selected_basename(&table));
     }
 
     #[test]

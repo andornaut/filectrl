@@ -20,6 +20,11 @@ pub(super) struct DirectoryContent {
     search_root: Option<PathBuf>,
     /// True while a directory's entries are still streaming in.
     loading: bool,
+    /// Entries of a staged load, held back until `finalize_listing` swaps them
+    /// in. `Some` for a reload of the directory already shown, whose listing
+    /// stays valid until the new one is complete; `None` for a load that has
+    /// nothing valid to show and so clears the listing up front.
+    staged: Option<Vec<PathInfo>>,
     /// Bumped whenever `items_sorted` or display-affecting state (search root,
     /// bookmarks mode) changes. Lets the view cache per-item row heights and
     /// invalidate them with a cheap equality check.
@@ -60,23 +65,39 @@ impl DirectoryContent {
         self.items = items;
     }
 
-    /// Begin a streamed directory load: switch to `directory` and clear the
-    /// listing. Entries arrive via `append_listing` and are sorted by
-    /// `finalize_listing`. Filter/search/bookmarks state is left untouched (the
-    /// caller decides what carries over for a navigate vs. a refresh).
-    pub(super) fn start_listing(&mut self, directory: PathInfo) {
+    /// Begin a streamed directory load: switch to `directory`, and either stage
+    /// the incoming entries or clear the listing for them. Entries arrive via
+    /// `append` and are applied by `finalize_listing`. Filter/search/bookmarks
+    /// state is left untouched (the caller decides what carries over for a
+    /// navigate vs. a refresh).
+    ///
+    /// `staged` says the listing on screen is of this same directory and stays
+    /// valid until the new one is complete, so a directory being written to
+    /// does not blank and repaint once per watcher refresh. Nothing visible
+    /// changes then, so the revision is left alone.
+    pub(super) fn start_listing(&mut self, directory: PathInfo, staged: bool) {
         self.directory = Some(directory);
+        self.loading = true;
+        if staged {
+            self.staged = Some(Vec::new());
+            return;
+        }
+        self.staged = None;
         self.items.clear();
         self.items_sorted.clear();
-        self.loading = true;
         self.revision += 1;
     }
 
     /// Append a streamed batch (directory entries or search results) in read
     /// order so partial results are visible immediately. The visibility
     /// predicate is applied per batch so mid-stream rendering honors it; the
-    /// final ordering is applied once by `finalize_listing`.
+    /// final ordering is applied once by `finalize_listing`. A staged load
+    /// shows nothing until it completes, so its batches only accumulate.
     pub(super) fn append(&mut self, items: &[PathInfo]) {
+        if let Some(staged) = &mut self.staged {
+            staged.extend_from_slice(items);
+            return;
+        }
         let visibility = self.visibility();
         self.items_sorted.extend(
             items
@@ -101,9 +122,12 @@ impl DirectoryContent {
         }
         // A load cancelled mid-stream never finalizes, so leaving the
         // plain-listing flow must clear the loading flag; a stale value
-        // would let late batches through the table's accept guard.
+        // would let late batches through the table's accept guard. Its
+        // staged entries go with it: nothing will ever swap them in, and
+        // the next load must not inherit them.
         if mode != ListingMode::Normal {
             self.loading = false;
+            self.staged = None;
         }
         self.revision += 1;
     }
@@ -130,12 +154,21 @@ impl DirectoryContent {
     /// Finish a streamed load: sort the entries accumulated (and already
     /// filtered) by `append` once, in place. Visibility changes mid-stream go
     /// through `sort`, which re-derives from the unfiltered items.
+    ///
+    /// A staged load replaces the listing here instead, in one step: its
+    /// entries skipped `append`'s per-batch filter, so `sort` re-derives
+    /// visibility from them.
     pub(super) fn finalize_listing(
         &mut self,
         sort_column: SortColumn,
         sort_direction: SortDirection,
     ) {
         self.loading = false;
+        if let Some(staged) = self.staged.take() {
+            self.items = staged;
+            self.sort(sort_column, sort_direction);
+            return;
+        }
         self.sort_in_place(sort_column, sort_direction);
         self.revision += 1;
     }
@@ -565,7 +598,7 @@ mod tests {
         let mut content = DirectoryContent::default();
 
         let r0 = content.revision();
-        content.start_listing(fx.directory());
+        content.start_listing(fx.directory(), false);
         let r1 = content.revision();
         assert_ne!(r0, r1, "start_listing must bump the revision");
 
@@ -603,7 +636,7 @@ mod tests {
 
         // Streamed in two batches, then finalized once.
         let mut streamed = DirectoryContent::default();
-        streamed.start_listing(fx.directory());
+        streamed.start_listing(fx.directory(), false);
         streamed.append(&items[..2]);
         streamed.append(&items[2..]);
         streamed.finalize_listing(SortColumn::Name, SortDirection::Ascending);
@@ -621,7 +654,7 @@ mod tests {
             fx.file_entry("b", 1),
         ];
         let mut content = DirectoryContent::default();
-        content.start_listing(fx.directory());
+        content.start_listing(fx.directory(), false);
         assert!(content.is_loading());
 
         content.append(&items);
@@ -631,6 +664,71 @@ mod tests {
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert!(!content.is_loading());
         assert_eq!(names(&content), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_staged_listing_replaces_the_visible_one_only_at_finalize() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_items(
+            fx.directory(),
+            vec![fx.file_entry("a", 1), fx.file_entry("b", 1)],
+        );
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+        let revision = content.revision();
+
+        content.start_listing(fx.directory(), true);
+        content.append(&[fx.file_entry("c", 1), fx.file_entry("b", 1)]);
+
+        // The entries on screen are of this same directory and are still
+        // correct, so nothing changes until the load completes: neither the
+        // listing nor the revision the row-height cache keys on, which is what
+        // makes the frame identical and the terminal write nothing.
+        assert_eq!(names(&content), vec!["a", "b"]);
+        assert_eq!(revision, content.revision());
+
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["b", "c"]);
+        assert_ne!(revision, content.revision());
+    }
+
+    #[test]
+    fn a_staged_listing_is_filtered_when_it_is_swapped_in() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), vec![fx.file_entry("Apple", 1)]);
+        content.set_filter("ap".to_string());
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        // Staged entries never reach `append`'s per-batch filter, so the swap
+        // is what has to apply it.
+        content.start_listing(fx.directory(), true);
+        content.append(&[fx.file_entry("Apricot", 1), fx.file_entry("Banana", 1)]);
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
+
+        assert_eq!(names(&content), vec!["Apricot"]);
+    }
+
+    #[test]
+    fn a_staged_listing_abandoned_by_a_search_is_dropped() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        content.start_listing(fx.directory(), true);
+        content.append(&[fx.file_entry("b", 1)]);
+        content.start_search();
+        assert!(!content.is_loading());
+        content.append(&[fx.file_entry("hit", 1)]);
+
+        // A late completion of the abandoned load must not swap its directory
+        // entries into the search results.
+        content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["hit"]);
     }
 
     #[test]
@@ -644,7 +742,7 @@ mod tests {
         ];
         let mut content = DirectoryContent::default();
         content.set_filter("ap".to_string());
-        content.start_listing(fx.directory());
+        content.start_listing(fx.directory(), false);
 
         content.append(&items);
         // Non-matching entries must not flash into view mid-stream.
@@ -662,7 +760,7 @@ mod tests {
         let mut content = DirectoryContent::default();
         // Default config has show_hidden_files = true; toggle it off.
         content.toggle_show_hidden();
-        content.start_listing(fx.directory());
+        content.start_listing(fx.directory(), false);
 
         content.append(&items);
         // Hidden entries must not flash into view mid-stream.
@@ -696,7 +794,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let mut content = DirectoryContent::default();
-        content.start_listing(fx.directory());
+        content.start_listing(fx.directory(), false);
         content.append(&[fx.file_entry("Banana", 1), fx.file_entry("Apple", 1)]);
 
         // A filter arrives mid-stream; `sort` re-derives from the unfiltered
