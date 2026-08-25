@@ -120,12 +120,20 @@ impl DirectoryContent {
         if mode != ListingMode::Search {
             self.search_root = None;
         }
-        // A load cancelled mid-stream never finalizes, so leaving the
-        // plain-listing flow must clear the loading flag; a stale value
-        // would let late batches through the table's accept guard. Its
-        // staged entries go with it: nothing will ever swap them in, and
-        // the next load must not inherit them.
-        if mode != ListingMode::Normal {
+        if mode == ListingMode::Normal {
+            // Entering the plain listing from a search or the bookmarks view,
+            // whose entries are of another root and describe nothing in this
+            // directory. The refresh that follows would otherwise stage onto
+            // them, leaving them on screen as this directory's own, and
+            // rendered as bare names now that the search root is gone.
+            self.items.clear();
+            self.items_sorted.clear();
+        } else {
+            // A load cancelled mid-stream never finalizes, so leaving the
+            // plain-listing flow must clear the loading flag; a stale value
+            // would let late batches through the table's accept guard. Its
+            // staged entries go with it: nothing will ever swap them in, and
+            // the next load must not inherit them.
             self.loading = false;
             self.staged = None;
         }
@@ -175,6 +183,12 @@ impl DirectoryContent {
 
     pub(super) fn is_loading(&self) -> bool {
         self.loading
+    }
+
+    /// Whether the load in flight is staged, and so has left the listing that
+    /// is on screen live for its whole duration.
+    pub(super) fn is_staged(&self) -> bool {
+        self.staged.is_some()
     }
 
     pub(super) fn set_filter(&mut self, filter: String) {
@@ -709,6 +723,26 @@ mod tests {
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
 
         assert_eq!(names(&content), vec!["Apricot"]);
+    }
+
+    #[test]
+    fn returning_to_the_plain_listing_drops_the_entries_of_the_mode_it_left() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::default();
+        content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+        content.start_search();
+        content.append(&[fx.nested_file_entry("sub", "hit")]);
+        assert_eq!(names(&content), vec!["hit"]);
+
+        // Esc leaves the search. Its results are of another root and describe
+        // nothing in this directory, and the refresh that follows stages onto
+        // whatever is here, so leaving them would show them as this
+        // directory's own entries, under bare names now that the search root
+        // is gone.
+        content.set_mode(ListingMode::Normal);
+        assert!(names(&content).is_empty());
     }
 
     #[test]

@@ -7,12 +7,13 @@ impl CommandHandler for StatusView {
             Command::NavigatedDirectory {
                 directory,
                 generation,
-            }
-            | Command::RefreshedDirectory {
+            } => self.begin_directory(directory.clone(), *generation),
+            Command::RefreshedDirectory {
                 directory,
                 generation,
-            } => self.begin_directory(directory.clone(), *generation),
+            } => self.begin_reload(directory.clone(), *generation),
             Command::ListingBatch { items, generation } => self.count_listing(items, *generation),
+            Command::DirectoryListingComplete { generation } => self.finish_listing(*generation),
             Command::SelectionChanged { selected, .. } => self.set_selected(selected.clone()),
             _ => CommandResult::NotHandled,
         }

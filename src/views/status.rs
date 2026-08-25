@@ -8,9 +8,13 @@ use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 pub(super) struct StatusView {
     directory: Option<PathInfo>,
     directory_len: usize,
-    /// Generation of the directory load whose entries `directory_len` counts.
+    /// Generation of the directory load whose entries the count follows.
     load_generation: u64,
     selected: Option<PathInfo>,
+    /// Entries counted for a reload, applied once it completes. `None` while a
+    /// navigation loads, which counts straight into `directory_len` because
+    /// the listing it described is gone.
+    staged_len: Option<usize>,
 }
 
 impl StatusView {
@@ -18,12 +22,37 @@ impl StatusView {
         self.directory = Some(directory);
         self.directory_len = 0;
         self.load_generation = generation;
+        self.staged_len = None;
+        CommandResult::Handled
+    }
+
+    /// Begin a reload of the directory already summarized. The table keeps its
+    /// listing on screen for the duration, so the count it belongs to is held
+    /// too: resetting it here would show `# Items: 0` under a listing that has
+    /// not changed, once per watcher refresh.
+    fn begin_reload(&mut self, directory: PathInfo, generation: u64) -> CommandResult {
+        self.directory = Some(directory);
+        self.load_generation = generation;
+        self.staged_len = Some(0);
         CommandResult::Handled
     }
 
     fn count_listing(&mut self, items: &[PathInfo], generation: u64) -> CommandResult {
         if generation == self.load_generation {
-            self.directory_len += items.len();
+            match &mut self.staged_len {
+                Some(staged_len) => *staged_len += items.len(),
+                None => self.directory_len += items.len(),
+            }
+        }
+        CommandResult::Handled
+    }
+
+    /// Apply a reload's count, in step with the table swapping its entries in.
+    fn finish_listing(&mut self, generation: u64) -> CommandResult {
+        if generation == self.load_generation
+            && let Some(staged_len) = self.staged_len.take()
+        {
+            self.directory_len = staged_len;
         }
         CommandResult::Handled
     }
@@ -52,6 +81,17 @@ mod tests {
             directory: path("dir"),
             generation,
         });
+    }
+
+    fn refreshed(view: &mut StatusView, generation: u64) {
+        view.handle_command(&Command::RefreshedDirectory {
+            directory: path("dir"),
+            generation,
+        });
+    }
+
+    fn complete(view: &mut StatusView, generation: u64) {
+        view.handle_command(&Command::DirectoryListingComplete { generation });
     }
 
     fn batch(view: &mut StatusView, count: usize, generation: u64) {
@@ -109,13 +149,46 @@ mod tests {
 
         // The watcher re-reads the same directory, so its batches repeat
         // entries that were already counted.
-        view.handle_command(&Command::RefreshedDirectory {
-            directory: path("dir"),
-            generation: 2,
-        });
-        batch(&mut view, 4, 2);
+        refreshed(&mut view, 2);
+        batch(&mut view, 6, 2);
+        complete(&mut view, 2);
 
+        assert_eq!(6, view.directory_len);
+    }
+
+    #[test]
+    fn a_refresh_holds_the_previous_count_until_the_reload_completes() {
+        let mut view = StatusView::default();
+        navigated(&mut view, 1);
+        batch(&mut view, 4, 1);
+
+        refreshed(&mut view, 2);
+        batch(&mut view, 5, 2);
+
+        // The table keeps its listing on screen for the whole reload, so a
+        // count dropping to zero and climbing back would flash a total that
+        // contradicts the rows above it.
         assert_eq!(4, view.directory_len);
+
+        complete(&mut view, 2);
+        assert_eq!(5, view.directory_len);
+    }
+
+    #[test]
+    fn a_superseded_completion_does_not_apply_a_reloads_count() {
+        let mut view = StatusView::default();
+        navigated(&mut view, 1);
+        batch(&mut view, 4, 1);
+        refreshed(&mut view, 2);
+        batch(&mut view, 5, 2);
+
+        // The completion of the load this reload replaced. Applying the
+        // pending count here would show it before its own listing arrives.
+        complete(&mut view, 1);
+        assert_eq!(4, view.directory_len);
+
+        complete(&mut view, 2);
+        assert_eq!(5, view.directory_len);
     }
 
     #[test]

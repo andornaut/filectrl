@@ -72,6 +72,16 @@ impl TableView {
     /// Finish a streamed directory load: sort the accumulated entries once and
     /// restore the selection captured by `begin_directory`.
     pub(super) fn finish_directory(&mut self) -> CommandResult {
+        // A staged load leaves the listing live while it runs, so the cursor
+        // and the marks to carry across are whatever the user last did with
+        // them, not what `begin_directory` captured before the load started.
+        // Replaying that snapshot would undo a keypress made during the load,
+        // twice a second for a directory being written to.
+        if self.content.is_staged() {
+            self.pending_load.prev_selected = self.selected_path().cloned();
+            self.pending_load.prev_selected_index = self.table_state.selected();
+            self.pending_load.prev_marked = self.marked_paths();
+        }
         self.content
             .finalize_listing(self.columns.sort_column(), self.columns.sort_direction());
         // Marks are stored by index and the listing has just been rebuilt, so
@@ -475,6 +485,72 @@ mod tests {
         table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
         assert_eq!(vec!["b", "c"], visible_names(&table));
         assert_eq!(Some("b".to_string()), selected_basename(&table));
+    }
+
+    #[test]
+    fn a_reload_keeps_a_cursor_move_and_a_mark_made_while_it_runs() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        let children = [fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)];
+        table.set_directory(fx.directory(), &children, Reselect::Top);
+        table.select(0);
+
+        table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+
+        // The listing stays live for the length of the reload, so it still
+        // takes input. Restoring the cursor and marks the reload began with
+        // would undo that input, twice a second under a watcher refresh.
+        table.select_next();
+        table.select_next();
+        table.toggle_mark();
+
+        table.handle_command(&Command::ListingBatch {
+            items: children.to_vec(),
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        assert_eq!(Some("c".to_string()), selected_basename(&table));
+        assert_eq!(
+            vec!["c".to_string()],
+            table
+                .marked_paths()
+                .iter()
+                .map(|item| item.display_name.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn leaving_a_search_does_not_leave_its_results_in_the_directory_listing() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        table.content.start_search();
+        table.content.append(&[fx.nested("sub", "hit")]);
+        assert_eq!(vec!["hit"], visible_names(&table));
+
+        // Esc, then the refresh it asks for. The results belong to another
+        // root, so a reload staging onto them would show them as this
+        // directory's entries until it completes.
+        table.handle_command(&Command::ResetView);
+        table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        assert!(visible_names(&table).is_empty());
+
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1)],
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+        assert_eq!(vec!["a"], visible_names(&table));
     }
 
     #[test]
