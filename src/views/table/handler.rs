@@ -102,7 +102,7 @@ impl CommandHandler for TableView {
                 // only `SelectionChanged { mark_count: 0 }` that resets the
                 // mark-count notice for a bookmarks reload, because the
                 // `RefreshedDirectory` branch above defers clearing to here.
-                self.sort(Reselect::Top)
+                self.sort()
             }
             // A bookmark delete runs as an async task; reload the list once it
             // finishes so the deleted entry disappears.
@@ -296,7 +296,7 @@ impl TableView {
         // Marks carry across: results stream so they can be marked
         // while the walk is still running, and the walk finishing is
         // not a reorder the user asked for.
-        self.sort_keeping_marks(Reselect::Top)
+        self.sort_keeping_marks()
     }
 
     fn reset_view(&mut self, previous_mode: ListingMode) -> CommandResult {
@@ -310,7 +310,7 @@ impl TableView {
                 self.table_state.select(None);
                 Command::RefreshDirectory.into()
             }
-            ListingMode::Normal if had_filter => self.sort(Reselect::Top),
+            ListingMode::Normal if had_filter => self.sort(),
             ListingMode::Normal => CommandResult::Handled,
         }
     }

@@ -674,6 +674,30 @@ open_directory = "alacritty --working-directory %s"
         );
     }
 
+    #[test]
+    fn equal_buffer_sizes_are_accepted() {
+        // The bound is "must not exceed", so one buffer size for every copy is
+        // a valid configuration rather than the degenerate case of the check.
+        Config::parse(
+            RuntimeEnv::default(),
+            "[file_system]\nbuffer_min_bytes = 100\nbuffer_max_bytes = 100\n",
+            None,
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_search_depth_of_zero_is_rejected() {
+        // A depth of zero descends into nothing, so a search would report no
+        // results instead of the config failing to load.
+        let err = parse_err("[file_system]\nsearch_max_depth = 0\n");
+        assert!(
+            err.contains("search_max_depth"),
+            "error should name the key: {err}"
+        );
+    }
+
     // ── writing the defaults ────────────────────────────────────────────────
     //
     // Always through an explicit path: `None` resolves to the real user config

@@ -345,6 +345,9 @@ mod tests {
     #[test_case(24, "…oper/Downloads/"; "destination tail kept at width 24")]
     #[test_case(23, "…per/Downloads/"; "destination tail kept at width 23")]
     #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
+    // The narrowest budget that still has room for a character beside the
+    // ellipsis, which is what MIN_TRUNCATE_WIDTH marks the bottom of.
+    #[test_case(10, "…/"; "one character of the tail at the minimum budget")]
     fn truncate_detail_copy(width: u16, expected: &str) {
         assert_eq!(
             expected,

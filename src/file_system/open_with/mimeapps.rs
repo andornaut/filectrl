@@ -284,6 +284,9 @@ mod tests {
     #[test_case("[Unknown Group]\ntext/plain=a.desktop" ; "unknown group")]
     #[test_case("[Added Associations]\nno equals sign" ; "malformed line")]
     #[test_case("[Added Associations]\ntext/plain=;;" ; "no usable ids")]
+    // A comment is skipped before the line is split, so one shaped like an
+    // association is still a comment.
+    #[test_case("[Added Associations]\n#text/plain=a.desktop" ; "a commented-out association")]
     fn parse_skips(text: &str) {
         assert!(MimeAppsList::parse(false, text).added.is_empty());
     }

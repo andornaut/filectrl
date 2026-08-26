@@ -126,9 +126,10 @@ mod tests {
         let (_dir, mut table) = table_for_clicks();
         table.select(1);
 
-        // Inside the table area but past the last entry. Moving the cursor
-        // here would be a selection the user never aimed at.
-        let result = click(&mut table, 8);
+        // The first row past the last entry, which is the row the bound has
+        // to exclude: one further out is past any off-by-one. Moving the
+        // cursor here would be a selection the user never aimed at.
+        let result = click(&mut table, 4);
 
         assert_eq!(CommandResult::Handled, result);
         assert_eq!(Some("b".to_string()), selected(&table));

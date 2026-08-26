@@ -1548,8 +1548,11 @@ mod tests {
 
         // The two paths name one file. A granted overwrite clears the
         // destination before copying, so letting this through would unlink the
-        // source and leave nothing to copy from.
-        assert!(validate_paths(&src, &dest, "copy", overwrite).is_err());
+        // source and leave nothing to copy from. Without a granted overwrite
+        // the existing-destination rule refuses the same paste, so the message
+        // is what says the alias check is the one that fired.
+        let message = rejection(validate_paths(&src, &dest, "copy", overwrite));
+        assert!(message.ends_with("into its own directory"), "{message}");
         assert!(real.join("f.txt").exists());
     }
 

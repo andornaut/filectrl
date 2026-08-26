@@ -344,8 +344,10 @@ mod tests {
         // never closes, so tokenizing fails, but the operation token makes
         // it clearly an entry, not prose.
         assert!(parse_clipboard_text("cp '/path wi").is_err());
-        // Unclosed quotes without an operation token stay silent.
+        // Unclosed quotes without an operation token stay silent, however many
+        // tokens follow: an apostrophe in copied prose is not a truncation.
         assert!(parse_clipboard_text("don't").unwrap().is_none());
+        assert!(parse_clipboard_text("don't copy that").unwrap().is_none());
     }
 
     #[test]

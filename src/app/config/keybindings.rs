@@ -621,27 +621,37 @@ mod tests {
     #[test_case("F5", KeyCode::F(5), KeyModifiers::NONE         ; "a function key")]
     #[test_case("F12", KeyCode::F(12), KeyModifiers::NONE       ; "a two digit function key")]
     #[test_case("F24", KeyCode::F(24), KeyModifiers::NONE       ; "the last function key")]
+    // "F" alone is the letter, not a function key missing its number.
+    #[test_case("F", KeyCode::Char('F'), KeyModifiers::SHIFT     ; "F on its own is a character")]
     fn a_spelling_parses_to_its_combo(spelling: &str, code: KeyCode, modifiers: KeyModifiers) {
         let combo = parse_key_combo(spelling).unwrap();
         assert_eq!(code, combo.code);
         assert_eq!(modifiers, combo.modifiers);
     }
 
-    #[test_case("F0"              ; "a function key below the range")]
-    #[test_case("F25"             ; "a function key above the range")]
-    #[test_case("F99"             ; "a function key far above the range")]
-    #[test_case("InvalidKey"      ; "a name that is not a key")]
-    #[test_case("Ctrl+InvalidKey" ; "a modifier on a name that is not a key")]
-    #[test_case("Foo+c"           ; "a modifier that does not exist")]
-    #[test_case("Ctrl+"           ; "a modifier with no key")]
+    #[test_case("F0"              => "Invalid F-key: 'F0' (must be F1-F24)"  ; "a function key below the range")]
+    #[test_case("F25"             => "Invalid F-key: 'F25' (must be F1-F24)" ; "a function key above the range")]
+    #[test_case("F99"             => "Invalid F-key: 'F99' (must be F1-F24)" ; "a function key far above the range")]
+    #[test_case("InvalidKey"      => "Unknown key: 'InvalidKey'" ; "a name that is not a key")]
+    #[test_case("Ctrl+InvalidKey" => "Unknown key: 'InvalidKey'" ; "a modifier on a name that is not a key")]
+    // A spelling starting with "F" reaches the F-key arm, so the number is
+    // what it is reported as failing to parse.
+    #[test_case("Foo+c"           => "Invalid F-key: 'Foo+c'"    ; "a modifier that does not exist")]
+    // The key name is never empty: the modifier prefix is stripped only when
+    // something follows it, so the whole spelling is what the error names.
+    #[test_case("Ctrl+"           => "Unknown key: 'Ctrl+'"      ; "a modifier with no key")]
     // A multibyte char straddling the prefix-length byte index must not panic
     // the str slicing; it has to come back as a normal parse error.
-    #[test_case("aaa\u{2713}x"     ; "a multibyte char straddling the prefix index")]
-    #[test_case("\u{2713}"         ; "a lone multibyte char")]
-    fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) {
+    #[test_case("aaa\u{2713}x"     => "Unknown key: 'aaa\u{2713}x'" ; "a multibyte char straddling the prefix index")]
+    #[test_case("\u{2713}"         => "Unknown key: '\u{2713}'"     ; "a lone multibyte char")]
+    fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // No terminal emits these, so they must fail config loading rather
-        // than silently producing a binding that never fires.
-        assert!(parse_key_combo(spelling).is_err());
+        // than silently producing a binding that never fires. Which refusal
+        // fired is the assertion: every one of these is an error whatever the
+        // parser did with the modifier prefix or the F-key range.
+        parse_key_combo(spelling)
+            .expect_err("a spelling that is not a key must be refused")
+            .to_string()
     }
 
     #[test]

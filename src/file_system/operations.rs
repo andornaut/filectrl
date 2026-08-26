@@ -361,16 +361,21 @@ mod tests {
         fs::read_dir(dir.path()).unwrap().next().is_none()
     }
 
-    #[test_case("" ; "empty")]
-    #[test_case("." ; "current directory")]
-    #[test_case(".." ; "parent directory")]
-    #[test_case("nested/name" ; "relative path")]
-    fn create_directory_rejects_a_name_that_is_not_a_basename(name: &str) {
+    #[test_case("" => "Directory name cannot be empty" ; "empty")]
+    #[test_case("." => "Directory name cannot be \".\"" ; "current directory")]
+    #[test_case(".." => "Directory name cannot be \"..\"" ; "parent directory")]
+    #[test_case("nested/name" => "Directory name cannot contain '/'" ; "relative path")]
+    fn create_directory_rejects_a_name_that_is_not_a_basename(name: &str) -> String {
         let dir = TempDir::new("ops_create");
         let parent = PathInfo::try_from(dir.path()).unwrap();
 
-        assert!(create_directory(&parent, name).is_err());
+        // Every one of these names also fails at `create_dir`, so which rule
+        // refused is the assertion: `is_err` alone holds with no validation.
+        let error = create_directory(&parent, name)
+            .expect_err("a name that is not a basename must be refused")
+            .to_string();
         assert!(is_empty(&dir));
+        error
     }
 
     #[test]
@@ -397,7 +402,12 @@ mod tests {
         fs::write(&b, b"b").unwrap();
 
         let info = PathInfo::try_from(a.as_path()).unwrap();
-        assert!(rename(&info, "b.txt").is_err());
+        // Which refusal matters: a destination wrongly taken for the source's
+        // own file is refused too, with the "same file" message instead.
+        let error = rename(&info, "b.txt")
+            .expect_err("an existing destination must be refused")
+            .to_string();
+        assert!(error.ends_with("already exists"), "{error}");
         // The existing destination must be untouched.
         assert_eq!(b"b".to_vec(), fs::read(&b).unwrap());
 
@@ -527,15 +537,20 @@ mod tests {
         assert!(bookmarks.join("favs").symlink_metadata().is_ok());
     }
 
-    #[test_case("" ; "empty")]
-    #[test_case("   " ; "only whitespace, which trims to empty")]
-    #[test_case("nested/name" ; "a path rather than a name")]
-    fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) {
+    #[test_case("" => "Bookmark name cannot be empty" ; "empty")]
+    #[test_case("   " => "Bookmark name cannot be empty" ; "only whitespace, which trims to empty")]
+    #[test_case("nested/name" => "Bookmark name cannot contain '/'" ; "a path rather than a name")]
+    fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) -> String {
         let base = TempDir::new("ops_bookmark_bad_name");
         let bookmarks = base.join("bookmarks");
         let target = PathInfo::try_from(base.path()).unwrap();
 
-        assert!(add_bookmark(&bookmarks, &target, name).is_err());
+        // An empty name resolves to the bookmarks directory and a nested one
+        // to a missing parent, so both fail later on anyway: the message is
+        // what says the name was refused rather than the symlink call failing.
+        add_bookmark(&bookmarks, &target, name)
+            .expect_err("a name that is not a basename must be refused")
+            .to_string()
     }
 
     #[test]

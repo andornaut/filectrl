@@ -118,7 +118,7 @@ mod tests {
         table
             .content
             .set_items(PathInfo::try_from(dir.path()).unwrap(), items);
-        table.sort(super::super::navigation::Reselect::Top);
+        table.sort();
         (dir, table)
     }
 

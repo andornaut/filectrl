@@ -4,9 +4,9 @@ use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 /// What to select after the visible items change.
 #[derive(Clone, Copy, Default)]
 pub(super) enum Reselect {
-    /// The selection does not carry over (navigating to another directory,
-    /// filtering, or re-sorting). Restore the selected file if it still
-    /// exists, otherwise select the first item.
+    /// The selection does not carry over (navigating to another directory).
+    /// Restore the selected file if it still exists, otherwise select the
+    /// first item.
     #[default]
     Top,
     /// The same directory was reloaded: keep the selected file, or hold the
@@ -148,10 +148,16 @@ impl TableView {
             return CommandResult::Handled;
         }
         self.content.set_filter(filter);
-        self.sort(Reselect::Top)
+        self.sort()
     }
 
-    pub(super) fn sort(&mut self, reselect: Reselect) -> CommandResult {
+    /// Reorder the visible items, following the selection to where it moved.
+    ///
+    /// A reorder cannot rename an entry, so an entry that is no longer in the
+    /// listing was filtered out rather than replaced, and the cursor goes to
+    /// the top. Holding the cursor's position instead is a reload's job, where
+    /// the entry under it may have been deleted (`restore_selection`).
+    pub(super) fn sort(&mut self) -> CommandResult {
         // Marks are stored by index, so any change to the visible items invalidates them.
         self.clear_marks();
 
@@ -165,25 +171,15 @@ impl TableView {
         // the selection in `restore_selection`, where inode is right precisely
         // because a rename is possible.
         let selected = self.selected_path().cloned();
-        let selected_index = self.table_state.selected();
 
         self.content
             .sort(self.columns.sort_column(), self.columns.sort_direction());
 
-        if let Some(selected_path) = selected {
-            if let Some(new_index) = self.content.find_by_path(selected_path.as_path()) {
-                // The selected file still exists after sort/filter
-                return self.select(new_index);
-            }
-
-            // The selected file is gone. On a refresh (Reselect::Keep) it was
-            // likely deleted, so hold the cursor at the same position;
-            // otherwise fall through to the top.
-            if let Reselect::Keep = reselect
-                && let Some(idx) = selected_index
-            {
-                return self.select(idx.min(self.content.len().saturating_sub(1)));
-            }
+        if let Some(selected_path) = selected
+            && let Some(new_index) = self.content.find_by_path(selected_path.as_path())
+        {
+            // The selected file still exists after sort/filter
+            return self.select(new_index);
         }
 
         // Fallback: Select the first item
@@ -198,11 +194,11 @@ impl TableView {
     /// is done. The marks are re-derived from the entries they named, so one the
     /// reorder dropped loses its mark. Range mode ends either way, since its
     /// anchor names a position and the positions have just changed.
-    pub(super) fn sort_keeping_marks(&mut self, reselect: Reselect) -> CommandResult {
+    pub(super) fn sort_keeping_marks(&mut self) -> CommandResult {
         // Captured before the sort clears them: an index says nothing about an
         // entry once the order has changed.
         let marked = self.marked_paths();
-        let result = self.sort(reselect);
+        let result = self.sort();
         if marked.is_empty() {
             return result;
         }
@@ -216,7 +212,7 @@ impl TableView {
 
     pub(super) fn sort_by(&mut self, column: SortColumn) -> CommandResult {
         self.columns.sort_by(column);
-        self.sort(Reselect::Top)
+        self.sort()
     }
 
     pub(super) fn toggle_show_hidden(&mut self) -> CommandResult {
@@ -228,7 +224,7 @@ impl TableView {
             return CommandResult::Handled;
         }
         self.content.toggle_show_hidden();
-        self.sort(Reselect::Top)
+        self.sort()
     }
 }
 
@@ -371,6 +367,27 @@ mod tests {
         );
         assert_eq!(table.table_state.selected(), Some(1));
         assert_eq!(selected_basename(&table).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn reselect_keep_clamps_a_held_cursor_to_a_shorter_listing() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(
+            fx.directory(),
+            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
+            Reselect::Top,
+        );
+        table.select(2); // "c", the last item
+
+        // Reloaded with the tail gone, so the position the cursor held no
+        // longer exists. Holding it verbatim would leave the cursor past the
+        // end of the listing, selecting nothing at all.
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Keep);
+
+        assert_eq!(Some(0), table.table_state.selected());
+        assert_eq!(Some("a"), selected_basename(&table).as_deref());
     }
 
     #[test]
