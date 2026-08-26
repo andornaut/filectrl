@@ -241,6 +241,20 @@ fn canonical_str(mime: &str) -> String {
         .map_or_else(|_| mime.to_string(), |parsed| canonical(&parsed))
 }
 
+/// Whether an entry describes an application this picker can offer: one the
+/// spec says is runnable, is not deleted, and whose `TryExec` program is
+/// installed.
+///
+/// `NoDisplay` entries are deliberately kept: the spec says the key exists so
+/// that an application can be associated with a MIME type without appearing in
+/// menus.
+fn is_offerable(entry: &DesktopEntry) -> bool {
+    if entry.type_() != Some("Application") || entry.hidden() {
+        return false;
+    }
+    entry.try_exec().is_none_or(is_installed)
+}
+
 fn to_candidate(
     locales: &[String],
     path: &Path,
@@ -248,17 +262,9 @@ fn to_candidate(
     entry: &DesktopEntry,
 ) -> Option<AppCandidate> {
     let file = entry.path.as_path();
-    if entry.type_() != Some("Application") || entry.hidden() {
-        return None;
-    }
-    // NoDisplay entries are deliberately kept: the spec says the key exists so
-    // that an application can be associated with a MIME type without appearing
-    // in menus.
-    if let Some(try_exec) = entry.try_exec()
-        && !is_installed(try_exec)
-    {
+    if !is_offerable(entry) {
         debug!(
-            "Skipping {}: TryExec {try_exec:?} is not installed",
+            "Skipping {}: not an installed, visible application",
             file.display()
         );
         return None;
@@ -442,13 +448,25 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn env_dir(name: &str) -> Option<PathBuf> {
-    env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    dir_of(env::var_os(name))
+}
+
+/// An unset variable and one set to the empty string mean the same thing: the
+/// caller falls back to the spec's default rather than to the current
+/// directory, which is what an empty `PathBuf` would name.
+fn dir_of(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
 fn env_dirs(name: &str, fallback: &str) -> Vec<PathBuf> {
-    let value = env::var_os(name).filter(|value| !value.is_empty());
+    dirs_of(env::var_os(name), fallback)
+}
+
+/// Split a `$PATH`-shaped value, falling back to `fallback` when it is unset or
+/// empty. Empty components are dropped: `a::b` names two directories, not three,
+/// and the empty one would resolve to the current directory.
+fn dirs_of(value: Option<OsString>, fallback: &str) -> Vec<PathBuf> {
+    let value = value.filter(|value| !value.is_empty());
     let value = value.unwrap_or_else(|| fallback.into());
     env::split_paths(&value)
         .filter(|dir| !dir.as_os_str().is_empty())
@@ -458,8 +476,15 @@ fn env_dirs(name: &str, fallback: &str) -> Vec<PathBuf> {
 /// Each entry of `$XDG_CURRENT_DESKTOP`, lowercased, in order. These name the
 /// `$desktop-mimeapps.list` files that take precedence over the generic one.
 fn current_desktops() -> Vec<String> {
-    env::var("XDG_CURRENT_DESKTOP")
-        .unwrap_or_default()
+    desktops_of(&env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+}
+
+/// The names in a `$XDG_CURRENT_DESKTOP` value. Empty names are dropped: an
+/// unset variable, a trailing colon and a stray space would each otherwise
+/// produce one, and the name is used to build a `$desktop-mimeapps.list`
+/// filename that would then read the generic list a second time.
+fn desktops_of(value: &str) -> Vec<String> {
+    value
         .split(':')
         .map(|desktop| desktop.trim().to_lowercase())
         .filter(|desktop| !desktop.is_empty())
@@ -494,8 +519,9 @@ mod tests {
     };
 
     use super::{
-        DesktopEntry, TEXT_PLAIN, dedupe_dirs, glob_name, in_terminal, is_executable, parents_of,
-        parse_subclasses, scan_mime_types, to_candidate,
+        DesktopEntry, Sources, TEXT_PLAIN, candidates_from, dedupe_dirs, desktops_of, dir_of,
+        dirs_of, glob_name, in_terminal, is_executable, is_offerable, parents_of, parse_subclasses,
+        scan_mime_types, to_candidate,
     };
     use crate::{app::config::Config, test_support::TempDir};
 
@@ -519,6 +545,21 @@ mod tests {
         ; "Hidden means the entry was deleted and must not be offered")]
     #[test_case("[Desktop Entry]\nType=Link\nName=Viewer\nExec=view %f\nURL=http://x\n", false
         ; "only an Application can open a file")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTryExec=/nonexistent/program\n", false
+        ; "TryExec naming a program that is not installed")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTryExec=sh\n", true
+        ; "TryExec naming a program on $PATH")]
+    fn is_offerable_accepts_an_installed_visible_application(body: &str, expected: bool) {
+        let dir = TempDir::new("open_with_offerable");
+        let entry = desktop_entry(&dir, "viewer.desktop", body);
+
+        assert_eq!(expected, is_offerable(&entry), "{body:?}");
+    }
+
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n", true
+        ; "an application is offered")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nHidden=true\n", false
+        ; "an entry the filter rejects is not built")]
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\n", false
         ; "an entry with no Exec has nothing to run")]
     fn to_candidate_offers_only_a_runnable_application(body: &str, expected: bool) {
@@ -589,6 +630,111 @@ mod tests {
         let dir = TempDir::new("open_with_exec_dir");
 
         assert!(!is_executable(dir.path()));
+    }
+
+    /// A data directory holding three applications, all associated with
+    /// `all/all` so that what the shared MIME database guesses about the file
+    /// cannot change the outcome, and a mimeapps.list naming one of them the
+    /// default.
+    fn data_dir_with_applications(dir: &TempDir) -> std::path::PathBuf {
+        let applications = dir.join("applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let write = |name: &str, body: &str| std::fs::write(applications.join(name), body).unwrap();
+        write(
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
+        );
+        write(
+            "editor.desktop",
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=edit %f\nMimeType=all/all;\nPath=/var/empty\n",
+        );
+        write(
+            "blank.desktop",
+            "[Desktop Entry]\nType=Application\nName=Blank\nExec=blank %f\nMimeType=all/all;\nPath=\n",
+        );
+        std::fs::write(
+            applications.join("mimeapps.list"),
+            "[Default Applications]\nall/all=editor.desktop\n",
+        )
+        .unwrap();
+        dir.path().to_path_buf()
+    }
+
+    #[test]
+    fn the_configured_default_is_the_one_marked_default() {
+        Config::init_test();
+        let dir = TempDir::new("open_with_sources");
+        let data = data_dir_with_applications(&dir);
+        let file = dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let sources = Sources::from_dirs(&[], &[data]);
+
+        let candidates = candidates_from(&sources, &file);
+
+        let named = |name: &str| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.name == name)
+                .unwrap_or_else(|| panic!("{name} should be offered: {candidates:?}"))
+        };
+        // mimeapps.list names editor.desktop, so the marker follows the
+        // configuration rather than the order the entries were indexed in.
+        assert!(named("Editor").is_default);
+        assert!(!named("Viewer").is_default);
+        assert!(!named("Blank").is_default);
+    }
+
+    #[test]
+    fn an_entrys_working_directory_is_taken_only_when_it_names_one() {
+        Config::init_test();
+        let dir = TempDir::new("open_with_working_dir");
+        let data = data_dir_with_applications(&dir);
+        let file = dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let sources = Sources::from_dirs(&[], &[data]);
+
+        let candidates = candidates_from(&sources, &file);
+
+        let working_dir = |name: &str| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.name == name)
+                .and_then(|candidate| candidate.working_dir.clone())
+        };
+        assert_eq!(Some(PathBuf::from("/var/empty")), working_dir("Editor"));
+        assert_eq!(None, working_dir("Viewer"));
+        // An empty `Path=` names no directory. Taking it literally would run
+        // the program in whatever directory FileCTRL happened to be started in.
+        assert_eq!(None, working_dir("Blank"));
+    }
+
+    #[test_case(None, None                          ; "unset falls back to the spec default")]
+    #[test_case(Some(""), None                      ; "empty falls back rather than naming the current directory")]
+    #[test_case(Some("/x/data"), Some("/x/data")    ; "a directory is taken as given")]
+    fn dir_of_reads_a_single_directory_variable(value: Option<&str>, expected: Option<&str>) {
+        let expected = expected.map(PathBuf::from);
+
+        assert_eq!(expected, dir_of(value.map(OsString::from)));
+    }
+
+    #[test_case(None, &["/usr/share"]                 ; "unset uses the fallback")]
+    #[test_case(Some(""), &["/usr/share"]             ; "empty uses the fallback")]
+    #[test_case(Some("/a:/b"), &["/a", "/b"]          ; "each component is a directory")]
+    #[test_case(Some("/a::/b"), &["/a", "/b"]         ; "an empty component is dropped")]
+    #[test_case(Some(":/a"), &["/a"]                  ; "a leading separator is not a directory")]
+    fn dirs_of_splits_a_search_path(value: Option<&str>, expected: &[&str]) {
+        let expected: Vec<PathBuf> = expected.iter().map(PathBuf::from).collect();
+
+        assert_eq!(expected, dirs_of(value.map(OsString::from), "/usr/share"));
+    }
+
+    #[test_case("", &[]                             ; "unset names no desktop")]
+    #[test_case("GNOME", &["gnome"]                  ; "a single name is lowercased")]
+    #[test_case("ubuntu:GNOME", &["ubuntu", "gnome"] ; "each name in order")]
+    #[test_case("GNOME:", &["gnome"]                 ; "a trailing separator names nothing")]
+    #[test_case(" GNOME ", &["gnome"]                ; "surrounding space is not part of the name")]
+    fn desktops_of_names_the_lists_to_read(value: &str, expected: &[&str]) {
+        assert_eq!(strings(expected), desktops_of(value));
     }
 
     #[test]
