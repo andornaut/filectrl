@@ -47,10 +47,11 @@ mod tests {
     }
 
     /// Two calls in a row are microseconds apart, so every case here is inside
-    /// the threshold whatever it is configured to. The elapsed-time branch
-    /// needs a real wait and is not covered.
+    /// the window whatever it is set to. The elapsed-time branch needs a real
+    /// wait and is not covered. The value is the test's own: what the app
+    /// builds its own with is pinned in `mouse.rs`.
     fn clicker() -> DoubleClick {
-        DoubleClick::new(500)
+        DoubleClick::new(300)
     }
 
     #[test]

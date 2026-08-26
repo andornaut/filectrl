@@ -7,7 +7,9 @@ use super::columns::{SortColumn, SortDirection};
 use crate::file_system::path_info::{PathInfo, name_comparator};
 use crate::views::ListingMode;
 
-#[derive(Default)]
+/// Deliberately not `Default`: the two settings below have no meaningful
+/// default of their own, and a derived one would read as "hide dotfiles, do
+/// not group directories", the opposite of what the shipped config asks for.
 pub(super) struct DirectoryContent {
     directory: Option<PathInfo>,
     filter: String,
@@ -43,9 +45,17 @@ impl DirectoryContent {
     /// about.
     pub(super) fn new(show_hidden: bool, sort_directories_first: bool) -> Self {
         Self {
+            directory: None,
+            filter: String::new(),
+            items: Vec::new(),
+            items_sorted: Vec::new(),
+            mode: ListingMode::default(),
+            search_root: None,
+            loading: false,
+            staged: None,
+            revision: 0,
             show_hidden,
             sort_directories_first,
-            ..Self::default()
         }
     }
 

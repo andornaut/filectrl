@@ -38,8 +38,7 @@ pub(super) struct OpenWithView {
 }
 
 impl OpenWithView {
-    pub(super) fn new(keybindings: &KeyBindings) -> Self {
-        let kb = keybindings;
+    pub(super) fn new(kb: &KeyBindings) -> Self {
         Self {
             area: Rect::default(),
             candidates: Vec::new(),

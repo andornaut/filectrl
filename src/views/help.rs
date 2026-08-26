@@ -8,9 +8,9 @@ use self::widget::{
     add_keybinding_lines, add_section_header, build_normal_keybindings, build_prompt_keybindings,
     max_label_width,
 };
-use super::{ScrollbarView, as_dimension};
+use super::ScrollbarView;
 use crate::{
-    app::config::{Config, keybindings::Action},
+    app::config::{Config, keybindings::Action, theme::Help},
     command::result::CommandResult,
 };
 
@@ -20,14 +20,17 @@ const MIN_HEIGHT: u16 = 5;
 
 pub(super) struct HelpView {
     area: Rect,
-    /// Rendered content height in lines, cached at construction.
-    content_height: u16,
-    /// Bordered header hint, cached at construction.
+    /// Bordered header hint, built once from the keybindings.
     hint: String,
     inner_height: u16,
-    /// Help content lines, cached at construction (keybindings and theme
-    /// never change after startup).
-    lines: Vec<Line<'static>>,
+    /// The label and key columns, resolved once from the keybindings. The
+    /// styled lines are built per frame from the theme the render is handed,
+    /// so the body and the border it sits in cannot come from two themes.
+    normal_keybindings: Vec<(String, String)>,
+    prompt_keybindings: Vec<(String, String)>,
+    /// The width the two columns are laid out to, which the line count below
+    /// depends on and the theme does not.
+    label_width: usize,
     max_scroll: u16,
     scroll_offset: u16,
     scrollbar_view: ScrollbarView,
@@ -42,25 +45,40 @@ impl HelpView {
         );
         let normal_keybindings = build_normal_keybindings(kb);
         let prompt_keybindings = build_prompt_keybindings(kb);
-        let help_theme = &config.theme().help;
-        let max_width = max_label_width(&normal_keybindings, &prompt_keybindings);
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        add_section_header(&mut lines, "Normal Mode", max_width, help_theme);
-        add_keybinding_lines(&mut lines, &normal_keybindings, max_width, help_theme);
-        lines.push(Line::raw(""));
-        add_section_header(&mut lines, "Prompt Mode", max_width, help_theme);
-        add_keybinding_lines(&mut lines, &prompt_keybindings, max_width, help_theme);
-        let content_height = as_dimension(lines.len());
+        let label_width = max_label_width(&normal_keybindings, &prompt_keybindings);
         Self {
             area: Rect::default(),
-            content_height,
             hint,
             inner_height: 0,
-            lines,
+            normal_keybindings,
+            prompt_keybindings,
+            label_width,
             max_scroll: 0,
             scroll_offset: 0,
             scrollbar_view: ScrollbarView::default(),
         }
+    }
+
+    /// The help text, styled with `theme`. Built per frame rather than cached,
+    /// so every part of the view is drawn with the theme its render was given.
+    fn lines(&self, theme: &Help) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        add_section_header(&mut lines, "Normal Mode", self.label_width, theme);
+        add_keybinding_lines(
+            &mut lines,
+            &self.normal_keybindings,
+            self.label_width,
+            theme,
+        );
+        lines.push(Line::raw(""));
+        add_section_header(&mut lines, "Prompt Mode", self.label_width, theme);
+        add_keybinding_lines(
+            &mut lines,
+            &self.prompt_keybindings,
+            self.label_width,
+            theme,
+        );
+        lines
     }
 
     pub(super) fn reset_scroll(&mut self) {
