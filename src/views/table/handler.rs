@@ -369,6 +369,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resetting_a_filtered_listing_clears_the_filter_and_re_sorts() {
+        let (_dir, mut table) = marked_table();
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+        assert_eq!(1, table.content.len());
+
+        let result = table.handle_command(&Command::ResetView);
+
+        assert!(table.content.filter().is_empty());
+        assert_eq!(3, table.content.len());
+        // The listing changed, so the selection has to be reported again.
+        assert!(
+            matches!(result, CommandResult::HandledWith(ref command)
+                if matches!(**command, Command::SelectionChanged { .. })),
+            "expected a selection snapshot, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn resetting_an_unfiltered_listing_reorders_nothing() {
+        let (_dir, mut table) = marked_table();
+
+        // Esc with nothing to undo: re-sorting would move the cursor to the
+        // top of a listing the user never filtered.
+        let result = table.handle_command(&Command::ResetView);
+
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!(Some(2), table.table_state.selected());
+    }
+
     /// A non-terminal update and the terminal one for the same task, taken
     /// from the channel an `ActiveTask` reports on rather than built by hand.
     fn task_updates() -> (Task, Task) {

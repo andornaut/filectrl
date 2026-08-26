@@ -164,27 +164,21 @@ mod tests {
         assert_eq!(NAME_MIN_LEN, name_width);
     }
 
-    #[test]
-    fn modified_column_has_correct_length_and_name_shrinks() {
-        // A literal rather than the formula the implementation uses, which
-        // would agree with itself however it changed.
-        let (constraints, name_width) = calculate_constraints(40);
-        assert_eq!(Constraint::Length(MODIFIED_LEN), constraints[1]);
-        assert_eq!(27, name_width);
-    }
-
-    #[test]
-    fn size_column_has_correct_length_and_name_shrinks() {
-        let (constraints, name_width) = calculate_constraints(61);
-        assert_eq!(Constraint::Length(SIZE_LEN), constraints[2]);
-        assert_eq!(40, name_width);
-    }
-
-    #[test]
-    fn mode_column_has_correct_length_and_name_shrinks() {
-        let (constraints, name_width) = calculate_constraints(72);
-        assert_eq!(Constraint::Length(MODE_LEN), constraints[3]);
-        assert_eq!(40, name_width);
+    // The name widths are literals rather than the formula the implementation
+    // uses, which would agree with itself however it changed. Each row is the
+    // width at which that column first fits.
+    #[test_case(40, 1, MODIFIED_LEN, 27 ; "modified")]
+    #[test_case(61, 2, SIZE_LEN, 40     ; "size")]
+    #[test_case(72, 3, MODE_LEN, 40     ; "mode")]
+    fn a_column_takes_its_own_length_and_the_name_column_shrinks(
+        width: u16,
+        index: usize,
+        expected_len: u16,
+        expected_name_width: u16,
+    ) {
+        let (constraints, name_width) = calculate_constraints(width);
+        assert_eq!(Constraint::Length(expected_len), constraints[index]);
+        assert_eq!(expected_name_width, name_width);
     }
 
     // --- sort_by ---

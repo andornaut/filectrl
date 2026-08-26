@@ -407,6 +407,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_ls_colors_keeps_the_configured_style_for_an_entry_that_parses_to_nothing() {
+        let mut ft = FileType::default();
+        ft.apply_ls_colors("di=34", false);
+
+        // "99" is not a code this understands, so the entry carries no color
+        // and no modifier. Applying it would replace a color the user
+        // configured with nothing at all.
+        ft.apply_ls_colors("di=99", false);
+
+        assert_eq!(ft.directory().fg, Some(Color::Blue));
+    }
+
+    #[test]
     fn apply_ls_colors_skips_empty_colon_separated_entries() {
         // A trailing or doubled colon leaves an empty entry, which GNU `ls`
         // accepts, so it must be skipped rather than end the parse.

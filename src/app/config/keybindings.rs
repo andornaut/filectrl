@@ -566,9 +566,12 @@ fn format_key_combo(combo: &KeyCombo) -> String {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
+    const CTRL_SHIFT: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
 
     /// Parse the embedded default config's `[keybindings]` section into a `TomlKeybindings`.
     fn default_toml_keybindings() -> TomlKeybindings {
@@ -595,18 +598,50 @@ mod tests {
         KeyBindings::new(&toml_kb)
     }
 
-    #[test]
-    fn parse_single_char() {
-        let combo = parse_key_combo("q").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('q'));
-        assert_eq!(combo.modifiers, KeyModifiers::NONE);
+    #[test_case("q", KeyCode::Char('q'), KeyModifiers::NONE     ; "a bare character")]
+    #[test_case("+", KeyCode::Char('+'), KeyModifiers::NONE     ; "the separator itself")]
+    #[test_case("G", KeyCode::Char('G'), KeyModifiers::SHIFT    ; "an uppercase character carries shift")]
+    #[test_case("Ctrl+c", KeyCode::Char('c'), KeyModifiers::CONTROL ; "a modifier")]
+    #[test_case("Ctrl++", KeyCode::Char('+'), KeyModifiers::CONTROL ; "a modifier on the separator")]
+    #[test_case("Ctrl+Shift+a", KeyCode::Char('a'), CTRL_SHIFT  ; "two modifiers")]
+    #[test_case("Ctrl+Shift++", KeyCode::Char('+'), CTRL_SHIFT  ; "two modifiers on the separator")]
+    #[test_case("Enter", KeyCode::Enter, KeyModifiers::NONE     ; "a named key")]
+    #[test_case("Esc", KeyCode::Esc, KeyModifiers::NONE         ; "esc")]
+    #[test_case("Backspace", KeyCode::Backspace, KeyModifiers::NONE ; "backspace")]
+    #[test_case("Delete", KeyCode::Delete, KeyModifiers::NONE   ; "delete")]
+    #[test_case("Space", KeyCode::Char(' '), KeyModifiers::NONE ; "space names a character")]
+    #[test_case("Home", KeyCode::Home, KeyModifiers::NONE       ; "home")]
+    #[test_case("End", KeyCode::End, KeyModifiers::NONE         ; "end")]
+    #[test_case("PgUp", KeyCode::PageUp, KeyModifiers::NONE     ; "the short paging spelling")]
+    #[test_case("PgDn", KeyCode::PageDown, KeyModifiers::NONE   ; "the short paging spelling, down")]
+    #[test_case("PageUp", KeyCode::PageUp, KeyModifiers::NONE   ; "the long paging spelling")]
+    #[test_case("PageDown", KeyCode::PageDown, KeyModifiers::NONE ; "the long paging spelling, down")]
+    // F1 and F24 are the ends of the accepted range.
+    #[test_case("F1", KeyCode::F(1), KeyModifiers::NONE         ; "the first function key")]
+    #[test_case("F5", KeyCode::F(5), KeyModifiers::NONE         ; "a function key")]
+    #[test_case("F12", KeyCode::F(12), KeyModifiers::NONE       ; "a two digit function key")]
+    #[test_case("F24", KeyCode::F(24), KeyModifiers::NONE       ; "the last function key")]
+    fn a_spelling_parses_to_its_combo(spelling: &str, code: KeyCode, modifiers: KeyModifiers) {
+        let combo = parse_key_combo(spelling).unwrap();
+        assert_eq!(code, combo.code);
+        assert_eq!(modifiers, combo.modifiers);
     }
 
-    #[test]
-    fn parse_uppercase_adds_shift() {
-        let combo = parse_key_combo("G").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('G'));
-        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+    #[test_case("F0"              ; "a function key below the range")]
+    #[test_case("F25"             ; "a function key above the range")]
+    #[test_case("F99"             ; "a function key far above the range")]
+    #[test_case("InvalidKey"      ; "a name that is not a key")]
+    #[test_case("Ctrl+InvalidKey" ; "a modifier on a name that is not a key")]
+    #[test_case("Foo+c"           ; "a modifier that does not exist")]
+    #[test_case("Ctrl+"           ; "a modifier with no key")]
+    // A multibyte char straddling the prefix-length byte index must not panic
+    // the str slicing; it has to come back as a normal parse error.
+    #[test_case("aaa\u{2713}x"     ; "a multibyte char straddling the prefix index")]
+    #[test_case("\u{2713}"         ; "a lone multibyte char")]
+    fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) {
+        // No terminal emits these, so they must fail config loading rather
+        // than silently producing a binding that never fires.
+        assert!(parse_key_combo(spelling).is_err());
     }
 
     #[test]
@@ -630,95 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_ctrl_modifier() {
-        let combo = parse_key_combo("Ctrl+c").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('c'));
-        assert_eq!(combo.modifiers, KeyModifiers::CONTROL);
-    }
-
-    #[test]
-    fn parse_ctrl_shift() {
-        let combo = parse_key_combo("Ctrl+Shift+a").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('a'));
-        assert_eq!(combo.modifiers, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
-    }
-
-    #[test]
-    fn parse_named_keys() {
-        assert_eq!(parse_key_combo("Enter").unwrap().code, KeyCode::Enter);
-        assert_eq!(parse_key_combo("Esc").unwrap().code, KeyCode::Esc);
-        assert_eq!(
-            parse_key_combo("Backspace").unwrap().code,
-            KeyCode::Backspace
-        );
-        assert_eq!(parse_key_combo("Delete").unwrap().code, KeyCode::Delete);
-        assert_eq!(parse_key_combo("Space").unwrap().code, KeyCode::Char(' '));
-        assert_eq!(parse_key_combo("Home").unwrap().code, KeyCode::Home);
-        assert_eq!(parse_key_combo("End").unwrap().code, KeyCode::End);
-        assert_eq!(parse_key_combo("PgUp").unwrap().code, KeyCode::PageUp);
-        assert_eq!(parse_key_combo("PgDn").unwrap().code, KeyCode::PageDown);
-        assert_eq!(parse_key_combo("PageUp").unwrap().code, KeyCode::PageUp);
-        assert_eq!(parse_key_combo("PageDown").unwrap().code, KeyCode::PageDown);
-    }
-
-    #[test]
-    fn parse_f_keys() {
-        // F1 and F24 are the ends of the accepted range.
-        assert_eq!(parse_key_combo("F1").unwrap().code, KeyCode::F(1));
-        assert_eq!(parse_key_combo("F5").unwrap().code, KeyCode::F(5));
-        assert_eq!(parse_key_combo("F12").unwrap().code, KeyCode::F(12));
-        assert_eq!(parse_key_combo("F24").unwrap().code, KeyCode::F(24));
-    }
-
-    #[test]
-    fn parse_out_of_range_f_keys_is_error() {
-        // No terminal emits these; they must fail config loading rather than
-        // silently producing a binding that never fires.
-        assert!(parse_key_combo("F0").is_err());
-        assert!(parse_key_combo("F25").is_err());
-        assert!(parse_key_combo("F99").is_err());
-    }
-
-    #[test]
-    fn parse_plus_key() {
-        let combo = parse_key_combo("+").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('+'));
-        assert_eq!(combo.modifiers, KeyModifiers::NONE);
-    }
-
-    #[test]
-    fn parse_modifier_plus_key() {
-        let combo = parse_key_combo("Ctrl++").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('+'));
-        assert_eq!(combo.modifiers, KeyModifiers::CONTROL);
-
-        let combo = parse_key_combo("Ctrl+Shift++").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('+'));
-        assert_eq!(combo.modifiers, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
-    }
-
-    #[test]
-    fn parse_modifier_without_key_is_error() {
-        assert!(parse_key_combo("Ctrl+").is_err());
-    }
-
-    #[test]
-    fn parse_multibyte_key_string_does_not_panic() {
-        // A multibyte char straddling the prefix-length byte index must not
-        // panic the str slicing; it should be a normal parse error.
-        assert!(parse_key_combo("aaa✓x").is_err());
-        assert!(parse_key_combo("✓").is_err());
-    }
-
-    #[test]
-    fn parse_invalid_key() {
-        assert!(parse_key_combo("InvalidKey").is_err());
-        assert!(parse_key_combo("Ctrl+InvalidKey").is_err());
-        assert!(parse_key_combo("Foo+c").is_err());
-    }
-
-    #[test]
-    fn format_round_trips() {
+    fn formatting_a_combo_produces_a_spelling_that_parses_back() {
         let cases = [
             "q",
             "G",
@@ -749,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_key_detected() {
+    fn two_actions_bound_to_the_same_key_is_an_error() {
         let result = keybindings_with_override(
             r#"
             [keybindings]
@@ -793,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn override_replaces_default() {
+    fn a_configured_binding_replaces_the_default_for_that_action() {
         let kb = keybindings_with_override(
             r#"
             [keybindings]
@@ -928,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_action_lookup() {
+    fn prompt_mode_resolves_its_own_bindings() {
         let kb = default_keybindings();
         assert_eq!(
             kb.prompt_action(KeyCode::Enter, KeyModifiers::NONE),

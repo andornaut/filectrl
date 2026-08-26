@@ -78,10 +78,12 @@ impl BreadcrumbsView {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
     use super::*;
     use crate::{
         app::config::Config,
-        command::{Command, handler::CommandHandler},
+        command::{Command, handler::CommandHandler, result::CommandResult},
     };
 
     fn view(parts: &[&str], mode: ListingMode) -> BreadcrumbsView {
@@ -90,6 +92,22 @@ mod tests {
             mode,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_refresh_while_showing_bookmarks_keeps_the_bookmarks_breadcrumbs() {
+        Config::init_test();
+        let mut v = view(&["", "home", "bookmarks"], ListingMode::Bookmarks);
+
+        // The watcher refreshes the working directory behind the bookmarks
+        // listing. Following it here would put the working directory in the
+        // breadcrumbs above a listing of bookmarks.
+        v.handle_command(&Command::RefreshedDirectory {
+            directory: crate::file_system::path_info::PathInfo::try_from("/tmp").unwrap(),
+            generation: 1,
+        });
+
+        assert_eq!(vec!["", "home", "bookmarks"], v.breadcrumbs);
     }
 
     #[test]
@@ -127,6 +145,68 @@ mod tests {
         );
         // Past the end of the trail: a click that addresses no breadcrumb.
         assert_eq!(None, view.to_path(2).map(|info| info.path));
+    }
+
+    /// Populate `positions` the way `render` does, so a click can be dispatched
+    /// without a terminal. The widget is what maps columns to breadcrumbs, so
+    /// building the positions by hand would test something else.
+    fn lay_out(view: &mut BreadcrumbsView, width: u16) {
+        use ratatui::style::Style;
+
+        let display = view.display_breadcrumbs();
+        let tag_style = (view.mode != ListingMode::Normal).then(Style::default);
+        let (_, positions) = super::widget::spans(
+            &display,
+            width,
+            tag_style,
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        );
+        view.area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height: u16::try_from(positions.len()).expect("the fixture is a few rows"),
+        };
+        view.positions = positions;
+    }
+
+    fn click(view: &mut BreadcrumbsView, x: u16) -> CommandResult {
+        view.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn clicking_a_breadcrumb_while_a_tag_is_shown_addresses_the_directory_under_the_column() {
+        Config::init_test();
+        let mut v = view(&["", "tmp"], ListingMode::Search);
+        lay_out(&mut v, 40);
+
+        // "[Search] " occupies the first columns and names no directory, so a
+        // click lands one breadcrumb earlier than its position says. Reading
+        // the position directly would open the root for a click on "tmp".
+        let result = click(&mut v, 11);
+
+        let Ok(Command::Open(path)) = Command::try_from(result) else {
+            panic!("expected the clicked breadcrumb to open");
+        };
+        assert_eq!(std::path::PathBuf::from("/tmp"), path.path);
+    }
+
+    #[test]
+    fn clicking_the_tag_itself_opens_nothing() {
+        Config::init_test();
+        let mut v = view(&["", "tmp"], ListingMode::Search);
+        lay_out(&mut v, 40);
+
+        // The tag is not a directory, and the breadcrumb before it does not
+        // exist.
+        assert_eq!(CommandResult::Handled, click(&mut v, 2));
     }
 
     #[test]

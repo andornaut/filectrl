@@ -328,6 +328,19 @@ mod tests {
     use super::*;
     use crate::test_support::TempDir;
 
+    #[test]
+    fn renaming_a_vanished_source_says_so_rather_than_blaming_the_destination() {
+        let dir = TempDir::new("ops_rename_vanished");
+        let gone = PathInfo::try_from(dir.path()).unwrap();
+        std::fs::remove_dir_all(dir.path()).unwrap();
+
+        let error = rename(&gone, "new-name").unwrap_err().to_string();
+
+        // Only NotFound means vanished. Any other errno has to keep its own
+        // message, so a permission problem is not reported as a missing file.
+        assert!(error.contains("no longer exists"), "{error}");
+    }
+
     #[test_case("/b", "/a", "b"; "/a to b relative")]
     #[test_case("/b", "/a", "/b"; "/a to /b absolute")]
     #[test_case("/b", "/a/aa", "/b"; "/a/aa to /b absolute")]

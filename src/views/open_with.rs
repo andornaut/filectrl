@@ -155,8 +155,12 @@ mod tests {
     use test_case::test_case;
 
     use super::{OpenWithView, clamp_scroll, clamp_selection};
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+
     use crate::{
-        app::config::Config, command::result::CommandResult, file_system::open_with::AppCandidate,
+        app::config::{Config, keybindings::Action},
+        command::{Command, handler::CommandHandler, result::CommandResult},
+        file_system::open_with::AppCandidate,
     };
 
     fn picker(count: usize) -> OpenWithView {
@@ -193,6 +197,62 @@ mod tests {
         // `len() - 1` would underflow, and there is no row to launch anyway.
         assert_eq!(CommandResult::Handled, view.select(0));
         assert_eq!(0, view.selected);
+    }
+
+    #[test]
+    fn a_digit_launches_its_row() {
+        Config::init_test();
+        let mut view = picker(20);
+
+        let result = view.handle_key(KeyCode::Char('3'), KeyModifiers::NONE);
+
+        let Ok(Command::OpenWith { label, .. }) = Command::try_from(result) else {
+            panic!("expected the third row to launch");
+        };
+        assert_eq!("App2", label);
+    }
+
+    #[test]
+    fn a_digit_with_a_modifier_is_not_a_row_shortcut() {
+        Config::init_test();
+        let mut view = picker(20);
+
+        // Ctrl+3 is not a row: a chord belongs to whatever binds it, and
+        // launching an application on one would be a surprise.
+        let result = view.handle_key(KeyCode::Char('3'), KeyModifiers::CONTROL);
+
+        assert_eq!(CommandResult::NotHandled, result);
+    }
+
+    #[test]
+    fn a_scroll_action_is_claimed_rather_than_falling_through_to_the_row_shortcuts() {
+        Config::init_test();
+        let mut view = picker(20);
+
+        // The digit keys the picker scrolls with must not also launch a row.
+        let result = view.handle_key(KeyCode::Down, KeyModifiers::NONE);
+
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!(1, view.selected);
+    }
+
+    // A 20 candidate list in a 5 row viewport, so a page is 5 rows and the
+    // ends of the list are reachable in one keystroke.
+    #[test_case(Action::SelectNext, 0, 1       ; "next moves one row down")]
+    #[test_case(Action::SelectPrevious, 3, 2   ; "previous moves one row up")]
+    #[test_case(Action::SelectPrevious, 0, 0   ; "previous holds at the first row")]
+    #[test_case(Action::PageDown, 0, 5         ; "a page down moves by the viewport height")]
+    #[test_case(Action::PageUp, 12, 7          ; "a page up moves by the viewport height")]
+    #[test_case(Action::PageUp, 2, 0           ; "a page up holds at the first row")]
+    #[test_case(Action::SelectFirst, 12, 0     ; "first jumps to the top")]
+    #[test_case(Action::SelectLast, 0, 19      ; "last jumps to the bottom")]
+    fn a_scroll_action_moves_the_selection(action: Action, from: usize, expected: usize) {
+        let mut view = picker(20);
+        view.select(from);
+
+        view.handle_scroll_action(action);
+
+        assert_eq!(expected, view.selected);
     }
 
     #[test_case(5, 20, 15, 0, 15 ; "a drag to the bottom carries the selection with it")]

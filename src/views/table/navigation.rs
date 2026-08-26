@@ -488,6 +488,44 @@ mod tests {
     }
 
     #[test]
+    fn navigating_to_the_parent_selects_the_directory_it_came_from() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let child = fx.nested("sub", "inside");
+        let parent = fx.directory();
+        let mut table = TableView::default();
+        // Start inside `sub`, as though the user had just descended into it.
+        table.set_directory(
+            PathInfo::try_from(child.as_path().parent().unwrap()).unwrap(),
+            std::slice::from_ref(&child),
+            Reselect::Top,
+        );
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: parent.clone(),
+            generation: 1,
+        });
+        // `aaa` is a directory that sorts above `sub`, so it is what the
+        // fallback would select. A listing whose first row is `sub` cannot
+        // tell the rule being pinned from the fallback.
+        fx.nested("aaa", "inside");
+        table.handle_command(&Command::ListingBatch {
+            items: vec![
+                PathInfo::try_from(fx.directory().as_path().join("aaa").as_path()).unwrap(),
+                fx.file("z", 1),
+                PathInfo::try_from(fx.directory().as_path().join("sub").as_path()).unwrap(),
+            ],
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        // Going up puts the cursor on the directory just left, not on the top
+        // of the parent listing, so a second press of the same key walks back
+        // out along the path the user came in on.
+        assert_eq!(Some("sub".to_string()), selected_basename(&table));
+    }
+
+    #[test]
     fn a_reload_keeps_a_cursor_move_and_a_mark_made_while_it_runs() {
         Config::init_test();
         let fx = Fixture::new();

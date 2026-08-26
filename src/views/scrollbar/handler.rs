@@ -59,6 +59,7 @@ impl ScrollbarView {
 #[cfg(test)]
 mod tests {
     use ratatui::layout::Rect;
+    use test_case::test_case;
 
     use super::ScrollbarView;
 
@@ -80,23 +81,15 @@ mod tests {
         assert_eq!(None, s.handle_drag(0, 0));
     }
 
-    #[test]
-    fn drag_at_top_selects_first_position() {
+    // height=10 over a max position of 99, so a row maps to 99/9 of the range.
+    #[test_case(0, Some(0)     ; "the top row selects the first position")]
+    #[test_case(9, Some(99)    ; "the bottom row selects the last position")]
+    // relative=5, percentage=5/9 = 0.556, position = round(0.556 * 99)
+    #[test_case(5, Some(55)    ; "a middle row selects proportionally")]
+    #[test_case(100, Some(99)  ; "a drag past the bottom clamps to the last position")]
+    fn a_drag_maps_a_row_to_a_position(y: u16, expected: Option<usize>) {
         let s = scrollbar_at(0, 10);
-        assert_eq!(Some(0), s.handle_drag(0, 99));
-    }
-
-    #[test]
-    fn drag_at_bottom_selects_last_position() {
-        let s = scrollbar_at(0, 10);
-        assert_eq!(Some(99), s.handle_drag(9, 99));
-    }
-
-    #[test]
-    fn drag_at_middle_selects_proportional_position() {
-        // height=10, y=5 → relative=5, percentage=5/9 ≈ 0.556, position = round(0.556 * 99) = 55
-        let s = scrollbar_at(0, 10);
-        assert_eq!(Some(55), s.handle_drag(5, 99));
+        assert_eq!(expected, s.handle_drag(y, 99));
     }
 
     #[test]
@@ -106,11 +99,5 @@ mod tests {
         assert_eq!(Some(0), s.handle_drag(5, 99));
         // drag at y=14 → relative=9 → last position
         assert_eq!(Some(99), s.handle_drag(14, 99));
-    }
-
-    #[test]
-    fn drag_beyond_bottom_clamps_to_last_position() {
-        let s = scrollbar_at(0, 10);
-        assert_eq!(Some(99), s.handle_drag(100, 99));
     }
 }

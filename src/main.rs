@@ -300,6 +300,20 @@ mod tests {
     }
 
     #[test]
+    fn version_takes_no_config() {
+        // --version prints a constant, so even the flag every other action
+        // reads cannot change what it prints.
+        let args = Args {
+            version: true,
+            config: Some("config.toml".to_string()),
+            ..args()
+        };
+        let error = usage_error(&args);
+        assert!(error.contains("--config"), "{error}");
+        assert!(error.contains("--version"), "{error}");
+    }
+
+    #[test]
     fn a_directory_the_action_ignores_is_rejected() {
         let args = Args {
             print_keybindings: true,

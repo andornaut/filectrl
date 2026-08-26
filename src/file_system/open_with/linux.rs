@@ -488,12 +488,47 @@ fn lists_in(desktops: &[String], dir: &Path) -> Vec<MimeAppsList> {
 mod tests {
     use test_case::test_case;
 
-    use std::{ffi::OsString, path::PathBuf};
+    use std::{
+        ffi::OsString,
+        path::{Path, PathBuf},
+    };
 
-    use super::{dedupe_dirs, glob_name, in_terminal, parse_subclasses, scan_mime_types};
+    use super::{
+        DesktopEntry, TEXT_PLAIN, dedupe_dirs, glob_name, in_terminal, is_executable, parents_of,
+        parse_subclasses, scan_mime_types, to_candidate,
+    };
+    use crate::{app::config::Config, test_support::TempDir};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()
+    }
+
+    /// A desktop entry written to disk, since `DesktopEntry` is built from a
+    /// file rather than from text.
+    fn desktop_entry(dir: &TempDir, name: &str, body: &str) -> DesktopEntry {
+        let file = dir.join(name);
+        std::fs::write(&file, body).unwrap();
+        DesktopEntry::from_path(file, None::<&[&str]>).unwrap()
+    }
+
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n", true
+        ; "an application is offered")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nNoDisplay=true\n", true
+        ; "NoDisplay is kept, since the key exists to associate without appearing in menus")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nHidden=true\n", false
+        ; "Hidden means the entry was deleted and must not be offered")]
+    #[test_case("[Desktop Entry]\nType=Link\nName=Viewer\nExec=view %f\nURL=http://x\n", false
+        ; "only an Application can open a file")]
+    #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\n", false
+        ; "an entry with no Exec has nothing to run")]
+    fn to_candidate_offers_only_a_runnable_application(body: &str, expected: bool) {
+        Config::init_test();
+        let dir = TempDir::new("open_with_entry");
+        let entry = desktop_entry(&dir, "viewer.desktop", body);
+
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry);
+
+        assert_eq!(expected, candidate.is_some(), "{body:?}");
     }
 
     #[test]
@@ -512,6 +547,48 @@ mod tests {
         #[allow(clippy::case_sensitive_file_extension_comparisons)]
         let ends_with_txt = name.ends_with(".txt");
         assert!(ends_with_txt, "{name}");
+    }
+
+    #[test]
+    fn every_text_type_inherits_text_plain() {
+        // A type the shared MIME database has never heard of, so the parent
+        // comes from this rule rather than from the database.
+        let parents = parents_of("text/x-filectrl-test");
+
+        assert!(
+            parents.iter().any(|p| p == TEXT_PLAIN),
+            "an editor registered for text/plain must be offered for any text type: {parents:?}"
+        );
+    }
+
+    #[test]
+    fn text_plain_is_not_its_own_parent() {
+        // Listing itself would rank text/plain handlers twice, above the ones
+        // registered for the type the file actually is.
+        assert!(!parents_of(TEXT_PLAIN).iter().any(|p| p == TEXT_PLAIN));
+    }
+
+    #[test_case(0o644, false ; "a readable file with no execute bit")]
+    #[test_case(0o755, true  ; "an executable file")]
+    #[test_case(0o100, true  ; "executable by its owner alone")]
+    fn is_executable_reads_the_execute_bits(mode: u32, expected: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("open_with_exec");
+        let file = dir.join("program");
+        std::fs::write(&file, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+
+        assert_eq!(expected, is_executable(&file));
+    }
+
+    #[test]
+    fn a_directory_with_the_execute_bit_is_not_a_program() {
+        // Every directory carries the execute bit, and TryExec names a file to
+        // run; a directory on $PATH would otherwise pass for one.
+        let dir = TempDir::new("open_with_exec_dir");
+
+        assert!(!is_executable(dir.path()));
     }
 
     #[test]

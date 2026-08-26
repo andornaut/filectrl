@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_percentage() {
+    fn a_percentage_rounds_and_counts_a_zero_total_as_complete() {
         assert_eq!(100, progress(0, 0).percentage()); // total == 0 is "done"
         assert_eq!(100, progress(50, 0).percentage());
         assert_eq!(0, progress(0, 100).percentage());
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_scaled() {
+    fn a_scaled_position_clamps_to_the_factor_and_is_full_when_done() {
         assert_eq!(10, progress(0, 0).scaled(10)); // done -> full factor
         assert_eq!(10, progress(100, 100).scaled(10)); // done -> full factor
         assert_eq!(0, progress(0, 100).scaled(10));
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_is_done() {
+    fn a_task_is_done_at_its_total_or_when_it_has_none() {
         assert!(progress(0, 0).is_done()); // zero total is done
         assert!(progress(100, 100).is_done());
         assert!(!progress(0, 100).is_done());
@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn task_kind_prefix() {
+    fn each_task_kind_names_its_own_verb() {
         assert_eq!("Copying ", copy("a", "b").prefix());
         assert_eq!("Moving ", r#move("a", "b").prefix());
         assert_eq!("Deleting ", TaskKind::Delete { path: "a".into() }.prefix());

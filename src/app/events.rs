@@ -378,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn timeouts_keep_polling() {
+    fn a_poll_that_times_out_keeps_the_loop_running() {
         let (tx, rx) = mpsc::channel();
         let mut source = FakeEventSource::new((0..10).map(|_| Ok(false)).collect());
 

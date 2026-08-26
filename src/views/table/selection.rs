@@ -104,6 +104,42 @@ mod tests {
         (dir, table)
     }
 
+    /// A four entry listing. An odd count cannot tell `(len - 1) / 2` from
+    /// `len / 2`, which is the whole of what the middle-item rule says.
+    fn even_table() -> (crate::test_support::TempDir, TableView) {
+        use crate::file_system::path_info::PathInfo;
+
+        let (dir, mut table) = table();
+        std::fs::write(dir.join("d"), b"x").unwrap();
+        let items: Vec<PathInfo> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| PathInfo::try_from(dir.join(name).as_path()).unwrap())
+            .collect();
+        table
+            .content
+            .set_items(PathInfo::try_from(dir.path()).unwrap(), items);
+        table.sort(super::super::navigation::Reselect::Top);
+        (dir, table)
+    }
+
+    #[test]
+    fn the_middle_of_an_even_listing_is_the_upper_of_the_two_centre_rows() {
+        let (_dir, mut table) = even_table();
+
+        table.select_middle_item();
+
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn the_last_item_is_the_final_row_rather_than_one_past_it() {
+        let (_dir, mut table) = even_table();
+
+        table.select_last();
+
+        assert_eq!(Some("d".to_string()), selected(&table));
+    }
+
     #[test]
     fn moving_the_cursor_in_range_mode_sweeps_the_marks() {
         let (_dir, mut table) = table();
@@ -164,6 +200,9 @@ mod tests {
 
     #[test]
     fn the_cursor_keys_are_safe_on_an_empty_listing() {
+        // Every cursor move ends in a selection snapshot, which reads the
+        // theme, so this test cannot borrow another one's initialization.
+        crate::app::config::Config::init_test();
         let mut table = TableView::default();
 
         // Each of these bounds itself with `saturating_sub` on a length of
