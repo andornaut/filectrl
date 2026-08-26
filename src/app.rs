@@ -151,7 +151,7 @@ impl App {
             #[cfg(debug_assertions)]
             debug: debug::DebugHandler,
             file_system: FileSystem::new(config, tx.clone()),
-            root: RootView::new(),
+            root: RootView::new(config),
         };
         Self {
             handlers,
@@ -196,9 +196,12 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         let root = &mut self.handlers.root;
+        // The one theme read in the view layer: everything below is handed
+        // what it draws with.
+        let theme = Config::global().theme();
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
-            root.render(area, frame);
+            root.render(theme, area, frame);
         })?;
         Ok(())
     }

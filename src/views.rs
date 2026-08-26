@@ -53,11 +53,15 @@ fn render_lines(lines: &[Line<'_>], area: Rect, buf: &mut Buffer, style: Style, 
     }
 }
 
+use crate::app::config::theme::Theme;
 use crate::command::{Command, handler::CommandHandler};
 
 pub(super) trait View: CommandHandler {
     fn constraint(&self, area: Rect) -> Constraint;
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>);
+    /// The theme is passed down from the one place that reads the config
+    /// rather than reached for here, so a view draws with whatever it is
+    /// handed and nothing below this trait needs a global to be initialized.
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>);
 }
 
 /// Which listing the table is showing. Search and bookmarks are mutually

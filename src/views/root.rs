@@ -10,6 +10,7 @@ use super::{
     View, alerts::AlertsView, breadcrumbs::BreadcrumbsView, help::HelpView, notices::NoticesView,
     open_with::OpenWithView, prompt::PromptView, status::StatusView, table::TableView,
 };
+use crate::app::config::theme::Theme;
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
@@ -55,18 +56,21 @@ pub struct RootView {
 }
 
 impl RootView {
-    pub fn new() -> Self {
+    /// Every view that needs a setting is given it here, so nothing below this
+    /// point reaches for the config to build itself.
+    pub fn new(config: &Config) -> Self {
+        let keybindings = &config.keybindings;
         Self {
-            alerts: AlertsView::new(),
+            alerts: AlertsView::new(keybindings),
             breadcrumbs: BreadcrumbsView::default(),
-            help: HelpView::new(),
+            help: HelpView::new(config),
             is_help_visible: false,
             mode: InputMode::default(),
-            notices: NoticesView::new(),
-            open_with: OpenWithView::new(),
+            notices: NoticesView::new(keybindings),
+            open_with: OpenWithView::new(keybindings),
             prompt: PromptView::default(),
             status: StatusView::default(),
-            table: TableView::default(),
+            table: TableView::new(config.ui),
         }
     }
 
@@ -212,10 +216,9 @@ impl View for RootView {
         )
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let theme = Config::global().theme();
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            render_resize_message(frame.buffer_mut(), area);
+            render_resize_message(theme, frame.buffer_mut(), area);
             return;
         }
 
@@ -238,12 +241,11 @@ impl View for RootView {
             .split(area)
             .iter()
             .zip(views)
-            .for_each(|(area, handler)| handler.render(*area, frame));
+            .for_each(|(area, handler)| handler.render(theme, *area, frame));
     }
 }
 
-fn render_resize_message(buf: &mut Buffer, area: Rect) {
-    let theme = Config::global().theme();
+fn render_resize_message(theme: &Theme, buf: &mut Buffer, area: Rect) {
     let widget = Paragraph::new(RESIZE_WINDOW)
         .style(theme.alert.error())
         .wrap(Wrap { trim: true });
@@ -263,7 +265,7 @@ mod tests {
 
     fn view() -> RootView {
         Config::init_test();
-        RootView::new()
+        RootView::new(Config::global())
     }
 
     #[test]

@@ -34,8 +34,7 @@ pub(super) struct HelpView {
 }
 
 impl HelpView {
-    pub fn new() -> Self {
-        let config = Config::global();
+    pub fn new(config: &Config) -> Self {
         let kb = &config.keybindings;
         let hint = format!(
             "(Press {} to close)",
@@ -102,7 +101,7 @@ mod tests {
     /// test runs.
     fn help() -> HelpView {
         Config::init_test();
-        let mut view = HelpView::new();
+        let mut view = HelpView::new(Config::global());
         view.inner_height = 4;
         view.max_scroll = 10;
         view

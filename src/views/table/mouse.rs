@@ -63,7 +63,7 @@ mod tests {
     };
 
     use super::super::{TableView, columns::SortDirection, marked_table, row_map::LineItemMap};
-    use crate::command::{handler::CommandHandler, result::CommandResult};
+    use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
     /// A three row listing (`a`, `b`, `c`) laid out the way a render would: the
     /// header on row 0 and one line per item below it, in a viewport with room
@@ -103,6 +103,22 @@ mod tests {
         click(&mut table, 1);
 
         assert_eq!(Some("a".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn two_clicks_on_one_row_open_it() {
+        let (_dir, mut table) = table_for_clicks();
+
+        // Back to back, so they fall inside the configured double-click
+        // window, which the table is built with rather than reading when the
+        // click arrives.
+        click(&mut table, 1);
+        let result = click(&mut table, 1);
+
+        let Ok(Command::Open(path)) = Command::try_from(result) else {
+            panic!("expected the row to open");
+        };
+        assert_eq!("a", path.display_name);
     }
 
     #[test]

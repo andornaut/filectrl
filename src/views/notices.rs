@@ -12,8 +12,8 @@ use notice::Notice;
 use ratatui::layout::Rect;
 
 use crate::{
-    app::config::keybindings::Action,
-    app::{clipboard::ClipboardEntry, config::Config},
+    app::clipboard::ClipboardEntry,
+    app::config::keybindings::{Action, KeyBindings},
     command::{progress::Task, result::CommandResult},
 };
 
@@ -42,8 +42,7 @@ pub(super) struct NoticesView {
 }
 
 impl NoticesView {
-    pub fn new() -> Self {
-        let keybindings = &Config::global().keybindings;
+    pub fn new(keybindings: &KeyBindings) -> Self {
         let hint = format!(
             "(Press {} to clear)",
             keybindings.hint_for(&[Action::ResetView])
@@ -154,7 +153,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::clipboard::ClipboardEntry,
+        app::{clipboard::ClipboardEntry, config::Config},
         command::{
             Command,
             handler::CommandHandler,
@@ -165,7 +164,7 @@ mod tests {
 
     fn view() -> NoticesView {
         Config::init_test();
-        NoticesView::new()
+        NoticesView::new(&Config::global().keybindings)
     }
 
     fn tags(notices: &[Notice]) -> Vec<&'static str> {

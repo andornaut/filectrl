@@ -6,19 +6,16 @@ use ratatui::{
 };
 
 use super::{BreadcrumbsView, widget::spans};
-use crate::{
-    app::config::Config,
-    views::{ListingMode, View},
-};
+use crate::app::config::theme::Theme;
+use crate::views::{ListingMode, View};
 
 impl View for BreadcrumbsView {
     fn constraint(&self, area: Rect) -> Constraint {
         Constraint::Length(self.height(area.width))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
-        let theme = Config::global().theme();
         let display = self.display_breadcrumbs();
 
         let tag_style = match self.mode {

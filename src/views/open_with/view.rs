@@ -4,10 +4,8 @@ use ratatui::{
 };
 
 use super::{MIN_HEIGHT, OpenWithView, widget::build_rows};
-use crate::{
-    app::config::Config,
-    views::{View, as_dimension, bordered, render_lines},
-};
+use crate::app::config::theme::Theme;
+use crate::views::{View, as_dimension, bordered, render_lines};
 
 impl View for OpenWithView {
     /// The same constraint as `TableView`, so the picker lands in exactly the
@@ -16,7 +14,7 @@ impl View for OpenWithView {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if area.height < MIN_HEIGHT {
             // Zero-size areas clear both hit test regions, so a click on the
             // sliver that is left cannot be tested against a stale layout.
@@ -26,8 +24,8 @@ impl View for OpenWithView {
         }
         self.area = area;
 
-        let theme = &Config::global().theme().open_with;
-        let style = theme.base();
+        let open_with = &theme.open_with;
+        let style = open_with.base();
         let bordered_area = bordered(area, frame.buffer_mut(), style, &self.title, &self.hint);
 
         self.inner_height = bordered_area.height as usize;
@@ -51,7 +49,12 @@ impl View for OpenWithView {
         };
 
         self.content_area = content_area;
-        let rows = build_rows(theme, self.selected, content_area.width, &self.candidates);
+        let rows = build_rows(
+            open_with,
+            self.selected,
+            content_area.width,
+            &self.candidates,
+        );
         render_lines(
             &rows,
             content_area,
@@ -60,6 +63,7 @@ impl View for OpenWithView {
             as_dimension(self.scroll_offset),
         );
         self.scrollbar_view.render(
+            theme,
             scrollbar_area,
             frame.buffer_mut(),
             self.scroll_offset,

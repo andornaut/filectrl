@@ -4,23 +4,20 @@ use ratatui::{
 };
 
 use super::{HelpView, MIN_HEIGHT};
-use crate::{
-    app::config::Config,
-    views::{View, bordered, render_lines},
-};
+use crate::app::config::theme::Theme;
+use crate::views::{View, bordered, render_lines};
 
 impl View for HelpView {
     fn constraint(&self, _: Rect) -> Constraint {
         Constraint::Min(MIN_HEIGHT)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
         if area.height < MIN_HEIGHT {
             return;
         }
 
-        let theme = Config::global().theme();
         let style = theme.help.base();
         let bordered_area = bordered(area, frame.buffer_mut(), style, "Help", &self.hint);
 
@@ -37,6 +34,7 @@ impl View for HelpView {
             render_lines(&self.lines, content_area, frame.buffer_mut(), style, scroll);
 
             self.scrollbar_view.render(
+                theme,
                 scrollbar_area,
                 frame.buffer_mut(),
                 scroll as usize,
@@ -45,7 +43,7 @@ impl View for HelpView {
             );
         } else {
             self.scrollbar_view
-                .render(Rect::default(), frame.buffer_mut(), 0, 0, 0);
+                .render(theme, Rect::default(), frame.buffer_mut(), 0, 0, 0);
             render_lines(
                 &self.lines,
                 bordered_area,

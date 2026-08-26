@@ -7,7 +7,7 @@ use ratatui::{
 
 use super::widget::{confirmation_label_widget, label_widget, suggestion_overlay_text};
 use super::{PromptView, View};
-use crate::app::config::Config;
+use crate::app::config::theme::Theme;
 use crate::command::PromptAction;
 
 impl View for PromptView {
@@ -15,8 +15,7 @@ impl View for PromptView {
         Constraint::Length(1)
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let theme = Config::global().theme();
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         let label = self.label();
         let label_width = label.cell_width();
 

@@ -21,9 +21,13 @@ use self::{
     navigation::PendingLoad, row_map::LineItemMap,
 };
 use super::ScrollbarView;
-use crate::{app::clipboard::ClipboardEntry, file_system::path_info::PathInfo};
+#[cfg(test)]
+use crate::app::config::Config;
+use crate::{
+    app::{clipboard::ClipboardEntry, config::UiConfig},
+    file_system::path_info::PathInfo,
+};
 
-#[derive(Default)]
 pub(super) struct TableView {
     clipboard_entry: Option<ClipboardEntry>,
     content: DirectoryContent,
@@ -58,6 +62,44 @@ pub(super) struct TableView {
     /// The (name column width, content revision) the cache was built for.
     height_cache_key: Option<(u16, u64)>,
     scrollbar_view: ScrollbarView,
+}
+
+impl TableView {
+    /// The listing settings and the double-click window come from the config
+    /// here, once, rather than from a global reached for during a sort or a
+    /// click.
+    pub(super) fn new(ui: UiConfig) -> Self {
+        Self {
+            clipboard_entry: None,
+            content: DirectoryContent::new(ui.show_hidden_files, ui.sort_directories_first),
+            marks: Marks::default(),
+            pending_delete: Vec::new(),
+            table_area: Rect::default(),
+            table_state: TableState::default(),
+            first_visible_item: 0,
+            drag_line: None,
+            stream_generation: 0,
+            pending_load: PendingLoad::default(),
+            columns: Columns::default(),
+            double_click: DoubleClick::new(ui.double_click_interval_milliseconds),
+            mapper: LineItemMap::default(),
+            cached_heights: Vec::new(),
+            height_cache_key: None,
+            scrollbar_view: ScrollbarView::default(),
+        }
+    }
+}
+
+/// The shipped defaults, so a test says only what it is about. Test-only: the
+/// app builds its table from the config it loaded, and a `Default` that read a
+/// global would put a test's behaviour at the mercy of whether another test
+/// had initialized one.
+#[cfg(test)]
+impl Default for TableView {
+    fn default() -> Self {
+        Config::init_test();
+        Self::new(Config::global().ui)
+    }
 }
 
 /// A listing of `a`, `b` and `c`, with `a` and `b` marked and the cursor left

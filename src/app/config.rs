@@ -53,7 +53,7 @@ struct PlatformOpeners {
     macos: Openers,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
     pub show_hidden_files: bool,

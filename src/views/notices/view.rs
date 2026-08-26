@@ -5,10 +5,8 @@ use ratatui::{
 };
 
 use super::NoticesView;
-use crate::{
-    app::config::Config,
-    views::{View, as_dimension},
-};
+use crate::app::config::theme::Theme;
+use crate::views::{View, as_dimension};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect) -> Constraint {
@@ -17,13 +15,12 @@ impl View for NoticesView {
         Constraint::Length(as_dimension(self.notices.len()))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if self.notices.is_empty() {
             return;
         }
 
         self.area = area;
-        let theme = Config::global().theme();
 
         let search_elapsed = self.search_elapsed();
         let constraints = vec![Constraint::Length(1); self.notices.len()];

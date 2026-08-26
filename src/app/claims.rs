@@ -81,7 +81,7 @@ fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
         #[cfg(debug_assertions)]
         debug: debug::DebugHandler,
         file_system,
-        root: RootView::new(),
+        root: RootView::new(Config::global()),
     }
 }
 

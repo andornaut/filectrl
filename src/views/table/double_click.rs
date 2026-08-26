@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{app::config::Config, file_system::path_info::PathInfo};
+use crate::file_system::path_info::PathInfo;
 
 pub(super) struct DoubleClick {
     last_path: Option<PathInfo>,
@@ -8,18 +8,15 @@ pub(super) struct DoubleClick {
     threshold: Duration,
 }
 
-impl Default for DoubleClick {
-    fn default() -> Self {
-        let ms = Config::global().ui.double_click_interval_milliseconds;
+impl DoubleClick {
+    pub(super) fn new(interval_milliseconds: u16) -> Self {
         Self {
             last_path: None,
             start: None,
-            threshold: Duration::from_millis(u64::from(ms)),
+            threshold: Duration::from_millis(u64::from(interval_milliseconds)),
         }
     }
-}
 
-impl DoubleClick {
     pub(super) fn click_and_is_double_click(&mut self, path: &PathInfo) -> bool {
         let item = Some(path.clone());
         if let Some(start) = self.start
@@ -53,8 +50,7 @@ mod tests {
     /// the threshold whatever it is configured to. The elapsed-time branch
     /// needs a real wait and is not covered.
     fn clicker() -> DoubleClick {
-        Config::init_test();
-        DoubleClick::default()
+        DoubleClick::new(500)
     }
 
     #[test]

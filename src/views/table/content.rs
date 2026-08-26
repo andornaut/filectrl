@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
-use crate::app::config::Config;
 use crate::file_system::path_info::{PathInfo, name_comparator};
 use crate::views::ListingMode;
 
@@ -29,12 +28,27 @@ pub(super) struct DirectoryContent {
     /// bookmarks mode) changes. Lets the view cache per-item row heights and
     /// invalidate them with a cheap equality check.
     revision: u64,
-    /// Runtime override for showing hidden (dotfile) entries. `None` defers to
-    /// the `ui.show_hidden_files` config value.
-    show_hidden: Option<bool>,
+    /// Whether hidden (dotfile) entries are listed. Seeded from
+    /// `ui.show_hidden_files` and toggled at runtime.
+    show_hidden: bool,
+    /// Whether directories are grouped ahead of files under a name sort.
+    /// Seeded from `ui.sort_directories_first`.
+    sort_directories_first: bool,
 }
 
 impl DirectoryContent {
+    /// The listing settings come from the config once, at construction, rather
+    /// than being read on every sort: a listing has to behave the same way for
+    /// its whole life, and a test has to be able to state the settings it is
+    /// about.
+    pub(super) fn new(show_hidden: bool, sort_directories_first: bool) -> Self {
+        Self {
+            show_hidden,
+            sort_directories_first,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn get(&self, index: usize) -> Option<&PathInfo> {
         self.items_sorted.get(index)
     }
@@ -201,11 +215,10 @@ impl DirectoryContent {
 
     fn show_hidden(&self) -> bool {
         self.show_hidden
-            .unwrap_or(Config::global().ui.show_hidden_files)
     }
 
     pub(super) fn toggle_show_hidden(&mut self) {
-        self.show_hidden = Some(!self.show_hidden());
+        self.show_hidden = !self.show_hidden;
     }
 
     /// Sort and filter items into `items_sorted`. Visibility is re-derived
@@ -263,7 +276,7 @@ impl DirectoryContent {
             (SortColumn::Size, true) => self.items_sorted.sort_by_key(|item| Reverse(item.size)),
         }
 
-        if sort_column == SortColumn::Name && Config::global().ui.sort_directories_first {
+        if sort_column == SortColumn::Name && self.sort_directories_first {
             self.items_sorted.sort_by_key(|path| !path.is_directory());
         }
     }
@@ -446,8 +459,10 @@ fn ends_with_ignore_case(haystack: &str, suffix_lowercase: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::{app::config::Config, test_support::TempDir};
 
     struct Fixture {
         dir: TempDir,
@@ -485,6 +500,14 @@ mod tests {
         }
     }
 
+    /// A listing built with the shipped settings, so a test states only the
+    /// setting it is about. The app builds one from the config it loaded.
+    fn content() -> DirectoryContent {
+        Config::init_test();
+        let ui = Config::global().ui;
+        DirectoryContent::new(ui.show_hidden_files, ui.sort_directories_first)
+    }
+
     fn names(content: &DirectoryContent) -> Vec<String> {
         content
             .items_sorted()
@@ -509,7 +532,7 @@ mod tests {
             fx.file_entry(".secret", 1),
             fx.dir_entry("Apple"),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), items);
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
@@ -534,7 +557,7 @@ mod tests {
             fx.file_entry("apple", 1),
             fx.file_entry("Banana", 1),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), items);
         content.sort(SortColumn::Name, SortDirection::Descending);
 
@@ -552,7 +575,7 @@ mod tests {
             fx.file_entry("small", 1),
             fx.file_entry("large", 500),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), items);
 
         content.sort(SortColumn::Size, SortDirection::Ascending);
@@ -571,7 +594,7 @@ mod tests {
             fx.file_entry("Apricot", 1),
             fx.file_entry("Banana", 1),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), items);
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
@@ -588,7 +611,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), items);
 
         // Default config has show_hidden_files = true.
@@ -609,7 +632,7 @@ mod tests {
     fn revision_changes_when_the_listing_changes_but_not_on_reads() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
 
         let r0 = content.revision();
         content.start_listing(fx.directory(), false);
@@ -644,12 +667,12 @@ mod tests {
         ];
 
         // Reference: the one-shot path.
-        let mut reference = DirectoryContent::default();
+        let mut reference = content();
         reference.set_items(fx.directory(), items.clone());
         reference.sort(SortColumn::Name, SortDirection::Ascending);
 
         // Streamed in two batches, then finalized once.
-        let mut streamed = DirectoryContent::default();
+        let mut streamed = content();
         streamed.start_listing(fx.directory(), false);
         streamed.append(&items[..2]);
         streamed.append(&items[2..]);
@@ -667,7 +690,7 @@ mod tests {
             fx.file_entry("a", 1),
             fx.file_entry("b", 1),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.start_listing(fx.directory(), false);
         assert!(content.is_loading());
 
@@ -684,7 +707,7 @@ mod tests {
     fn a_staged_listing_replaces_the_visible_one_only_at_finalize() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(
             fx.directory(),
             vec![fx.file_entry("a", 1), fx.file_entry("b", 1)],
@@ -711,7 +734,7 @@ mod tests {
     fn a_staged_listing_is_filtered_when_it_is_swapped_in() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), vec![fx.file_entry("Apple", 1)]);
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
@@ -725,11 +748,55 @@ mod tests {
         assert_eq!(names(&content), vec!["Apricot"]);
     }
 
+    // The directory sorts last by name, so grouping it first is the only thing
+    // that can put it at the top: a directory named ahead of the files would
+    // lead either way. The dot is trimmed per segment, so `.hidden` sorts as
+    // `hidden`.
+    #[test_case(true, &["zdir", "afile", ".hidden"]   ; "directories are grouped first")]
+    #[test_case(false, &["afile", ".hidden", "zdir"]  ; "one flat name order")]
+    fn the_listing_obeys_the_settings_it_was_built_with(
+        directories_first: bool,
+        expected: &[&str],
+    ) {
+        Config::init_test();
+        let fx = Fixture::new();
+        // Built with the settings rather than reading them from a global, so
+        // the same listing can be exercised both ways in one process.
+        let mut content = DirectoryContent::new(true, directories_first);
+        content.set_items(
+            fx.directory(),
+            vec![
+                fx.file_entry("afile", 1),
+                fx.dir_entry("zdir"),
+                fx.file_entry(".hidden", 1),
+            ],
+        );
+
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        assert_eq!(expected, names(&content));
+    }
+
+    #[test]
+    fn a_listing_built_without_hidden_files_never_lists_them() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = DirectoryContent::new(false, true);
+        content.set_items(
+            fx.directory(),
+            vec![fx.file_entry("file", 1), fx.file_entry(".hidden", 1)],
+        );
+
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        assert_eq!(vec!["file"], names(&content));
+    }
+
     #[test]
     fn returning_to_the_plain_listing_drops_the_entries_of_the_mode_it_left() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
         content.start_search();
@@ -749,7 +816,7 @@ mod tests {
     fn a_staged_listing_abandoned_by_a_search_is_dropped() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
@@ -774,7 +841,7 @@ mod tests {
             fx.file_entry("Banana", 1),
             fx.file_entry("Apricot", 1),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_filter("ap".to_string());
         content.start_listing(fx.directory(), false);
 
@@ -791,7 +858,7 @@ mod tests {
         Config::init_test();
         let fx = Fixture::new();
         let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         // Default config has show_hidden_files = true; toggle it off.
         content.toggle_show_hidden();
         content.start_listing(fx.directory(), false);
@@ -808,7 +875,7 @@ mod tests {
     fn search_results_bypass_the_show_hidden_filter() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), vec![]);
         // Default config has show_hidden_files = true; toggle it off.
         content.toggle_show_hidden();
@@ -827,7 +894,7 @@ mod tests {
     fn finalize_after_a_mid_stream_filter_change_matches_a_full_sort() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.start_listing(fx.directory(), false);
         content.append(&[fx.file_entry("Banana", 1), fx.file_entry("Apple", 1)]);
 
@@ -946,7 +1013,7 @@ mod tests {
             fx.nested_file_entry("reports", "inner.txt"),
             fx.file_entry("other.txt", 1),
         ];
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_items(fx.directory(), vec![]);
         content.start_search();
         content.append(&items);
@@ -969,7 +1036,7 @@ mod tests {
     fn filter_finds_no_separator_in_bookmark_rows() {
         Config::init_test();
         let fx = Fixture::new();
-        let mut content = DirectoryContent::default();
+        let mut content = content();
         content.set_bookmarks(vec![
             fx.dir_entry("reports"),
             fx.file_entry("report.txt", 1),

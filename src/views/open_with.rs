@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 
 use super::ScrollbarView;
 use crate::{
-    app::config::{Config, keybindings::Action},
+    app::config::keybindings::{Action, KeyBindings},
     command::{Command, result::CommandResult},
     file_system::{
         open_with::{AppCandidate, candidates_for},
@@ -38,8 +38,8 @@ pub(super) struct OpenWithView {
 }
 
 impl OpenWithView {
-    pub(super) fn new() -> Self {
-        let kb = &Config::global().keybindings;
+    pub(super) fn new(keybindings: &KeyBindings) -> Self {
+        let kb = keybindings;
         Self {
             area: Rect::default(),
             candidates: Vec::new(),
@@ -165,7 +165,7 @@ mod tests {
 
     fn picker(count: usize) -> OpenWithView {
         Config::init_test();
-        let mut view = OpenWithView::new();
+        let mut view = OpenWithView::new(&Config::global().keybindings);
         view.candidates = (0..count)
             .map(|index| AppCandidate {
                 argv: vec!["prog".into()],

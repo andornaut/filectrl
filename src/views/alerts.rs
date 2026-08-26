@@ -11,7 +11,7 @@ use ratatui::{
 
 use super::{View, as_dimension, bordered};
 use crate::{
-    app::config::keybindings::Action,
+    app::config::keybindings::{Action, KeyBindings},
     app::config::{Config, theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
     views::unicode::split_with_ellipsis,
@@ -45,12 +45,10 @@ pub(super) struct AlertsView {
 }
 
 impl AlertsView {
-    pub fn new() -> Self {
+    pub fn new(keybindings: &KeyBindings) -> Self {
         let hint = format!(
             "(Press {} to clear)",
-            Config::global()
-                .keybindings
-                .hint_for(&[Action::ClearAlerts])
+            keybindings.hint_for(&[Action::ClearAlerts])
         );
         Self {
             alerts: VecDeque::new(),
@@ -152,13 +150,12 @@ impl View for AlertsView {
         Constraint::Length(self.height(area))
     }
 
-    fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+    fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         self.area = area;
         if !self.should_show(area) {
             return;
         }
 
-        let theme = Config::global().theme();
         let style = theme.alert.base();
         let inner_area = if Self::has_border(area) {
             bordered(area, frame.buffer_mut(), style, "Alerts", &self.hint)
@@ -179,11 +176,10 @@ impl View for AlertsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::config::Config;
 
     fn view() -> AlertsView {
         Config::init_test();
-        AlertsView::new()
+        AlertsView::new(&Config::global().keybindings)
     }
 
     #[test]
