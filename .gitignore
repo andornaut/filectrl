@@ -11,3 +11,10 @@
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+
+# Agent skills are repo knowledge and are committed; the rest of .claude/ is not.
+# The global ignore excludes .claude/ wholesale, and git cannot re-include a file
+# whose parent directory is excluded, so the directory is re-included first.
+!.claude/
+.claude/*
+!.claude/skills/
