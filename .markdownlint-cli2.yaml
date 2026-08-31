@@ -27,12 +27,19 @@ globs:
 # the ones in the tree. So CI, which checks out tracked files, never sees them,
 # while a working copy holds them and would report findings the gate cannot.
 #
-# .claude/ is not named here, this repository's own .gitignore covering it and
-# committing its skills under it. Naming it would take those skills out of the
-# gate they are checked out into.
+# .claude/ is the exception, this repository committing its skills under it. The
+# pair below ignores the loose files and every subdirectory except skills/, so
+# those skills stay in the gate they are checked out into. Canon names
+# ".claude/**", which is right for a repository that commits none of it; the
+# sweep takes either spelling, but only whole. The entry is negated and handed to
+# micromatch, so the extglob does the excepting: a leading "!" would arrive as
+# "!!" and re-include. This repository's own .gitignore draws the same line, and
+# naming it here as well keeps the gate right if that ever loosens.
 ignores:
   - "**/node_modules/**"
   - ".agents/**"
+  - ".claude/*"
+  - ".claude/!(skills)/**"
   - AGENTS.md
   - CLAUDE.md
   - GEMINI.md
