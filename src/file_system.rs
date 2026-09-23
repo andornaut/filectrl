@@ -1937,7 +1937,9 @@ mod tests {
         let [Cancellable::Search(current)] = file_system.cancellables.as_slice() else {
             panic!("expected only the new search to be registered");
         };
-        assert!(!current.is_cancelled());
+        // Not `!current.is_cancelled()`: the new search's thread cancels its
+        // own token when it finishes, which on an empty root can be at once.
+        assert!(!current.is_same(&previous));
         file_system.cancel_search();
         drop(rx);
     }

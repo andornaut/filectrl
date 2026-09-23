@@ -128,6 +128,12 @@ impl CancellationToken {
         self.0.store(true, Ordering::Relaxed);
     }
 
+    /// Whether both handles control the same task.
+    #[cfg(test)]
+    pub fn is_same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
