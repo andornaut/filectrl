@@ -209,6 +209,9 @@ pub struct FileSystem {
     /// Set when a refresh arrives while a load is already streaming, so the
     /// load runs to completion and the refresh is re-issued afterwards.
     reload_pending: bool,
+    /// Set once a refresh has found the listed directory replaced and said so,
+    /// so the watcher's later refreshes stay silent. Cleared by navigating.
+    directory_replaced: bool,
     /// The latest search's generation. `ExitedSearch` carries it, so every
     /// consumer can ignore messages from a superseded search instead of
     /// tearing down its replacement.
@@ -250,6 +253,7 @@ impl FileSystem {
             current_load: None,
             load_started: None,
             reload_pending: false,
+            directory_replaced: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: config.openers.open_directory.clone(),
@@ -334,6 +338,10 @@ impl FileSystem {
             )
             .into();
         }
+        // The identity `refresh` compares against is the directory's as it is
+        // listed now: a remembered one, such as the previous directory, may
+        // name what was there before.
+        let directory = PathInfo::try_from(directory.as_path()).unwrap_or(directory);
 
         // Track the directory we're leaving so "-" can toggle back to it.
         if navigate
@@ -343,6 +351,7 @@ impl FileSystem {
             self.previous_directory = Some(current.clone());
         }
         self.directory = Some(directory.clone());
+        self.directory_replaced = false;
         let path_buf = directory.path.clone();
         if let Some(watcher) = &mut self.watcher
             && let Err(e) = watcher.watch_directory(path_buf.clone())
@@ -607,7 +616,24 @@ impl FileSystem {
             self.reload_pending = true;
             return CommandResult::Handled;
         }
-        self.cd(self.current_directory().clone(), false)
+        // A reload lists whatever the path names now. If that is another
+        // directory, the marks and the cursor would carry over by path onto
+        // same-named entries the user never saw, so it is refused instead. A
+        // path that can no longer be read is left for `cd` to report. The
+        // warning is given once: the watcher keeps refreshing while the old
+        // directory changes, and repeating it would say nothing new.
+        let listed = self.current_directory().clone();
+        if PathInfo::try_from(listed.as_path()).is_ok_and(|fresh| !fresh.is_same_inode(&listed)) {
+            if std::mem::replace(&mut self.directory_replaced, true) {
+                return CommandResult::Handled;
+            }
+            return Command::AlertWarn(format!(
+                "Cannot refresh {}: it was replaced since it was listed; navigate to it again",
+                compact(&listed.path)
+            ))
+            .into();
+        }
+        self.cd(listed, false)
     }
 
     /// Runs a task, registering it on the cancel stack when it starts. Returns
@@ -918,6 +944,7 @@ mod tests {
             current_load: None,
             load_started: None,
             reload_pending: false,
+            directory_replaced: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: String::new(),
@@ -1703,6 +1730,108 @@ mod tests {
         assert_eq!(Some(generation), file_system.current_load.map(|(id, _)| id));
         assert!(!file_system.reload_pending);
         drop(rx);
+    }
+
+    /// Replaces the directory at `path` with a new, empty one, keeping the old
+    /// one so the new one cannot reuse its inode.
+    fn replace_directory(path: &Path) {
+        let mut kept = path.as_os_str().to_owned();
+        kept.push(".orig");
+        fs::rename(path, kept).unwrap();
+        fs::create_dir(path).unwrap();
+    }
+
+    #[test]
+    fn a_refresh_of_a_directory_replaced_since_it_was_listed_is_refused() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_refresh_replaced");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        file_system.directory = Some(PathInfo::try_from(sub.as_path()).unwrap());
+        replace_directory(&sub);
+
+        let commands = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+
+        // Reloading would list the new directory under the old one's marks,
+        // which match its entries by path.
+        let [Command::AlertWarn(message)] = commands.as_slice() else {
+            panic!("expected one warning, got {commands:?}");
+        };
+        assert!(message.starts_with("Cannot refresh"), "{message}");
+        assert!(message.ends_with("navigate to it again"), "{message}");
+        assert!(file_system.current_load.is_none());
+    }
+
+    #[test]
+    fn a_replaced_directory_is_reported_once_until_the_user_navigates() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_refresh_replaced_once");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let listed = PathInfo::try_from(sub.as_path()).unwrap();
+        file_system.directory = Some(listed.clone());
+        replace_directory(&sub);
+        let refresh = |file_system: &mut FileSystem| {
+            file_system
+                .handle_command(&Command::RefreshDirectory)
+                .into_commands()
+        };
+
+        let first = refresh(&mut file_system);
+        // The watcher refreshes on every change to the old directory, which
+        // would repeat the warning each time.
+        let second = refresh(&mut file_system);
+
+        assert!(
+            matches!(first.as_slice(), [Command::AlertWarn(_)]),
+            "{first:?}"
+        );
+        assert!(second.is_empty(), "{second:?}");
+        assert!(file_system.current_load.is_none());
+
+        // Navigating clears it, so a directory replaced after that is
+        // reported again.
+        file_system.cd(listed.parent().unwrap(), true);
+        file_system.cancel_current_load();
+        file_system.directory = Some(listed);
+        let third = refresh(&mut file_system);
+        assert!(
+            matches!(third.as_slice(), [Command::AlertWarn(_)]),
+            "{third:?}"
+        );
+    }
+
+    #[test]
+    fn returning_to_a_directory_replaced_since_it_was_left_lists_the_new_one() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_previous_replaced");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        file_system.cd(PathInfo::try_from(sub.as_path()).unwrap(), true);
+        file_system.cd(PathInfo::try_from(root.path()).unwrap(), true);
+        replace_directory(&sub);
+        file_system.handle_command(&Command::GoToPreviousDirectory);
+        file_system.cancel_current_load();
+
+        let commands = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+
+        // Navigating to it is what the refusal asks for, so the directory it
+        // records is the one listed now, not the remembered one.
+        let [Command::RefreshedDirectory { directory, .. }] = commands.as_slice() else {
+            panic!("expected RefreshedDirectory, got {commands:?}");
+        };
+        assert_eq!(sub, directory.path);
+        file_system.cancel_current_load();
     }
 
     #[test]

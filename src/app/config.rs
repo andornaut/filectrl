@@ -162,19 +162,15 @@ impl Config {
         let path = absolute_path(&path)?;
 
         debug!("Loading config from user-provided path: {}", path.display());
-        match fs::read_to_string(&path) {
-            Ok(content) => Self::parse(
-                env,
-                Some(&path),
-                &content,
-                path.parent().map(std::path::Path::to_path_buf),
-                include_paths,
-            ),
-            Err(error) => Err(anyhow!(
-                "Failed to read config file {}: {error}",
-                path.display()
-            )),
-        }
+        let content =
+            read_regular_file(&path).map_err(|failure| failure.describe(CONFIG_FILE, &path))?;
+        Self::parse(
+            env,
+            Some(&path),
+            &content,
+            path.parent().map(std::path::Path::to_path_buf),
+            include_paths,
+        )
     }
 
     fn default_config_dir() -> Result<PathBuf> {
@@ -364,7 +360,7 @@ impl Config {
             default_path.display()
         );
 
-        match fs::read_to_string(&default_path) {
+        match read_regular_file(&default_path) {
             Ok(content) => Self::parse(
                 env,
                 Some(&default_path),
@@ -372,14 +368,11 @@ impl Config {
                 default_path.parent().map(std::path::Path::to_path_buf),
                 include_paths,
             ),
-            Err(err) if err.kind() == ErrorKind::NotFound => {
+            Err(ReadFailure::Io(err)) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
                 Self::parse(env, None, "", None, include_paths)
             }
-            Err(error) => Err(anyhow!(
-                "Failed to read config file {}: {error}",
-                default_path.display()
-            )),
+            Err(failure) => Err(failure.describe(CONFIG_FILE, &default_path)),
         }
     }
 }
@@ -399,19 +392,63 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
         .map_err(|error| anyhow!("Failed to resolve {}: {error}", path.display()))
 }
 
+const CONFIG_FILE: &str = "config file";
+const INCLUDE_FILE: &str = "include file";
+
+/// Why a config or include file could not be read.
+enum ReadFailure {
+    Io(std::io::Error),
+    NotRegular,
+}
+
+impl ReadFailure {
+    /// `kind` names the role the file plays, so the user knows which of the
+    /// files they passed to go and look at.
+    fn describe(self, kind: &str, path: &Path) -> anyhow::Error {
+        match self {
+            Self::Io(error) => anyhow!("Failed to read {kind} {}: {error}", path.display()),
+            Self::NotRegular => {
+                anyhow!("Cannot read {kind} {}: not a regular file", path.display())
+            }
+        }
+    }
+}
+
+/// Reads a file that must be a regular file, following symlinks. A FIFO would
+/// block the read until a writer appears, and a device such as `/dev/zero`
+/// would fill memory, so either is refused before anything is read.
+///
+/// Opened non-blocking, so that opening a FIFO does not itself wait for a
+/// writer, and the type is taken from the open descriptor, so it is the type
+/// of the file that is then read.
+fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
+    use std::{io::Read, os::unix::fs::OpenOptionsExt};
+
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NONBLOCK)
+        .open(path)
+        .map_err(ReadFailure::Io)?;
+    if !file.metadata().map_err(ReadFailure::Io)?.is_file() {
+        return Err(ReadFailure::NotRegular);
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content).map_err(ReadFailure::Io)?;
+    Ok(content)
+}
+
 /// Writes `content` to `path`, creating the parent directory. Refuses to
 /// replace an existing file unless `force`, so that a hand-edited config is not
 /// lost to a flag whose only other output is the path it wrote.
 ///
-/// Existence is tested without following symlinks: a config symlinked into a
-/// dotfiles repository is a file to refuse, not one to write through.
+/// The file is created exclusively (`O_CREAT | O_EXCL`), which fails on
+/// anything already at `path`, a symlink included, in the same syscall that
+/// creates it. `force` removes a file first but refuses a symlink, even a
+/// dangling one: a config symlinked into a dotfiles repository is left alone
+/// rather than replaced or written through to its target.
 fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
-    if !force && path.symlink_metadata().is_ok() {
-        return Err(anyhow!(
-            "Cannot write {}: it already exists; pass --force to replace it",
-            path.display()
-        ));
-    }
+    use std::io::Write;
+
     let parent = path.parent().ok_or_else(|| {
         anyhow!(
             "Cannot write {}: it has no parent directory",
@@ -420,7 +457,40 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
     })?;
     fs::create_dir_all(parent)
         .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
-    fs::write(path, content).map_err(|error| anyhow!("Failed to write {}: {error}", path.display()))
+    if force {
+        match path.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(anyhow!(
+                    "Cannot write {}: it is a symbolic link",
+                    path.display()
+                ));
+            }
+            Ok(_) => match fs::remove_file(path) {
+                Err(error) if error.kind() != ErrorKind::NotFound => {
+                    return Err(anyhow!("Failed to replace {}: {error}", path.display()));
+                }
+                _ => (),
+            },
+            Err(error) if error.kind() == ErrorKind::NotFound => (),
+            Err(error) => return Err(anyhow!("Failed to replace {}: {error}", path.display())),
+        }
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == ErrorKind::AlreadyExists {
+                anyhow!(
+                    "Cannot write {}: it already exists; pass --force to replace it",
+                    path.display()
+                )
+            } else {
+                anyhow!("Failed to write {}: {error}", path.display())
+            }
+        })?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| anyhow!("Failed to write {}: {error}", path.display()))
 }
 
 /// Merges the given include files on top of an existing config value.
@@ -447,7 +517,7 @@ fn canonical_or_raw(path: &Path) -> PathBuf {
 fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
     // Canonicalize so the same file referenced via different paths is detected.
     // Fall back to the raw path if canonicalization fails: a missing file or
-    // permission error will then surface from `fs::read_to_string` below with
+    // permission error will then surface from `read_regular_file` below with
     // a more informative message.
     let canonical = canonical_or_raw(path);
 
@@ -469,8 +539,8 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     }
 
     debug!("Loading include file: {}", path.display());
-    let content = fs::read_to_string(path)
-        .map_err(|error| anyhow!("Failed to read include file {}: {error}", path.display()))?;
+    let content =
+        read_regular_file(path).map_err(|failure| failure.describe(INCLUDE_FILE, path))?;
     let include_value = parse_toml(Some(path), &content)?;
 
     let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
@@ -876,6 +946,40 @@ open_directory = "alacritty --working-directory %s"
         assert!(!target.exists());
     }
 
+    /// `--force` replaces a file, never a link: removing the link would detach
+    /// the config from the repository, and writing through it would overwrite
+    /// the repository's copy. Dangling as well as live, so the refusal cannot
+    /// depend on the target existing.
+    #[test_case(true ; "to an existing file")]
+    #[test_case(false ; "dangling")]
+    fn force_refuses_a_symlink(target_exists: bool) {
+        let dir = TempDir::new("config_force_symlink");
+        let target = dir.join("dotfiles.toml");
+        if target_exists {
+            fs::write(&target, b"# in the repository\n").unwrap();
+        }
+        let link = dir.join("config.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = Config::write_default(Some(link.clone()), true)
+            .expect_err("a symlink must be refused even with --force")
+            .to_string();
+
+        assert_eq!(
+            format!("Cannot write {}: it is a symbolic link", link.display()),
+            error
+        );
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        if target_exists {
+            assert_eq!(
+                "# in the repository\n",
+                fs::read_to_string(&target).unwrap()
+            );
+        } else {
+            assert!(!target.exists());
+        }
+    }
+
     // ── loading, and what a bad path reports ────────────────────────────────
 
     /// Load a config that is expected to fail, returning the error message.
@@ -911,6 +1015,71 @@ open_directory = "alacritty --working-directory %s"
         // which of the two files to go and look at.
         assert!(error.starts_with("Failed to read include file"), "{error}");
         assert!(error.contains(&include.display().to_string()), "{error}");
+    }
+
+    /// A FIFO would block the read until a writer appeared, and a device can
+    /// be read forever, so neither is read at all. `/dev/null` stands in for
+    /// the device: it reads as an empty, valid config, so only the type check
+    /// can refuse it.
+    fn not_a_regular_file(dir: &TempDir, fifo: bool) -> PathBuf {
+        if fifo {
+            let path = dir.join("fifo.toml");
+            nix::unistd::mkfifo(&path, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
+            path
+        } else {
+            PathBuf::from("/dev/null")
+        }
+    }
+
+    #[test_case(true ; "a fifo")]
+    #[test_case(false ; "a device")]
+    fn a_config_that_is_not_a_regular_file_is_refused(fifo: bool) {
+        let dir = TempDir::new("config_not_regular");
+        let path = not_a_regular_file(&dir, fifo);
+
+        let error = load_err(Some(path.clone()), &[]);
+
+        assert_eq!(
+            format!(
+                "Cannot read config file {}: not a regular file",
+                path.display()
+            ),
+            error
+        );
+    }
+
+    #[test_case(true ; "a fifo")]
+    #[test_case(false ; "a device")]
+    fn an_include_that_is_not_a_regular_file_is_refused(fifo: bool) {
+        let dir = TempDir::new("config_include_not_regular");
+        let config = dir.join("config.toml");
+        fs::write(&config, b"").unwrap();
+        let include = not_a_regular_file(&dir, fifo);
+
+        let error = load_err(Some(config), std::slice::from_ref(&include));
+
+        assert_eq!(
+            format!(
+                "Cannot read include file {}: not a regular file",
+                include.display()
+            ),
+            error
+        );
+    }
+
+    /// A symlink is followed: what must be a regular file is what it names.
+    #[test]
+    fn a_symlinked_include_file_is_read() {
+        let dir = TempDir::new("config_include_symlink");
+        let config = dir.join("config.toml");
+        fs::write(&config, b"").unwrap();
+        let target = binds_select_next(&dir, "target.toml", 'e');
+        let link = dir.join("link.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
     }
 
     #[test]

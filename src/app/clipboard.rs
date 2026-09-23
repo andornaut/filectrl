@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     command::Command,
-    file_system::path_info::{PathInfo, compact},
+    file_system::path_info::{PathInfo, compact, quoted},
 };
 use anyhow::{Context, Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
@@ -208,7 +208,22 @@ fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
     if parts.len() < 2 || !is_entry_shaped(&parts) {
         return Ok(None);
     }
+    if let Some(part) = parts[1..].iter().find(|part| !is_plain_path(part)) {
+        return Err(anyhow!(
+            "Cannot paste {}: a clipboard path must not contain \".\" or \"..\"",
+            quoted(Path::new(part))
+        ));
+    }
     parse_clipboard_parts(&parts).map(Some)
+}
+
+/// Whether every component of `path` names an entry: no `.` and no `..`. A
+/// `..` makes a path lead somewhere other than the directories it spells out,
+/// so the confirmation would name one location and the paste act on another.
+/// Split on the separator rather than walking `Path::components`, which drops
+/// a `.` it finds past the start.
+fn is_plain_path(path: &str) -> bool {
+    path.split('/').all(|part| part != "." && part != "..")
 }
 
 /// True when the tokens are shaped like an entry filectrl writes: a "cp"/"mv"
@@ -376,6 +391,10 @@ mod tests {
     // closes, so tokenizing fails, but the operation token makes it clearly an
     // entry, not prose.
     #[test_case("cp '/path wi" => "Malformed clipboard entry: \"cp '/path wi\"" ; "a truncated quoted entry")]
+    // Paths that exist, so the refusal is not the lookup failing. Each leads
+    // somewhere other than the directories it names.
+    #[test_case("cp /usr/../tmp" => "Cannot paste \"/usr/../tmp\": a clipboard path must not contain \".\" or \"..\"" ; "a parent component")]
+    #[test_case("mv /tmp /tmp/." => "Cannot paste \"/tmp/.\": a clipboard path must not contain \".\" or \"..\"" ; "a current directory component after a plain path")]
     fn a_malformed_entry_is_an_error(text: &str) -> String {
         parse_clipboard_text(text)
             .expect_err("an entry that cannot be pasted must be reported")

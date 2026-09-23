@@ -35,22 +35,30 @@ pub(super) struct ExecContext<'a> {
 ///
 /// Two shapes are refused with `Refused`, so the entry is not offered: a
 /// field code in an argument written with quotes or escapes, unless the
-/// argument is nothing but that code (`app "%f"`), and one in the script a
-/// shell is given with `-c`, however it is written. The spec leaves a quoted
-/// code undefined, and in practice such an argument is a script for some
+/// argument is nothing but that code (`app "%f"`), and a value anywhere after
+/// an option that may take code, however it is written, whether a field code
+/// or the path appended for want of one. The spec leaves a quoted code
+/// undefined, and in practice such an argument is a script for some
 /// interpreter (`sh -c`, `python3 -c`, `env -S`), where the name would run as
-/// code and no quoting is right for every language that might read it. A
-/// shell's script is recognized even unquoted (`sh -c %f`), the one place an
-/// unquoted code is read as code.
+/// code and no quoting is right for every language that might read it. An
+/// unquoted code is read as code only after such an option (`sh -c %f`),
+/// which is recognized by its shape alone, whatever the program. The rule is
+/// deliberately broad and refuses some safe entries (`sh -c 'mpv "$1"' sh
+/// %f`).
 pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsString>> {
     // The desktop entry string escapes are undone before the quoting rules are
     // applied, so a literal backslash inside a quoted argument is written as
     // four backslashes.
     let tokens = split(&unescape_value(exec))
         .map_err(|error| anyhow!("Malformed Exec {exec:?}: {error}"))?;
-    if shell_scripts(&tokens).any(has_substituting_code) {
+    let after_code_option = after_code_option(&tokens);
+    if let Some(start) = after_code_option
+        && tokens[start..]
+            .iter()
+            .any(|token| has_substituting_code(&token.text))
+    {
         return Err(Refused(format!(
-            "Exec {exec:?}: a field code in a shell's -c script cannot be passed safely"
+            "Exec {exec:?}: a field code after an option that takes code cannot be passed safely"
         ))
         .into());
     }
@@ -89,8 +97,15 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     // An entry that declares no file field code takes no argument, but the user
     // picked it to open this path, so append it rather than launch the
     // application against nothing. A program that rejects the extra argument
-    // exits straight away and is reported.
+    // exits straight away and is reported. Appended after an option that takes
+    // code, it could be read as code (`sh -c`), so that is refused.
     if !consumed_path {
+        if after_code_option.is_some() {
+            return Err(Refused(format!(
+                "Exec {exec:?}: a path appended after an option that takes code cannot be passed safely"
+            ))
+            .into());
+        }
         argv.push(context.path.as_os_str().to_os_string());
     }
     Ok(argv)
@@ -110,51 +125,20 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
-/// Programs that read the argument after `-c` as a shell script.
-const SHELLS: [&str; 9] = [
-    "ash", "bash", "csh", "dash", "fish", "ksh", "mksh", "sh", "zsh",
-];
-
-/// Long options of the shells above that take the next argument as their
-/// value.
-const SHELL_OPTIONS_WITH_VALUE: [&str; 2] = ["--init-file", "--rcfile"];
-
-/// The scripts shells among `tokens` are given with `-c`. Every token naming a
-/// shell is tried, since an earlier one may be another program's argument
-/// (`env -u sh bash -c ...`).
-fn shell_scripts(tokens: &[Token]) -> impl Iterator<Item = &str> {
-    tokens.iter().enumerate().filter_map(|(start, token)| {
-        let program = token.text.rsplit('/').next().unwrap_or(&token.text);
-        if SHELLS.contains(&program) {
-            script_operand(&tokens[start + 1..])
-        } else {
-            None
-        }
-    })
-}
-
-/// The script among a shell's `arguments`, when `-c` is given: the first
-/// operand after the options.
-fn script_operand(arguments: &[Token]) -> Option<&str> {
-    let mut has_script_option = false;
-    let mut rest = arguments.iter().map(|token| token.text.as_str());
-    while let Some(token) = rest.next() {
-        let Some(options) = token.strip_prefix(['-', '+']) else {
-            return has_script_option.then_some(token);
-        };
-        if options.starts_with('-') {
-            if SHELL_OPTIONS_WITH_VALUE.contains(&token) {
-                rest.next();
-            }
-            continue;
-        }
-        has_script_option |= options.contains('c');
-        // `-o` and `-O` take the next argument as their value.
-        if options.ends_with(['o', 'O']) {
-            rest.next();
-        }
-    }
-    None
+/// The index just past the first option cluster among `tokens` holding `c`,
+/// `e` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-S`). That is how shells, `env`,
+/// `python3`, `perl`, `node` and the like are given code to run, so it is
+/// matched for any program. Every later argument counts, since options may
+/// stand between the cluster and the code (`sh -c -x %f`) and a program may
+/// read an argument after the code as code too (`eval "$1"`).
+fn after_code_option(tokens: &[Token]) -> Option<usize> {
+    let index = tokens.iter().position(|token| {
+        token.text.strip_prefix('-').is_some_and(|options| {
+            options.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                && options.contains(['c', 'e', 'S'])
+        })
+    })?;
+    Some(index + 1)
 }
 
 /// One argument of an `Exec` line, with its quotes and escapes removed.
@@ -426,110 +410,95 @@ mod tests {
         }
     }
 
+    /// The rules `expand` refuses by, as the tail of their messages.
+    const AFTER_OPTION: &str =
+        "a field code after an option that takes code cannot be passed safely";
+    const APPENDED: &str =
+        "a path appended after an option that takes code cannot be passed safely";
+    const QUOTED: &str = "a field code in a quoted argument cannot be passed safely";
+
+    // Any value after an option cluster holding c, e or S may be read as code,
+    // by any program, however it is written. A code in an argument with any
+    // quoting or escape in it is in a script, whatever reads it.
+    #[test_case("sh -c %f", AFTER_OPTION ; "c directly before the code")]
+    #[test_case("foo -e %f", AFTER_OPTION ; "e directly before the code")]
+    #[test_case("env -S %f", AFTER_OPTION ; "s directly before the code")]
+    #[test_case("sh -lc %f", AFTER_OPTION ; "c last in a cluster")]
+    #[test_case("sh -cx %f", AFTER_OPTION ; "c first in a cluster")]
+    #[test_case("foo -xey %f", AFTER_OPTION ; "e inside a cluster")]
+    #[test_case("foo -verbose %f", AFTER_OPTION ; "a single dash long option holding e")]
+    #[test_case("sh -c -x %f", AFTER_OPTION ; "after a further option")]
+    #[test_case("bash -c -o pipefail %f", AFTER_OPTION ; "after a further option with a value")]
+    #[test_case("sh -c -- %f", AFTER_OPTION ; "after a double dash")]
+    #[test_case("foo -c -- -- %f", AFTER_OPTION ; "after several double dashes")]
+    #[test_case("foo -c bar %f", AFTER_OPTION ; "after the code argument")]
+    #[test_case("sh -c 'mpv \"$1\"' sh %f", AFTER_OPTION ; "after the script as its parameter")]
+    #[test_case("sh -c 'mpv %f'", AFTER_OPTION ; "in a single quoted script")]
+    #[test_case("sh -c \"mpv %f\"", AFTER_OPTION ; "in a double quoted script")]
+    #[test_case("foo -c \"%f\"", AFTER_OPTION ; "a quoted code on its own")]
+    #[test_case("sh -c \"cat <<EOF\n%f\nEOF\"", AFTER_OPTION ; "in a here document")]
+    #[test_case("sh -c cat${IFS}%f", AFTER_OPTION ; "embedded in an unquoted script")]
+    #[test_case("foo -c --file=%f", AFTER_OPTION ; "embedded in an option value")]
+    #[test_case("sh -c %F", AFTER_OPTION ; "the file list code")]
+    #[test_case("sh -c %u", AFTER_OPTION ; "the uri code")]
+    #[test_case("sh -c %U", AFTER_OPTION ; "the uri list code")]
+    #[test_case("sh -c %c", AFTER_OPTION ; "the name code")]
+    #[test_case("sh -c %k", AFTER_OPTION ; "the desktop file code")]
+    #[test_case("/bin/bash -lc 'mpv %u'", AFTER_OPTION ; "a path to the program")]
+    #[test_case("env FOO=1 dash -c 'mpv %f'", AFTER_OPTION ; "a shell run through env")]
+    #[test_case("bash -o pipefail -c 'cat %f'", AFTER_OPTION ; "an option before the cluster")]
+    #[test_case("zsh --login -c 'cat %f'", AFTER_OPTION ; "a long option before the cluster")]
+    #[test_case("rbash -c %f", AFTER_OPTION ; "a restricted shell")]
+    #[test_case("tcsh -c %f", AFTER_OPTION ; "a csh")]
+    #[test_case("env -S \"sh -c %f\"", AFTER_OPTION ; "a command line split by env")]
+    #[test_case("python3 -c %f", AFTER_OPTION ; "python")]
+    #[test_case("perl -e %f", AFTER_OPTION ; "perl")]
+    #[test_case("node -e %f", AFTER_OPTION ; "node")]
+    #[test_case("ruby -e %f", AFTER_OPTION ; "ruby")]
+    #[test_case("sh -c", APPENDED ; "no code so the path would be the script")]
+    #[test_case("foo -c %d", APPENDED ; "only a deprecated code")]
+    #[test_case("foo -c %i", APPENDED ; "only the icon code")]
+    #[test_case("foo -c %%", APPENDED ; "only a literal percent")]
+    #[test_case("run --command \"mpv %f\"", QUOTED ; "double quoted script")]
+    #[test_case("run --command 'mpv %f'", QUOTED ; "single quoted script")]
+    #[test_case("run --command \"%f --flag\"", QUOTED ; "a quoted script that starts with the code")]
+    #[test_case(r#"run --command "echo \"%f\"""# , QUOTED ; "inside the script's double quotes")]
+    #[test_case(r"run --command echo\\ %f", QUOTED ; "after an escaped space")]
+    #[test_case(r#"run --command "echo "%f"#, QUOTED ; "after a quoted space")]
+    #[test_case(r#"app "x"%f"#, QUOTED ; "after a quoted word")]
+    #[test_case("app \\'%f", QUOTED ; "after an escaped quote")]
+    #[test_case("app \"--file=%f\"", QUOTED ; "a quoted option value")]
+    #[test_case("env --split-string \"sh -c %f\"", QUOTED ; "a long option that takes code")]
+    fn expand_refuses(exec: &str, rule: &str) {
+        let error = expand(&hostile_context(), exec).expect_err("the entry must not be offered");
+        assert!(error.is::<Refused>(), "{error}");
+        assert!(error.to_string().ends_with(rule), "{error}");
+    }
+
     // Outside quotes the value is one argv element and no shell reads it, so it
     // is passed raw, embedded or not. So is a quoted argument that is only the
-    // code.
-    #[test_case("mpv %f", &["mpv", HOSTILE] ; "bare code is raw")]
-    #[test_case("mpv --file=%f", &["mpv", "--file=/v/x$(touch pwned).mp4"] ; "unquoted embedded code is raw")]
+    // code. A code that expands to nothing puts nothing into a script, and a
+    // literal percent is not a code.
+    #[test_case("mpv %f", &["mpv", HOSTILE] ; "a bare code")]
+    #[test_case("vlc %U", &["vlc", URI] ; "a bare uri code")]
+    #[test_case("mpv --file=%f", &["mpv", "--file=/v/x$(touch pwned).mp4"] ; "an unquoted embedded code")]
     #[test_case("app \"%f\"", &["app", HOSTILE] ; "a quoted code on its own")]
     #[test_case("app '%f'", &["app", HOSTILE] ; "a single quoted code on its own")]
     #[test_case("app \"it's\" %f", &["app", "it's", HOSTILE] ; "a code after a quoted argument")]
-    fn a_code_outside_quotes_is_passed_raw(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
-    }
-
-    // A code in an argument with any quoting or escape in it is in a script,
-    // whatever reads it, so the entry is refused.
-    #[test_case("run -c \"mpv %f\"" ; "double quoted script")]
-    #[test_case("run -c 'mpv %f'" ; "single quoted script")]
-    #[test_case("run -c \"%f --flag\"" ; "a quoted script that starts with the code")]
-    #[test_case(r#"run -c "echo \"%f\"""# ; "inside the script's double quotes")]
-    #[test_case(r"run -c echo\\ %f" ; "after an escaped space")]
-    #[test_case(r#"run -c "echo "%f"# ; "after a quoted space")]
-    #[test_case(r#"app "x"%f"# ; "after a quoted word")]
-    #[test_case("app \\'%f" ; "after an escaped quote")]
-    #[test_case("app \"--file=%f\"" ; "a quoted option value")]
-    #[test_case("python3 -c \"print(%f)\"" ; "another language")]
-    #[test_case("env -S \"sh -c %f\"" ; "a command line split by env")]
-    fn a_code_in_a_quoted_argument_is_refused(exec: &str) {
-        let error = expand(&hostile_context(), exec).expect_err("the entry must not be offered");
-        assert!(error.is::<Refused>(), "{error}");
-        let error = error.to_string();
-        assert!(
-            error.ends_with("a field code in a quoted argument cannot be passed safely"),
-            "{error}"
-        );
-    }
-
-    // A code that expands to nothing puts nothing into the script, so where it
-    // sits does not matter, and a literal percent is not a code.
-    #[test_case(r#"run -c "echo '%d'""#, &["run", "-c", "echo ''", HOSTILE] ; "a deprecated code")]
-    #[test_case(r#"run -c "echo '%i'""#, &["run", "-c", "echo ''", HOSTILE] ; "an icon code inside an argument")]
-    #[test_case(r#"run -c "printf 100%%""#, &["run", "-c", "printf 100%", HOSTILE] ; "a literal percent")]
-    #[test_case("sh -c 'mpv \"$1\"' sh %f", &["sh", "-c", "mpv \"$1\"", "sh", HOSTILE] ; "the code after the script")]
-    fn a_script_with_no_substituting_code_is_offered(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
-    }
-
-    /// Runs `exec` expanded against a file whose name runs a command if a
-    /// shell reads it unquoted, returning what it printed and whether the
-    /// command ran.
-    fn run_against_a_hostile_name(exec: impl Fn(&Path) -> String) -> (Vec<u8>, Vec<u8>, bool) {
-        let dir = crate::test_support::TempDir::new("exec_hostile");
-        let path = dir.join("x$(touch pwned).mp4");
-        let uri = file_uri(&path);
-        let context = ExecContext {
-            path: &path,
-            uri: &uri,
-            ..context()
-        };
-        let argv = expand(&context, &exec(dir.path())).unwrap();
-
-        let output = std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        assert!(output.status.success());
-        let expected = path.as_os_str().as_encoded_bytes().to_vec();
-        (expected, output.stdout, dir.join("pwned").exists())
-    }
-
-    #[test]
-    fn a_name_passed_to_a_shell_after_its_script_is_inert() {
-        let (expected, printed, ran) =
-            run_against_a_hostile_name(|_| "sh -c 'printf %%s \"$1\"' sh %f".to_string());
-        assert_eq!(expected, printed);
-        assert!(!ran);
-    }
-
-    // A shell reads its -c operand as a script however it is written, so a
-    // code there is refused even unquoted.
-    #[test_case("sh -c %f" ; "the code as the whole script")]
-    #[test_case("sh -c cat${IFS}%f" ; "no whitespace in the script")]
-    #[test_case("sh -c \"cat <<EOF\n%f\nEOF\"" ; "a here document")]
-    #[test_case("/bin/bash -lc 'mpv %u'" ; "a path to the shell and clustered options")]
-    #[test_case("env FOO=1 dash -c 'mpv %c'" ; "a shell run through env")]
-    #[test_case("bash -o pipefail -c 'cat %f'" ; "an option that takes a value")]
-    #[test_case("bash --rcfile /dev/null -c %f" ; "a long option that takes a value")]
-    #[test_case("zsh --login -c 'cat %k'" ; "a long option")]
-    #[test_case("env -u sh bash -c %f" ; "an earlier argument that names a shell")]
-    fn a_code_in_a_shell_script_is_refused(exec: &str) {
-        let error = expand(&hostile_context(), exec).expect_err("the entry must not be offered");
-        assert!(error.is::<Refused>(), "{error}");
-        assert!(
-            error
-                .to_string()
-                .ends_with("a field code in a shell's -c script cannot be passed safely"),
-            "{error}"
-        );
-    }
-
     #[test_case("sh %f", &["sh", HOSTILE] ; "a shell given a file rather than a script")]
-    #[test_case("bash --norc %f", &["bash", "--norc", HOSTILE] ; "a long option with a c in it")]
-    #[test_case("app -c %f", &["app", "-c", HOSTILE] ; "a -c option of a program that is not a shell")]
-    fn a_shell_whose_script_holds_no_code_is_offered(exec: &str, expected: &[&str]) {
+    #[test_case("foo %f -c bar", &["foo", HOSTILE, "-c", "bar"] ; "a code before the cluster")]
+    #[test_case("foo %f -c %i", &["foo", HOSTILE, "-c", "--icon", "viewer-icon"] ; "the icon code after the cluster")]
+    #[test_case("foo %f -c %% %d", &["foo", HOSTILE, "-c", "%"] ; "a literal percent and a deprecated code after the cluster")]
+    #[test_case("foo --config %f", &["foo", "--config", HOSTILE] ; "a long option")]
+    #[test_case("foo --exec %f", &["foo", "--exec", HOSTILE] ; "a long option holding e and c")]
+    #[test_case("bash --norc %f", &["bash", "--norc", HOSTILE] ; "a long option ending in c")]
+    #[test_case("foo -a-c %f", &["foo", "-a-c", HOSTILE] ; "a word that is not a cluster")]
+    #[test_case("foo -xvf %f", &["foo", "-xvf", HOSTILE] ; "a cluster without c e or s")]
+    #[test_case("foo -s %f", &["foo", "-s", HOSTILE] ; "a lower case s")]
+    #[test_case(r#"run --command "echo '%d'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "a deprecated code in a quoted argument")]
+    #[test_case(r#"run --command "echo '%i'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "an icon code in a quoted argument")]
+    #[test_case(r#"run --command "printf 100%%" %f"#, &["run", "--command", "printf 100%", HOSTILE] ; "a literal percent in a quoted argument")]
+    fn expand_offers(exec: &str, expected: &[&str]) {
         assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
     }
 

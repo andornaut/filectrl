@@ -1,6 +1,8 @@
 use std::{
     ffi::{OsStr, OsString},
     fs,
+    io::ErrorKind,
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Stdio},
     sync::mpsc::Sender,
@@ -15,7 +17,7 @@ use super::{
     path_info::{PathInfo, compact},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
-    tasks::is_same_file,
+    tasks::{Stale, is_same_file, rename_no_replace, restat_listed},
 };
 use crate::command::{Command, progress::CancellationToken};
 
@@ -172,13 +174,14 @@ fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Send
 }
 
 /// Refuses a symlink rather than changing its target: `chmod(2)` follows the
-/// link, and Linux has no `lchmod`. The type is read afresh, since the listing
-/// the path came from may be stale.
+/// link, and Linux has no `lchmod`. The listed type is the one checked, since
+/// an entry that is no longer the one listed is refused anyway.
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     let p = path.as_path();
-    if is_symlink(p, mode)? {
+    if path.is_symlink() {
         return Err(symlink_refusal(p));
     }
+    restat_listed(path).map_err(|stale| stale.into_error("chmod", p))?;
     info!("Changing mode of {} to {mode:o}", p.display());
     set_mode_without_following(p, mode)
 }
@@ -276,22 +279,24 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     validate_basename("New name", new_basename)?;
     let old_path = path.as_path();
     let new_path = join_parent(old_path, new_basename);
-    info!("Renaming {} to {}", old_path.display(), new_path.display());
-    if old_path != new_path {
-        // Diagnose a vanished source up front; otherwise an existing
-        // destination would be misreported as the problem. Only NotFound
-        // means vanished; other errors (e.g. permission denied) must not
-        // claim the file is gone.
-        if let Err(error) = old_path.symlink_metadata() {
-            return Err(if error.kind() == std::io::ErrorKind::NotFound {
-                anyhow!("{} no longer exists", compact(old_path))
-            } else {
-                anyhow!("Failed to rename {}: {error}", compact(old_path))
-            });
+    if old_path == new_path {
+        return Ok(());
+    }
+    // Only NotFound means vanished; other errors (e.g. permission denied)
+    // must not claim the file is gone.
+    let vanished = || anyhow!("{} no longer exists", compact(old_path));
+    match restat_listed(path) {
+        Ok(_) => {}
+        Err(stale) if stale.is_not_found() => return Err(vanished()),
+        Err(Stale::Changed) => return Err(anyhow!("it changed since it was listed")),
+        Err(Stale::Unreadable(error)) => {
+            return Err(anyhow!("Failed to rename {}: {error}", compact(old_path)));
         }
-        // Refuse to overwrite: `fs::rename` would silently replace an
-        // existing destination.
-        if new_path.symlink_metadata().is_ok() {
+    }
+    info!("Renaming {} to {}", old_path.display(), new_path.display());
+    match rename_no_replace(old_path, &new_path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Err(vanished()),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             if !is_same_file(old_path, &new_path) {
                 return Err(anyhow!("{} already exists", compact(&new_path)));
             }
@@ -306,10 +311,10 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
                     compact(&new_path)
                 ));
             }
+            Ok(fs::rename(old_path, new_path)?)
         }
-        fs::rename(old_path, new_path)?;
+        result => Ok(result?),
     }
-    Ok(())
 }
 
 /// True when the two paths' file names differ only by letter case.
@@ -324,6 +329,11 @@ fn is_case_only_change(a: &Path, b: &Path) -> bool {
 
 /// The single place the detach strategy is defined, so that both spawn paths
 /// stay in step.
+///
+/// The child gets a process group of its own, outside the terminal's
+/// foreground group: signals the terminal sends that group (the hangup when
+/// it closes) do not reach it, and it is stopped rather than obeyed if it
+/// tries to read from or reconfigure the terminal filectrl is drawing on.
 fn detached_command<P, I, S>(program: P, args: I) -> std::process::Command
 where
     P: AsRef<OsStr>,
@@ -335,7 +345,8 @@ where
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        .process_group(0);
     command
 }
 
@@ -437,6 +448,25 @@ mod tests {
 
         assert!(rename(&info, "c.txt").is_ok());
         assert!(dir.join("c.txt").exists());
+    }
+
+    #[test]
+    fn rename_refuses_an_entry_replaced_since_it_was_listed() {
+        let dir = TempDir::new("ops_rename_replaced");
+        let a = dir.join("a.txt");
+        fs::write(&a, b"seen").unwrap();
+        let listed = PathInfo::try_from(a.as_path()).unwrap();
+        let other = dir.join("other.txt");
+        fs::write(&other, b"unseen").unwrap();
+        fs::rename(&other, &a).unwrap();
+
+        let error = rename(&listed, "b.txt")
+            .expect_err("another entry at the listed path must be refused")
+            .to_string();
+
+        assert_eq!("it changed since it was listed", error);
+        assert_eq!(b"unseen".to_vec(), fs::read(&a).unwrap());
+        assert!(dir.join("b.txt").symlink_metadata().is_err());
     }
 
     #[test]
@@ -575,8 +605,21 @@ mod tests {
     }
 
     #[test]
-    fn chmod_reports_a_failure_it_did_not_decide() {
+    fn setting_the_mode_reports_a_failure_it_did_not_decide() {
         let dir = TempDir::new("ops_chmod_gone");
+        let file = dir.join("a.txt");
+
+        let error = set_mode_without_following(&file, 0o600)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.starts_with("Failed to chmod"), "{error}");
+        assert!(error.contains("to 600: "), "{error}");
+    }
+
+    #[test]
+    fn chmod_reports_an_entry_that_vanished_as_a_failure_rather_than_a_change() {
+        let dir = TempDir::new("ops_chmod_vanished");
         let file = dir.join("a.txt");
         fs::write(&file, b"a").unwrap();
         let info = PathInfo::try_from(file.as_path()).unwrap();
@@ -584,8 +627,32 @@ mod tests {
 
         let error = chmod(&info, 0o600).unwrap_err().to_string();
 
+        // Nothing was found to compare, so it is the errno that is reported.
         assert!(error.starts_with("Failed to chmod"), "{error}");
-        assert!(error.contains("to 600: "), "{error}");
+        assert!(!error.contains("changed since it was listed"), "{error}");
+    }
+
+    /// The row seen was `sub/key`; `sub` is then swapped for a link to another
+    /// directory holding a file of the same name, which the user never saw.
+    #[test]
+    fn chmod_refuses_an_entry_whose_parent_was_swapped_since_it_was_listed() {
+        let dir = TempDir::new("ops_chmod_parent_swapped");
+        let sub = dir.join("sub");
+        let other = dir.join("other");
+        fs::create_dir(&sub).unwrap();
+        fs::create_dir(&other).unwrap();
+        fs::write(sub.join("key"), b"seen").unwrap();
+        fs::write(other.join("key"), b"unseen").unwrap();
+        fs::set_permissions(other.join("key"), fs::Permissions::from_mode(0o600)).unwrap();
+        let listed = PathInfo::try_from(sub.join("key").as_path()).unwrap();
+        fs::rename(&sub, dir.join("sub.orig")).unwrap();
+        std::os::unix::fs::symlink(&other, &sub).unwrap();
+
+        let error = chmod(&listed, 0o644).unwrap_err().to_string();
+
+        assert!(error.starts_with("Cannot chmod"), "{error}");
+        assert!(error.ends_with("it changed since it was listed"), "{error}");
+        assert_eq!(0o600, mode_of(&other.join("key")));
     }
 
     // ── create_directory ────────────────────────────────────────────────────
@@ -736,6 +803,25 @@ mod tests {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
             Err(error) => panic!("the watcher never finished: {error}"),
         }
+    }
+
+    /// Linux only: the group is read from `/proc`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_launched_program_runs_in_a_process_group_of_its_own() {
+        let mut child = detached_command("sleep", ["10"]).spawn().unwrap();
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id()));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        // After the parenthesised command name: state, parent, then group.
+        let stat = stat.unwrap();
+        let group: u32 = stat
+            .rsplit_once(')')
+            .and_then(|(_, fields)| fields.split_whitespace().nth(2))
+            .and_then(|group| group.parse().ok())
+            .unwrap_or_else(|| panic!("unexpected /proc stat line {stat:?}"));
+        assert_eq!(child.id(), group);
     }
 
     #[test]

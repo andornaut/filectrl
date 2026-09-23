@@ -41,27 +41,23 @@ impl Parameters {
 /// The argv that runs `template` with `sh -c`, `%s` standing for `values`. The
 /// reference is written to expand to exactly the value wherever `%s` sits:
 /// quoted when it is outside quotes, bare inside double quotes, and closing and
-/// reopening single quotes around itself inside them. After a backslash, a
-/// newline goes first, so the backslash continues the line rather than
-/// escaping the reference. A misjudged quote state (inside `$(...)`, say) can
-/// only split the value into words or garble it, never run it.
+/// reopening single quotes around itself inside them. Backslashes are not
+/// tracked, so a misjudged quote state (after an escaped quote, or inside
+/// `$(...)`) can only split the value into words or garble it, never run it.
 pub(crate) fn command(
     template: &str,
     parameters: Parameters,
     values: impl IntoIterator<Item = OsString>,
 ) -> Vec<OsString> {
     let mut script = String::with_capacity(template.len() + 8);
-    let mut quotes = Quotes::default();
+    let mut quote = Quote::None;
     let mut chars = template.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' && chars.next_if_eq(&'s').is_some() {
-            if std::mem::take(&mut quotes.escaped) {
-                script.push('\n');
-            }
-            script.push_str(parameters.reference(&quotes.state));
+            script.push_str(parameters.reference(&quote));
             continue;
         }
-        quotes.advance(c);
+        quote.advance(c);
         script.push(c);
     }
     let mut argv = vec![
@@ -76,31 +72,15 @@ pub(crate) fn command(
 }
 
 /// The quote state of a script as `sh` reads it, advanced over its characters.
-#[derive(Default)]
-struct Quotes {
-    state: Quote,
-    escaped: bool,
-}
-
-#[derive(Default, PartialEq)]
 enum Quote {
-    #[default]
     None,
     Single,
     Double,
 }
 
-impl Quotes {
+impl Quote {
     fn advance(&mut self, c: char) {
-        if self.escaped {
-            self.escaped = false;
-            return;
-        }
-        self.state = match (&self.state, c) {
-            (Quote::None | Quote::Double, '\\') => {
-                self.escaped = true;
-                return;
-            }
+        *self = match (&*self, c) {
             (Quote::None, '\'') => Quote::Single,
             (Quote::None, '"') => Quote::Double,
             (Quote::Single, '\'') | (Quote::Double, '"') => Quote::None,
@@ -174,11 +154,17 @@ mod tests {
     #[test_case("./rec '%s'", "" ; "inside single quotes")]
     #[test_case("./rec \"--file=%s\"", "--file=" ; "embedded in a double quoted word")]
     #[test_case("./rec '--file=%s'", "--file=" ; "embedded in a single quoted word")]
-    #[test_case("./rec \\%s", "" ; "after a backslash")]
-    #[test_case("./rec \"\\%s\"", "" ; "after a backslash inside double quotes")]
     fn the_value_arrives_as_one_word(template: &str, prefix: &str) {
         let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
         assert_eq!(vec![format!("{prefix}{HOSTILE}").into_bytes()], words);
+    }
+
+    // Had the backslash ended the comment, the value `./rec` would run and
+    // print `x`.
+    #[test]
+    fn a_backslash_before_the_reference_does_not_end_a_comment() {
+        let (words, _) = run("true # see \\%s x", Parameters::One, &[OsStr::new("./rec")]);
+        assert!(words.is_empty(), "the opened file ran: {words:?}");
     }
 
     #[test]

@@ -223,11 +223,9 @@ fn run_copy_task(
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
     let conflicts = conflicts.cloned();
-    // Re-stat first: `validate_paths` decides whether the subtree check applies
-    // from the source's type, so it must not read selection-time metadata.
-    let path = match restat_source("copy", &path.path) {
+    let path = match restat_listed(path) {
         Ok(fresh) => fresh,
-        Err(result) => return TaskRunResult::failed(result),
+        Err(stale) => return TaskRunResult::failed(stale.into_error("copy", &path.path).into()),
     };
     let (old_path, new_path) = match validate_paths(&path, dir, "copy", overwrite) {
         Ok(paths) => paths,
@@ -303,9 +301,9 @@ fn run_move_task(
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
     let conflicts = conflicts.cloned();
-    let path = match restat_source("move", &path.path) {
+    let path = match restat_listed(path) {
         Ok(fresh) => fresh,
-        Err(result) => return TaskRunResult::failed(result),
+        Err(stale) => return TaskRunResult::failed(stale.into_error("move", &path.path).into()),
     };
     let (old_path, new_path) = match validate_paths(&path, dir, "move", overwrite) {
         Ok(paths) => paths,
@@ -383,12 +381,9 @@ fn run_move_task(
 }
 
 fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
-    // Same staleness class as copy/move: the selection-time metadata may be
-    // outdated. A directory replaced by a symlink must be unlinked as a
-    // link, not followed into its target.
-    let path = match restat_source("delete", &path.path) {
+    let path = match restat_listed(path) {
         Ok(fresh) => fresh,
-        Err(result) => return TaskRunResult::failed(result),
+        Err(stale) => return TaskRunResult::failed(stale.into_error("delete", &path.path).into()),
     };
     let kind = TaskKind::Delete {
         path: display_path(&path.path),
@@ -558,17 +553,16 @@ fn scan_tree(
     root: &Path,
     mut visit: impl FnMut(&Dir, &CStr, bool),
 ) -> Option<()> {
-    let level = |listed: std::io::Result<Option<(Dir, Entries)>>| match listed {
-        Ok(Some((dir, entries))) => Some(DirId::of_dir(&dir).ok().map(|id| Level {
+    let level = |listed: std::io::Result<(Dir, Entries)>| {
+        let (dir, entries) = listed.ok()?;
+        DirId::of_dir(&dir).ok().map(|id| Level {
             dir: Some(dir),
             id,
             name: None,
             entries: entries.into_iter(),
-        })),
-        Ok(None) => None,
-        Err(_) => Some(None),
+        })
     };
-    let Some(root) = level(open_and_list(active, None, root))? else {
+    let Some(root) = level(open_and_list(None, root)) else {
         return Some(());
     };
     let mut stack = vec![root];
@@ -593,7 +587,7 @@ fn scan_tree(
         };
         let dir = top.dir.as_ref().expect("the level being read holds its fd");
         visit(dir, &name, is_directory);
-        if is_directory && let Some(child) = level(open_and_list(active, Some(dir), &name))? {
+        if is_directory && let Some(child) = level(open_and_list(Some(dir), &name)) {
             // Closed until the walk returns here, through `reopen_parent`.
             top.dir = None;
             stack.push(child);
@@ -618,18 +612,13 @@ macro_rules! try_or_abort {
 }
 
 /// Opens and lists the directory `$name` in `$parent` for `remove_path`:
-/// unwraps the directory and its entries, finalizes `$active` as cancelled and
-/// returns `None` if the drain was cancelled, or as an error naming `$dir` and
-/// returns `None` if the open or the read failed.
+/// unwraps the directory and its entries, or finalizes `$active` as an error
+/// naming `$dir` and returns `None` if the open or the read failed.
 macro_rules! list_or_abort {
     ($active:expr, $parent:expr, $name:expr, $dir:expr) => {{
         let dir = $dir;
-        match open_and_list(&$active, $parent, $name) {
-            Ok(Some(listed)) => listed,
-            Ok(None) => {
-                $active.cancelled();
-                return None;
-            }
+        match open_and_list($parent, $name) {
+            Ok(listed) => listed,
             Err(error) => {
                 $active.error(format!(
                     "Failed to read directory {}: {error}",
@@ -641,13 +630,48 @@ macro_rules! list_or_abort {
     }};
 }
 
-/// Re-stats the source at task start: selection- and yank-time metadata may
-/// be stale, and the path may have changed since (e.g. replaced by a FIFO,
-/// which a byte-wise copy would block on forever, or by a symlink, which a
-/// delete must unlink rather than follow).
-fn restat_source(operation: &str, old_path: &Path) -> Result<PathInfo, CommandResult> {
-    PathInfo::try_from(old_path)
-        .map_err(|error| anyhow!("Failed to {operation} {}: {error}", compact(old_path)).into())
+/// Why an entry was not acted on as it was listed.
+pub(super) enum Stale {
+    /// The path could not be read again: gone, or no longer reachable.
+    Unreadable(anyhow::Error),
+    /// The path names another entry than the one listed.
+    Changed,
+}
+
+impl Stale {
+    pub(super) fn is_not_found(&self) -> bool {
+        match self {
+            Self::Unreadable(error) => error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::NotFound),
+            Self::Changed => false,
+        }
+    }
+
+    /// The alert for refusing to `operation` the entry at `path`.
+    pub(super) fn into_error(self, operation: &str, path: &Path) -> anyhow::Error {
+        match self {
+            Self::Unreadable(error) => anyhow!("Failed to {operation} {}: {error}", compact(path)),
+            Self::Changed => anyhow!(
+                "Cannot {operation} {}: it changed since it was listed",
+                compact(path)
+            ),
+        }
+    }
+}
+
+/// Re-reads the entry `listed` names, without following a symlink in its own
+/// name, and refuses it unless it is still the entry that was listed: the same
+/// device and inode. The path is resolved again at action time, so without
+/// this a parent directory swapped for a symlink since the listing would lead
+/// the operation to a same-named entry the user never saw. Returns the fresh
+/// metadata, since the listed mode and size may be out of date.
+pub(super) fn restat_listed(listed: &PathInfo) -> Result<PathInfo, Stale> {
+    let fresh = PathInfo::try_from(listed.as_path()).map_err(Stale::Unreadable)?;
+    if !fresh.is_same_inode(listed) {
+        return Err(Stale::Changed);
+    }
+    Ok(fresh)
 }
 
 /// Finishes a cross-device move once the copy stage is done, removing the
@@ -805,7 +829,7 @@ fn copy_path(
     if !is_directory {
         return copy_entry(&at, &paths, active, errors, context, &stat);
     }
-    let Some(level) = enter_directory(&at, &paths, active, errors, context, &stat) else {
+    let Some(level) = enter_directory(&at, &paths, errors, context, &stat) else {
         return true;
     };
     // Only the directories being worked in are held open.
@@ -881,7 +905,7 @@ fn copy_tree(
             dst_name: &name,
         };
         if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
-            if let Some(child) = enter_directory(&at, paths, active, errors, context, &stat) {
+            if let Some(child) = enter_directory(&at, paths, errors, context, &stat) {
                 // Closed until the walk returns here.
                 top.src = None;
                 top.dst = None;
@@ -911,7 +935,6 @@ fn copy_tree(
 fn enter_directory(
     at: &At<'_>,
     paths: &Paths,
-    active: &ActiveTask,
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
     stat: &rustix::fs::Stat,
@@ -988,7 +1011,7 @@ fn enter_directory(
         give_up(errors, context, message);
         return None;
     }
-    let names = match list_names(active, &src) {
+    let names = match list_names(&src) {
         Ok(names) => names,
         Err(error) => {
             give_up(errors, context, read_failure(&error));
@@ -1364,7 +1387,15 @@ fn create_file_at(
 /// A move keeps the full mode, like `mv`, except setuid and setgid when the
 /// copy is not owned by the source's user and group: `mv` clears them when it
 /// cannot carry the ownership over, or a program would run as whoever moved it.
+/// It first gives the copy the source's group, as `mv` does, so the group bits
+/// it keeps are granted to the group they were granted to before rather than
+/// to whichever group the destination assigned. Best effort: a user can only
+/// give a file a group they belong to, and the comparison below then clears
+/// setgid for a group that did not carry over.
 fn apply_final_mode(file: &File, source: &Source, context: &CopyContext<'_>) {
+    if context.preserve {
+        let _ = rustix::fs::fchown(file, None, Some(rustix::fs::Gid::from_raw(source.gid)));
+    }
     let Ok(created) = fstat(file) else {
         return;
     };
@@ -1446,16 +1477,12 @@ fn reopen_parent_of(dir: &File, expected: DirId) -> std::io::Result<File> {
     Ok(parent)
 }
 
-/// The names in the open directory `dir`, read to the end. Checked for
-/// cancellation once per entry, returning what was read so far when cancelled:
-/// the walk sees the cancel before it copies any of them.
-fn list_names(active: &ActiveTask, dir: &File) -> std::io::Result<Vec<CString>> {
+/// The names in the open directory `dir`, read to the end. `copy_tree` checks
+/// for a cancel between the entries.
+fn list_names(dir: &File) -> std::io::Result<Vec<CString>> {
     let mut names = Vec::new();
     let mut entries = Dir::read_from(dir)?;
     while let Some(entry) = entries.read() {
-        if active.is_cancelled() {
-            break;
-        }
         let entry = entry?;
         let name = entry.file_name();
         if name != c"." && name != c".." {
@@ -1808,16 +1835,16 @@ fn open_directory_fd(
 /// `open_directory` then `list_entries`. A `None` parent resolves `name`
 /// against the current directory, like a path.
 fn open_and_list(
-    active: &ActiveTask,
     parent: Option<&Dir>,
     name: impl rustix::path::Arg,
-) -> std::io::Result<Option<(Dir, Entries)>> {
+) -> std::io::Result<(Dir, Entries)> {
     let parent = match parent {
         Some(parent) => parent.fd()?,
         None => CWD,
     };
     let mut dir = open_directory(parent, name)?;
-    Ok(list_entries(active, &mut dir)?.map(|entries| (dir, entries)))
+    let entries = list_entries(&mut dir)?;
+    Ok((dir, entries))
 }
 
 /// Unlinks `name` in `dir`: a file or symlink with no `flags`, an empty
@@ -1830,14 +1857,13 @@ fn unlink(dir: &Dir, name: &CStr, flags: AtFlags) -> std::io::Result<()> {
 /// before the caller deletes anything. The type comes from the directory entry,
 /// or from an `lstat` where the filesystem does not report one, so a link to a
 /// directory reports `false` and is unlinked rather than descended into.
-/// Checked for cancellation once per entry, so a huge directory does not delay
-/// a cancel; returns `Ok(None)` when cancelled.
-fn list_entries(active: &ActiveTask, dir: &mut Dir) -> std::io::Result<Option<Entries>> {
+///
+/// Never checked for cancellation: the callers check between entries, and the
+/// removal of a moved source, which a cancel must not stop part way, lists
+/// through here too.
+fn list_entries(dir: &mut Dir) -> std::io::Result<Entries> {
     let mut entries = Vec::new();
     while let Some(entry) = dir.read() {
-        if active.is_cancelled() {
-            return Ok(None);
-        }
         let entry = entry?;
         let name = entry.file_name();
         if name == c"." || name == c".." {
@@ -1851,20 +1877,20 @@ fn list_entries(active: &ActiveTask, dir: &mut Dir) -> std::io::Result<Option<En
         };
         entries.push((name.to_owned(), file_type == FileType::Directory));
     }
-    Ok(Some(entries))
+    Ok(entries)
 }
 
 /// Renames `old_path` to `new_path`, failing atomically with `AlreadyExists` if
-/// `new_path` is taken, unlike `fs::rename`, which replaces it. `validate_paths`
-/// rejects an existing destination already, but on the UI thread before the
-/// worker starts; folding the check into the rename closes the window where one
-/// appears in between.
+/// `new_path` is taken, unlike `fs::rename`, which replaces it. A check made
+/// before the rename leaves a window in which a file created at `new_path` is
+/// silently replaced; folding the check into the rename closes it.
 ///
 /// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np`, both
 /// through rustix's safe wrapper, since `unsafe` is denied crate-wide. Other
-/// targets fall back to `fs::rename` and keep the narrow race.
+/// targets, and filesystems that reject the flag, fall back to a check and
+/// `fs::rename`, and keep the narrow race.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+pub(super) fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
     use rustix::{
         fs::{CWD, RenameFlags, renameat_with},
         io::Errno,
@@ -1874,10 +1900,7 @@ fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
     // against the current directory, matching `fs::rename`.
     match renameat_with(CWD, old_path, CWD, new_path, RenameFlags::NOREPLACE) {
         Ok(()) => Ok(()),
-        // Some filesystems reject the no-replace flag; fall back to a plain
-        // rename (validate_paths already guarded the destination, so only the
-        // narrow race reopens here).
-        Err(Errno::NOSYS | Errno::INVAL | Errno::NOTSUP) => fs::rename(old_path, new_path),
+        Err(Errno::NOSYS | Errno::INVAL | Errno::NOTSUP) => checked_rename(old_path, new_path),
         // Preserve the errno (e.g. XDEV -> CrossesDevices, EXIST ->
         // AlreadyExists) so callers can dispatch on `error.kind()`.
         Err(errno) => Err(errno.into()),
@@ -1885,7 +1908,15 @@ fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+pub(super) fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+    checked_rename(old_path, new_path)
+}
+
+/// `rename_no_replace` where the kernel cannot refuse a taken name itself.
+fn checked_rename(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+    if new_path.symlink_metadata().is_ok() {
+        return Err(ErrorKind::AlreadyExists.into());
+    }
     fs::rename(old_path, new_path)
 }
 
@@ -1895,7 +1926,7 @@ fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
 /// be absolutized.
 fn display_path(path: &Path) -> String {
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    crate::visible(&path.to_string_lossy()).into_owned()
+    crate::visible_os(path.as_os_str()).into_owned()
 }
 
 /// The path with symlinks and `..` components resolved. Falls back to a lexical
@@ -2813,30 +2844,85 @@ mod tests {
         );
     }
 
+    /// The single alert a task refused before it started carried.
+    fn refusal(result: Result<Task, Vec<Command>>) -> String {
+        let Err(commands) = result else {
+            panic!("the task should have been refused");
+        };
+        let [Command::AlertError(message)] = commands.as_slice() else {
+            panic!("expected one alert, got {commands:?}");
+        };
+        message.clone()
+    }
+
     #[test]
-    fn a_copy_rereads_a_source_whose_type_changed_since_it_was_listed() {
+    fn a_copy_refuses_a_source_whose_type_changed_since_it_was_listed() {
         let fx = TempDir::new("tasks_copy_restat");
         let src = fx.join("was_a_directory");
-        fs::write(&src, b"now a file").unwrap();
+        fs::create_dir(&src).unwrap();
+        let listed = PathInfo::try_from(src.as_path()).unwrap();
+        // Written while the directory still exists, so it cannot reuse its
+        // inode.
+        fs::write(fx.join("file"), b"now a file").unwrap();
+        fs::remove_dir(&src).unwrap();
+        fs::rename(fx.join("file"), &src).unwrap();
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
-        // Listed as a directory: `path_info` reports one whatever is on disk.
-        let stale = path_info(src.to_str().unwrap(), "was_a_directory");
 
-        // The type decides how the source is copied, so the one read when it
-        // was listed must not be the one acted on.
-        let task = run_to_end(TaskCommand::Copy(
-            stale,
+        // The entry at the path is not the one the user chose to copy.
+        let message = refusal(run_to_end(TaskCommand::Copy(
+            listed,
             PathInfo::try_from(dst.as_path()).unwrap(),
             false,
-        ))
-        .expect("the copy should start");
+        )));
 
-        assert_eq!(None, task.error_message());
-        assert_eq!(
-            b"now a file".to_vec(),
-            fs::read(dst.join("was_a_directory")).unwrap()
+        assert!(message.starts_with("Cannot copy"), "{message}");
+        assert!(
+            message.ends_with("it changed since it was listed"),
+            "{message}"
         );
+        assert!(dst.join("was_a_directory").symlink_metadata().is_err());
+    }
+
+    /// The row seen was `sub/notes.txt`; `sub` is then swapped for a link to
+    /// another directory holding a file of the same name. The path is resolved
+    /// again when the task starts, and then names that file, which the user
+    /// never saw.
+    #[test_case("copy" ; "a copy")]
+    #[test_case("move" ; "a move")]
+    #[test_case("delete" ; "a delete")]
+    fn a_task_refuses_a_source_whose_parent_was_swapped_since_it_was_listed(verb: &str) {
+        let fx = TempDir::new("tasks_parent_swapped");
+        let sub = fx.join("sub");
+        let other = fx.join("other");
+        let dest = fx.join("dest");
+        for dir in [&sub, &other, &dest] {
+            fs::create_dir(dir).unwrap();
+        }
+        fs::write(sub.join("notes.txt"), b"seen").unwrap();
+        fs::write(other.join("notes.txt"), b"unseen").unwrap();
+        let listed = PathInfo::try_from(sub.join("notes.txt").as_path()).unwrap();
+        fs::rename(&sub, fx.join("sub.orig")).unwrap();
+        std::os::unix::fs::symlink(&other, &sub).unwrap();
+        let destination = PathInfo::try_from(dest.as_path()).unwrap();
+        let task = match verb {
+            "copy" => TaskCommand::Copy(listed, destination, false),
+            "move" => TaskCommand::Move(listed, destination, false),
+            _ => TaskCommand::Delete(listed),
+        };
+
+        let message = refusal(run_to_end(task));
+
+        assert!(message.starts_with(&format!("Cannot {verb}")), "{message}");
+        assert!(
+            message.ends_with("it changed since it was listed"),
+            "{message}"
+        );
+        assert_eq!(
+            b"unseen".to_vec(),
+            fs::read(other.join("notes.txt")).unwrap()
+        );
+        assert!(dest.join("notes.txt").symlink_metadata().is_err());
     }
 
     #[test]
@@ -2899,22 +2985,29 @@ mod tests {
     }
 
     #[test]
-    fn a_delete_unlinks_a_source_that_became_a_symlink_since_it_was_listed() {
+    fn a_delete_refuses_a_source_that_became_a_symlink_since_it_was_listed() {
         let fx = TempDir::new("tasks_delete_restat");
         let outside = fx.join("outside");
         fs::create_dir(&outside).unwrap();
         fs::write(outside.join("keep.txt"), b"keep").unwrap();
         let link = fx.join("link");
-        std::os::unix::fs::symlink(&outside, &link).unwrap();
-        // Listed as a directory before it was swapped for a link.
-        let stale = path_info(link.to_str().unwrap(), "link");
+        fs::create_dir(&link).unwrap();
+        let listed = PathInfo::try_from(link.as_path()).unwrap();
+        // Made while the directory still exists, so it cannot reuse its inode.
+        std::os::unix::fs::symlink(&outside, fx.join("new_link")).unwrap();
+        fs::remove_dir(&link).unwrap();
+        fs::rename(fx.join("new_link"), &link).unwrap();
 
-        let task = run_to_end(TaskCommand::Delete(stale)).expect("the delete should start");
+        let message = refusal(run_to_end(TaskCommand::Delete(listed)));
 
-        // Deleted as the link it is now, not refused as a directory that
-        // cannot be opened, and never followed.
-        assert_eq!(None, task.error_message());
-        assert!(link.symlink_metadata().is_err());
+        // Neither unlinked, since it is not the entry the user chose, nor
+        // followed.
+        assert!(message.starts_with("Cannot delete"), "{message}");
+        assert!(
+            message.ends_with("it changed since it was listed"),
+            "{message}"
+        );
+        assert!(link.symlink_metadata().unwrap().is_symlink());
         assert_eq!(
             b"keep".to_vec(),
             fs::read(outside.join("keep.txt")).unwrap()
@@ -3296,6 +3389,34 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(None, finished_task(&rx).error_message());
+    }
+
+    /// Once the copy is complete a cancel can no longer stop the move: the
+    /// cancel key checks the stage first, but one that reaches the token
+    /// anyway must not leave the source part removed, split between two
+    /// places.
+    #[test]
+    fn a_cross_device_move_removes_its_whole_source_even_when_cancelled() {
+        let (_fx, src, _, _) = moved("tasks_move_cancelled");
+        fs::create_dir(src.join("sub")).unwrap();
+        fs::write(src.join("sub").join("b.txt"), b"src").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let (active, _, token) = ActiveTask::new(
+            tx,
+            TaskKind::Move(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            1,
+        );
+        token.cancel();
+
+        finish_cross_device_move(active, copied(&src), &src, true);
+
+        assert!(src.symlink_metadata().is_err());
+        let task = finished_task(&rx);
+        assert!(!task.is_cancelled());
+        assert_eq!(None, task.error_message());
     }
 
     /// Something renames another directory onto the source's name once the
@@ -3728,6 +3849,23 @@ mod tests {
         assert_eq!(b"x".to_vec(), std::fs::read(&dst).unwrap());
     }
 
+    /// The fallback for a filesystem that rejects the no-replace flag, which
+    /// `fs::rename` alone would turn into a silent replace.
+    #[test]
+    fn the_checked_rename_refuses_a_taken_name() {
+        let fx = TempDir::new("tasks_checked_rename");
+        let src = fx.join("a.txt");
+        fs::write(&src, b"a").unwrap();
+        let dst = fx.join("b.txt");
+        fs::write(&dst, b"b").unwrap();
+
+        let error = checked_rename(&src, &dst).unwrap_err();
+
+        assert_eq!(ErrorKind::AlreadyExists, error.kind());
+        assert_eq!(b"b".to_vec(), fs::read(&dst).unwrap());
+        assert!(src.exists());
+    }
+
     #[test]
     fn remove_path_deletes_directory_tree() {
         let fx = TempDir::new("tasks");
@@ -3934,26 +4072,6 @@ mod tests {
 
         assert!(remove_path(&root, true, active, Removal::Delete).is_none());
         assert!(root.join("sub").join("f.txt").exists());
-    }
-
-    #[test]
-    fn list_entries_reports_cancellation_during_the_drain() {
-        let fx = TempDir::new("tasks");
-        std::fs::write(fx.join("a.txt"), b"x").unwrap();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let (active, _, token) = ActiveTask::new(
-            tx,
-            TaskKind::Delete {
-                path: String::new(),
-            },
-            1,
-        );
-        token.cancel();
-
-        // A cancel observed while listing yields Ok(None), so the caller
-        // aborts instead of deleting a directory it never finished reading.
-        let mut dir = open_directory(CWD, fx.path()).unwrap();
-        assert!(list_entries(&active, &mut dir).unwrap().is_none());
     }
 
     /// Run by `remove_path_deletes_a_tree_deeper_than_the_open_file_limit`
@@ -4251,6 +4369,44 @@ mod tests {
         assert_eq!(0o755, mode_of(&fx.join("dst")) & 0o7777);
     }
 
+    /// A move keeps the group bits, like `mv`, so it keeps the group they were
+    /// granted to as well: the copy is otherwise created with whichever group
+    /// the destination assigns, and a file readable by one group would become
+    /// readable by another. Needs a second group to belong to, which
+    /// `getgroups` reports on Linux.
+    #[cfg(target_os = "linux")]
+    #[test_case(false, 0o640 ; "a file")]
+    #[test_case(true, 0o750 ; "a directory")]
+    fn a_move_keeps_the_group_of_its_source(is_directory: bool, mode: u32) {
+        use std::os::unix::fs::MetadataExt;
+
+        let own = nix::unistd::getegid();
+        let Some(other) = nix::unistd::getgroups()
+            .unwrap()
+            .into_iter()
+            .find(|group| *group != own)
+        else {
+            eprintln!("skipped: the user running the tests belongs to one group only");
+            return;
+        };
+        let fx = TempDir::new("tasks_move_group");
+        let src = fx.join("src");
+        if is_directory {
+            fs::create_dir(&src).unwrap();
+        } else {
+            fs::write(&src, b"x").unwrap();
+        }
+        std::os::unix::fs::chown(&src, None, Some(other.as_raw())).unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(mode)).unwrap();
+
+        let errors = copy_one(&src, &fx.join("dst"), true);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        let copied = fs::symlink_metadata(fx.join("dst")).unwrap();
+        assert_eq!(other.as_raw(), copied.gid());
+        assert_eq!(mode, copied.mode() & 0o7777);
+    }
+
     /// Another user renames a directory the copy created and leaves a link to
     /// one of the victim's in its place. The copy continues in the directory it
     /// created, and neither writes into nor changes the mode of the victim's.
@@ -4283,7 +4439,7 @@ mod tests {
             src_name: c"src",
             dst_name: c"dst",
         };
-        let level = enter_directory(&at, &paths, &active, &mut errors, &mut context, &source)
+        let level = enter_directory(&at, &paths, &mut errors, &mut context, &source)
             .expect("the directory should be entered");
 
         fs::rename(&dst, fx.join("moved")).unwrap();
@@ -4333,7 +4489,7 @@ mod tests {
             src_name: c"src",
             dst_name: c"dst",
         };
-        let level = enter_directory(&at, &paths, &active, &mut errors, &mut context, &source)
+        let level = enter_directory(&at, &paths, &mut errors, &mut context, &source)
             .expect("the directory should be entered");
 
         fs::rename(src.join("sub"), fx.join("sub.orig")).unwrap();
@@ -4420,7 +4576,7 @@ mod tests {
         change: impl FnOnce(),
     ) -> (PathBuf, Task) {
         let verb = if is_move { "move" } else { "copy" };
-        let path = restat_source(verb, old).ok().unwrap();
+        let path = PathInfo::try_from(old).unwrap();
         let dest = PathInfo::try_from(dest).unwrap();
         let (old_path, new_path) = validate_paths(&path, &dest, verb, false).ok().unwrap();
         change();
@@ -4585,7 +4741,7 @@ mod tests {
             new: fx.join("dst"),
         };
 
-        let level = enter_directory(&at, &paths, &active, &mut errors, &mut context, &stat);
+        let level = enter_directory(&at, &paths, &mut errors, &mut context, &stat);
         active.done();
 
         assert!(level.is_none());

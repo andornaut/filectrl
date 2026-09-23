@@ -39,10 +39,12 @@ fn build_row(
     } else {
         " ".repeat(3)
     };
-    let detail = match (candidate.is_default, candidate.detail.is_empty()) {
-        (false, _) => candidate.detail.clone(),
+    // A desktop file id or bundle identifier, which can hold any text.
+    let program = crate::visible(&candidate.detail);
+    let detail = match (candidate.is_default, program.is_empty()) {
+        (false, _) => program.into_owned(),
         (true, true) => DEFAULT_MARKER.to_string(),
-        (true, false) => format!("{} {DEFAULT_MARKER}", candidate.detail),
+        (true, false) => format!("{program} {DEFAULT_MARKER}"),
     };
     let used = 1
         + shortcut.cell_width() as usize
@@ -135,6 +137,20 @@ mod tests {
         viewer.detail = detail.to_string();
         let rows = build_rows(theme(), 0, 0, &[candidate("App0", false), viewer]);
         text(&rows[1])
+    }
+
+    #[test_case(false ; "unselected")]
+    #[test_case(true ; "selected")]
+    fn the_program_is_shown_with_disguising_characters_spelled_out(is_selected: bool) {
+        let mut app = candidate("App", false);
+        app.detail = "org.a\u{202e}pp".to_string();
+        // The only row is index 0, so selecting index 1 leaves it unselected.
+        let rows = build_rows(theme(), usize::from(!is_selected), 0, &[app]);
+        assert!(
+            text(&rows[0]).starts_with(" 1. App  org.a\\u{202e}pp"),
+            "{:?}",
+            text(&rows[0])
+        );
     }
 
     #[test]

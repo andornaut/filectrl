@@ -34,7 +34,7 @@ use std::{
 use log::debug;
 
 use super::shell;
-use crate::app::config::Config;
+use crate::app::config::{Config, Openers};
 
 /// An application offered by the "open with" picker, and the argv that launches
 /// it against the chosen path.
@@ -66,7 +66,7 @@ pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     for candidate in &mut candidates {
         candidate.name = shown_name(&candidate.name);
     }
-    if let Some(fallback) = configured_opener(&path) {
+    if let Some(fallback) = configured_opener(&Config::global().openers, &path) {
         candidates.push(fallback);
     }
     candidates
@@ -114,8 +114,7 @@ fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
 /// The `openers` template for this kind of path, offered last so that the
 /// picker still works on a system with no application database at all. The
 /// template is a shell command rather than an argv, so it runs through `sh`.
-fn configured_opener(path: &Path) -> Option<AppCandidate> {
-    let openers = &Config::global().openers;
+fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
     let (key, template) = if path.is_dir() {
         ("open_directory", &openers.open_directory)
     } else {
@@ -135,7 +134,7 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
         // change.
         detail: format!("openers.{key}"),
         is_default: false,
-        name: template.clone(),
+        name: shown_name(template),
         working_dir: None,
     })
 }
@@ -146,7 +145,8 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{AppCandidate, dedupe_by_name, shown_name};
+    use super::{AppCandidate, configured_opener, dedupe_by_name, shown_name};
+    use crate::app::config::Openers;
 
     fn candidate(name: &str, detail: &str) -> AppCandidate {
         AppCandidate {
@@ -164,6 +164,28 @@ mod tests {
     #[test_case(&"x".repeat(60) => format!("{}…", "x".repeat(48)) ; "a long name is cut")]
     fn shown_name_produces(name: &str) -> String {
         shown_name(name)
+    }
+
+    /// The template is shown as the application's name, so it is shown the
+    /// way every other name is.
+    #[test]
+    fn the_configured_opener_is_named_like_any_other_application() {
+        let template = format!("{}\u{202e} %s", "x".repeat(60));
+        let openers = Openers {
+            open_directory: template.clone(),
+            open_file: template,
+            open_filectrl_window: String::new(),
+            run_in_terminal: String::new(),
+        };
+        let opener = configured_opener(&openers, std::path::Path::new("/")).unwrap();
+        assert_eq!(format!("{}…", "x".repeat(48)), opener.name);
+
+        let openers = Openers {
+            open_directory: "a\u{202e} %s".to_string(),
+            ..openers
+        };
+        let opener = configured_opener(&openers, std::path::Path::new("/")).unwrap();
+        assert_eq!("a\\u{202e} %s", opener.name);
     }
 
     #[test]

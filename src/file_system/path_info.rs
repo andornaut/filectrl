@@ -20,16 +20,15 @@ fn display_name(path: &Path) -> String {
     path.file_name().map_or(String::new(), visible_name)
 }
 
-/// A file name as it is shown: lossy for bytes that are not UTF-8, and passed
-/// through `crate::visible`.
+/// A file name as it is shown, through `crate::visible_os`.
 pub(crate) fn visible_name(name: &OsStr) -> String {
-    crate::visible(&name.to_string_lossy()).into_owned()
+    crate::visible_os(name).into_owned()
 }
 
-/// A whole path as it is shown, for a view that has room for it: lossy for
-/// bytes that are not UTF-8, and passed through `crate::visible`.
+/// A whole path as it is shown, for a view that has room for it, through
+/// `crate::visible_os`.
 pub(crate) fn visible_path(path: &Path) -> String {
-    crate::visible(&path.to_string_lossy()).into_owned()
+    crate::visible_os(path.as_os_str()).into_owned()
 }
 
 /// Trailing components a compacted path always keeps: the parent and the entry
@@ -43,24 +42,40 @@ const MAX_PATH_COMPONENTS: usize = 4;
 /// a long middle elided to the first component and the last two. A message naming
 /// two paths otherwise wraps across several rows of the alerts view and pushes
 /// everything else off screen; a path's middle costs the most and says least.
-pub struct Compact<'a>(&'a Path);
+pub struct Compact<'a> {
+    path: &'a Path,
+    elide: bool,
+}
 
 pub fn compact(path: &Path) -> Compact<'_> {
-    Compact(path)
+    Compact { path, elide: true }
+}
+
+/// `compact` without the elision, for a confirmation whose answer depends on
+/// exactly where the path leads.
+pub fn quoted(path: &Path) -> Compact<'_> {
+    Compact { path, elide: false }
 }
 
 /// Quoted, with a quote or backslash in the path escaped so the quotes
-/// delimit it, and every character `crate::is_disguising` names spelled out.
+/// delimit it, every character `crate::is_disguising` names spelled out, and
+/// each byte that is not valid UTF-8 spelled `\xNN`, as `crate::visible_os`
+/// does.
 impl Display for Compact<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use fmt::Write;
 
         f.write_char('"')?;
-        for c in compact_str(self.0).chars() {
-            match c {
-                '"' | '\\' => write!(f, "\\{c}")?,
-                c if crate::is_disguising(c) => write!(f, "{}", c.escape_default())?,
-                c => f.write_char(c)?,
+        for chunk in compact_bytes(self.path, self.elide).utf8_chunks() {
+            for c in chunk.valid().chars() {
+                match c {
+                    '"' | '\\' => write!(f, "\\{c}")?,
+                    c if crate::is_disguising(c) => write!(f, "{}", c.escape_default())?,
+                    c => f.write_char(c)?,
+                }
+            }
+            for byte in chunk.invalid() {
+                write!(f, "\\x{byte:02x}")?;
             }
         }
         f.write_char('"')
@@ -75,31 +90,36 @@ fn home_dir() -> Option<&'static Path> {
         .as_deref()
 }
 
-fn compact_str(path: &Path) -> String {
+/// The path's bytes with the home directory as `~` and, when `elide` is set, a
+/// long middle replaced by an ellipsis. Bytes rather than a string, so a name
+/// that is not UTF-8 reaches `Compact`'s escaping intact.
+fn compact_bytes(path: &Path, elide: bool) -> Vec<u8> {
+    let separator = MAIN_SEPARATOR_STR.as_bytes();
     let text = match home_dir().and_then(|home| path.strip_prefix(home).ok()) {
         // The home directory itself strips to an empty path.
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
-        None => path.display().to_string(),
+        Some(rest) if rest.as_os_str().is_empty() => b"~".to_vec(),
+        Some(rest) => [b"~", separator, rest.as_os_str().as_encoded_bytes()].concat(),
+        None => path.as_os_str().as_encoded_bytes().to_vec(),
     };
 
     // Split on the separator rather than walking `Path::components`, so the
     // leading `/` of an absolute path and a `~` root are handled alike.
-    let parts: Vec<&str> = text.split(MAIN_SEPARATOR).collect();
-    let named = parts.iter().filter(|part| !part.is_empty()).count();
-    if named <= MAX_PATH_COMPONENTS {
+    let named_parts: Vec<&[u8]> = text
+        .split(|byte| *byte == separator[0])
+        .filter(|part| !part.is_empty())
+        .collect();
+    let named = named_parts.len();
+    if !elide || named <= MAX_PATH_COMPONENTS {
         return text;
     }
-    let is_absolute = parts.first().is_some_and(|first| first.is_empty());
-    let named_parts: Vec<&str> = parts.into_iter().filter(|part| !part.is_empty()).collect();
-    let head = named_parts[0];
-    let tail = named_parts[named - KEPT_TAIL_COMPONENTS..].join(MAIN_SEPARATOR_STR);
-    let root = if is_absolute {
-        MAIN_SEPARATOR.to_string()
+    let root: &[u8] = if text.starts_with(separator) {
+        separator
     } else {
-        String::new()
+        b""
     };
-    format!("{root}{head}{MAIN_SEPARATOR}…{MAIN_SEPARATOR}{tail}")
+    let head = named_parts[0];
+    let tail = named_parts[named - KEPT_TAIL_COMPONENTS..].join(separator);
+    [root, head, separator, "…".as_bytes(), separator, &tail].concat()
 }
 
 /// Each component of `path` from the root down, the root as an empty string.
@@ -645,8 +665,26 @@ mod tests {
     #[test_case("a\u{2067}b\u{2069}" => "a\\u{2067}b\\u{2069}" ; "bidi isolates are escaped")]
     #[test_case("report\u{200b}.pdf" => "report\\u{200b}.pdf" ; "a zero width space is escaped")]
     #[test_case("report\n.pdf" => "report\\n.pdf" ; "a control character is escaped")]
+    #[test_case("a\u{2800}" => "a\\u{2800}" ; "a braille blank is escaped")]
     fn visible_name_spells_out_what_would_disguise_it(name: &str) -> String {
         visible_name(OsStr::new(name))
+    }
+
+    /// Lossy decoding would show all three as `caf\u{fffd}`.
+    #[test]
+    fn names_that_differ_in_bytes_that_are_not_utf8_look_different() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let shown = [
+            visible_name(OsStr::from_bytes(b"caf\xe9")),
+            visible_name(OsStr::from_bytes(b"caf\xff")),
+            visible_name(OsStr::new("caf\u{fffd}")),
+        ];
+        assert_eq!(["caf\\xe9", "caf\\xff", "caf\u{fffd}"], shown);
+        assert_eq!(
+            "/a/caf\\xe9",
+            visible_path(Path::new(OsStr::from_bytes(b"/a/caf\xe9")))
+        );
     }
 
     #[test]
@@ -667,6 +705,27 @@ mod tests {
     #[test_case("a.txt" => "\"a.txt\"" ; "a bare name is unchanged")]
     fn compact_elides_the_middle_of_a_long_path(path: &str) -> String {
         compact(Path::new(path)).to_string()
+    }
+
+    /// A literal backslash is escaped, so it cannot pass for an escape that
+    /// `compact` wrote itself.
+    #[test]
+    fn compact_spells_out_bytes_that_are_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = Path::new(OsStr::from_bytes(b"/tmp/one/two/three/caf\xe9"));
+        assert_eq!("\"/tmp/…/three/caf\\xe9\"", compact(path).to_string());
+        let literal = Path::new("/tmp/caf\\xe9");
+        assert_eq!("\"/tmp/caf\\\\xe9\"", compact(literal).to_string());
+    }
+
+    #[test]
+    fn quoted_keeps_the_middle_of_a_long_path() {
+        let path = Path::new("/tmp/one/two/three/a\u{202e}.txt");
+        assert_eq!(
+            "\"/tmp/one/two/three/a\\u{202e}.txt\"",
+            quoted(path).to_string()
+        );
     }
 
     #[test]

@@ -12,12 +12,17 @@ use super::{View, as_dimension, unicode::pluralize_items};
 use crate::{
     app::clipboard::ClipboardEntry,
     command::{Command, PromptAction, result::CommandResult},
-    file_system::path_info::{PathInfo, compact},
+    file_system::path_info::{PathInfo, compact, quoted},
 };
 
 /// Paths a confirmation of a paste from elsewhere lists, one per line, before
 /// it counts the rest.
 const MAX_LISTED_PASTE_PATHS: usize = 5;
+
+/// Entries of a directory the Goto prompt reads for its suggestions. The read
+/// runs on the UI thread, so a larger directory gets no suggestions rather
+/// than a stall.
+const MAX_SUGGESTION_ENTRIES: usize = 10_000;
 
 #[derive(Default)]
 pub(super) struct PromptView {
@@ -60,11 +65,13 @@ impl PromptView {
                     ClipboardEntry::Copy(_) => "copy",
                     ClipboardEntry::Move(_) => "move",
                 };
+                // Each path in full: another program chose it, and an elided
+                // middle would hide which directory it is in.
                 let paths = entry.paths();
                 if let [path] = paths {
                     return format!(
                         " Clipboard from elsewhere: {verb} {} here? (y/n) ",
-                        compact(&path.path)
+                        quoted(&path.path)
                     );
                 }
                 // Every path is named, up to a few lines' worth: the text came
@@ -77,7 +84,7 @@ impl PromptView {
                     paths
                         .iter()
                         .take(MAX_LISTED_PASTE_PATHS)
-                        .map(|path| format!("   {}", compact(&path.path))),
+                        .map(|path| format!("   {}", quoted(&path.path))),
                 );
                 if paths.len() > MAX_LISTED_PASTE_PATHS {
                     let more = paths.len() - MAX_LISTED_PASTE_PATHS;
@@ -85,14 +92,16 @@ impl PromptView {
                 }
                 lines.join("\n")
             }
+            // `name` is the table's display name, already escaped, so it is
+            // quoted as it is rather than escaped a second time.
             PromptAction::Conflict {
                 name,
                 can_overwrite: true,
-            } => format!(" {name:?} exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all "),
+            } => format!(" \"{name}\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all "),
             PromptAction::Conflict {
                 name,
                 can_overwrite: false,
-            } => format!(" {name:?} exists as a directory: [s]kip, [S]kip all "),
+            } => format!(" \"{name}\" exists as a directory: [s]kip, [S]kip all "),
         }
     }
 
@@ -195,6 +204,10 @@ impl PromptView {
                     Command::AlertWarn(format!("Path does not exist: {}", compact(&path)))
                 }
             }
+            // Submitting the name as it was offered changes nothing, and for a
+            // name that is not UTF-8 the offered text is a lossy spelling that
+            // names a different file.
+            PromptAction::Rename { .. } if value == self.initial_text => Command::CancelPrompt,
             PromptAction::Rename { path, .. } => Command::Rename {
                 path: path.clone(),
                 name: value,
@@ -256,6 +269,7 @@ impl PromptView {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 let mut all: Vec<(String, bool)> = entries
                     .flatten()
+                    .take(MAX_SUGGESTION_ENTRIES + 1)
                     .map(|entry| {
                         // Completed into the input, so it has to be the name
                         // itself rather than its escaped form.
@@ -265,8 +279,12 @@ impl PromptView {
                         (name, is_dir)
                     })
                     .collect();
-                all.sort_by(|a, b| a.0.cmp(&b.0));
-                self.cached_entries = all;
+                // A partial listing would suggest some names and silently
+                // omit others, so a directory past the limit gets none.
+                if all.len() <= MAX_SUGGESTION_ENTRIES {
+                    all.sort_by(|a, b| a.0.cmp(&b.0));
+                    self.cached_entries = all;
+                }
             }
             self.cached_dir = Some(dir);
         }
@@ -465,6 +483,18 @@ mod tests {
         conflict_chord(true, key, KeyModifiers::SHIFT)
     }
 
+    /// The name arrives as the table shows it, escapes included, so the
+    /// prompt must not escape its backslashes a second time.
+    #[test_case(true => " \"a\\u{202e}b\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all " ; "a file")]
+    #[test_case(false => " \"a\\u{202e}b\" exists as a directory: [s]kip, [S]kip all " ; "a directory")]
+    fn a_conflict_names_the_entry_as_the_table_shows_it(can_overwrite: bool) -> String {
+        let view = prompt_with_action(PromptAction::Conflict {
+            name: "a\\u{202e}b".to_string(),
+            can_overwrite,
+        });
+        view.label()
+    }
+
     #[test]
     fn a_conflict_prompt_renders_as_a_confirmation() {
         // No text is collected, so it takes the full-width label path rather
@@ -543,7 +573,7 @@ mod tests {
         let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
         let expected = format!(
             " Clipboard from elsewhere: move {} here? (y/n) ",
-            compact(&dir.join("a"))
+            quoted(&dir.join("a"))
         );
         assert_eq!(expected, view.label());
 
@@ -561,10 +591,32 @@ mod tests {
 
         let mut expected = vec![" Clipboard from elsewhere: move 7 items here? (y/n) ".to_string()];
         for name in &names[..MAX_LISTED_PASTE_PATHS] {
-            expected.push(format!("   {}", compact(&dir.join(name))));
+            expected.push(format!("   {}", quoted(&dir.join(name))));
         }
         expected.push("   and 2 more".to_string());
         assert_eq!(expected, label.lines().collect::<Vec<_>>());
+    }
+
+    /// Deep enough that `compact` would elide the middle, which is where the
+    /// directory that tells two locations apart would be.
+    #[test_case(1 ; "one path")]
+    #[test_case(2 ; "a list of paths")]
+    fn a_paste_from_elsewhere_names_every_directory_in_the_path(count: usize) {
+        let (dir, _, dest) = foreign_paste(&[]);
+        let parent = dir.join("one/two/three/four");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::write(parent.join("a"), b"x").unwrap();
+        let src = PathInfo::try_from(parent.join("a").as_path()).unwrap();
+        let view = prompt_with_action(PromptAction::ConfirmPaste {
+            entry: ClipboardEntry::Copy(vec![src; count]),
+            dest,
+        });
+
+        let label = view.label();
+
+        let shown = quoted(&parent.join("a")).to_string();
+        assert!(shown.ends_with("/one/two/three/four/a\""), "{shown}");
+        assert_eq!(count, label.matches(&shown).count(), "{label}");
     }
 
     // ── copy and cut ─────────────────────────────────────────────────────────
@@ -745,14 +797,33 @@ mod tests {
             path: path.clone(),
             name: "bar.txt".into(),
         });
+        type_str(&mut view, "x");
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
             result,
             Command::Rename {
                 path,
-                name: "bar.txt".to_string()
+                name: "bar.txtx".to_string()
             }
             .into()
+        );
+    }
+
+    /// The prefill of a name that is not UTF-8 is its lossy spelling, so
+    /// renaming to it would name a different file.
+    #[test_case("bar.txt" ; "a name left as it was")]
+    #[test_case("caf\u{fffd}.txt" ; "the lossy spelling of a name that is not UTF-8")]
+    fn submitting_a_rename_unchanged_cancels_it(name: &str) {
+        let mut view = prompt_with_action(PromptAction::Rename {
+            path: test_path(),
+            name: name.to_string(),
+        });
+        // An edit undone before submitting still leaves the name unchanged.
+        type_str(&mut view, "x");
+        view.handle_key(KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(
+            CommandResult::from(Command::CancelPrompt),
+            view.handle_key(KeyCode::Enter, KeyModifiers::NONE)
         );
     }
 
@@ -896,6 +967,24 @@ mod tests {
         type_str(&mut view, "Ch");
 
         assert_eq!(Some(("erry".to_string(), 0, 1)), view.current_suggestion());
+    }
+
+    /// Filled to the limit and then one past it, reopening in between so the
+    /// directory is read again.
+    #[test]
+    fn a_directory_past_the_entry_limit_gets_no_suggestions() {
+        let dir = TempDir::new("goto_limit");
+        for index in 0..MAX_SUGGESTION_ENTRIES {
+            std::fs::write(dir.join(format!("f{index}")), b"").unwrap();
+        }
+        let mut view = goto_prompt(dir.path());
+        type_str(&mut view, "f0");
+        assert_eq!(Some((String::new(), 0, 1)), view.current_suggestion());
+
+        std::fs::write(dir.join("g"), b"").unwrap();
+        let mut view = goto_prompt(dir.path());
+        type_str(&mut view, "f0");
+        assert_eq!(None, view.current_suggestion());
     }
 
     #[test]

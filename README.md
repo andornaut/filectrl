@@ -53,7 +53,7 @@ Option | Description
 `-c`, `--config <PATH>` | Read the config from `PATH`, or write it there when combined with a `--write-default-*` flag
 `-i`, `--include <PATH>` | Merge a TOML file on top of the config. Repeatable; later files take precedence
 `--no-truecolor` | Use the 256-color theme instead of detecting truecolor support
-`--force` | Replace an existing file when writing defaults, which fails without it
+`--force` | Replace an existing file when writing defaults, which fails without it. A symlink is refused even with `--force`, so a config linked into a dotfiles repository is left alone
 `--print-keybindings` | Print the keybindings, then exit
 `--write-default-config` | Write the default config, then exit
 `--write-default-themes` | Write the default theme as `theme.toml` beside the config, then exit
@@ -71,6 +71,8 @@ Flag | Also accepts
 
 Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` and so is not always under `~/.config`.
 
+SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode.
+
 ### Bookmarks
 
 Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside the config file (e.g. `~/.config/filectrl/bookmarks/`).
@@ -86,9 +88,9 @@ Names must be unique, cannot be empty, and cannot contain a path separator.
 
 ### Copy / paste
 
-Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard.
+Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, and an entry from elsewhere with a `.` or `..` component in a path is refused.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes and timestamps (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it. An original that was replaced by another entry after the copy is kept, and the move reports it.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the timestamps, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled. An original that was replaced by another entry after the copy is kept, and the move reports it. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
@@ -110,6 +112,10 @@ Key | Action
 ### Chmod
 
 Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than having its target changed. Setting a mode without following links needs glibc 2.32 or newer, or `/proc` mounted; where neither holds (an old distribution, or a container without `/proc`), chmod fails with "Operation not supported".
+
+### Entries that change after they are listed
+
+Rename, chmod, delete, and the sources of a copy or cut act only on the entry that was listed. Each reads its path again first and refuses with "it changed since it was listed" when the path now names a different entry (another device or inode): the entry was replaced, or a directory above it was swapped for a symlink. A refresh of a directory that was itself replaced is refused the same way, since the marks would carry over by path to entries you never saw. The warning is shown once, and later refreshes stay silent until you navigate; navigate to it again to list the new one.
 
 ### Multi-select
 
@@ -218,7 +224,7 @@ Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
 Accept path suggestion (cursor at end of input) | <kbd>Tab</kbd>
 Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
-A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. Moving the cursor off the end of the input dismisses it.
+A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. Moving the cursor off the end of the input dismisses it. A directory of more than 10,000 entries offers no suggestions.
 
 Text pasted through the terminal (bracketed paste) goes into a text prompt as one line, with its line breaks removed. A paste anywhere else, including a y/n prompt, is ignored, so pasted text never acts as keys.
 
@@ -304,8 +310,22 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` puts a field code such as `%f` in an argument written with quotes or escapes, or in the script a shell (`sh`, `bash`, `zsh` and the like) is given with `-c`, is not offered either, and the log names it at warn level: such an argument is a script for some interpreter (`sh -c "mpv %f"`), and no quoting survives everything a script can do with the name. A quoted argument that is only the code (`"%f"`) is offered, and so is one that passes the name after the script (`sh -c 'mpv "$1"' sh %f`). Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` could hand the file name to an interpreter as code is not offered either (see below), and the log names it at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
+
+On Linux, a desktop entry's `Exec` is refused when a value could reach an interpreter as code. An option cluster is a single `-` followed only by letters and digits; one holding `c`, `e` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-S`, `-verbose`) is taken to give code to run, whatever the program.
+
+`Exec` shape | Example | Result
+--- | --- | ---
+Field code with no cluster before it | `mpv %f`, `mpv --file=%f`, `foo %f -c bar` | Offered
+Quoted argument that is only the code | `app "%f"` | Offered
+Code after a long option or a cluster without `c`, `e` or `S` | `foo --exec %f`, `foo -xvf %f` | Offered
+`%i`, `%%` or a deprecated code after a cluster, with the file code before it | `foo %f -c %i` | Offered
+Field code anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `env -S %f` | Refused
+No file code, so the appended path would follow a cluster | `sh -c`, `xterm -e htop` | Refused
+Field code inside a quoted or escaped argument | `run --command "mpv %f"`, `app "--file=%f"` | Refused
+
+The rule is deliberately broad and refuses some safe entries, such as `sh -c 'mpv "$1"' sh %f`, which passes the name to the script as a parameter. To open files through a shell command, use the `openers` templates above, which pass the path to the shell as an argument.
 
 Two `openers` settings shape the list, and setting either to `""` drops its effect:
 
@@ -377,7 +397,7 @@ include_files = ["theme.toml"]
 
 - Relative paths resolve from the directory containing the config file; absolute paths are used as-is
 - Files merge in order, later ones taking precedence over the base config and over earlier files
-- The value must be an array of strings, and every listed file must exist and parse, or FileCTRL exits with an error
+- The value must be an array of strings, and every listed file must exist, be a regular file (or a symlink to one), and parse, or FileCTRL exits with an error. The same holds for the config file and for `--include`
 
 Export the defaults, then copy and edit:
 

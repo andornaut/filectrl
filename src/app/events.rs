@@ -16,12 +16,20 @@ use ratatui::crossterm::event::{Event, poll, read};
 
 use crate::command::Command;
 
-// Signal handling for graceful shutdown on SIGTERM / SIGINT / SIGHUP.
-// Keyboard Ctrl+C never reaches this path: raw mode disables ISIG, so
-// only an externally sent SIGINT does.
+// Signal handling for graceful shutdown on SIGTERM / SIGINT / SIGHUP /
+// SIGQUIT / SIGUSR1 / SIGUSR2 / SIGALRM, the terminating signals a user or
+// another program is likely to send. Keyboard Ctrl+C, Ctrl+\ and Ctrl+Z never
+// reach this path: raw mode disables ISIG, so only an externally sent signal
+// does.
 //
 // Without a handler, kill(1) terminates the process instantly, leaving the
 // terminal in raw mode with the alternate screen active (broken shell).
+//
+// SIGTSTP stops the process by default, which leaves the terminal just as
+// broken for as long as it stays stopped. It gets a handler that does nothing
+// rather than SIG_IGN: an ignored disposition is inherited across exec, so a
+// program launched from the file manager could not be suspended either, while
+// a caught one is reset to the default.
 //
 // Architecture
 // ------------
@@ -126,7 +134,9 @@ fn install_signal_pipe() -> Result<(), Errno> {
     Ok(())
 }
 
-/// Register handlers for termination signals so the app can exit gracefully.
+/// Register handlers for termination signals so the app can exit gracefully,
+/// and one for SIGTSTP so that it cannot stop the app with the terminal in raw
+/// mode.
 pub fn install_signal_handlers() -> Result<(), Errno> {
     // Before `sigaction`, so a signal delivered as soon as the handlers are
     // installed finds a pipe to write to.
@@ -144,12 +154,31 @@ pub fn install_signal_handlers() -> Result<(), Errno> {
             nix::sys::signal::SaFlags::SA_RESTART,
             nix::sys::signal::SigSet::empty(),
         );
-        sigaction(Signal::SIGTERM, &action)?;
-        sigaction(Signal::SIGINT, &action)?;
-        sigaction(Signal::SIGHUP, &action)?;
+        for signal in [
+            Signal::SIGTERM,
+            Signal::SIGINT,
+            Signal::SIGHUP,
+            Signal::SIGQUIT,
+            Signal::SIGUSR1,
+            Signal::SIGUSR2,
+            Signal::SIGALRM,
+        ] {
+            sigaction(signal, &action)?;
+        }
+
+        let ignore = SigAction::new(
+            SigHandler::Handler(ignore_signal),
+            nix::sys::signal::SaFlags::SA_RESTART,
+            nix::sys::signal::SigSet::empty(),
+        );
+        sigaction(Signal::SIGTSTP, &ignore)?;
     }
     Ok(())
 }
+
+/// Catches a signal only to keep its default action from running. See the
+/// SIGTSTP note above for why this is not SIG_IGN.
+extern "C" fn ignore_signal(_: i32) {}
 
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     // Block (zero CPU) until the first command arrives

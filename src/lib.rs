@@ -8,6 +8,8 @@ mod views;
 use std::{
     borrow::Cow,
     env,
+    ffi::OsStr,
+    fmt::Write as _,
     io::{IsTerminal, Write, stdout},
     path::{Path, PathBuf},
 };
@@ -166,6 +168,8 @@ pub fn is_disguising(c: char) -> bool {
                 // overrides.
                 | '\u{2028}'..='\u{202e}'
                 | '\u{2060}'..='\u{206f}'
+                // Braille pattern blank, which draws as a space.
+                | '\u{2800}'
                 | '\u{3164}'
                 | '\u{feff}'
                 | '\u{ffa0}'
@@ -188,6 +192,24 @@ pub fn is_disguising(c: char) -> bool {
 /// escaped too, so a name cannot forge a log record or a second line.
 pub fn visible(text: &str) -> Cow<'_, str> {
     escape_disguising(text, |_| false)
+}
+
+/// `visible` for text that need not be UTF-8, such as a file name: each byte
+/// that is not part of a valid sequence is spelled `\xNN`, so names that differ
+/// only in such bytes, or in a byte and U+FFFD, do not look the same.
+pub fn visible_os(text: &OsStr) -> Cow<'_, str> {
+    let bytes = text.as_encoded_bytes();
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return visible(text);
+    }
+    let mut shown = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        shown.push_str(&visible(chunk.valid()));
+        for byte in chunk.invalid() {
+            let _ = write!(shown, "\\x{byte:02x}");
+        }
+    }
+    Cow::Owned(shown)
 }
 
 /// `visible` for text printed to the terminal outside the interface, which can
@@ -265,9 +287,21 @@ mod tests {
     #[test_case("a\nb\tc" => "a\\nb\\tc" ; "a newline and a tab are escaped")]
     #[test_case("a\u{202e}b" => "a\\u{202e}b" ; "a bidi override is escaped")]
     #[test_case("a\u{2063}b\u{3164}c" => "a\\u{2063}b\\u{3164}c" ; "invisible characters are escaped")]
+    #[test_case("a\u{2800}b" => "a\\u{2800}b" ; "a braille blank is escaped")]
     #[test_case("a\u{200d}b\u{fe0f}" => "a\u{200d}b\u{fe0f}" ; "a joiner and a variation selector are kept")]
     fn visible_produces(message: &str) -> String {
         visible(message).into_owned()
+    }
+
+    #[test_case(b"caf\xc3\xa9" => "caf\u{e9}" ; "valid UTF-8 is unchanged")]
+    #[test_case(b"caf\xe9" => "caf\\xe9" ; "an invalid byte is spelled out")]
+    #[test_case(b"caf\xff" => "caf\\xff" ; "a different invalid byte is spelled differently")]
+    #[test_case("caf\u{fffd}".as_bytes() => "caf\u{fffd}" ; "a replacement character is not an invalid byte")]
+    #[test_case(b"\xe9\xe2\x80\xae" => "\\xe9\\u{202e}" ; "a valid run after an invalid byte is still escaped")]
+    fn visible_os_produces(bytes: &[u8]) -> String {
+        use std::os::unix::ffi::OsStrExt;
+
+        visible_os(OsStr::from_bytes(bytes)).into_owned()
     }
 
     #[test_case("a\nb" => "a\nb" ; "a newline is kept")]

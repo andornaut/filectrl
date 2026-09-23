@@ -34,11 +34,12 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     let now = Local::now();
     spans.push(Span::styled(" Selected ", theme.status.label()));
     let mut fields = Vec::new();
+    // Read from the user and group databases, which can hold any text.
     if let Some(owner) = selected.owner() {
-        fields.push((" Owner:", owner));
+        fields.push((" Owner:", crate::visible(&owner).into_owned()));
     }
     if let Some(group) = selected.group() {
-        fields.push((" Group:", group));
+        fields.push((" Group:", crate::visible(&group).into_owned()));
     }
     fields.push((" Type:", kind_field(selected)));
     if let Some(accessed) = selected.accessed(now) {
