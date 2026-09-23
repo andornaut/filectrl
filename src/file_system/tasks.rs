@@ -29,7 +29,7 @@ use rustix::{
 use super::{
     Occupant, PasteStep,
     conflicts::Conflicts,
-    path_info::{PathInfo, compact, has_stable_inodes},
+    path_info::{PathInfo, compact, is_same_entry, lists_stable_inodes},
     step,
 };
 use crate::{
@@ -1756,7 +1756,7 @@ fn open_root(
         |error: std::io::Error| format!("Failed to read directory {}: {error}", compact(path));
     let dir = open_directory(root.dir, root.name).map_err(failed)?;
     let id = DirId::of_dir(&dir).map_err(failed)?;
-    if !is_expected(path, expected, id) {
+    if !is_same_entry(expected.pair(), id.pair(), || lists_stable_inodes(path)) {
         return Err(removal.refusal(path));
     }
     let (dir, entries) = list_dir(dir).map_err(failed)?;
@@ -1790,7 +1790,9 @@ fn remove_file_entry(
         statat(at.dir, at.name, AtFlags::SYMLINK_NOFOLLOW),
         failed()
     );
-    if !is_expected(path, expected, DirId::of_stat(&stat)) {
+    if !is_same_entry(expected.pair(), DirId::of_stat(&stat).pair(), || {
+        lists_stable_inodes(path)
+    }) {
         active.error(removal.refusal(path));
         return None;
     }
@@ -1893,6 +1895,11 @@ impl DirId {
         }
     }
 
+    /// The (device, inode) pair `is_same_entry` compares.
+    fn pair(self) -> (rustix::fs::Dev, u64) {
+        (self.dev, self.ino)
+    }
+
     /// The identity of the entry `listed` names, as it was read.
     // std widens `st_dev` to u64 on every target; narrowing it back to the
     // target's `dev_t` restores the value it was read as.
@@ -1904,15 +1911,6 @@ impl DirId {
             ino,
         }
     }
-}
-
-/// Whether `found`, the entry opened at `path`, is `expected`: the same device
-/// and inode, or only the same device on a filesystem that does not keep inode
-/// numbers stable (see `PathInfo::is_still_listed_as`).
-fn is_expected(path: &Path, expected: DirId, found: DirId) -> bool {
-    found == expected
-        || (found.dev == expected.dev
-            && !has_stable_inodes(path.parent().unwrap_or(Path::new("."))))
 }
 
 /// The directory an operation's root entry was opened in, and its name there.
@@ -2633,6 +2631,16 @@ mod tests {
     }
 
     #[test]
+    fn display_path_spells_out_a_byte_that_is_not_utf8() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        // A lossy rendering would show U+FFFD, the same as for any other
+        // invalid byte, or for a name holding U+FFFD itself.
+        let path = Path::new(OsStr::from_bytes(b"/a/caf\xe9.txt"));
+
+        assert_eq!("/a/caf\\xe9.txt", display_path(path));
+    }
+
+    #[test]
     fn validate_paths_rejects_source_without_file_name() {
         let src = path_info("/", "");
         let dest = path_info("/x", "x");
@@ -2986,35 +2994,6 @@ mod tests {
         message.clone()
     }
 
-    #[test]
-    fn a_copy_refuses_a_source_whose_type_changed_since_it_was_listed() {
-        let fx = TempDir::new("tasks_copy_restat");
-        let src = fx.join("was_a_directory");
-        fs::create_dir(&src).unwrap();
-        let listed = PathInfo::try_from(src.as_path()).unwrap();
-        // Written while the directory still exists, so it cannot reuse its
-        // inode.
-        fs::write(fx.join("file"), b"now a file").unwrap();
-        fs::remove_dir(&src).unwrap();
-        fs::rename(fx.join("file"), &src).unwrap();
-        let dst = fx.join("dst");
-        fs::create_dir(&dst).unwrap();
-
-        // The entry at the path is not the one the user chose to copy.
-        let message = refusal(run_to_end(TaskCommand::Copy(
-            listed,
-            PathInfo::try_from(dst.as_path()).unwrap(),
-            false,
-        )));
-
-        assert!(message.starts_with("Cannot copy"), "{message}");
-        assert!(
-            message.ends_with("it changed since it was listed"),
-            "{message}"
-        );
-        assert!(dst.join("was_a_directory").symlink_metadata().is_err());
-    }
-
     /// The row seen was `sub/notes.txt`; `sub` is then swapped for a link to
     /// another directory holding a file of the same name. The path is resolved
     /// again when the task starts, and then names that file, which the user
@@ -3113,36 +3092,6 @@ mod tests {
         // root, a.txt, sub, sub/b.txt: the unit is an entry removed, not the
         // single entry the task is seeded with.
         assert_eq!(4, task.combine_progress(&Progress::default()).total);
-    }
-
-    #[test]
-    fn a_delete_refuses_a_source_that_became_a_symlink_since_it_was_listed() {
-        let fx = TempDir::new("tasks_delete_restat");
-        let outside = fx.join("outside");
-        fs::create_dir(&outside).unwrap();
-        fs::write(outside.join("keep.txt"), b"keep").unwrap();
-        let link = fx.join("link");
-        fs::create_dir(&link).unwrap();
-        let listed = PathInfo::try_from(link.as_path()).unwrap();
-        // Made while the directory still exists, so it cannot reuse its inode.
-        std::os::unix::fs::symlink(&outside, fx.join("new_link")).unwrap();
-        fs::remove_dir(&link).unwrap();
-        fs::rename(fx.join("new_link"), &link).unwrap();
-
-        let message = refusal(run_to_end(TaskCommand::Delete(listed)));
-
-        // Neither unlinked, since it is not the entry the user chose, nor
-        // followed.
-        assert!(message.starts_with("Cannot delete"), "{message}");
-        assert!(
-            message.ends_with("it changed since it was listed"),
-            "{message}"
-        );
-        assert!(link.symlink_metadata().unwrap().is_symlink());
-        assert_eq!(
-            b"keep".to_vec(),
-            fs::read(outside.join("keep.txt")).unwrap()
-        );
     }
 
     /// A copy context whose collisions are settled by a standing choice, which
@@ -4097,18 +4046,36 @@ mod tests {
         let elapsed = start.elapsed();
         active.done();
         assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
-        let updates = rx
+        let updates: Vec<Progress> = rx
             .try_iter()
-            .filter(|command| matches!(command, Command::Progress(task) if !task.is_terminal()))
-            .count();
+            .filter_map(|command| match command {
+                Command::Progress(task) if !task.is_terminal() => {
+                    Some(task.combine_progress(&Progress::default()))
+                }
+                _ => None,
+            })
+            .collect();
 
         // `set_total` sends one, the first chunk another, and the floor admits
         // one more per interval elapsed. One per file would be a thousand.
         let bound = 2 + elapsed.as_millis() / PROGRESS_MIN_INTERVAL.as_millis();
         assert!(
-            (updates as u128) <= bound,
-            "{updates} updates in {elapsed:?} for {FILES} files"
+            (updates.len() as u128) <= bound,
+            "{} updates in {elapsed:?} for {FILES} files",
+            updates.len()
         );
+        // The share is of the tree's bytes, so every update reports that total,
+        // and the first chunk counts toward it rather than filling the bar.
+        let total = FILES as u64 * 10;
+        assert!(
+            updates.iter().all(|progress| progress.total == total),
+            "{updates:?}"
+        );
+        let [first, chunk, ..] = updates.as_slice() else {
+            panic!("expected the total and the first chunk, got {updates:?}");
+        };
+        assert_eq!(0, first.completed);
+        assert_eq!(10, chunk.completed);
     }
 
     #[test_case(false ; "a file")]

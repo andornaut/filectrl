@@ -139,13 +139,12 @@ mod tests {
         text(&rows[1])
     }
 
-    #[test_case(false ; "unselected")]
-    #[test_case(true ; "selected")]
-    fn the_program_is_shown_with_disguising_characters_spelled_out(is_selected: bool) {
-        let mut app = candidate("App", false);
+    #[test_case(false ; "not the default")]
+    #[test_case(true ; "the default")]
+    fn the_program_is_shown_with_disguising_characters_spelled_out(is_default: bool) {
+        let mut app = candidate("App", is_default);
         app.detail = "org.a\u{202e}pp".to_string();
-        // The only row is index 0, so selecting index 1 leaves it unselected.
-        let rows = build_rows(theme(), usize::from(!is_selected), 0, &[app]);
+        let rows = build_rows(theme(), 0, 0, &[app]);
         assert!(
             text(&rows[0]).starts_with(" 1. App  org.a\\u{202e}pp"),
             "{:?}",

@@ -363,10 +363,12 @@ mod tests {
 
     use std::os::fd::AsFd;
 
+    use nix::{libc, sys::signal::Signal};
     use test_case::test_case;
 
     use super::{
-        Command, EventSource, event_loop, panic_message, receive_commands, watch_signal_pipe,
+        Command, EventSource, event_loop, handle_signal, ignore_signal, install_signal_handlers,
+        panic_message, receive_commands, watch_signal_pipe,
     };
 
     const INTERVAL: Duration = Duration::from_millis(500);
@@ -537,6 +539,60 @@ mod tests {
         watch_signal_pipe(&tx, read_fd.as_fd());
 
         assert!(rx.try_recv().is_err());
+    }
+
+    /// The signal's current action, read without changing it.
+    #[allow(unsafe_code)]
+    fn current_action(signal: Signal) -> libc::sigaction {
+        let mut action = std::mem::MaybeUninit::<libc::sigaction>::zeroed();
+        // Safety: a null new action only reads the current one into `action`.
+        let result =
+            unsafe { libc::sigaction(signal as i32, std::ptr::null(), action.as_mut_ptr()) };
+        assert_eq!(0, result, "{signal} should have a readable action");
+        // Safety: zeroed is a valid `sigaction`, and the call filled it in.
+        unsafe { action.assume_init() }
+    }
+
+    /// Installed in this process for real, then put back before anything is
+    /// asserted, so that the rest of the test binary still ends on SIGINT and
+    /// SIGTERM.
+    #[test]
+    fn the_handlers_are_installed_for_every_signal_they_cover() {
+        const TERMINATING: [Signal; 7] = [
+            Signal::SIGTERM,
+            Signal::SIGINT,
+            Signal::SIGHUP,
+            Signal::SIGQUIT,
+            Signal::SIGUSR1,
+            Signal::SIGUSR2,
+            Signal::SIGALRM,
+        ];
+        let signals: Vec<Signal> = TERMINATING.into_iter().chain([Signal::SIGTSTP]).collect();
+        let saved: Vec<libc::sigaction> = signals.iter().map(|&s| current_action(s)).collect();
+
+        let installed = install_signal_handlers();
+        let handlers: Vec<libc::sighandler_t> = signals
+            .iter()
+            .map(|&s| current_action(s).sa_sigaction)
+            .collect();
+        for (&signal, action) in signals.iter().zip(&saved) {
+            // Safety: restores an action this process had a moment ago.
+            #[allow(unsafe_code)]
+            let result = unsafe { libc::sigaction(signal as i32, action, std::ptr::null_mut()) };
+            assert_eq!(0, result, "{signal} should be restored");
+        }
+
+        installed.unwrap();
+        for (signal, handler) in signals.iter().zip(&handlers) {
+            // SIGTSTP is caught by a handler that does nothing, not ignored,
+            // which a program launched from the file manager would inherit.
+            let expected = if *signal == Signal::SIGTSTP {
+                ignore_signal as *const () as libc::sighandler_t
+            } else {
+                handle_signal as *const () as libc::sighandler_t
+            };
+            assert_eq!(expected, *handler, "{signal}");
+        }
     }
 
     #[test_case(&"boom" => "boom" ; "a str payload")]

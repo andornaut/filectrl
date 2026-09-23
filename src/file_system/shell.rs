@@ -170,4 +170,10 @@ mod tests {
             .collect();
         assert_eq!(expected, argv);
     }
+
+    #[test]
+    fn every_placeholder_is_replaced() {
+        let argv = command("diff %s %s.orig", Parameters::One, []);
+        assert_eq!("diff \"$1\" \"$1\".orig", argv[2]);
+    }
 }

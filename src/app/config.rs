@@ -189,7 +189,10 @@ impl Config {
                 path.display()
             )
         })?;
-        Self::parse(env, config_file, &content, config_dir, include_paths)
+        // Canonical, so that a `..` or `.` in the path does not reach the
+        // bookmark paths derived from it, which a clipboard entry must not hold.
+        let config_dir = canonical_or_raw(config_dir);
+        Self::parse(env, config_file, &content, &config_dir, include_paths)
     }
 
     fn default_path() -> Result<PathBuf> {
@@ -392,13 +395,14 @@ impl ReadFailure {
 ///
 /// Opened non-blocking, so that opening a FIFO does not itself wait for a
 /// writer, and the type is taken from the open descriptor, so it is the type
-/// of the file that is then read.
+/// of the file that is then read. `O_NOCTTY`, so that opening a terminal
+/// device cannot make it the process's controlling terminal.
 fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
     use std::{io::Read, os::unix::fs::OpenOptionsExt};
 
     let mut file = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(nix::libc::O_NONBLOCK)
+        .custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOCTTY)
         .open(path)
         .map_err(ReadFailure::Io)?;
     if !file.metadata().map_err(ReadFailure::Io)?.is_file() {
@@ -429,23 +433,17 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
     })?;
     fs::create_dir_all(parent)
         .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
-    if force {
-        match path.symlink_metadata() {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(anyhow!(
-                    "Cannot write {}: it is a symbolic link",
-                    path.display()
-                ));
-            }
-            Ok(_) => match fs::remove_file(path) {
-                Err(error) if error.kind() != ErrorKind::NotFound => {
-                    return Err(anyhow!("Failed to replace {}: {error}", path.display()));
-                }
-                _ => (),
-            },
-            Err(error) if error.kind() == ErrorKind::NotFound => (),
-            Err(error) => return Err(anyhow!("Failed to replace {}: {error}", path.display())),
+    // A failed lookup leaves the path to `create_new`, which reports whatever
+    // is there.
+    if force && let Ok(metadata) = path.symlink_metadata() {
+        if metadata.file_type().is_symlink() {
+            return Err(anyhow!(
+                "Cannot write {}: it is a symbolic link",
+                path.display()
+            ));
         }
+        fs::remove_file(path)
+            .map_err(|error| anyhow!("Failed to replace {}: {error}", path.display()))?;
     }
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -923,16 +921,12 @@ open_directory = "alacritty --working-directory %s"
 
     /// `--force` replaces a file, never a link: removing the link would detach
     /// the config from the repository, and writing through it would overwrite
-    /// the repository's copy. Dangling as well as live, so the refusal cannot
-    /// depend on the target existing.
-    #[test_case(true ; "to an existing file")]
-    #[test_case(false ; "dangling")]
-    fn force_refuses_a_symlink(target_exists: bool) {
+    /// the repository's copy. Dangling, so only a check that does not follow
+    /// the link finds one there.
+    #[test]
+    fn force_refuses_a_symlink() {
         let dir = TempDir::new("config_force_symlink");
         let target = dir.join("dotfiles.toml");
-        if target_exists {
-            fs::write(&target, b"# in the repository\n").unwrap();
-        }
         let link = dir.join("config.toml");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
@@ -945,14 +939,19 @@ open_directory = "alacritty --working-directory %s"
             error
         );
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        if target_exists {
-            assert_eq!(
-                "# in the repository\n",
-                fs::read_to_string(&target).unwrap()
-            );
-        } else {
-            assert!(!target.exists());
-        }
+        assert!(!target.exists());
+    }
+
+    /// Nothing to replace is not an error: `--force` permits a replacement
+    /// rather than requiring one.
+    #[test]
+    fn force_writes_a_missing_file() {
+        let dir = TempDir::new("config_force_missing");
+        let path = dir.join("config.toml");
+
+        Config::write_default(Some(path.clone()), true).unwrap();
+
+        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
     }
 
     // ── loading, and what a bad path reports ────────────────────────────────
@@ -990,6 +989,27 @@ open_directory = "alacritty --working-directory %s"
         // Bookmarks still live beside where the config would be.
         assert_eq!(dir.path(), config.config_dir);
         assert!(select_next_key(&config, 'j'));
+    }
+
+    /// Only absence falls back: a default config that exists but cannot be
+    /// read is the user's file, and ignoring it would drop their settings.
+    #[test]
+    fn an_unreadable_default_config_is_an_error() {
+        let dir = TempDir::new("config_default_unreadable");
+        let file = dir.join("file");
+        fs::write(&file, b"").unwrap();
+        // A path under a regular file fails with ENOTDIR rather than ENOENT.
+        let path = file.join("config.toml");
+
+        let error = match Config::load_from(RuntimeEnv::default(), &path, true, &[]) {
+            Ok(_) => panic!("expected the load to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(
+            error.starts_with(&format!("Failed to read config file {}:", path.display())),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1243,6 +1263,27 @@ open_directory = "alacritty --working-directory %s"
         binds_select_next(&dir, "sub/nested.toml", 'e');
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
+    }
+
+    /// A symlinked include's own includes resolve from the directory of the
+    /// file it names, not from the directory holding the link.
+    #[test]
+    fn a_symlinked_includes_relative_include_resolves_from_its_target() {
+        let dir = TempDir::new("config_symlinked_include_nested");
+        fs::create_dir(dir.join("config")).unwrap();
+        fs::create_dir(dir.join("dotfiles")).unwrap();
+        let config = dir.join("config/config.toml");
+        fs::write(&config, b"").unwrap();
+        let target = dir.join("dotfiles/listed.toml");
+        fs::write(&target, "include_files = [\"nested.toml\"]\n").unwrap();
+        // Only `dotfiles/` holds a `nested.toml`.
+        binds_select_next(&dir, "dotfiles/nested.toml", 'e');
+        let link = dir.join("config/link.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap();
 
         assert!(select_next_key(&merged, 'e'));
     }

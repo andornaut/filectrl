@@ -209,9 +209,6 @@ pub struct FileSystem {
     /// Set when a refresh arrives while a load is already streaming, so the
     /// load runs to completion and the refresh is re-issued afterwards.
     reload_pending: bool,
-    /// Set once a refresh has found the listed directory replaced and said so,
-    /// so the watcher's later refreshes stay silent. Cleared by navigating.
-    directory_replaced: bool,
     /// The latest search's generation. `ExitedSearch` carries it, so every
     /// consumer can ignore messages from a superseded search instead of
     /// tearing down its replacement.
@@ -253,7 +250,6 @@ impl FileSystem {
             current_load: None,
             load_started: None,
             reload_pending: false,
-            directory_replaced: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: config.openers.open_directory.clone(),
@@ -351,7 +347,6 @@ impl FileSystem {
             self.previous_directory = Some(current.clone());
         }
         self.directory = Some(directory.clone());
-        self.directory_replaced = false;
         let path_buf = directory.path.clone();
         if let Some(watcher) = &mut self.watcher
             && let Err(e) = watcher.watch_directory(path_buf.clone())
@@ -613,25 +608,25 @@ impl FileSystem {
             return CommandResult::Handled;
         }
         // A reload lists whatever the path names now. If that is another
-        // directory, the marks and the cursor would carry over by path onto
-        // same-named entries the user never saw, so it is refused instead. A
-        // path that can no longer be read is left for `cd` to report. The
-        // warning is given once: the watcher keeps refreshing while the old
-        // directory changes, and repeating it would say nothing new.
+        // directory, a reload would carry the marks and the cursor over by path
+        // onto same-named entries the user never saw, so it is listed as a
+        // navigation instead, which starts both afresh and watches the new
+        // directory. A path that can no longer be read is left for `cd` to
+        // report.
         let listed = self.current_directory().clone();
-        if PathInfo::try_from(listed.as_path())
-            .is_ok_and(|fresh| !listed.is_still_listed_as(&fresh))
-        {
-            if std::mem::replace(&mut self.directory_replaced, true) {
-                return CommandResult::Handled;
+        match PathInfo::try_from(listed.as_path()) {
+            Ok(fresh) if !listed.is_still_listed_as(&fresh) => {
+                let mut commands = self.cd(fresh, true).into_commands();
+                if let [Command::NavigatedDirectory { .. }] = commands.as_slice() {
+                    commands.push(Command::AlertInfo(format!(
+                        "{} was replaced; showing the new directory",
+                        compact(&listed.path)
+                    )));
+                }
+                commands.into()
             }
-            return Command::AlertWarn(format!(
-                "Cannot refresh {}: it was replaced since it was listed; navigate to it again",
-                compact(&listed.path)
-            ))
-            .into();
+            _ => self.cd(listed, false),
         }
-        self.cd(listed, false)
     }
 
     /// Runs a task, registering it on the cancel stack when it starts. Returns
@@ -929,7 +924,6 @@ mod tests {
             current_load: None,
             load_started: None,
             reload_pending: false,
-            directory_replaced: false,
             current_search_generation: 0,
             next_generation: 0,
             open_directory_template: String::new(),
@@ -1726,70 +1720,116 @@ mod tests {
         fs::create_dir(path).unwrap();
     }
 
+    /// The names a load streamed for `generation`, once it reports complete.
+    fn streamed_names(rx: &std::sync::mpsc::Receiver<Command>, generation: u64) -> Vec<String> {
+        let mut names = Vec::new();
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::ListingBatch {
+                    items,
+                    generation: batch,
+                }) if batch == generation => {
+                    names.extend(items.into_iter().map(|item| item.display_name));
+                }
+                Ok(Command::DirectoryListingComplete { generation: done })
+                    if done == generation =>
+                {
+                    names.sort();
+                    return names;
+                }
+                Ok(_) => {}
+                Err(error) => panic!("load did not complete: {error}"),
+            }
+        }
+    }
+
     #[test]
-    fn a_refresh_of_a_directory_replaced_since_it_was_listed_is_refused() {
+    fn a_refresh_of_a_replaced_directory_lists_the_new_one_as_a_navigation() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         let root = TempDir::new("fs_refresh_replaced");
         let sub = root.join("sub");
         fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("seen.txt"), b"x").unwrap();
         file_system.directory = Some(PathInfo::try_from(sub.as_path()).unwrap());
         replace_directory(&sub);
+        fs::write(sub.join("unseen.txt"), b"x").unwrap();
 
         let commands = file_system
             .handle_command(&Command::RefreshDirectory)
             .into_commands();
 
-        // Reloading would list the new directory under the old one's marks,
-        // which match its entries by path.
-        let [Command::AlertWarn(message)] = commands.as_slice() else {
-            panic!("expected one warning, got {commands:?}");
+        // A reload would carry the marks and the cursor over by path onto
+        // same-named entries the user never saw. A navigation is what clears
+        // the marks and puts the cursor at the top (`Reselect::Top`).
+        let [
+            Command::NavigatedDirectory {
+                directory,
+                generation,
+            },
+            Command::AlertInfo(message),
+        ] = commands.as_slice()
+        else {
+            panic!("expected a navigation and a notice, got {commands:?}");
         };
-        assert!(message.starts_with("Cannot refresh"), "{message}");
-        assert!(message.ends_with("navigate to it again"), "{message}");
-        assert!(file_system.current_load.is_none());
+        assert_eq!(sub, directory.path);
+        assert!(
+            message.ends_with("was replaced; showing the new directory"),
+            "{message}"
+        );
+        assert_eq!(vec!["unseen.txt"], streamed_names(&rx, *generation));
+        file_system.handle_command(&Command::DirectoryListingComplete {
+            generation: *generation,
+        });
+
+        // The new directory is now the listed one, so the watcher's next
+        // refresh is an ordinary reload with nothing to report.
+        let again = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+        assert!(
+            matches!(again.as_slice(), [Command::RefreshedDirectory { .. }]),
+            "{again:?}"
+        );
+        file_system.cancel_current_load();
     }
 
     #[test]
-    fn a_replaced_directory_is_reported_once_until_the_user_navigates() {
+    fn creating_in_a_replaced_directory_refreshes_the_one_on_screen() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
-        let root = TempDir::new("fs_refresh_replaced_once");
+        let root = TempDir::new("fs_create_replaced");
         let sub = root.join("sub");
         fs::create_dir(&sub).unwrap();
-        let listed = PathInfo::try_from(sub.as_path()).unwrap();
-        file_system.directory = Some(listed.clone());
+        file_system.directory = Some(PathInfo::try_from(sub.as_path()).unwrap());
         replace_directory(&sub);
-        let refresh = |file_system: &mut FileSystem| {
-            file_system
-                .handle_command(&Command::RefreshDirectory)
-                .into_commands()
+        let first = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+        let Some(Command::NavigatedDirectory { generation, .. }) = first.first() else {
+            panic!("expected a navigation, got {first:?}");
         };
+        file_system.handle_command(&Command::DirectoryListingComplete {
+            generation: *generation,
+        });
 
-        let first = refresh(&mut file_system);
-        // The watcher refreshes on every change to the old directory, which
-        // would repeat the warning each time.
-        let second = refresh(&mut file_system);
+        let commands = file_system
+            .handle_command(&Command::CreateDirectory("made".into()))
+            .into_commands();
 
+        // The directory is created by path, so in the new one, and the reload
+        // after it lists the new one, which is the one on screen.
+        assert!(sub.join("made").is_dir());
+        let [Command::RefreshedDirectory { directory, .. }] = commands.as_slice() else {
+            panic!("expected RefreshedDirectory, got {commands:?}");
+        };
         assert!(
-            matches!(first.as_slice(), [Command::AlertWarn(_)]),
-            "{first:?}"
+            directory.is_still_listed_as(&PathInfo::try_from(sub.as_path()).unwrap()),
+            "{directory:?}"
         );
-        assert!(second.is_empty(), "{second:?}");
-        assert!(file_system.current_load.is_none());
-
-        // Navigating clears it, so a directory replaced after that is
-        // reported again.
-        file_system.cd(listed.parent().unwrap(), true);
         file_system.cancel_current_load();
-        file_system.directory = Some(listed);
-        let third = refresh(&mut file_system);
-        assert!(
-            matches!(third.as_slice(), [Command::AlertWarn(_)]),
-            "{third:?}"
-        );
     }
 
     #[test]
@@ -1810,8 +1850,9 @@ mod tests {
             .handle_command(&Command::RefreshDirectory)
             .into_commands();
 
-        // Navigating to it is what the refusal asks for, so the directory it
-        // records is the one listed now, not the remembered one.
+        // Navigating records the directory as it is listed now, not the
+        // remembered one, so its next refresh is a reload and not reported as
+        // a replacement.
         let [Command::RefreshedDirectory { directory, .. }] = commands.as_slice() else {
             panic!("expected RefreshedDirectory, got {commands:?}");
         };

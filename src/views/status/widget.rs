@@ -33,14 +33,7 @@ fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize)
 fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     let now = Local::now();
     spans.push(Span::styled(" Selected ", theme.status.label()));
-    let mut fields = Vec::new();
-    // Read from the user and group databases, which can hold any text.
-    if let Some(owner) = selected.owner() {
-        fields.push((" Owner:", crate::visible(&owner).into_owned()));
-    }
-    if let Some(group) = selected.group() {
-        fields.push((" Group:", crate::visible(&group).into_owned()));
-    }
+    let mut fields = account_fields(selected.owner(), selected.group());
     fields.push((" Type:", kind_field(selected)));
     if let Some(accessed) = selected.accessed(now) {
         fields.push((" Accessed:", accessed));
@@ -51,6 +44,18 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     let default_style = theme.status.detail();
     let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
+}
+
+/// Read from the user and group databases, which can hold any text.
+fn account_fields(owner: Option<String>, group: Option<String>) -> Vec<(&'static str, String)> {
+    let mut fields = Vec::new();
+    if let Some(owner) = owner {
+        fields.push((" Owner:", crate::visible(&owner).into_owned()));
+    }
+    if let Some(group) = group {
+        fields.push((" Group:", crate::visible(&group).into_owned()));
+    }
+    fields
 }
 
 fn kind_field(selected: &PathInfo) -> String {
@@ -125,7 +130,7 @@ fn to_entries(
 mod tests {
     use test_case::test_case;
 
-    use super::kind_field;
+    use super::{account_fields, kind_field};
     use crate::file_system::path_info::PathInfo;
 
     // The mode bits each case stands for. A door is Solaris-only and cannot be
@@ -159,6 +164,17 @@ mod tests {
     #[test_case(DIRECTORY_STICKY_OTHER_WRITABLE => "Directory,Sticky,Other Writable,Executable" ; "a sticky, other-writable directory")]
     fn kind_field_reports(mode: u32) -> String {
         kind_field(&PathInfo::with_mode(mode))
+    }
+
+    #[test]
+    fn owner_and_group_are_shown_with_disguising_characters_spelled_out() {
+        assert_eq!(
+            vec![
+                (" Owner:", "a\\u{202e}b".to_string()),
+                (" Group:", "c\\u{202e}d".to_string()),
+            ],
+            account_fields(Some("a\u{202e}b".into()), Some("c\u{202e}d".into()))
+        );
     }
 
     #[test]

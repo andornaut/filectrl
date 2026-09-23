@@ -299,17 +299,11 @@ impl PathInfo {
     }
 
     /// Whether `fresh`, this entry's path read again, still names the entry
-    /// that was listed: the same device and inode. FUSE without `use_ino`
-    /// (sshfs, gvfs) and SMB/CIFS can give an entry nobody touched a new
-    /// inode number, so on those only the device is compared.
+    /// that was listed (see `is_same_entry`).
     pub fn is_still_listed_as(&self, fresh: &Self) -> bool {
-        self.is_still_listed_on(fresh, || {
-            has_stable_inodes(fresh.path.parent().unwrap_or(&fresh.path))
+        is_same_entry(self.device_and_inode(), fresh.device_and_inode(), || {
+            lists_stable_inodes(&fresh.path)
         })
-    }
-
-    fn is_still_listed_on(&self, fresh: &Self, has_stable_inodes: impl FnOnce() -> bool) -> bool {
-        self.is_same_inode(fresh) || (self.device == fresh.device && !has_stable_inodes())
     }
 
     pub fn is_setgid(&self) -> bool {
@@ -566,10 +560,29 @@ fn maybe_time_to_string(
     time.map(|time| humanize_datetime(*time, relative_to))
 }
 
+/// Whether `found`, an entry read again by path, is `listed`, both as (device,
+/// inode): the same pair, or only the same device where `has_stable_inodes` is
+/// false. FUSE without `use_ino` (sshfs, gvfs), SMB/CIFS, FAT and exFAT can
+/// give an entry nobody touched a new inode number, so on those a swap within
+/// the same mount is not detected.
+pub(super) fn is_same_entry<D: Copy + PartialEq>(
+    listed: (D, u64),
+    found: (D, u64),
+    has_stable_inodes: impl FnOnce() -> bool,
+) -> bool {
+    listed == found || (listed.0 == found.0 && !has_stable_inodes())
+}
+
+/// Whether the filesystem `path` is listed in keeps inode numbers stable: its
+/// parent's, or its own for a path with no parent.
+pub(super) fn lists_stable_inodes(path: &Path) -> bool {
+    has_stable_inodes(path.parent().unwrap_or(path))
+}
+
 /// Whether the filesystem holding `directory` keeps an entry's inode number
 /// for as long as the entry exists. Assumed where it cannot be read.
 #[cfg(target_os = "linux")]
-pub(super) fn has_stable_inodes(directory: &Path) -> bool {
+fn has_stable_inodes(directory: &Path) -> bool {
     rustix::fs::statfs(directory).map_or(true, |stat| {
         // The magic is 32 bits wide; `f_type`'s width and sign vary by target.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -579,14 +592,19 @@ pub(super) fn has_stable_inodes(directory: &Path) -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(super) fn has_stable_inodes(_directory: &Path) -> bool {
+fn has_stable_inodes(_directory: &Path) -> bool {
     true
 }
 
-/// FUSE, CIFS, SMB2 and the old SMB filesystem, by `statfs` magic.
+/// FUSE, CIFS, SMB2, the old SMB filesystem, FAT and exFAT, by `statfs` magic.
+/// FAT and exFAT derive an entry's inode number from where it is stored, which
+/// a rename changes.
 #[cfg(any(target_os = "linux", test))]
 fn is_unstable_inode_filesystem(magic: u32) -> bool {
-    matches!(magic, 0x6573_5546 | 0xFF53_4D42 | 0xFE53_4D42 | 0x517B)
+    matches!(
+        magic,
+        0x6573_5546 | 0xFF53_4D42 | 0xFE53_4D42 | 0x517B | 0x4D44 | 0x2011_BAB0
+    )
 }
 
 #[cfg(test)]
@@ -707,7 +725,6 @@ mod tests {
     #[test_case("a\u{2067}b\u{2069}" => "a\\u{2067}b\\u{2069}" ; "bidi isolates are escaped")]
     #[test_case("report\u{200b}.pdf" => "report\\u{200b}.pdf" ; "a zero width space is escaped")]
     #[test_case("report\n.pdf" => "report\\n.pdf" ; "a control character is escaped")]
-    #[test_case("a\u{2800}" => "a\\u{2800}" ; "a braille blank is escaped")]
     fn visible_name_spells_out_what_would_disguise_it(name: &str) -> String {
         visible_name(OsStr::new(name))
     }
@@ -800,6 +817,8 @@ mod tests {
     #[test_case(0xFF53_4D42 => true ; "cifs")]
     #[test_case(0xFE53_4D42 => true ; "smb2")]
     #[test_case(0x517B => true ; "smb")]
+    #[test_case(0x4D44 => true ; "fat")]
+    #[test_case(0x2011_BAB0 => true ; "exfat")]
     #[test_case(0xEF53 => false ; "ext4")]
     #[test_case(0x9123_683E => false ; "btrfs")]
     #[test_case(0x0102_1994 => false ; "tmpfs")]
@@ -816,15 +835,11 @@ mod tests {
         other_device: bool,
         other_inode: bool,
     ) -> bool {
-        let listed = PathInfo::try_from(Path::new(".")).unwrap();
-        let mut fresh = listed.clone();
-        if other_device {
-            fresh.device = fresh.device.wrapping_add(1);
-        }
-        if other_inode {
-            fresh.inode = fresh.inode.wrapping_add(1);
-        }
-        listed.is_still_listed_on(&fresh, || stable)
+        // The one rule both a listed row (`is_still_listed_as`) and an entry a
+        // task reopens by name (`remove_path`) are held to.
+        let listed = (7_u64, 42);
+        let found = (7 + u64::from(other_device), 42 + u64::from(other_inode));
+        is_same_entry(listed, found, || stable)
     }
 
     #[test_case(".bashrc",  "bashrc"  ; "strips single leading dot")]

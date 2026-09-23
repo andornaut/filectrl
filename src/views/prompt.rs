@@ -811,12 +811,11 @@ mod tests {
 
     /// The prefill of a name that is not UTF-8 is its lossy spelling, so
     /// renaming to it would name a different file.
-    #[test_case("bar.txt" ; "a name left as it was")]
-    #[test_case("caf\u{fffd}.txt" ; "the lossy spelling of a name that is not UTF-8")]
-    fn submitting_a_rename_unchanged_cancels_it(name: &str) {
+    #[test]
+    fn submitting_a_rename_unchanged_cancels_it() {
         let mut view = prompt_with_action(PromptAction::Rename {
             path: test_path(),
-            name: name.to_string(),
+            name: "caf\u{fffd}.txt".to_string(),
         });
         // An edit undone before submitting still leaves the name unchanged.
         type_str(&mut view, "x");

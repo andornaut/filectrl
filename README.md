@@ -115,9 +115,9 @@ Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than h
 
 ### Entries that change after they are listed
 
-Rename, chmod, delete, and the sources of a copy or cut act only on the entry that was listed. Each reads its path again first and refuses with "it changed since it was listed" when the path now names a different entry (another device or inode): the entry was replaced, or a directory above it was swapped for a symlink. A refresh of a directory that was itself replaced is refused the same way, since the marks would carry over by path to entries you never saw. The warning is shown once, and later refreshes stay silent until you navigate; navigate to it again to list the new one.
+Rename, chmod, delete, and the sources of a copy or cut act only on the entry that was listed. Each reads its path again first and refuses with "it changed since it was listed" when the path now names a different entry (another device or inode): the entry was replaced, or a directory above it was swapped for a symlink. When the directory being viewed is itself replaced (`rm -rf build && mkdir build`), the next refresh lists the new directory as if you had navigated to it, with a notice saying so: the marks are cleared and the cursor returns to the top, since by path they would land on entries you never saw.
 
-On Linux, FUSE (sshfs, GNOME's gvfs) and SMB/CIFS mounts can give an entry nobody touched a new inode number, so there only the device is compared: a swap within the same mount is not detected.
+On Linux, FUSE (sshfs, GNOME's gvfs), SMB/CIFS, FAT and exFAT mounts can give an entry nobody touched a new inode number, so there only the device is compared: a swap within the same mount is not detected.
 
 ### Multi-select
 
@@ -314,18 +314,18 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` could hand the file name to an interpreter as code is not offered either (see below), and the log names it at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, and the log names it at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux, a desktop entry's `Exec` is refused when a value could reach an interpreter as code. An option cluster is a single `-` followed only by letters and digits; one holding `c`, `e` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-S`, `-verbose`) is taken to give code to run, whatever the program. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
+On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-verbose`, `-cprint(1)`, `-S%f`); it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
 
 `Exec` shape | Example | Result
 --- | --- | ---
 Field code with no cluster before it | `mpv %f`, `mpv --file=%f`, `foo %f -c bar` | Offered
 Quoted argument that is only the code | `app "%f"` | Offered
-Code after a long option or a cluster without `c`, `e` or `S` | `foo --exec %f`, `foo -xvf %f` | Offered
+Code after a long option or a `-` option that is not a cluster | `foo --exec %f`, `foo --c=%f`, `foo -xvf %f`, `foo -C %f` | Offered
 A removed code or `%%` after a cluster, with the file code before it | `foo %f -c %i` | Offered
-Field code anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `env -S %f` | Refused
+Field code in or anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `perl -E %f`, `env -S %f`, `env -S%f`, `python3 "-cimport sys; ..." %f` | Refused
 No file code, so the appended path would follow a cluster | `sh -c`, `xterm -e htop` | Refused
 Field code inside a quoted or escaped argument | `run --command "mpv %f"`, `app "--file=%f"` | Refused
 

@@ -850,6 +850,51 @@ mod tests {
         assert_eq!(vec![("Viewer", true), ("Editor", false)], rows);
     }
 
+    // First and Second are offerable but not associated, so only the configured
+    // defaults can list them. Viewer and Editor are associated in that order.
+    #[test_case("first.desktop;second.desktop", &[("First", true), ("Viewer", false), ("Editor", false)] ; "only the first offerable default is hoisted")]
+    #[test_case("editor.desktop", &[("Editor", true), ("Viewer", false)] ; "an associated default is listed once")]
+    fn candidates_from_lists_each_entry_once(defaults: &str, expected: &[(&str, bool)]) {
+        Config::init_test();
+        let dir = TempDir::new("open_with_default_rows");
+        let applications = dir.join("applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let write = |name: &str, body: &str| std::fs::write(applications.join(name), body).unwrap();
+        write(
+            "first.desktop",
+            "[Desktop Entry]\nType=Application\nName=First\nExec=first %f\n",
+        );
+        write(
+            "second.desktop",
+            "[Desktop Entry]\nType=Application\nName=Second\nExec=second %f\n",
+        );
+        write(
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
+        );
+        write(
+            "editor.desktop",
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=edit %f\nMimeType=all/all;\n",
+        );
+        write(
+            "mimeapps.list",
+            &format!(
+                "[Default Applications]\nall/all={defaults}\n[Added Associations]\nall/all=viewer.desktop;editor.desktop\n"
+            ),
+        );
+        let file = dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
+
+        let candidates = candidates_from(&sources, &file);
+
+        let rows: Vec<(&str, bool)> = candidates
+            .iter()
+            .map(|candidate| (candidate.name.as_str(), candidate.is_default))
+            .collect();
+        assert_eq!(expected, rows.as_slice());
+    }
+
     /// No configured default at all: the fallback is the most preferred
     /// association, which skips an entry the picker will not show.
     #[test]

@@ -483,6 +483,32 @@ mod tests {
     }
 
     #[test]
+    fn rename_of_an_unreachable_entry_is_a_failure_not_a_vanishing() {
+        let dir = TempDir::new("ops_rename_unreachable");
+        let sub = dir.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let a = sub.join("a.txt");
+        fs::write(&a, b"a").unwrap();
+        let listed = PathInfo::try_from(a.as_path()).unwrap();
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reaches through a mode-000 directory anyway; probe rather than
+        // inspect the euid.
+        let is_unreachable = a.symlink_metadata().is_err();
+
+        let result = rename(&listed, "b.txt");
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o755)).unwrap();
+
+        if !is_unreachable {
+            return;
+        }
+        // EACCES keeps its own message: the entry is still there.
+        let error = result.unwrap_err().to_string();
+        assert!(error.starts_with("Failed to rename"), "{error}");
+        assert!(error.contains("Permission denied"), "{error}");
+        assert!(a.exists());
+    }
+
+    #[test]
     fn rename_refuses_a_name_that_leaves_the_directory() {
         let dir = TempDir::new("ops_rename_escape");
         fs::create_dir(dir.join("sub")).unwrap();

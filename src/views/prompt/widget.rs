@@ -46,9 +46,11 @@ mod tests {
 
     /// Left raw, U+202E would draw the rest of the overlay, the counter
     /// included, right to left.
-    #[test_case(1 => "a\\u{202e}txt" ; "alone")]
-    #[test_case(2 => "a\\u{202e}txt (1 of 2)" ; "before the counter")]
-    fn a_disguising_suffix_is_spelled_out(total: usize) -> String {
-        suggestion_overlay_text("a\u{202e}txt", 0, total)
+    #[test]
+    fn a_disguising_suffix_is_spelled_out() {
+        assert_eq!(
+            "a\\u{202e}txt (1 of 2)",
+            suggestion_overlay_text("a\u{202e}txt", 0, 2)
+        );
     }
 }

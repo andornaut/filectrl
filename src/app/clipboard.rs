@@ -435,6 +435,39 @@ mod tests {
         assert_eq!(ClipboardEntry::Move(paths), parsed);
     }
 
+    /// A bookmark is listed under the config directory, so a `..` in the
+    /// config path would reach every entry copied from the bookmarks, and
+    /// another window would refuse to paste it.
+    #[test]
+    fn a_bookmark_under_a_config_path_with_a_parent_component_can_be_pasted() {
+        use crate::{
+            app::config::{Config, RuntimeEnv},
+            test_support::TempDir,
+        };
+
+        let dir = TempDir::new("clipboard_bookmark_dotdot");
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("config.toml"), b"").unwrap();
+        let config = Config::load(
+            RuntimeEnv::default(),
+            Some(dir.join("sub/../config.toml")),
+            &[],
+        )
+        .unwrap();
+        let bookmarks = config.bookmarks_dir();
+        std::fs::create_dir(&bookmarks).unwrap();
+        let bookmark = bookmarks.join("mark");
+        std::os::unix::fs::symlink(dir.path(), &bookmark).unwrap();
+        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(bookmark.as_path()).unwrap()]);
+
+        // Another window has no `last_entry`, so it parses the text.
+        let parsed = parse_clipboard_text(&entry.to_string())
+            .expect("a filectrl-written entry must parse")
+            .expect("a filectrl-written entry is not unrelated text");
+
+        assert_eq!(entry, parsed);
+    }
+
     // Linux only: macOS file systems refuse a name that is not valid UTF-8.
     #[cfg(target_os = "linux")]
     #[test_case(ClipboardEntry::Copy ; "a copy")]
