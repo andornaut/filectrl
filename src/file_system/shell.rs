@@ -54,6 +54,63 @@ pub(crate) fn template(template: &str, replacement: &OsStr) -> OsString {
     expanded
 }
 
+/// Whether a `%s` in `template` sits inside quotes or after a backslash. The
+/// substituted path carries its own single quotes, which there would close the
+/// template's quoting rather than open their own, so a name such as `a;$(cmd)`
+/// would run `cmd`.
+pub(crate) fn has_quoted_placeholder(template: &str) -> bool {
+    let mut quotes = Quotes::default();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' && quotes.is_open() && chars.peek() == Some(&'s') {
+            return true;
+        }
+        quotes.advance(c);
+    }
+    false
+}
+
+/// The quote state of a script as `sh` reads it, advanced over its literal
+/// characters. Substituted values are not fed through it: a shell-quoted value
+/// opens and closes its own quotes.
+#[derive(Default)]
+pub(crate) struct Quotes {
+    state: Quote,
+    escaped: bool,
+}
+
+#[derive(Default, PartialEq)]
+enum Quote {
+    #[default]
+    None,
+    Single,
+    Double,
+}
+
+impl Quotes {
+    pub(crate) fn advance(&mut self, c: char) {
+        if self.escaped {
+            self.escaped = false;
+            return;
+        }
+        self.state = match (&self.state, c) {
+            (Quote::None | Quote::Double, '\\') => {
+                self.escaped = true;
+                return;
+            }
+            (Quote::None, '\'') => Quote::Single,
+            (Quote::None, '"') => Quote::Double,
+            (Quote::Single, '\'') | (Quote::Double, '"') => Quote::None,
+            _ => return,
+        };
+    }
+
+    /// Whether a quote, or a backslash escape, is open at this point.
+    pub(crate) fn is_open(&self) -> bool {
+        self.escaped || self.state != Quote::None
+    }
+}
+
 /// Joins `argv` into one shell command line, quoting each word that needs it.
 ///
 /// Only the Linux terminal wrapper needs this: macOS launches through `open`

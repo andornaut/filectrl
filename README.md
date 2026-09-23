@@ -86,7 +86,9 @@ Names must be unique, cannot be empty, and cannot contain a path separator.
 
 ### Copy / paste
 
-Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`.
+Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard.
+
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes and timestamps (setuid and setgid only when the copy has the original's owner and group), and removes only what it copied, keeping any entry that changed in the original while the copy ran.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
@@ -260,7 +262,7 @@ Key | Opens with
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
-Each template runs with `sh -c`, and `%s` is substituted already quoted for the shell. Never place `%s` inside quotes in a template: the path's own quoting closes them, so a name such as `a;$(cmd)` would run `cmd`. To use the path inside a nested script, pass it as an argument instead, as the macOS `open_filectrl_window` below does.
+Each template runs with `sh -c`, and `%s` is substituted already quoted for the shell. A template with `%s` inside quotes or after a backslash is refused when the config loads: the path's own quoting would close them, so a name such as `a;$(cmd)` would run `cmd`. To use the path inside a nested script, pass it as an argument instead, as the macOS `open_filectrl_window` below does. The check cannot see text the template reads a second time: `eval`, a here-document, or a nested `sh -c %s` or `ssh` would run the name as code despite the quoting.
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -296,12 +298,12 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` gives a shell (`sh`, `bash`, `zsh` and the like) a `-c` script containing a field code such as `%f` is not offered either, since no quoting survives everything a script can do with the name. One that passes the name after the script (`sh -c 'mpv "$1"' sh %f`) is.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
 Two `openers` settings shape the list, and setting either to `""` drops its effect:
 
-- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`.
+- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. The terminal must run the words after its option as a program and its arguments, as `xterm -e` and `alacritty --command` do. One that joins them into a string for a shell to parse again would run a file name as shell code.
 - `openers.open_file` (or `openers.open_directory` for a directory) is offered last, showing its command template beside the setting name, so the picker still works with no application database. Without it, a path that matches nothing shows "No applications found".
 
 ### Theming

@@ -22,9 +22,10 @@ search_max_depth = 20
 search_max_results = 10000
 
 # Programs to use to open files or directories, run with `sh -c`:
-# %s is replaced by the relevant path, already quoted for the shell. Never put
-# %s inside quotes of your own: the path's quoting would close them, and the
-# shell would then interpret the name.
+# %s is replaced by the relevant path, already quoted for the shell. A template
+# with %s inside quotes of your own, or after a backslash, is refused: the path's
+# quoting would close them, and the shell would then interpret the name. Text
+# read a second time (eval, a here-document, a nested sh -c %s) is not covered.
 [openers.linux]
 # xterm has no working directory option, so the shell changes into the directory
 # and xterm inherits it

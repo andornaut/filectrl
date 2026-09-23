@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use crate::file_system::path_info::PathInfo;
+use crate::{command::Command, file_system::path_info::PathInfo};
 use anyhow::{Context, Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
 use log::warn;
@@ -76,7 +76,11 @@ impl Clipboard {
     /// - `Err(_)`: the text looks like an entry ("cp "/"mv " prefix) but is
     ///   invalid (e.g. a path that no longer exists); callers should surface
     ///   this to the user rather than silently doing nothing
-    pub fn get_clipboard_entry(&mut self) -> Result<Option<ClipboardEntry>> {
+    ///
+    /// The flag is true when this window wrote the entry. Any program can put
+    /// text shaped like one on the clipboard, so an entry from elsewhere is
+    /// confirmed before it is acted on.
+    pub fn get_clipboard_entry(&mut self) -> Result<Option<(ClipboardEntry, bool)>> {
         match self.get_text() {
             Some(text) => resolve_clipboard_text(self.last_entry.as_ref(), &text),
             None => Ok(None),
@@ -129,6 +133,14 @@ impl ClipboardEntry {
             Self::Copy(paths) | Self::Move(paths) => paths,
         }
     }
+
+    /// The operation that pastes this entry into `dest`.
+    pub fn into_paste(self, dest: PathInfo) -> Command {
+        match self {
+            Self::Copy(srcs) => Command::Copy { srcs, dest },
+            Self::Move(srcs) => Command::Move { srcs, dest },
+        }
+    }
 }
 
 /// Serialized as `"cp '/path/one' '/path/two'"` in the system clipboard.
@@ -154,19 +166,20 @@ impl Display for ClipboardEntry {
 fn resolve_clipboard_text(
     last_entry: Option<&(String, ClipboardEntry)>,
     text: &str,
-) -> Result<Option<ClipboardEntry>> {
+) -> Result<Option<(ClipboardEntry, bool)>> {
     let Some((_, entry)) = last_entry.filter(|(written, _)| written == text) else {
-        return parse_clipboard_text(text);
+        return Ok(parse_clipboard_text(text)?.map(|entry| (entry, false)));
     };
     let paths: Vec<PathInfo> = entry
         .paths()
         .iter()
         .map(|path| path_info(&path.path))
         .collect::<Result<_>>()?;
-    Ok(Some(match entry {
+    let entry = match entry {
         ClipboardEntry::Copy(_) => ClipboardEntry::Copy(paths),
         ClipboardEntry::Move(_) => ClipboardEntry::Move(paths),
-    }))
+    };
+    Ok(Some((entry, true)))
 }
 
 fn path_info(path: &Path) -> Result<PathInfo> {
@@ -189,19 +202,17 @@ fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
         }
         return Ok(None);
     };
-    if parts.len() < 2 {
+    if parts.len() < 2 || !is_entry_shaped(&parts) {
         return Ok(None);
     }
-    match parse_clipboard_parts(&parts) {
-        Ok(entry) => Ok(Some(entry)),
-        Err(error) if is_entry_shaped(&parts) => Err(error),
-        Err(_) => Ok(None),
-    }
+    parse_clipboard_parts(&parts).map(Some)
 }
 
 /// True when the tokens are shaped like an entry filectrl writes: a "cp"/"mv"
-/// token followed by absolute paths. Requiring absolute paths keeps an ordinary
-/// copied shell line ("cp build dist") from raising an alert.
+/// token followed by absolute paths. An ordinary copied shell line
+/// ("cp build dist") is not one, even when its paths exist: a relative path
+/// would resolve against the directory filectrl was started in, which is not
+/// the one it names.
 fn is_entry_shaped(parts: &[String]) -> bool {
     matches!(parts.first().map(String::as_str), Some("cp" | "mv"))
         && parts[1..].iter().all(|part| part.starts_with('/'))
@@ -346,6 +357,14 @@ mod tests {
         assert!(parse_clipboard_text(text).unwrap().is_none());
     }
 
+    #[test]
+    fn a_shell_line_naming_existing_relative_paths_is_not_an_entry() {
+        let dir = std::env::current_dir().unwrap();
+        let name = dir.read_dir().unwrap().next().unwrap().unwrap().file_name();
+        let text = format!("cp {}", shell_words::quote(&name.to_string_lossy()));
+        assert!(parse_clipboard_text(&text).unwrap().is_none(), "{text}");
+    }
+
     #[test_case("mv '/filectrl-does-not-exist-xyz'" => "Failed to access /filectrl-does-not-exist-xyz" ; "a missing path")]
     // The entry parser splits on any whitespace, so classification must not
     // depend on a literal "cp "/"mv " space prefix.
@@ -414,7 +433,10 @@ mod tests {
         clipboard.set_clipboard_entry(&entry).unwrap();
 
         // The text holds U+FFFD in place of 0xe9, which names no file.
-        assert_eq!(Some(entry), clipboard.get_clipboard_entry().unwrap());
+        assert_eq!(
+            Some((entry, true)),
+            clipboard.get_clipboard_entry().unwrap()
+        );
     }
 
     #[test]
@@ -429,10 +451,10 @@ mod tests {
         let written = (entry.to_string(), entry);
 
         // Another window's entry: the text no longer matches, so it is what
-        // counts.
+        // counts, and it is not this window's own.
         let other = ClipboardEntry::Move(vec![PathInfo::try_from(second.as_path()).unwrap()]);
         assert_eq!(
-            Some(other.clone()),
+            Some((other.clone(), false)),
             resolve_clipboard_text(Some(&written), &other.to_string()).unwrap()
         );
     }

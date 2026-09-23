@@ -6,6 +6,7 @@ mod test_support;
 mod views;
 
 use std::{
+    borrow::Cow,
     env,
     io::{IsTerminal, Write, stdout},
     path::{Path, PathBuf},
@@ -123,7 +124,7 @@ fn configure_logging() {
                 record.level(),
                 path.strip_prefix(MODULE_PREFIX).unwrap_or(path),
                 record.line().unwrap_or_default(),
-                record.args()
+                escape_controls(&record.args().to_string())
             )
         })
         .init();
@@ -136,8 +137,43 @@ fn configure_logging() {
     }
 }
 
+/// Escapes the control characters in a log message. Messages carry file names,
+/// and the log is written to stderr, which is often the terminal itself: an
+/// escape sequence in a name would otherwise be run by the terminal. A newline
+/// is escaped too, so that a name cannot forge a log record.
+fn escape_controls(message: &str) -> Cow<'_, str> {
+    escape_controls_except(message, |_| false)
+}
+
+/// Escapes the control characters in text printed to the terminal, which can
+/// carry a path from the command line, a symlink or a config file. A newline is
+/// kept, since usage text and some error messages span lines.
+pub fn escape_for_terminal(text: &str) -> Cow<'_, str> {
+    escape_controls_except(text, |c| c == '\n')
+}
+
+fn escape_controls_except(text: &str, keep: impl Fn(char) -> bool) -> Cow<'_, str> {
+    let is_escaped = |c: char| c.is_control() && !keep(c);
+    if !text.contains(is_escaped) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.chars()
+            .map(|c| {
+                if is_escaped(c) {
+                    c.escape_default().to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
@@ -176,5 +212,19 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!("Cannot open an empty path", error);
+    }
+
+    #[test_case("plain caf\u{e9}" => "plain caf\u{e9}" ; "printable text is unchanged")]
+    #[test_case("a\u{1b}]52;c;eA==\u{7}b" => "a\\u{1b}]52;c;eA==\\u{7}b" ; "an escape sequence is escaped")]
+    #[test_case("a\u{9b}2Jb" => "a\\u{9b}2Jb" ; "a C1 control is escaped")]
+    #[test_case("a\nb\tc" => "a\\nb\\tc" ; "a newline and a tab are escaped")]
+    fn escape_controls_produces(message: &str) -> String {
+        escape_controls(message).into_owned()
+    }
+
+    #[test_case("a\nb" => "a\nb" ; "a newline is kept")]
+    #[test_case("a\u{1b}]0;t\u{7}\rb" => "a\\u{1b}]0;t\\u{7}\\rb" ; "an escape sequence and a carriage return are escaped")]
+    fn escape_for_terminal_produces(text: &str) -> String {
+        escape_for_terminal(text).into_owned()
     }
 }

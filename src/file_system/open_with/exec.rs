@@ -49,6 +49,14 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     let tokens = shell_words::split(&unescaped)
         .map_err(|error| anyhow!("Malformed Exec {exec:?}: {error}"))?;
 
+    if let Some(script) = shell_script(&tokens)
+        && has_substituting_code(script)
+    {
+        return Err(anyhow!(
+            "Exec {exec:?}: a field code inside a shell's -c script cannot be passed safely"
+        ));
+    }
+
     // Only ever one path, so %F and %U behave as %f and %u.
     let mut argv: Vec<OsString> = Vec::with_capacity(tokens.len() + 1);
     let mut consumed_path = false;
@@ -92,23 +100,79 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     Ok(argv)
 }
 
+/// Programs that read the argument after `-c` as a shell script.
+const SHELLS: [&str; 9] = [
+    "ash", "bash", "csh", "dash", "fish", "ksh", "mksh", "sh", "zsh",
+];
+
+/// The script a shell among `tokens` is given with `-c`, if any. A field code
+/// inside it is refused rather than quoted: quoting cannot follow what a script
+/// does with the text (a here-document, `eval`, a nested `sh -c`), and the name
+/// can be passed safely as an argument after the script instead
+/// (`sh -c 'mpv "$1"' sh %f`).
+fn shell_script(tokens: &[String]) -> Option<&str> {
+    let start = tokens.iter().position(|token| {
+        let program = token.rsplit('/').next().unwrap_or(token);
+        SHELLS.contains(&program)
+    })?;
+    let mut has_script_option = false;
+    let mut rest = tokens[start + 1..].iter();
+    while let Some(token) = rest.next() {
+        let Some(options) = token.strip_prefix(['-', '+']) else {
+            // The first operand: the script when `-c` was given.
+            return has_script_option.then_some(token.as_str());
+        };
+        if options.starts_with('-') {
+            // A long option such as `--login` or `--norc`.
+            continue;
+        }
+        has_script_option |= options.contains('c');
+        // `-o` and `-O` take the next argument as their value.
+        if options.ends_with(['o', 'O']) {
+            rest.next();
+        }
+    }
+    None
+}
+
+/// Whether `token` holds a field code that substitutes a value, as opposed to a
+/// literal percent or a code that expands to nothing.
+fn has_substituting_code(token: &str) -> bool {
+    let mut chars = token.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            continue;
+        }
+        let mut code = chars.next();
+        if code == Some(QUOTED_CODE) {
+            code = chars.next();
+        }
+        if matches!(code, Some('f' | 'F' | 'u' | 'U' | 'c' | 'k')) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Substitute the field codes appearing anywhere within a single argument, so
 /// that `--file=%f` works as well as a bare `%f`. Returns the expansion and
 /// whether it consumed the path.
 ///
 /// A code that was inside quotes is substituted shell quoted, as glib does. The
 /// spec leaves that case undefined, and in practice the quoted argument is a
-/// script (`sh -c "mpv %f"`), where a raw name would be run as shell code.
+/// script, where a raw name would be run as shell code. A shell that
+/// `shell_script` knows is refused before this; the quoting covers one it does
+/// not, such as a shell run under another name (`runner -c "mpv %f"`).
 ///
 /// Single quoting is only inert where the script itself has no quote open: in
-/// `sh -c "echo \"%f\""` the script's double quotes make the single quotes
+/// `runner -c "echo \"%f\""` the script's double quotes make the single quotes
 /// literal, and a `$(...)` in the name would run. The script's own quote state
 /// is therefore tracked, and a code inside it is refused rather than guessed
 /// at, so the entry is not offered.
 fn expand_in_token(context: &ExecContext<'_>, token: &str) -> Result<(OsString, bool)> {
     let mut expanded = OsString::with_capacity(token.len());
     let mut consumed_path = false;
-    let mut script = ScriptQuotes::default();
+    let mut script = shell::Quotes::default();
     let mut chars = token.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '%' {
@@ -149,50 +213,14 @@ fn expand_in_token(context: &ExecContext<'_>, token: &str) -> Result<(OsString, 
     Ok((expanded, consumed_path))
 }
 
-/// The quote state of a script as `sh` reads it, advanced over its literal
-/// characters. Substituted values are not fed through it: a shell-quoted value
-/// opens and closes its own quotes.
-#[derive(Default)]
-struct ScriptQuotes {
-    state: ScriptQuote,
-    escaped: bool,
-}
-
-#[derive(Default, PartialEq)]
-enum ScriptQuote {
-    #[default]
-    None,
-    Single,
-    Double,
-}
-
-impl ScriptQuotes {
-    fn advance(&mut self, c: char) {
-        if self.escaped {
-            self.escaped = false;
-            return;
-        }
-        self.state = match (&self.state, c) {
-            (ScriptQuote::None | ScriptQuote::Double, '\\') => {
-                self.escaped = true;
-                return;
-            }
-            (ScriptQuote::None, '\'') => ScriptQuote::Single,
-            (ScriptQuote::None, '"') => ScriptQuote::Double,
-            (ScriptQuote::Single, '\'') | (ScriptQuote::Double, '"') => ScriptQuote::None,
-            _ => return,
-        };
-    }
-
-    /// Whether a quote, or a backslash escape, is open at this point.
-    fn is_open(&self) -> bool {
-        self.escaped || self.state != ScriptQuote::None
-    }
-}
-
 /// Follow the '%' of every field code that sits inside single or double quotes
 /// with `QUOTED_CODE`, so `expand_in_token` can still tell after the quotes are
 /// removed. The quote state is tracked the way `shell_words::split` tracks it.
+///
+/// A code outside quotes is marked too when its argument holds whitespace that
+/// was quoted or escaped (`runner -c echo\ %f`, `runner -c "echo "%f`): only a
+/// script is written as one argument with spaces in it, and the shell reading
+/// that script would run a raw name as code.
 fn mark_quoted_codes(exec: &str) -> String {
     enum State {
         Delimiter,
@@ -205,21 +233,53 @@ fn mark_quoted_codes(exec: &str) -> String {
     }
 
     let mut marked = String::with_capacity(exec.len());
+    // The argument being read, with the offsets just after each '%' of a code
+    // outside quotes, which are marked once the argument turns out to be a
+    // script.
+    let mut word = String::new();
+    let mut unquoted_codes = Vec::new();
+    let mut is_script = false;
     let mut state = State::Delimiter;
     let mut chars = exec.chars().peekable();
-    while let Some(c) = chars.next() {
-        marked.push(c);
+    loop {
+        let next = chars.next();
+        if next.is_none() || matches!(state, State::Delimiter) {
+            if is_script {
+                for &offset in unquoted_codes.iter().rev() {
+                    word.insert(offset, QUOTED_CODE);
+                }
+            }
+            marked.push_str(&word);
+            word.clear();
+            unquoted_codes.clear();
+            is_script = false;
+        }
+        let Some(c) = next else {
+            break;
+        };
+        word.push(c);
         let quoted = matches!(
             state,
             State::Single | State::Double | State::DoubleBackslash
         );
-        if quoted && c == '%' {
+        if c == '%' {
             // "%%" is a literal percent rather than a code.
-            match chars.next_if_eq(&'%') {
-                Some(percent) => marked.push(percent),
-                None => marked.push(QUOTED_CODE),
+            if let Some(percent) = chars.next_if_eq(&'%') {
+                word.push(percent);
+            } else if quoted {
+                word.push(QUOTED_CODE);
+            } else {
+                unquoted_codes.push(word.len());
             }
         }
+        is_script |= match state {
+            State::Single | State::Double | State::DoubleBackslash => {
+                matches!(c, ' ' | '\t' | '\n')
+            }
+            // An escaped newline continues the line rather than escaping it.
+            State::Backslash { .. } => matches!(c, ' ' | '\t'),
+            _ => false,
+        };
         state = match (state, c) {
             (State::Delimiter | State::Unquoted, ' ' | '\t' | '\n')
             | (State::Backslash { in_word: false } | State::Comment, '\n') => State::Delimiter,
@@ -391,18 +451,19 @@ mod tests {
         }
     }
 
-    // Inside quotes the argument is typically a script, so the name is quoted
-    // for the shell that will read it.
-    #[test_case("sh -c \"mpv %f\"", &["sh", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "double quoted script")]
-    #[test_case("sh -c 'mpv %f'", &["sh", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "single quoted script")]
+    // `run` stands for an interpreter that is not known to be a shell, whose
+    // script is quoted for rather than refused. Inside quotes the argument is
+    // typically a script, so the name is quoted for the shell that will read it.
+    #[test_case("run -c \"mpv %f\"", &["run", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "double quoted script")]
+    #[test_case("run -c 'mpv %f'", &["run", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "single quoted script")]
     // A quoted argument that is only the code is one argv element, so it is
     // passed raw.
     #[test_case("app \"%f\"", &["app", HOSTILE] ; "a quoted code on its own")]
     #[test_case("app '%f'", &["app", HOSTILE] ; "a single quoted code on its own")]
     // Only a token that is exactly the code is passed raw; one that starts with
     // it is still a script.
-    #[test_case("sh -c \"%f --flag\"", &["sh", "-c", "'/v/x$(touch pwned).mp4' --flag"] ; "a quoted script that starts with the code")]
-    #[test_case("sh -c \"printf %%s %f\"", &["sh", "-c", "printf %s '/v/x$(touch pwned).mp4'"] ; "quoted percent stays literal")]
+    #[test_case("run -c \"%f --flag\"", &["run", "-c", "'/v/x$(touch pwned).mp4' --flag"] ; "a quoted script that starts with the code")]
+    #[test_case("run -c \"printf %%s %f\"", &["run", "-c", "printf %s '/v/x$(touch pwned).mp4'"] ; "quoted percent stays literal")]
     // Outside quotes the value is one argv element and no shell reads it, so it
     // is passed raw, embedded or not.
     #[test_case("mpv %f", &["mpv", HOSTILE] ; "bare code is raw")]
@@ -416,11 +477,24 @@ mod tests {
         assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
     }
 
+    // Whitespace that was quoted or escaped makes the argument a script, so a
+    // code outside the quotes is quoted for the shell that reads it too.
+    #[test_case(r"run -c echo\\ %f", &["run", "-c", "echo '/v/x$(touch pwned).mp4'"] ; "after an escaped space")]
+    #[test_case(r"run -c %f\\ --flag", &["run", "-c", "'/v/x$(touch pwned).mp4' --flag"] ; "before an escaped space")]
+    #[test_case(r"run -c echo\\ %c\\ %f", &["run", "-c", "echo Viewer '/v/x$(touch pwned).mp4'"] ; "two codes in one script")]
+    #[test_case(r#"run -c "echo "%f"#, &["run", "-c", "echo '/v/x$(touch pwned).mp4'"] ; "after a quoted space")]
+    #[test_case(r"run -c printf\\ %%s\\ %f", &["run", "-c", "printf %s '/v/x$(touch pwned).mp4'"] ; "an unquoted percent stays literal")]
+    // Quoting with no whitespace in it leaves the argument a plain value.
+    #[test_case(r#"app "x"%f"#, &["app", "x/v/x$(touch pwned).mp4"] ; "after a quoted word")]
+    fn a_code_in_an_argument_with_quoted_whitespace_is_quoted(exec: &str, expected: &[&str]) {
+        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
+    }
+
     // Inside the script's own quotes a single-quoted value is literal text, so
     // the name would be read as shell code: the entry is refused instead.
-    #[test_case(r#"sh -c "echo \"%f\"""# ; "inside the script's double quotes")]
-    #[test_case(r#"sh -c "echo '%f'""# ; "inside the script's single quotes")]
-    #[test_case(r#"sh -c "echo \\%f""# ; "after a backslash in the script")]
+    #[test_case(r#"run -c "echo \"%f\"""# ; "inside the script's double quotes")]
+    #[test_case(r#"run -c "echo '%f'""# ; "inside the script's single quotes")]
+    #[test_case(r#"run -c "echo \\%f""# ; "after a backslash in the script")]
     fn a_code_quoted_within_a_quoted_script_is_refused(exec: &str) {
         let error = expand(&hostile_context(), exec)
             .expect_err("the entry must not be offered")
@@ -430,8 +504,8 @@ mod tests {
 
     // A code that expands to nothing puts nothing into the script, so where it
     // sits does not matter.
-    #[test_case(r#"sh -c "echo '%d' %f""#, &["sh", "-c", "echo '' '/v/x$(touch pwned).mp4'"] ; "a deprecated code")]
-    #[test_case(r#"sh -c "echo '%i' %f""#, &["sh", "-c", "echo '' '/v/x$(touch pwned).mp4'"] ; "an icon code inside an argument")]
+    #[test_case(r#"run -c "echo '%d' %f""#, &["run", "-c", "echo '' '/v/x$(touch pwned).mp4'"] ; "a deprecated code")]
+    #[test_case(r#"run -c "echo '%i' %f""#, &["run", "-c", "echo '' '/v/x$(touch pwned).mp4'"] ; "an icon code inside an argument")]
     fn a_code_that_expands_to_nothing_inside_the_scripts_quotes_is_dropped(
         exec: &str,
         expected: &[&str],
@@ -441,16 +515,16 @@ mod tests {
 
     // The script's quotes are closed again before the code, so single quoting
     // is inert there.
-    #[test_case(r#"sh -c "echo \"a\" %f""#, &["sh", "-c", "echo \"a\" '/v/x$(touch pwned).mp4'"] ; "after a closed double quote")]
-    #[test_case(r#"sh -c "echo 'a' %f""#, &["sh", "-c", "echo 'a' '/v/x$(touch pwned).mp4'"] ; "after a closed single quote")]
+    #[test_case(r#"run -c "echo \"a\" %f""#, &["run", "-c", "echo \"a\" '/v/x$(touch pwned).mp4'"] ; "after a closed double quote")]
+    #[test_case(r#"run -c "echo 'a' %f""#, &["run", "-c", "echo 'a' '/v/x$(touch pwned).mp4'"] ; "after a closed single quote")]
     fn a_code_after_the_script_closes_its_quotes_is_quoted(exec: &str, expected: &[&str]) {
         assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
     }
 
-    /// Runs the expanded argv, so the check is what the shell does with the
-    /// name rather than what the string looks like.
-    #[test]
-    fn a_quoted_script_receives_the_name_as_inert_text() {
+    /// Runs `exec` expanded against a file whose name runs a command if a
+    /// shell reads it unquoted, returning what it printed and whether the
+    /// command ran.
+    fn run_against_a_hostile_name(exec: impl Fn(&Path) -> String) -> (Vec<u8>, Vec<u8>, bool) {
         let dir = crate::test_support::TempDir::new("exec_hostile");
         let path = dir.join("x$(touch pwned).mp4");
         let uri = file_uri(&path);
@@ -459,7 +533,7 @@ mod tests {
             uri: &uri,
             ..context()
         };
-        let argv = expand(&context, "sh -c \"printf %%s %f\"").unwrap();
+        let argv = expand(&context, &exec(dir.path())).unwrap();
 
         let output = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -468,11 +542,58 @@ mod tests {
             .unwrap();
 
         assert!(output.status.success());
-        assert_eq!(
-            path.as_os_str().as_encoded_bytes(),
-            output.stdout.as_slice()
-        );
-        assert!(!dir.join("pwned").exists());
+        let expected = path.as_os_str().as_encoded_bytes().to_vec();
+        (expected, output.stdout, dir.join("pwned").exists())
+    }
+
+    /// A shell under a name filectrl does not know, so its script is quoted
+    /// for rather than refused. Runs the expanded argv, so the check is what
+    /// the shell does with the name rather than what the string looks like.
+    #[test]
+    fn a_quoted_script_receives_the_name_as_inert_text() {
+        let (expected, printed, ran) = run_against_a_hostile_name(|dir| {
+            let runner = dir.join("runner");
+            std::os::unix::fs::symlink("/bin/sh", &runner).unwrap();
+            format!("{} -c \"printf %%s %f\"", runner.display())
+        });
+        assert_eq!(expected, printed);
+        assert!(!ran);
+    }
+
+    #[test]
+    fn a_name_passed_to_a_shell_after_its_script_is_inert() {
+        let (expected, printed, ran) =
+            run_against_a_hostile_name(|_| "sh -c 'printf %%s \"$1\"' sh %f".to_string());
+        assert_eq!(expected, printed);
+        assert!(!ran);
+    }
+
+    // Quoting cannot follow what a shell script does with the text, so a code
+    // in the script is refused wherever it sits.
+    #[test_case("sh -c \"mpv %f\"" ; "a double quoted script")]
+    #[test_case("sh -c %f" ; "the code as the whole script")]
+    #[test_case("sh -c \"cat <<EOF\n%f\nEOF\"" ; "a here document")]
+    #[test_case("sh -c \"eval cat %f\"" ; "eval")]
+    #[test_case("sh -c cat${IFS}%f" ; "no whitespace in the script")]
+    #[test_case("/bin/bash -lc 'mpv %u'" ; "a path to the shell and clustered options")]
+    #[test_case("env FOO=1 dash -c 'mpv %c'" ; "a shell run through env")]
+    #[test_case("bash -o pipefail -c 'cat %f'" ; "an option that takes a value")]
+    #[test_case("zsh --login -c 'cat %k'" ; "a long option")]
+    fn a_code_in_a_shell_script_is_refused(exec: &str) {
+        let error = expand(&hostile_context(), exec)
+            .expect_err("the entry must not be offered")
+            .to_string();
+        assert!(error.ends_with("cannot be passed safely"), "{error}");
+    }
+
+    #[test_case("sh -c 'mpv \"$1\"' sh %f", &["sh", "-c", "mpv \"$1\"", "sh", HOSTILE] ; "the code after the script")]
+    #[test_case("sh -c 'printf 100%%' %f", &["sh", "-c", "printf 100%", HOSTILE] ; "a literal percent in the script")]
+    #[test_case("sh -c 'echo %i' %f", &["sh", "-c", "echo ", HOSTILE] ; "a code that expands to nothing")]
+    #[test_case("sh %f", &["sh", HOSTILE] ; "a shell given a file rather than a script")]
+    #[test_case("bash --norc %f", &["bash", "--norc", HOSTILE] ; "a long option with a c in it")]
+    #[test_case("app -c %f", &["app", "-c", HOSTILE] ; "a -c option of a program that is not a shell")]
+    fn a_shell_whose_script_holds_no_code_is_offered(exec: &str, expected: &[&str]) {
+        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
     }
 
     #[test_case("/a/b.txt", "file:///a/b.txt" ; "unreserved characters pass through")]

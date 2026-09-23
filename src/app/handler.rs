@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::{Handlers, clipboard::ClipboardEntry};
+use super::Handlers;
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
@@ -36,15 +36,11 @@ impl CommandHandler for Handlers {
                 CommandResult::NotHandled
             }
             Command::Paste(dest) => match self.clipboard.get_clipboard_entry() {
-                Ok(Some(ClipboardEntry::Copy(srcs))) => Command::Copy {
-                    srcs,
+                Ok(Some((entry, true))) => entry.into_paste(dest.clone()).into(),
+                Ok(Some((entry, false))) => Command::OpenPrompt(PromptAction::ConfirmPaste {
+                    entry,
                     dest: dest.clone(),
-                }
-                .into(),
-                Ok(Some(ClipboardEntry::Move(srcs))) => Command::Move {
-                    srcs,
-                    dest: dest.clone(),
-                }
+                })
                 .into(),
                 // Nothing to paste and no system clipboard to read: an entry
                 // copied in another window would be unreachable here, so warn
@@ -98,7 +94,10 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
-    use crate::app::claims::{Fixture, test_handlers};
+    use crate::app::{
+        claims::{Fixture, test_handlers},
+        clipboard::ClipboardEntry,
+    };
 
     fn handlers(fixture: &Fixture) -> Handlers {
         let (tx, _rx) = mpsc::channel();
@@ -130,6 +129,25 @@ mod tests {
                 srcs,
                 dest: dest.clone()
             }),
+            handlers.handle_command(&Command::Paste(dest))
+        );
+    }
+
+    /// Text any program could have written, shaped like an entry: it is
+    /// confirmed rather than carried out.
+    #[test]
+    fn a_paste_of_an_entry_this_window_did_not_write_asks_first() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let (file, dest) = (fixture.file(), fixture.directory());
+        let text = format!("mv {}", shell_words::quote(&file.path.to_string_lossy()));
+        handlers.handle_command(&Command::SetClipboardText(text));
+
+        assert_eq!(
+            CommandResult::from(Command::OpenPrompt(PromptAction::ConfirmPaste {
+                entry: ClipboardEntry::Move(vec![file]),
+                dest: dest.clone(),
+            })),
             handlers.handle_command(&Command::Paste(dest))
         );
     }

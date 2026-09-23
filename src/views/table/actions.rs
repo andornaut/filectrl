@@ -111,10 +111,16 @@ impl TableView {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
             Some(path) => {
-                let display_name = path.display_name.clone();
+                // The name itself rather than `display_name`, which spells out
+                // disguising characters: submitting the prompt unchanged must
+                // not rename the file to its escaped form.
+                let name = path
+                    .path
+                    .file_name()
+                    .map_or(String::new(), |name| name.to_string_lossy().into_owned());
                 Command::OpenPrompt(PromptAction::Rename {
                     path: path.clone(),
-                    name: display_name,
+                    name,
                 })
                 .into()
             }
@@ -204,6 +210,30 @@ mod tests {
         };
         assert_eq!("c", path.display_name);
         assert_eq!("c", name);
+    }
+
+    /// The table shows the escaped form; the prompt must hold the real name.
+    #[test]
+    fn rename_starts_from_the_name_rather_than_its_escaped_form() {
+        use crate::{app::config::Config, test_support::TempDir};
+
+        Config::init_test();
+        let dir = TempDir::new("table_rename_disguised");
+        let path = dir.join("a\u{202e}b");
+        std::fs::write(&path, b"x").unwrap();
+        let mut table = TableView::default();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table
+            .content
+            .append(&[PathInfo::try_from(path.as_path()).unwrap()]);
+        table.finish_directory();
+        table.select(0);
+
+        let PromptAction::Rename { path, name } = prompt(table.open_rename_prompt()) else {
+            panic!("expected a Rename prompt");
+        };
+        assert_eq!("a\\u{202e}b", path.display_name);
+        assert_eq!("a\u{202e}b", name);
     }
 
     #[test]

@@ -1,11 +1,12 @@
 use std::{
     borrow::Cow,
     cmp, env,
+    ffi::OsStr,
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
     path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf},
-    time::SystemTime,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Error, Result};
@@ -16,8 +17,41 @@ const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
 fn display_name(path: &Path) -> String {
-    path.file_name()
-        .map_or(String::new(), |n| n.to_string_lossy().into_owned())
+    path.file_name().map_or(String::new(), visible_name)
+}
+
+/// A file name as it is shown: lossy for bytes that are not UTF-8, with every
+/// character that would hide or disguise what the name is spelled out as an
+/// escape. A bidi control reorders the text drawn after it, so `a\u{202e}txt.exe`
+/// would read as `aexe.txt`; an invisible character makes two names look the
+/// same; and a control character is dropped by the renderer, with the same
+/// effect. Joiners are left alone, since scripts and emoji need them.
+pub(crate) fn visible_name(name: &OsStr) -> String {
+    let lossy = name.to_string_lossy();
+    if !lossy.contains(is_disguising) {
+        return lossy.into_owned();
+    }
+    let mut visible = String::with_capacity(lossy.len() + 8);
+    for c in lossy.chars() {
+        if is_disguising(c) {
+            visible.extend(c.escape_unicode());
+        } else {
+            visible.push(c);
+        }
+    }
+    visible
+}
+
+fn is_disguising(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            // Bidi marks, embeddings, overrides and isolates.
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            // Invisible: zero width space, word joiner, byte order mark, soft
+            // hyphen, and the line and paragraph separators.
+            | '\u{200b}' | '\u{2060}' | '\u{feff}' | '\u{00ad}' | '\u{2028}' | '\u{2029}'
+        )
 }
 
 /// Trailing components a compacted path always keeps: the parent and the entry
@@ -82,10 +116,7 @@ fn compact_str(path: &Path) -> String {
 pub(crate) fn breadcrumbs(path: &Path) -> Vec<String> {
     let mut parts: Vec<_> = path
         .ancestors()
-        .map(|p| {
-            p.file_name()
-                .map_or(String::new(), |n| n.to_string_lossy().into_owned())
-        })
+        .map(|p| p.file_name().map_or(String::new(), visible_name))
         .collect();
     parts.reverse();
     parts
@@ -479,8 +510,24 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
     datetime
 }
 
+/// `None` for a time chrono cannot represent, rather than the panic that
+/// `DateTime::from(SystemTime)` raises there. A file's owner sets its times, and
+/// tmpfs or btrfs store 64-bit seconds, so any listing can contain one.
 fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
-    result.ok().map(Into::into)
+    let (seconds, nanoseconds) = match result.ok()?.duration_since(UNIX_EPOCH) {
+        Ok(after) => (i64::try_from(after.as_secs()).ok()?, after.subsec_nanos()),
+        // Before the epoch: whole seconds round down, so a positive nanosecond
+        // part is counted up from the second before.
+        Err(before) => {
+            let before = before.duration();
+            let seconds = i64::try_from(before.as_secs()).ok()?.checked_neg()?;
+            match before.subsec_nanos() {
+                0 => (seconds, 0),
+                nanoseconds => (seconds.checked_sub(1)?, 1_000_000_000 - nanoseconds),
+            }
+        }
+    };
+    Some(DateTime::from_timestamp(seconds, nanoseconds)?.with_timezone(&Local))
 }
 
 fn maybe_time_to_string(
@@ -542,6 +589,35 @@ mod tests {
         Local.from_local_datetime(&datetime).unwrap()
     }
 
+    #[test_case(UNIX_EPOCH + std::time::Duration::from_secs(1 << 62) ; "far in the future")]
+    #[test_case(UNIX_EPOCH - std::time::Duration::from_secs(1 << 62) ; "far in the past")]
+    fn a_time_chrono_cannot_represent_is_unknown(time: SystemTime) {
+        assert_eq!(None, maybe_time(Ok(time)));
+    }
+
+    #[test_case(UNIX_EPOCH + std::time::Duration::from_millis(1_500) => "1970-01-01T00:00:01.500" ; "after the epoch")]
+    #[test_case(UNIX_EPOCH - std::time::Duration::from_millis(1_500) => "1969-12-31T23:59:58.500" ; "before the epoch with a fraction")]
+    #[test_case(UNIX_EPOCH - std::time::Duration::from_secs(2) => "1969-12-31T23:59:58.000" ; "before the epoch on a whole second")]
+    fn a_representable_time_converts_exactly(time: SystemTime) -> String {
+        maybe_time(Ok(time))
+            .unwrap()
+            .naive_utc()
+            .format("%Y-%m-%dT%H:%M:%S%.3f")
+            .to_string()
+    }
+
+    #[test]
+    fn the_extremes_chrono_can_represent_render() {
+        let now = Local::now();
+        for extreme in [
+            DateTime::<chrono::Utc>::MAX_UTC,
+            DateTime::<chrono::Utc>::MIN_UTC,
+        ] {
+            let time = extreme.with_timezone(&Local);
+            assert!(maybe_time_to_string(Some(&time), now).is_some());
+        }
+    }
+
     // datetime_age boundary tests
 
     fn age(seconds_ago: i64) -> DateTimeAge {
@@ -570,6 +646,24 @@ mod tests {
     #[test_case("/a/b" => vec![String::new(), "a".to_string(), "b".to_string()] ; "root first, leaf last")]
     fn breadcrumbs_run_from_the_root_down(path: &str) -> Vec<String> {
         breadcrumbs(Path::new(path))
+    }
+
+    #[test_case("report.pdf" => "report.pdf" ; "a plain name is unchanged")]
+    #[test_case("caf\u{e9} \u{1f600}" => "caf\u{e9} \u{1f600}" ; "accents and emoji are unchanged")]
+    #[test_case("\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}" => "\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}" ; "a joiner a script needs is unchanged")]
+    #[test_case("invoice\u{202e}fdp.exe" => "invoice\\u{202e}fdp.exe" ; "a bidi override is escaped")]
+    #[test_case("a\u{2067}b\u{2069}" => "a\\u{2067}b\\u{2069}" ; "bidi isolates are escaped")]
+    #[test_case("report\u{200b}.pdf" => "report\\u{200b}.pdf" ; "a zero width space is escaped")]
+    #[test_case("report\n.pdf" => "report\\u{a}.pdf" ; "a control character is escaped")]
+    fn visible_name_spells_out_what_would_disguise_it(name: &str) -> String {
+        visible_name(OsStr::new(name))
+    }
+
+    #[test]
+    fn a_display_name_and_breadcrumbs_show_a_disguised_name_escaped() {
+        let path = Path::new("/a\u{202e}b/c\u{200b}d");
+        assert_eq!("c\\u{200b}d", display_name(path));
+        assert_eq!(vec!["", "a\\u{202e}b", "c\\u{200b}d"], breadcrumbs(path));
     }
 
     // compact: home as `~`, long middles elided to first + last two

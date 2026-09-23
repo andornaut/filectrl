@@ -10,8 +10,9 @@ use ratatui_textarea::{CursorMove, TextArea};
 
 use super::{View, as_dimension, unicode::pluralize_items};
 use crate::{
+    app::clipboard::ClipboardEntry,
     command::{Command, PromptAction, result::CommandResult},
-    file_system::path_info::PathInfo,
+    file_system::path_info::{PathInfo, compact},
 };
 
 #[derive(Default)]
@@ -50,6 +51,21 @@ impl PromptView {
             PromptAction::Goto { .. } => " Go to ".to_string(),
             PromptAction::Rename { .. } => " Rename ".to_string(),
             PromptAction::Search(_) => " Search ".to_string(),
+            PromptAction::ConfirmPaste { entry, .. } => {
+                let verb = match entry {
+                    ClipboardEntry::Copy(_) => "copy",
+                    ClipboardEntry::Move(_) => "move",
+                };
+                let what = match entry.paths() {
+                    [path] => compact(&path.path).to_string(),
+                    paths => format!(
+                        "{} starting with {}",
+                        pluralize_items(paths.len()),
+                        compact(&paths[0].path)
+                    ),
+                };
+                format!(" Clipboard from elsewhere: {verb} {what} here? (y/n) ")
+            }
             PromptAction::Conflict {
                 name,
                 can_overwrite: true,
@@ -65,6 +81,7 @@ impl PromptView {
         let text = match kind {
             PromptAction::Chmod { mode, .. } => mode.clone(),
             PromptAction::Conflict { .. }
+            | PromptAction::ConfirmPaste { .. }
             | PromptAction::CreateDirectory
             | PromptAction::Delete(_)
             | PromptAction::Goto { .. } => String::new(),
@@ -140,7 +157,9 @@ impl PromptView {
             // The confirmation prompts resolve in `handle_key` on a single
             // keypress, so submit never reaches them; treat it as a cancel
             // rather than guessing an answer on the user's behalf.
-            PromptAction::Conflict { .. } => Command::CancelPrompt,
+            PromptAction::Conflict { .. } | PromptAction::ConfirmPaste { .. } => {
+                Command::CancelPrompt
+            }
             PromptAction::Delete(_) => Command::ConfirmDelete,
             PromptAction::Filter(_) => Command::FilterChanged(value),
             PromptAction::Goto { .. } => {
@@ -451,6 +470,68 @@ mod tests {
     fn a_delete_prompt_answers_on_one_keypress(code: KeyCode, modifiers: KeyModifiers) -> Command {
         let mut view = prompt_with_action(PromptAction::Delete(1));
         Command::try_from(view.handle_key(code, modifiers)).unwrap()
+    }
+
+    // ── paste of an entry from elsewhere ─────────────────────────────────────
+
+    fn foreign_paste(names: &[&str]) -> (crate::test_support::TempDir, ClipboardEntry, PathInfo) {
+        let dir = crate::test_support::TempDir::new("prompt_confirm_paste");
+        let paths = names
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                std::fs::write(&path, b"x").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect();
+        let dest = PathInfo::try_from(dir.path()).unwrap();
+        (dir, ClipboardEntry::Move(paths), dest)
+    }
+
+    #[test_case(KeyCode::Char('y'), KeyModifiers::NONE, true ; "y pastes")]
+    #[test_case(KeyCode::Char('Y'), KeyModifiers::SHIFT, true ; "uppercase Y pastes")]
+    #[test_case(KeyCode::Char('y'), KeyModifiers::CONTROL, false ; "ctrl y cancels")]
+    #[test_case(KeyCode::Char('n'), KeyModifiers::NONE, false ; "n cancels")]
+    #[test_case(KeyCode::Enter, KeyModifiers::NONE, false ; "enter cancels")]
+    fn a_paste_from_elsewhere_runs_only_when_confirmed(
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        pastes: bool,
+    ) {
+        let (_dir, entry, dest) = foreign_paste(&["a"]);
+        let mut view = prompt_with_action(PromptAction::ConfirmPaste {
+            entry: entry.clone(),
+            dest: dest.clone(),
+        });
+        let expected = if pastes {
+            entry.into_paste(dest)
+        } else {
+            Command::CancelPrompt
+        };
+        assert_eq!(
+            expected,
+            Command::try_from(view.handle_key(code, modifiers)).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_paste_from_elsewhere_names_what_it_would_move() {
+        let (dir, entry, dest) = foreign_paste(&["a"]);
+        let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
+        let expected = format!(
+            " Clipboard from elsewhere: move {} here? (y/n) ",
+            compact(&dir.join("a"))
+        );
+        assert_eq!(expected, view.label());
+
+        let (dir, entry, dest) = foreign_paste(&["a", "b"]);
+        let first = compact(&entry.paths()[0].path).to_string();
+        let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
+        assert_eq!(
+            format!(" Clipboard from elsewhere: move 2 items starting with {first} here? (y/n) "),
+            view.label()
+        );
+        drop(dir);
     }
 
     // ── copy and cut ─────────────────────────────────────────────────────────

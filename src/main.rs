@@ -10,7 +10,7 @@ use std::{
 use anyhow::Result;
 use argh::FromArgs;
 
-use filectrl::{app::config::Config, print_keybindings, run};
+use filectrl::{app::config::Config, escape_for_terminal, print_keybindings, run};
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help", "help"))]
@@ -182,7 +182,7 @@ fn parse_args() -> Args {
         }
         eprintln!(
             "{}\nRun {command} --help for more information.",
-            early_exit.output
+            escape_for_terminal(&early_exit.output)
         );
         std::process::exit(1)
     })
@@ -195,12 +195,13 @@ fn main() -> ExitCode {
         Err(error) => {
             match error.downcast_ref::<UsageError>() {
                 Some(usage) => {
+                    let usage = escape_for_terminal(&usage.to_string()).into_owned();
                     eprintln!("{usage}\n\nRun filectrl --help for more information.");
                 }
                 // `{error:#}` flattens the cause chain onto one line, so a
                 // failure here reads the same as the alert the app would show
                 // for it.
-                None => eprintln!("Error: {error:#}"),
+                None => eprintln!("Error: {}", escape_for_terminal(&format!("{error:#}"))),
             }
             ExitCode::FAILURE
         }
@@ -238,7 +239,7 @@ fn dispatch(args: &Args) -> Result<()> {
 /// the config directory follows `$XDG_CONFIG_HOME` and need not be the
 /// `~/.config` path the documentation names.
 fn report_written(path: &Path) {
-    println!("Wrote {}", path.display());
+    println!("Wrote {}", escape_for_terminal(&path.display().to_string()));
 }
 
 fn selected_action(args: &Args) -> Result<Option<Action>> {

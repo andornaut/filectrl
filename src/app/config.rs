@@ -19,6 +19,7 @@ use toml::Value;
 
 use self::keybindings::{KeyBindings, TomlKeybindings};
 use self::theme::Theme;
+use crate::file_system::shell;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
@@ -237,7 +238,7 @@ impl Config {
         // Precedence (low → high): built-in defaults → user config file →
         // include_files from the user config → CLI --include paths.
         let defaults = merge_default_config()?;
-        let mut value = merge_toml_values(defaults.clone(), parse_toml(content)?);
+        let mut value = merge_toml_values(defaults.clone(), parse_toml(config_file, content)?);
         value = Self::merge_config_includes(config_file, value, config_dir.as_deref())?;
         value = merge_include_paths(config_file, value, include_paths)?;
         // Reject typo'd / unknown keys before deserializing so a broken config
@@ -321,6 +322,7 @@ impl Config {
             .map_err(|error| anyhow!("Failed to deserialize the config: {error}"))?;
 
         validate_file_system(&raw.file_system)?;
+        validate_openers(&raw.openers)?;
 
         let openers = if cfg!(target_os = "macos") {
             raw.openers.macos
@@ -384,8 +386,13 @@ impl Config {
     }
 }
 
-fn parse_toml(content: &str) -> Result<Value> {
-    toml::from_str::<Value>(content).map_err(|error| anyhow!("Failed to parse TOML: {error}"))
+/// `file` names the file `content` was read from, so that a mistake in one of
+/// several included files says which.
+fn parse_toml(file: Option<&Path>, content: &str) -> Result<Value> {
+    toml::from_str::<Value>(content).map_err(|error| match file {
+        Some(file) => anyhow!("Failed to parse {}: {error}", file.display()),
+        None => anyhow!("Failed to parse TOML: {error}"),
+    })
 }
 
 /// Absolutizes without requiring the path to exist, which `canonicalize` does.
@@ -466,7 +473,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     debug!("Loading include file: {}", path.display());
     let content = fs::read_to_string(path)
         .map_err(|error| anyhow!("Failed to read include file {}: {error}", path.display()))?;
-    let include_value = parse_toml(&content)?;
+    let include_value = parse_toml(Some(path), &content)?;
 
     let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
 
@@ -504,6 +511,28 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
         return Err(anyhow!(
             "file_system.search_max_results must be greater than 0"
         ));
+    }
+    Ok(())
+}
+
+/// Refuses an opener template with `%s` inside quotes, where the substituted
+/// path's own quoting would close them and let a file name run as shell code.
+/// Both platforms are checked, so a config shared between them fails on either.
+fn validate_openers(openers: &PlatformOpeners) -> Result<()> {
+    for (platform, openers) in [("linux", &openers.linux), ("macos", &openers.macos)] {
+        for (key, template) in [
+            ("open_directory", &openers.open_directory),
+            ("open_file", &openers.open_file),
+            ("open_filectrl_window", &openers.open_filectrl_window),
+            ("run_in_terminal", &openers.run_in_terminal),
+        ] {
+            if shell::has_quoted_placeholder(template) {
+                return Err(anyhow!(
+                    "openers.{platform}.{key} must not place %s inside quotes or after a \\: \
+                     it is substituted already quoted, so its quoting would close yours"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -568,8 +597,8 @@ fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> 
 /// Merges the embedded default config from its two source files:
 /// base config + theme (which includes both truecolor and 256-color variants).
 fn merge_default_config() -> Result<Value> {
-    let base = parse_toml(DEFAULT_CONFIG_BASE)?;
-    let theme = parse_toml(DEFAULT_THEME)?;
+    let base = parse_toml(None, DEFAULT_CONFIG_BASE)?;
+    let theme = parse_toml(None, DEFAULT_THEME)?;
     Ok(merge_toml_values(base, theme))
 }
 
@@ -606,8 +635,8 @@ mod tests {
     fn merge_overrides_shared_keys_and_preserves_the_rest() {
         // Nested, so the recursive arm is exercised: a table in the overlay
         // merges into its counterpart rather than replacing it whole.
-        let base = parse_toml("[t]\na = 1\nb = 2").unwrap();
-        let overlay = parse_toml("[t]\nb = 3").unwrap();
+        let base = parse_toml(None, "[t]\na = 1\nb = 2").unwrap();
+        let overlay = parse_toml(None, "[t]\nb = 3").unwrap();
         let merged = merge_toml_values(base, overlay);
         let table = merged.get("t").unwrap();
         assert_eq!(1, table.get("a").unwrap().as_integer().unwrap());
@@ -738,6 +767,26 @@ open_directory = "alacritty --working-directory %s"
     fn a_search_bound_of_zero_is_rejected(key: &str) {
         let err = parse_err(&format!("[file_system]\n{key} = 0\n"));
         assert_eq!(format!("file_system.{key} must be greater than 0"), err);
+    }
+
+    #[test_case("linux", "open_file", "xdg-open '%s'" ; "single quotes")]
+    #[test_case("linux", "open_directory", "cd \"%s\" && exec xterm" ; "double quotes")]
+    #[test_case("macos", "open_filectrl_window", "open \\%s" ; "a backslash")]
+    #[test_case("linux", "run_in_terminal", "sh -c 'xterm -e %s'" ; "a quoted script")]
+    fn an_opener_with_a_quoted_placeholder_is_rejected(platform: &str, key: &str, template: &str) {
+        let toml = format!("[openers.{platform}]\n{key} = {template:?}\n");
+        let err = parse_err(&toml);
+        assert!(
+            err.starts_with(&format!("openers.{platform}.{key} must not place %s")),
+            "{err}"
+        );
+    }
+
+    #[test_case("xdg-open %s" ; "unquoted")]
+    #[test_case("sh -c 'xdg-open \"$1\"' sh %s" ; "quotes closed before it")]
+    fn an_opener_with_an_unquoted_placeholder_is_accepted(template: &str) {
+        let toml = format!("[openers.linux]\nopen_file = {template:?}\n");
+        Config::parse(RuntimeEnv::default(), None, &toml, None, &[]).unwrap();
     }
 
     #[test]
@@ -1083,6 +1132,22 @@ open_directory = "alacritty --working-directory %s"
         assert!(select_next_key(&merged, 'e'));
     }
 
+    /// The config is valid and so is the first include, so only the file named
+    /// in the message tells the user where the mistake is.
+    #[test]
+    fn a_malformed_include_file_is_reported_by_name() {
+        let dir = TempDir::new("config_malformed_include");
+        let config = dir.join("config.toml");
+        fs::write(&config, "include_files = [\"good.toml\", \"bad.toml\"]\n").unwrap();
+        fs::write(dir.join("good.toml"), "log_level = \"warn\"\n").unwrap();
+        fs::write(dir.join("bad.toml"), "this is not toml =\n").unwrap();
+
+        let error = load_err(Some(config), &[]);
+
+        let expected = format!("Failed to parse {}: ", dir.join("bad.toml").display());
+        assert!(error.starts_with(&expected), "{error}");
+    }
+
     #[test]
     fn a_relative_config_path_resolves_from_the_working_directory() {
         let name = "filectrl-absent-config-xyz.toml";
@@ -1127,7 +1192,7 @@ open_directory = "alacritty --working-directory %s"
         fs::create_dir(&target).unwrap();
         let out = dir.join("out");
 
-        let value = parse_toml(DEFAULT_CONFIG_BASE).unwrap();
+        let value = parse_toml(None, DEFAULT_CONFIG_BASE).unwrap();
         let openers: PlatformOpeners = value.get("openers").unwrap().clone().try_into().unwrap();
         for openers in [&openers.linux, &openers.macos] {
             for template in [

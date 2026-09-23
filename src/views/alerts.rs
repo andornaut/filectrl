@@ -18,6 +18,10 @@ use crate::{
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
+/// Longest alert kept, in characters. A message can quote text from outside
+/// (a clipboard entry, a path), and every frame wraps each alert again, so an
+/// unbounded one would slow every redraw until the alerts are cleared.
+const MAX_ALERT_CHARS: usize = 1000;
 const MIN_HEIGHT_BORDERED: u16 = 3; // border(2) + 1 alert line
 const MIN_HEIGHT_BORDERLESS: u16 = MIN_HEIGHT_BORDERED - 2; // 1 alert line
 
@@ -59,7 +63,11 @@ impl AlertsView {
 }
 
 impl AlertsView {
-    fn add_alert(&mut self, kind: AlertKind, message: String) -> CommandResult {
+    fn add_alert(&mut self, kind: AlertKind, mut message: String) -> CommandResult {
+        if let Some((end, _)) = message.char_indices().nth(MAX_ALERT_CHARS) {
+            message.truncate(end);
+            message.push('…');
+        }
         match kind {
             AlertKind::Info => log::info!("{message}"),
             AlertKind::Warn => log::warn!("{message}"),
@@ -88,7 +96,7 @@ impl AlertsView {
         let border_size = if Self::has_border(area) { 2 } else { 0 };
         let inner_width = area.width.saturating_sub(border_size);
         let items = self.alerts(inner_width);
-        as_dimension(items.len()) + border_size
+        as_dimension(items.len()).saturating_add(border_size)
     }
 
     fn alerts(&self, inner_width: u16) -> Vec<(AlertKind, Line<'_>)> {
@@ -207,6 +215,16 @@ mod tests {
             format!("msg{}", MAX_NUMBER_ALERTS + 1)
         );
         assert_eq!(v.alerts.back().unwrap().1, "msg2");
+    }
+
+    #[test_case(MAX_ALERT_CHARS => MAX_ALERT_CHARS ; "at the limit is kept whole")]
+    #[test_case(MAX_ALERT_CHARS + 1 => MAX_ALERT_CHARS + 1 ; "past the limit is cut and ends in an ellipsis")]
+    fn a_long_alert_is_truncated(length: usize) -> usize {
+        let mut v = view();
+        v.add_alert(AlertKind::Warn, "é".repeat(length));
+        let kept = &v.alerts.front().unwrap().1;
+        assert_eq!(length > MAX_ALERT_CHARS, kept.ends_with('…'));
+        kept.chars().count()
     }
 
     /// One short alert, whose single line the border wraps when there is room

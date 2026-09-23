@@ -59,6 +59,12 @@ pub enum PromptAction {
         name: String,
     },
     Search(String),
+    /// A paste of a clipboard entry this window did not write, which could
+    /// have been put there by any program, confirmed before it runs.
+    ConfirmPaste {
+        entry: ClipboardEntry,
+        dest: PathInfo,
+    },
     /// A paste found `name` already present in the destination directory.
     /// `can_overwrite` is false when the existing entry is a directory, which
     /// is never replaced, so the prompt offers only the skip choices.
@@ -74,7 +80,9 @@ impl PromptAction {
     pub fn is_confirmation(&self) -> bool {
         matches!(
             self,
-            PromptAction::Delete(_) | PromptAction::Conflict { .. }
+            PromptAction::Delete(_)
+                | PromptAction::Conflict { .. }
+                | PromptAction::ConfirmPaste { .. }
         )
     }
 }

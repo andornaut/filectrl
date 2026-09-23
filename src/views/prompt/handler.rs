@@ -41,6 +41,16 @@ impl CommandHandler for PromptView {
             };
         }
 
+        // Paste of an entry from elsewhere: confirmed like a delete, since the
+        // text could have been put on the clipboard by any program.
+        if let PromptAction::ConfirmPaste { entry, dest } = &self.actions {
+            let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
+            return match code {
+                KeyCode::Char('y' | 'Y') if plain => entry.clone().into_paste(dest.clone()).into(),
+                _ => Command::CancelPrompt.into(),
+            };
+        }
+
         // Paste conflict: single keypress, uppercase answering for the rest of
         // the batch too. Overwrite is only bound when the existing entry is not
         // a directory, so an unbound key cancels the paste rather than falling
