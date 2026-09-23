@@ -117,6 +117,8 @@ Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than h
 
 Rename, chmod, delete, and the sources of a copy or cut act only on the entry that was listed. Each reads its path again first and refuses with "it changed since it was listed" when the path now names a different entry (another device or inode): the entry was replaced, or a directory above it was swapped for a symlink. A refresh of a directory that was itself replaced is refused the same way, since the marks would carry over by path to entries you never saw. The warning is shown once, and later refreshes stay silent until you navigate; navigate to it again to list the new one.
 
+On Linux, FUSE (sshfs, GNOME's gvfs) and SMB/CIFS mounts can give an entry nobody touched a new inode number, so there only the device is compared: a swap within the same mount is not detected.
+
 ### Multi-select
 
 Mark entries to apply chmod, copy, cut, or delete to several at once.

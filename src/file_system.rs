@@ -597,11 +597,7 @@ impl FileSystem {
 
     fn rename(&mut self, path: &PathInfo, new_basename: &str) -> CommandResult {
         match operations::rename(path, new_basename) {
-            Err(error) => anyhow!(
-                "Failed to rename {} to {new_basename:?}: {error}",
-                compact(&path.path)
-            )
-            .into(),
+            Err(error) => error.into(),
             Ok(()) => self.refresh(),
         }
     }
@@ -623,7 +619,9 @@ impl FileSystem {
         // warning is given once: the watcher keeps refreshing while the old
         // directory changes, and repeating it would say nothing new.
         let listed = self.current_directory().clone();
-        if PathInfo::try_from(listed.as_path()).is_ok_and(|fresh| !fresh.is_same_inode(&listed)) {
+        if PathInfo::try_from(listed.as_path())
+            .is_ok_and(|fresh| !listed.is_still_listed_as(&fresh))
+        {
             if std::mem::replace(&mut self.directory_replaced, true) {
                 return CommandResult::Handled;
             }

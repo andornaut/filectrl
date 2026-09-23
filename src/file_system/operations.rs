@@ -275,45 +275,57 @@ fn validate_basename(kind: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Renames `path` to `new_basename` in the same directory, never replacing an
+/// existing entry. Every error is the whole message: `Cannot rename` for a
+/// refusal filectrl decided, `Failed to rename` for one the system reported.
 pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
-    validate_basename("New name", new_basename)?;
     let old_path = path.as_path();
+    let refuse = |reason: &dyn std::fmt::Display| {
+        anyhow!(
+            "Cannot rename {} to {new_basename:?}: {reason}",
+            compact(old_path)
+        )
+    };
+    let fail = |error: &dyn std::fmt::Display| {
+        anyhow!(
+            "Failed to rename {} to {new_basename:?}: {error}",
+            compact(old_path)
+        )
+    };
+    validate_basename("New name", new_basename).map_err(|error| refuse(&error))?;
     let new_path = join_parent(old_path, new_basename);
     if old_path == new_path {
         return Ok(());
     }
     // Only NotFound means vanished; other errors (e.g. permission denied)
     // must not claim the file is gone.
-    let vanished = || anyhow!("{} no longer exists", compact(old_path));
+    let vanished = || refuse(&"it no longer exists");
     match restat_listed(path) {
         Ok(_) => {}
         Err(stale) if stale.is_not_found() => return Err(vanished()),
-        Err(Stale::Changed) => return Err(anyhow!("it changed since it was listed")),
-        Err(Stale::Unreadable(error)) => {
-            return Err(anyhow!("Failed to rename {}: {error}", compact(old_path)));
-        }
+        Err(Stale::Changed) => return Err(refuse(&"it changed since it was listed")),
+        Err(Stale::Unreadable(error)) => return Err(fail(&error)),
     }
     info!("Renaming {} to {}", old_path.display(), new_path.display());
     match rename_no_replace(old_path, &new_path) {
         Err(error) if error.kind() == ErrorKind::NotFound => Err(vanished()),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             if !is_same_file(old_path, &new_path) {
-                return Err(anyhow!("{} already exists", compact(&new_path)));
+                return Err(refuse(&format_args!(
+                    "{} already exists",
+                    compact(&new_path)
+                )));
             }
             // Same underlying file. A case-only change is a real rename on a
             // case-insensitive filesystem, where the destination resolves to the
             // source, so it is let through. Renaming onto another hard link of
             // the same inode is a POSIX no-op, so it is reported instead.
             if !is_case_only_change(old_path, &new_path) {
-                return Err(anyhow!(
-                    "{} and {} are the same file",
-                    compact(old_path),
-                    compact(&new_path)
-                ));
+                return Err(refuse(&"both names are the same file"));
             }
-            Ok(fs::rename(old_path, new_path)?)
+            fs::rename(old_path, new_path).map_err(|error| fail(&error))
         }
-        result => Ok(result?),
+        result => result.map_err(|error| fail(&error)),
     }
 }
 
@@ -464,7 +476,8 @@ mod tests {
             .expect_err("another entry at the listed path must be refused")
             .to_string();
 
-        assert_eq!("it changed since it was listed", error);
+        assert!(error.starts_with("Cannot rename"), "{error}");
+        assert!(error.ends_with("it changed since it was listed"), "{error}");
         assert_eq!(b"unseen".to_vec(), fs::read(&a).unwrap());
         assert!(dir.join("b.txt").symlink_metadata().is_err());
     }
@@ -483,7 +496,8 @@ mod tests {
             .expect_err("a name that is not a basename must be refused")
             .to_string();
 
-        assert_eq!("New name cannot contain '/'", error);
+        assert!(error.starts_with("Cannot rename"), "{error}");
+        assert!(error.ends_with("New name cannot contain '/'"), "{error}");
         assert!(a.exists());
         assert!(!dir.join("escaped.txt").exists());
     }

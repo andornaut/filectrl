@@ -668,7 +668,7 @@ impl Stale {
 /// metadata, since the listed mode and size may be out of date.
 pub(super) fn restat_listed(listed: &PathInfo) -> Result<PathInfo, Stale> {
     let fresh = PathInfo::try_from(listed.as_path()).map_err(Stale::Unreadable)?;
-    if !fresh.is_same_inode(listed) {
+    if !listed.is_still_listed_as(&fresh) {
         return Err(Stale::Changed);
     }
     Ok(fresh)
