@@ -75,23 +75,35 @@ impl DirectoryWatcher {
     }
 
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
-        let Some(watcher) = &mut self.watcher else {
-            return Ok(());
-        };
         // Rewatch even when the path is unchanged: an external delete and
         // recreate invalidates the watch on the old inode, and a refresh has to
         // re-register on the new one. The bookkeeping is cleared before
         // unwatching and set only after a successful watch, so
         // `watched_directory` never names a path without an active watch.
-        if let Some(old_path) = self.watched_directory.take()
-            && let Err(e) = watcher.unwatch(old_path.as_path())
-        {
-            warn!("Failed to unwatch directory: {e}");
-        }
-
+        self.unwatch();
+        let Some(watcher) = &mut self.watcher else {
+            return Ok(());
+        };
         watcher.watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
         self.watched_directory = Some(path);
         Ok(())
+    }
+}
+
+impl DirectoryWatcher {
+    /// Drops the watch on the watched directory, if there is one.
+    pub(super) fn unwatch(&mut self) {
+        if let Some(watcher) = &mut self.watcher
+            && let Some(path) = self.watched_directory.take()
+            && let Err(e) = watcher.unwatch(path.as_path())
+        {
+            warn!("Failed to unwatch directory: {e}");
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn watched_directory(&self) -> Option<&std::path::Path> {
+        self.watched_directory.as_deref()
     }
 }
 

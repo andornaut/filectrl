@@ -622,6 +622,11 @@ impl FileSystem {
                         "{} was replaced; showing the new directory",
                         compact(&listed.path)
                     )));
+                } else if let Some(watcher) = &mut self.watcher {
+                    // The watch is still on the directory that was replaced,
+                    // and each change there would retry this navigation and
+                    // report its failure again.
+                    watcher.unwatch();
                 }
                 commands.into()
             }
@@ -1741,6 +1746,34 @@ mod tests {
                 Err(error) => panic!("load did not complete: {error}"),
             }
         }
+    }
+
+    #[test]
+    fn a_replaced_directory_that_cannot_be_listed_is_no_longer_watched() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_refresh_replaced_unlistable");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let mut watcher = DirectoryWatcher::try_new(100).unwrap();
+        watcher.watch_directory(sub.clone()).unwrap();
+        file_system.watcher = Some(watcher);
+        file_system.directory = Some(PathInfo::try_from(sub.as_path()).unwrap());
+        fs::rename(&sub, root.join("sub.orig")).unwrap();
+        fs::write(&sub, b"not a directory").unwrap();
+
+        let commands = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+
+        assert!(
+            matches!(commands.as_slice(), [Command::AlertError(_)]),
+            "{commands:?}"
+        );
+        // Otherwise every change to the old directory would repeat the error.
+        let watcher = file_system.watcher.as_ref().unwrap();
+        assert_eq!(None, watcher.watched_directory());
     }
 
     #[test]

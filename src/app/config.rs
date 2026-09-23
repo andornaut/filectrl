@@ -1300,7 +1300,10 @@ open_directory = "alacritty --working-directory %s"
 
         let error = load_err(Some(config), &[]);
 
-        let expected = format!("Failed to parse {}: ", dir.join("bad.toml").display());
+        // Includes resolve from the canonical config directory, which differs
+        // where the temporary directory is reached through a symlink (macOS).
+        let bad = dir.path().canonicalize().unwrap().join("bad.toml");
+        let expected = format!("Failed to parse {}: ", bad.display());
         assert!(error.starts_with(&expected), "{error}");
     }
 
