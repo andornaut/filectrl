@@ -129,12 +129,11 @@ mod tests {
     /// program that prints its arguments NUL-terminated. Returns the words it
     /// printed and whether anything ran `touch`.
     fn run(template: &str, parameters: Parameters, values: &[&OsStr]) -> (Vec<Vec<u8>>, bool) {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = crate::test_support::TempDir::new("shell_command");
-        let rec = dir.join("rec");
-        std::fs::write(&rec, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
-        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::write_executable(
+            &dir.join("rec"),
+            "#!/bin/sh\nprintf '%s\\0' \"$@\"\n",
+        );
         let argv = command(
             template,
             parameters,

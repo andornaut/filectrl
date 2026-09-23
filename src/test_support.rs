@@ -5,6 +5,27 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+/// Writes `contents` to `path` as an executable script, from a child process.
+///
+/// Written here, the file would be open for writing in this process for a
+/// moment, and a test on another thread forking then would hand that open file
+/// to its child. Running the script fails with "Text file busy" for as long as
+/// any process holds it open for writing, so the test that runs it would fail
+/// at random.
+pub(crate) fn write_executable(path: &Path, contents: &str) {
+    let status = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            r#"printf '%s' "$1" > "$2" && chmod 755 "$2""#,
+            "sh",
+            contents,
+        ])
+        .arg(path)
+        .status()
+        .expect("the shell should run");
+    assert!(status.success(), "failed to write {}", path.display());
+}
+
 /// A unique temp directory, removed when dropped.
 ///
 /// Starting clean matters as much as being unique: tests that assert an

@@ -1128,7 +1128,7 @@ open_directory = "alacritty --working-directory %s"
     /// arguments, so the check is what the program would have received.
     #[test]
     fn the_default_openers_pass_a_hostile_name_through_intact() {
-        use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+        use std::os::unix::ffi::OsStrExt;
 
         use crate::file_system::shell;
 
@@ -1136,13 +1136,10 @@ open_directory = "alacritty --working-directory %s"
         let bin = dir.join("bin");
         fs::create_dir(&bin).unwrap();
         for program in ["xterm", "xdg-open", "osascript", "open"] {
-            let stub = bin.join(program);
-            fs::write(
-                &stub,
+            crate::test_support::write_executable(
+                &bin.join(program),
                 "#!/bin/sh\nprintf '%s\\0' \"$(pwd)\" \"$@\" > \"$STUB_OUT\"\n",
-            )
-            .unwrap();
-            fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+            );
         }
         let target = dir.join("it's a $(touch pwned);\"x\"");
         fs::create_dir(&target).unwrap();

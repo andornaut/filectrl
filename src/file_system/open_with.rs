@@ -52,17 +52,15 @@ pub struct AppCandidate {
 }
 
 /// The applications that can open `path`, most preferred first, always followed
-/// by the configured opener when one is set, and a message for each installed
-/// application left out because opening the file with it could run the file's
-/// name as code.
-pub fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
+/// by the configured opener when one is set.
+pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     // Resolve symlinks so that the type is sniffed from the target. The result
     // is always absolute, which desktop entries expect and which keeps a path
     // from ever being read as a command line flag.
     let path = std::fs::canonicalize(path)
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf());
-    let (mut candidates, refused) = platform_candidates(&path);
+    let mut candidates = platform_candidates(&path);
     // On the full names, so two that differ only past the cut both stay.
     dedupe_by_name(&mut candidates);
     for candidate in &mut candidates {
@@ -71,7 +69,7 @@ pub fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
     if let Some(fallback) = configured_opener(&path) {
         candidates.push(fallback);
     }
-    (candidates, refused)
+    candidates
 }
 
 /// Longest application name shown, so the detail after it that tells two
@@ -99,20 +97,18 @@ fn dedupe_by_name(candidates: &mut Vec<AppCandidate>) {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_candidates(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
+fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
     linux::candidates_for(path)
 }
 
-/// Launch Services hands back applications, not command lines, so nothing is
-/// refused.
 #[cfg(target_os = "macos")]
-fn platform_candidates(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
-    (macos::candidates_for(path), Vec::new())
+fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
+    macos::candidates_for(path)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn platform_candidates(_: &Path) -> (Vec<AppCandidate>, Vec<String>) {
-    (Vec::new(), Vec::new())
+fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
+    Vec::new()
 }
 
 /// The `openers` template for this kind of path, offered last so that the

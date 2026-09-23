@@ -140,22 +140,19 @@ fn sources() -> &'static Sources {
     })
 }
 
-/// The applications for `path`, and a message for each installed one refused
-/// because its `Exec` would let the file name run as code.
-pub(super) fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
+pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     let started = Instant::now();
-    let mut refused = Vec::new();
-    let candidates = candidates_from(sources(), path, &mut refused);
+    let candidates = candidates_from(sources(), path);
     debug!(
         "Found {} application(s) for {} in {:?}",
         candidates.len(),
         path.display(),
         started.elapsed()
     );
-    (candidates, refused)
+    candidates
 }
 
-fn candidates_from(sources: &Sources, path: &Path, refused: &mut Vec<String>) -> Vec<AppCandidate> {
+fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
     let chain = mime_chain(path);
     debug!("Resolved {} to MIME types: {chain:?}", path.display());
     let is_usable = |file: &Path| {
@@ -172,7 +169,7 @@ fn candidates_from(sources: &Sources, path: &Path, refused: &mut Vec<String>) ->
                 .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
                 .ok()?;
             let is_default = associations.default.as_deref() == Some(id);
-            to_candidate(&locales, path, is_default, &entry, refused)
+            to_candidate(&locales, path, is_default, &entry)
         })
         .collect()
 }
@@ -264,14 +261,14 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
     entry.try_exec().is_none_or(is_installed)
 }
 
-/// `refused` collects the message for an entry `expand` refuses as unsafe,
-/// which is also logged; any other reason to skip one is logged at debug only.
+/// An entry `expand` refuses as unsafe is logged as a warning, since the
+/// application is installed and would otherwise have been offered; any other
+/// reason to skip one is logged at debug only.
 fn to_candidate(
     locales: &[String],
     path: &Path,
     is_default: bool,
     entry: &DesktopEntry,
-    refused: &mut Vec<String>,
 ) -> Option<AppCandidate> {
     let file = entry.path.as_path();
     if !is_offerable(entry) {
@@ -294,9 +291,7 @@ fn to_candidate(
     let mut argv = expand(&context, entry.exec()?)
         .inspect_err(|error| {
             if error.is::<Refused>() {
-                let message = format!("Cannot offer {}: {error}", compact(file));
-                warn!("{message}");
-                refused.push(message);
+                warn!("Cannot offer {}: {error}", compact(file));
             } else {
                 debug!("Skipping {}: {error}", file.display());
             }
@@ -584,30 +579,6 @@ mod tests {
         assert_eq!(expected, is_offerable(&entry), "{body:?}");
     }
 
-    /// Installed and otherwise offerable, so the user is told why it is not.
-    /// One merely malformed is only logged.
-    #[test_case("Exec=sh -c %f\n", true ; "a code in a shell's script is reported")]
-    #[test_case("Exec=view \"unmatched\n", false ; "a malformed exec is not")]
-    fn an_entry_refused_as_unsafe_is_reported(exec: &str, reported: bool) {
-        Config::init_test();
-        let dir = TempDir::new("open_with_refused");
-        let body = format!("[Desktop Entry]\nType=Application\nName=Viewer\n{exec}");
-        let entry = desktop_entry(&dir, "viewer.desktop", &body);
-        let mut refused = Vec::new();
-
-        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry, &mut refused);
-
-        assert_eq!(None, candidate);
-        assert_eq!(reported, !refused.is_empty(), "{refused:?}");
-        if reported {
-            assert!(refused[0].starts_with("Cannot offer"), "{refused:?}");
-            assert!(
-                refused[0].ends_with("cannot be passed safely"),
-                "{refused:?}"
-            );
-        }
-    }
-
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n", true
         ; "an application is offered")]
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nHidden=true\n", false
@@ -619,13 +590,7 @@ mod tests {
         let dir = TempDir::new("open_with_entry");
         let entry = desktop_entry(&dir, "viewer.desktop", body);
 
-        let candidate = to_candidate(
-            &[],
-            Path::new("/tmp/file.txt"),
-            false,
-            &entry,
-            &mut Vec::new(),
-        );
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry);
 
         assert_eq!(expected, candidate.is_some(), "{body:?}");
     }
@@ -640,14 +605,7 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTerminal=true\n",
         );
 
-        let candidate = to_candidate(
-            &[],
-            Path::new("/tmp/file.txt"),
-            false,
-            &entry,
-            &mut Vec::new(),
-        )
-        .unwrap();
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry).unwrap();
 
         // The shipped `run_in_terminal` is `xterm -e %s`.
         assert_eq!(
@@ -824,7 +782,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[data]);
 
-        let candidates = candidates_from(&sources, &file, &mut Vec::new());
+        let candidates = candidates_from(&sources, &file);
 
         let named = |name: &str| {
             candidates
@@ -867,7 +825,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
 
-        let candidates = candidates_from(&sources, &file, &mut Vec::new());
+        let candidates = candidates_from(&sources, &file);
 
         let defaults: Vec<&str> = candidates
             .iter()
@@ -904,7 +862,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
 
-        let candidates = candidates_from(&sources, &file, &mut Vec::new());
+        let candidates = candidates_from(&sources, &file);
 
         let defaults: Vec<&str> = candidates
             .iter()
@@ -923,7 +881,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[data]);
 
-        let candidates = candidates_from(&sources, &file, &mut Vec::new());
+        let candidates = candidates_from(&sources, &file);
 
         let working_dir = |name: &str| {
             candidates
