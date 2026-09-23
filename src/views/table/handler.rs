@@ -3,7 +3,7 @@ use ratatui::{
     prelude::Position,
 };
 
-use super::{TableView, columns::SortColumn, navigation::Reselect};
+use super::{TableView, columns::SortColumn, navigation::Reselect, style::ClipboardHighlight};
 use crate::{
     app::config::{
         Config,
@@ -38,7 +38,7 @@ impl CommandHandler for TableView {
                 CommandResult::NotHandled
             }
             Command::ConfirmDelete => {
-                let paths = std::mem::take(&mut self.pending_delete);
+                let paths = self.pending_delete.take();
                 if paths.is_empty() {
                     CommandResult::Handled
                 } else {
@@ -46,7 +46,7 @@ impl CommandHandler for TableView {
                 }
             }
             Command::SetClipboardEntry(entry) => {
-                self.clipboard_entry.clone_from(entry);
+                self.clipboard = entry.as_ref().map(ClipboardHighlight::from);
                 CommandResult::NotHandled
             }
             Command::NavigatedDirectory {
@@ -300,7 +300,7 @@ impl TableView {
     }
 
     fn reset_view(&mut self, previous_mode: ListingMode) -> CommandResult {
-        self.clipboard_entry = None;
+        self.clipboard = None;
         self.clear_marks();
         let had_filter = !self.content.filter().is_empty();
         self.content.clear_filter();

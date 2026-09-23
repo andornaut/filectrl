@@ -5,7 +5,7 @@ pub mod open_with;
 mod operations;
 pub mod path_info;
 mod search;
-mod shell;
+pub(crate) mod shell;
 mod stream;
 mod tasks;
 mod watch;
@@ -558,15 +558,7 @@ impl FileSystem {
         // channel drain.
         let mut commands: Vec<Command> = paths
             .iter()
-            .filter_map(|path| {
-                operations::chmod(path, mode).err().map(|error| {
-                    anyhow!(
-                        "Failed to chmod {} to {mode_str}: {error}",
-                        compact(&path.path)
-                    )
-                    .into()
-                })
-            })
+            .filter_map(|path| operations::chmod(path, mode).err().map(Into::into))
             .collect();
         commands.extend(self.refresh().into_commands());
         commands.into()

@@ -2,9 +2,20 @@
 //!
 //! <https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html>
 
-use std::{ffi::OsString, fmt::Write as _, os::unix::ffi::OsStrExt, path::Path};
+use std::{
+    ffi::{OsStr, OsString},
+    fmt::Write as _,
+    os::unix::ffi::OsStrExt,
+    path::Path,
+};
 
 use anyhow::{Result, anyhow};
+
+use crate::file_system::shell;
+
+/// Follows the '%' of a field code that `mark_quoted_codes` found inside
+/// quotes. A private use character, so no meaningful `Exec` contains one.
+const QUOTED_CODE: char = '\u{E000}';
 
 /// The values substituted into a desktop entry's `Exec=` field codes.
 pub(super) struct ExecContext<'a> {
@@ -31,7 +42,7 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     // The desktop entry string escapes are undone before the quoting rules are
     // applied, so a literal backslash inside a quoted argument is written as
     // four backslashes.
-    let unescaped = unescape_value(exec);
+    let unescaped = mark_quoted_codes(&unescape_value(exec));
 
     // The spec's quoting (double quotes, backslash-escaping of " ` $ \) is a
     // subset of POSIX quoting.
@@ -41,7 +52,15 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     // Only ever one path, so %F and %U behave as %f and %u.
     let mut argv: Vec<OsString> = Vec::with_capacity(tokens.len() + 1);
     let mut consumed_path = false;
-    for token in tokens {
+    for mut token in tokens {
+        // A quoted argument that is nothing but one field code (`app "%f"`)
+        // becomes a single argv element that no shell reads, so the value is
+        // passed raw, as it would be unquoted.
+        if let [first, QUOTED_CODE, _] = token.chars().collect::<Vec<_>>()[..]
+            && first == '%'
+        {
+            token.remove(first.len_utf8());
+        }
         match token.as_str() {
             // The only code that expands to more than one argument.
             "%i" => {
@@ -80,35 +99,96 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
 /// Substitute the field codes appearing anywhere within a single argument, so
 /// that `--file=%f` works as well as a bare `%f`. Returns the expansion and
 /// whether it consumed the path.
+///
+/// A code that was inside quotes is substituted shell quoted, as glib does. The
+/// spec leaves that case undefined, and in practice the quoted argument is a
+/// script (`sh -c "mpv %f"`), where a raw name would be run as shell code.
 fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
     let mut expanded = OsString::with_capacity(token.len());
     let mut consumed_path = false;
-    let mut chars = token.chars();
+    let mut chars = token.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '%' {
             expanded.push(c.encode_utf8(&mut [0u8; 4]));
             continue;
         }
+        let quoted = chars.next_if_eq(&QUOTED_CODE).is_some();
+        // Pushed as an `OsStr`, so a name that is not valid UTF-8 reaches the
+        // program intact rather than as replacement characters.
+        let mut push = |value: &OsStr| {
+            if quoted {
+                expanded.push(shell::quote(value));
+            } else {
+                expanded.push(value);
+            }
+        };
         match chars.next() {
-            Some('%') => expanded.push("%"),
-            // Pushed as an `OsStr`, so a name that is not valid UTF-8 reaches
-            // the program intact rather than as replacement characters.
+            Some('%') => push(OsStr::new("%")),
             Some('f' | 'F') => {
-                expanded.push(context.path.as_os_str());
+                push(context.path.as_os_str());
                 consumed_path = true;
             }
             Some('u' | 'U') => {
-                expanded.push(context.uri);
+                push(OsStr::new(context.uri));
                 consumed_path = true;
             }
-            Some('c') => expanded.push(context.name),
-            Some('k') => expanded.push(context.desktop_file.as_os_str()),
+            Some('c') => push(OsStr::new(context.name)),
+            Some('k') => push(context.desktop_file.as_os_str()),
             // Deprecated, unrecognized, %i in a position where it cannot expand
             // to two arguments, and a trailing '%' are all dropped.
             _ => {}
         }
     }
     (expanded, consumed_path)
+}
+
+/// Follow the '%' of every field code that sits inside single or double quotes
+/// with `QUOTED_CODE`, so `expand_in_token` can still tell after the quotes are
+/// removed. The quote state is tracked the way `shell_words::split` tracks it.
+fn mark_quoted_codes(exec: &str) -> String {
+    enum State {
+        Delimiter,
+        Unquoted,
+        Backslash { in_word: bool },
+        Single,
+        Double,
+        DoubleBackslash,
+        Comment,
+    }
+
+    let mut marked = String::with_capacity(exec.len());
+    let mut state = State::Delimiter;
+    let mut chars = exec.chars().peekable();
+    while let Some(c) = chars.next() {
+        marked.push(c);
+        let quoted = matches!(
+            state,
+            State::Single | State::Double | State::DoubleBackslash
+        );
+        if quoted && c == '%' {
+            // "%%" is a literal percent rather than a code.
+            match chars.next_if_eq(&'%') {
+                Some(percent) => marked.push(percent),
+                None => marked.push(QUOTED_CODE),
+            }
+        }
+        state = match (state, c) {
+            (State::Delimiter | State::Unquoted, ' ' | '\t' | '\n')
+            | (State::Backslash { in_word: false } | State::Comment, '\n') => State::Delimiter,
+            (State::Delimiter, '#') | (State::Comment, _) => State::Comment,
+            (State::Delimiter | State::Unquoted, '\'') => State::Single,
+            (State::Delimiter | State::Unquoted, '"') => State::Double,
+            (State::Delimiter, '\\') => State::Backslash { in_word: false },
+            (State::Unquoted, '\\') => State::Backslash { in_word: true },
+            (State::Delimiter | State::Unquoted | State::Backslash { .. }, _)
+            | (State::Single, '\'')
+            | (State::Double, '"') => State::Unquoted,
+            (State::Single, _) => State::Single,
+            (State::Double, '\\') => State::DoubleBackslash,
+            (State::Double | State::DoubleBackslash, _) => State::Double,
+        };
+    }
+    marked
 }
 
 /// The `file://` URI of an absolute path, for the `%u` and `%U` field codes.
@@ -251,6 +331,64 @@ mod tests {
         assert_eq!(name, argv[1]);
         // The URI encodes the byte itself rather than a replacement character.
         assert_eq!("file:///tmp/caf%E9.txt", uri);
+    }
+
+    /// A name that runs a command if a shell ever reads it unquoted.
+    const HOSTILE: &str = "/v/x$(touch pwned).mp4";
+
+    fn hostile_context() -> ExecContext<'static> {
+        ExecContext {
+            path: Path::new(HOSTILE),
+            ..context()
+        }
+    }
+
+    // Inside quotes the argument is typically a script, so the name is quoted
+    // for the shell that will read it.
+    #[test_case("sh -c \"mpv %f\"", &["sh", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "double quoted script")]
+    #[test_case("sh -c 'mpv %f'", &["sh", "-c", "mpv '/v/x$(touch pwned).mp4'"] ; "single quoted script")]
+    // A quoted argument that is only the code is one argv element, so it is
+    // passed raw.
+    #[test_case("app \"%f\"", &["app", HOSTILE] ; "a quoted code on its own")]
+    #[test_case("app '%f'", &["app", HOSTILE] ; "a single quoted code on its own")]
+    #[test_case("sh -c \"printf %%s %f\"", &["sh", "-c", "printf %s '/v/x$(touch pwned).mp4'"] ; "quoted percent stays literal")]
+    // Outside quotes the value is one argv element and no shell reads it, so it
+    // is passed raw, embedded or not.
+    #[test_case("mpv %f", &["mpv", HOSTILE] ; "bare code is raw")]
+    #[test_case("mpv --file=%f", &["mpv", "--file=/v/x$(touch pwned).mp4"] ; "unquoted embedded code is raw")]
+    // A single quote inside double quotes opens nothing, so the code after the
+    // closing double quote is outside quotes.
+    #[test_case("app \"it's\" %f", &["app", "it's", HOSTILE] ; "a quote inside the other kind")]
+    fn expand_quotes_only_codes_inside_quotes(exec: &str, expected: &[&str]) {
+        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
+    }
+
+    /// Runs the expanded argv, so the check is what the shell does with the
+    /// name rather than what the string looks like.
+    #[test]
+    fn a_quoted_script_receives_the_name_as_inert_text() {
+        let dir = crate::test_support::TempDir::new("exec_hostile");
+        let path = dir.join("x$(touch pwned).mp4");
+        let uri = file_uri(&path);
+        let context = ExecContext {
+            path: &path,
+            uri: &uri,
+            ..context()
+        };
+        let argv = expand(&context, "sh -c \"printf %%s %f\"").unwrap();
+
+        let output = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            path.as_os_str().as_encoded_bytes(),
+            output.stdout.as_slice()
+        );
+        assert!(!dir.join("pwned").exists());
     }
 
     #[test_case("/a/b.txt", "file:///a/b.txt" ; "unreserved characters pass through")]

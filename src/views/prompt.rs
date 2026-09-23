@@ -335,7 +335,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::config::Config,
+        app::config::{Config, keybindings::Action},
         command::{Command, ConflictChoice, PromptAction, handler::CommandHandler},
         file_system::path_info::PathInfo,
         test_support::TempDir,
@@ -439,6 +439,93 @@ mod tests {
             .is_confirmation()
         );
         assert!(!PromptAction::CreateDirectory.is_confirmation());
+    }
+
+    // ── delete prompt ────────────────────────────────────────────────────────
+
+    #[test_case(KeyCode::Char('y'), KeyModifiers::NONE => Command::ConfirmDelete ; "y confirms")]
+    #[test_case(KeyCode::Char('Y'), KeyModifiers::SHIFT => Command::ConfirmDelete ; "uppercase Y confirms")]
+    #[test_case(KeyCode::Char('y'), KeyModifiers::CONTROL => Command::CancelPrompt ; "ctrl y cancels")]
+    #[test_case(KeyCode::Char('y'), KeyModifiers::ALT => Command::CancelPrompt ; "alt y cancels")]
+    #[test_case(KeyCode::Char('Y'), KeyModifiers::CONTROL | KeyModifiers::SHIFT => Command::CancelPrompt ; "ctrl shift y cancels")]
+    #[test_case(KeyCode::Char('n'), KeyModifiers::NONE => Command::CancelPrompt ; "n cancels")]
+    #[test_case(KeyCode::Enter, KeyModifiers::NONE => Command::CancelPrompt ; "enter cancels")]
+    #[test_case(KeyCode::Esc, KeyModifiers::NONE => Command::CancelPrompt ; "esc cancels")]
+    #[test_case(KeyCode::Char('q'), KeyModifiers::NONE => Command::CancelPrompt ; "any other key cancels")]
+    fn a_delete_prompt_answers_on_one_keypress(code: KeyCode, modifiers: KeyModifiers) -> Command {
+        let mut view = prompt_with_action(PromptAction::Delete(1));
+        Command::try_from(view.handle_key(code, modifiers)).unwrap()
+    }
+
+    // ── copy and cut ─────────────────────────────────────────────────────────
+
+    /// "hello world" with "world" selected.
+    fn prompt_with_selection() -> PromptView {
+        let mut view = prompt_with_action(PromptAction::Filter("hello world".into()));
+        view.text_area.move_cursor(CursorMove::Jump(0, 6));
+        view.text_area.start_selection();
+        view.text_area.move_cursor(CursorMove::End);
+        view
+    }
+
+    // A key that ratatui-textarea does not treat as copy or cut itself, so only
+    // the binding can make it do either. Ctrl+k deletes to the end of the line
+    // when it reaches the textarea.
+    #[test_case(KeyCode::Char('c'), KeyModifiers::ALT ; "alt c")]
+    #[test_case(KeyCode::Char('k'), KeyModifiers::CONTROL ; "ctrl k")]
+    fn a_rebound_copy_sets_the_clipboard_to_the_selection(code: KeyCode, modifiers: KeyModifiers) {
+        let mut view = prompt_with_selection();
+        // A stale yank, which a copy that did not happen would send instead.
+        view.text_area.set_yank_text("stale");
+        let result = view.handle_text_key(Some(Action::PromptCopy), code, modifiers);
+        assert_eq!(
+            CommandResult::from(Command::SetClipboardText("world".to_string())),
+            result
+        );
+        assert_eq!("hello world", view.text_area.lines()[0]);
+    }
+
+    #[test_case(KeyCode::Char('x'), KeyModifiers::ALT ; "alt x")]
+    #[test_case(KeyCode::Char('k'), KeyModifiers::CONTROL ; "ctrl k")]
+    fn a_rebound_cut_removes_the_selection_into_the_clipboard(
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) {
+        let mut view = prompt_with_selection();
+        view.text_area.set_yank_text("stale");
+        let result = view.handle_text_key(Some(Action::PromptCut), code, modifiers);
+        assert_eq!(
+            CommandResult::from(Command::SetClipboardText("world".to_string())),
+            result
+        );
+        assert_eq!("hello ", view.text_area.lines()[0]);
+    }
+
+    #[test_case(Action::PromptCopy ; "copy")]
+    #[test_case(Action::PromptCut ; "cut")]
+    fn copy_or_cut_without_a_selection_leaves_the_clipboard_alone(action: Action) {
+        let mut view = prompt_with_action(PromptAction::Filter("hello".into()));
+        view.text_area.set_yank_text("stale");
+        let result = view.handle_text_key(Some(action), KeyCode::Char('c'), KeyModifiers::ALT);
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!("hello", view.text_area.lines()[0]);
+    }
+
+    // A selection that was started and then moved back to its anchor, as with
+    // Shift+Left then Shift+Right at the end of the input, is still selecting
+    // but empty.
+    #[test_case(Action::PromptCopy ; "copy")]
+    #[test_case(Action::PromptCut ; "cut")]
+    fn copy_or_cut_of_an_empty_selection_leaves_the_clipboard_alone(action: Action) {
+        let mut view = prompt_with_action(PromptAction::Filter("hello".into()));
+        view.text_area.set_yank_text("stale");
+        view.text_area.start_selection();
+        view.text_area.move_cursor(CursorMove::Back);
+        view.text_area.move_cursor(CursorMove::Forward);
+        assert!(view.text_area.is_selecting());
+        let result = view.handle_text_key(Some(action), KeyCode::Char('c'), KeyModifiers::ALT);
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!("hello", view.text_area.lines()[0]);
     }
 
     // ── next_scroll_top ──────────────────────────────────────────────────────

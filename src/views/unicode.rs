@@ -25,6 +25,34 @@ pub(super) fn split_with_ellipsis(line: &str, width: usize) -> Vec<String> {
     parts
 }
 
+/// The number of lines `split_with_ellipsis` returns, counted without building
+/// them. Walks the graphemes with the same break rule as `split`.
+pub(super) fn split_line_count(line: &str, width: usize) -> usize {
+    assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
+
+    if line.cell_width() as usize <= width {
+        return 1;
+    }
+
+    let chunk_width = width.saturating_sub(ELLIPSIS_WIDTH);
+    let mut count = 0;
+    let mut current_width = 0;
+    let mut current_is_empty = true;
+    for g in line.graphemes(true) {
+        let g_width = g.cell_width() as usize;
+        if current_width + g_width > chunk_width && !current_is_empty {
+            count += 1;
+            current_width = 0;
+        }
+        current_is_empty = false;
+        current_width += g_width;
+    }
+    if !current_is_empty {
+        count += 1;
+    }
+    count
+}
+
 pub(super) fn truncate_left(line: &str, width: usize) -> String {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
@@ -123,6 +151,30 @@ mod tests {
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn split_with_ellipsis_panics_when_width_equals_ellipsis_width() {
         split_with_ellipsis("example", 1);
+    }
+
+    #[test]
+    fn split_line_count_agrees_with_split_with_ellipsis() {
+        let texts = [
+            "",
+            "example",
+            "a_very_long_file_name_that_must_wrap_across_several_lines.txt",
+            "ab cd ef",
+            "中文文件名称非常长非常长非常长.txt",
+            "a中b文c字d",
+            "e\u{0301}e\u{0301}e\u{0301}e\u{0301}e\u{0301}",
+            "ab\u{0915}\u{093F}cd\u{0915}\u{093F}ef",
+            "\u{200B}\u{200B}abc",
+        ];
+        for text in texts {
+            for width in 2..=text.cell_width() as usize + 2 {
+                assert_eq!(
+                    split_with_ellipsis(text, width).len(),
+                    split_line_count(text, width),
+                    "{text:?} at width {width}"
+                );
+            }
+        }
     }
 
     // ── truncate_left ─────────────────────────────────────────────────────────

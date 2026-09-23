@@ -1,8 +1,36 @@
-use super::TableView;
+use super::{TableView, style::PathSet};
 use crate::{
     command::{Command, PromptAction, result::CommandResult},
-    file_system::path_info::PathInfo,
+    file_system::path_info::{PathInfo, compact},
 };
+
+/// The entries a delete prompt is waiting on, with their paths indexed for the
+/// render's per-row lookup.
+#[derive(Default)]
+pub(super) struct PendingDelete {
+    paths: Vec<PathInfo>,
+    index: PathSet,
+}
+
+impl PendingDelete {
+    fn set(&mut self, paths: Vec<PathInfo>) {
+        self.index = PathSet::new(&paths);
+        self.paths = paths;
+    }
+
+    pub(super) fn take(&mut self) -> Vec<PathInfo> {
+        self.index = PathSet::default();
+        std::mem::take(&mut self.paths)
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.take();
+    }
+
+    pub(super) fn contains(&self, item: &PathInfo) -> bool {
+        self.index.contains(item)
+    }
+}
 
 impl TableView {
     pub(super) fn delete(&mut self) -> CommandResult {
@@ -15,7 +43,7 @@ impl TableView {
             }
         };
         let count = paths.len();
-        self.pending_delete = paths;
+        self.pending_delete.set(paths);
         Command::OpenPrompt(PromptAction::Delete(count)).into()
     }
 
@@ -47,6 +75,16 @@ impl TableView {
             (self.marked_paths(), String::new())
         } else {
             match self.selected_path() {
+                // A symlink's own mode is always 777 and chmod would apply to
+                // its target, so the prompt would offer the wrong mode for the
+                // wrong file. A marked symlink is refused when the chmod runs.
+                Some(path) if path.is_symlink() => {
+                    return Command::AlertWarn(format!(
+                        "Cannot chmod {}: it is a symlink",
+                        compact(&path.path)
+                    ))
+                    .into();
+                }
                 Some(path) => {
                     let mode = format!("{:o}", path.mode() & 0o7777);
                     (vec![path.clone()], mode)
@@ -177,7 +215,7 @@ mod tests {
         // The count in the prompt and the paths held for the confirmation have
         // to agree, or the message names a number the delete does not act on.
         assert_eq!(PromptAction::Delete(2), action);
-        assert_eq!(vec!["a", "b"], names(&table.pending_delete));
+        assert_eq!(vec!["a", "b"], names(&table.pending_delete.paths));
     }
 
     #[test]
@@ -188,7 +226,22 @@ mod tests {
         let action = prompt(table.delete());
 
         assert_eq!(PromptAction::Delete(1), action);
-        assert_eq!(vec!["c"], names(&table.pending_delete));
+        assert_eq!(vec!["c"], names(&table.pending_delete.paths));
+    }
+
+    #[test]
+    fn the_rows_shown_as_pending_delete_are_the_ones_held_for_confirmation() {
+        let (_dir, mut table) = marked_table();
+        let entries = table.content.items_sorted().to_vec();
+
+        table.delete();
+        assert!(table.pending_delete.contains(&entries[0]));
+        assert!(!table.pending_delete.contains(&entries[2]));
+
+        // Confirming hands the paths off, so no row stays styled for a delete
+        // that is no longer pending.
+        table.pending_delete.take();
+        assert!(!table.pending_delete.contains(&entries[0]));
     }
 
     #[test]
@@ -212,6 +265,27 @@ mod tests {
         };
         assert_eq!(vec!["c"], names(&paths));
         assert_eq!("640", mode);
+    }
+
+    #[test]
+    fn chmod_refuses_a_symlink_under_the_cursor_before_prompting() {
+        let (dir, mut table) = marked_table();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(dir.join("c"), &link).unwrap();
+        table.clear_marks();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table
+            .content
+            .append(&[PathInfo::try_from(link.as_path()).unwrap()]);
+        table.finish_directory();
+
+        match Command::try_from(table.open_chmod_prompt()) {
+            Ok(Command::AlertWarn(message)) => {
+                assert!(message.starts_with("Cannot chmod"), "{message}");
+                assert!(message.ends_with("it is a symlink"), "{message}");
+            }
+            other => panic!("expected the symlink to be refused, got {other:?}"),
+        }
     }
 
     #[test]

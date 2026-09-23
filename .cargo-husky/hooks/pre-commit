@@ -20,5 +20,5 @@ if [ -n "$staged" ]; then
 fi
 echo '+cargo test'
 cargo test
-echo '+cargo check'
-cargo check
+echo '+cargo clippy'
+cargo clippy --all-targets -- -D warnings

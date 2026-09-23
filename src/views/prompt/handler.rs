@@ -30,10 +30,13 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        // Delete confirmation: single-keypress y/Y confirms, anything else cancels
+        // Delete confirmation: single-keypress y/Y confirms, anything else
+        // cancels. A chord such as Ctrl+y is a different key and must not
+        // confirm a permanent delete, so only Shift may accompany the letter.
         if matches!(self.actions, PromptAction::Delete(_)) {
+            let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
-                KeyCode::Char('y' | 'Y') => Command::ConfirmDelete.into(),
+                KeyCode::Char('y' | 'Y') if plain => Command::ConfirmDelete.into(),
                 _ => Command::CancelPrompt.into(),
             };
         }
@@ -71,9 +74,53 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Rebindable prompt keys (lookup once, reuse after textarea input)
         let action = Config::global().keybindings.prompt_action(code, modifiers);
+        self.handle_text_key(action, code, modifiers)
+    }
 
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
+        let visual_col = event.column.saturating_sub(self.render_area.x);
+        let char_idx = self.display_col_to_char_idx(visual_col.saturating_add(self.scroll_col));
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.text_area.cancel_selection();
+                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if !self.text_area.is_selecting() {
+                    self.text_area.start_selection();
+                }
+                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
+            }
+            _ => {
+                self.text_area.input(Input::from(event)); // handles scroll wheel
+            }
+        }
+        CommandResult::Handled
+    }
+
+    fn should_handle_key(&self, mode: InputMode) -> bool {
+        matches!(mode, InputMode::Prompt)
+    }
+
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
+        self.render_area.contains(Position {
+            x: event.column,
+            y: event.row,
+        })
+    }
+}
+
+impl PromptView {
+    /// The text-editing half of `handle_key`, after the single-keypress prompts
+    /// have had their turn. `action` is `code` and `modifiers` looked up in the
+    /// prompt keybindings.
+    pub(super) fn handle_text_key(
+        &mut self,
+        action: Option<Action>,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> CommandResult {
         // Goto type-ahead: Tab accepts, Enter accepts then submits,
         // Down/Up cycle through matches
         if matches!(self.actions, PromptAction::Goto { .. }) {
@@ -112,6 +159,30 @@ impl CommandHandler for PromptView {
                 self.refresh_suggestions();
                 return CommandResult::Handled;
             }
+            // Performed here rather than left to `input()`, whose copy and cut
+            // keys are hardcoded and ignore the keybindings. Without a
+            // selection there is nothing to copy, and the yank buffer still
+            // holds whatever was last cut or pasted. A selection that was
+            // started and moved back to its anchor is empty, and `copy()`
+            // leaves the yank buffer alone for it too.
+            Some(Action::PromptCopy) => {
+                if self
+                    .text_area
+                    .selection_range()
+                    .is_none_or(|(start, end)| start == end)
+                {
+                    return CommandResult::Handled;
+                }
+                self.text_area.copy();
+                return Command::SetClipboardText(self.text_area.yank_text()).into();
+            }
+            Some(Action::PromptCut) => {
+                if !self.text_area.cut() {
+                    return CommandResult::Handled;
+                }
+                self.refresh_suggestions();
+                return Command::SetClipboardText(self.text_area.yank_text()).into();
+            }
             _ => {}
         }
 
@@ -122,44 +193,6 @@ impl CommandHandler for PromptView {
             self.refresh_suggestions();
         }
 
-        // Copy/Cut must be checked after textarea processes the key, because
-        // ratatui-textarea populates yank_text from the current selection during input().
-        if matches!(action, Some(Action::PromptCopy | Action::PromptCut)) {
-            return Command::SetClipboardText(self.text_area.yank_text()).into();
-        }
-
         CommandResult::Handled
-    }
-
-    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
-        let visual_col = event.column.saturating_sub(self.render_area.x);
-        let char_idx = self.display_col_to_char_idx(visual_col.saturating_add(self.scroll_col));
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.text_area.cancel_selection();
-                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if !self.text_area.is_selecting() {
-                    self.text_area.start_selection();
-                }
-                self.text_area.move_cursor(CursorMove::Jump(0, char_idx));
-            }
-            _ => {
-                self.text_area.input(Input::from(event)); // handles scroll wheel
-            }
-        }
-        CommandResult::Handled
-    }
-
-    fn should_handle_key(&self, mode: InputMode) -> bool {
-        matches!(mode, InputMode::Prompt)
-    }
-
-    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        self.render_area.contains(Position {
-            x: event.column,
-            y: event.row,
-        })
     }
 }

@@ -1,4 +1,11 @@
-use std::{error::Error, fmt, path::PathBuf, process::ExitCode};
+use std::{
+    error::Error,
+    ffi::{OsStr, OsString},
+    fmt,
+    os::unix::ffi::{OsStrExt, OsStringExt},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use anyhow::Result;
 use argh::FromArgs;
@@ -13,12 +20,12 @@ use filectrl::{app::config::Config, print_keybindings, run};
 /// FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 struct Args {
     /// path to a configuration file
-    #[argh(option, short = 'c')]
-    config: Option<String>,
+    #[argh(option, short = 'c', from_str_fn(decode_path))]
+    config: Option<PathBuf>,
 
     /// include a TOML file to merge on top of the config (repeatable; later files take precedence)
-    #[argh(option, short = 'i')]
-    include: Vec<String>,
+    #[argh(option, short = 'i', from_str_fn(decode_path))]
+    include: Vec<PathBuf>,
 
     /// use the 256-color theme instead of detecting truecolor support
     #[argh(switch)]
@@ -45,8 +52,8 @@ struct Args {
     version: bool,
 
     /// path to a directory to navigate to
-    #[argh(positional)]
-    directory: Option<String>,
+    #[argh(positional, from_str_fn(decode_path))]
+    directory: Option<PathBuf>,
 }
 
 /// A mistake in the command line rather than a failure while carrying it out.
@@ -103,8 +110,86 @@ impl Action {
     }
 }
 
+/// argh parses `&str` alone, so an argument that is not valid UTF-8 is carried
+/// through it encoded: each byte outside a valid UTF-8 sequence becomes the
+/// private use character `ESCAPE_BASE` + byte (U+F780 to U+F7FF, since such a
+/// byte is never ASCII). A character already in that range is encoded byte by
+/// byte the same way, so `decode_arg` restores every argument exactly. Only the
+/// values of path arguments are decoded; an option name is ASCII either way.
+const ESCAPE_BASE: u32 = 0xF700;
+const ESCAPE_RANGE: std::ops::RangeInclusive<char> = '\u{F780}'..='\u{F7FF}';
+
+fn escape(byte: u8) -> char {
+    char::from_u32(ESCAPE_BASE + u32::from(byte)).expect("U+F780 to U+F7FF are characters")
+}
+
+fn encode_arg(arg: &OsStr) -> String {
+    let mut encoded = String::with_capacity(arg.len());
+    for chunk in arg.as_bytes().utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if ESCAPE_RANGE.contains(&c) {
+                for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                    encoded.push(escape(byte));
+                }
+            } else {
+                encoded.push(c);
+            }
+        }
+        for &byte in chunk.invalid() {
+            encoded.push(escape(byte));
+        }
+    }
+    encoded
+}
+
+fn decode_arg(encoded: &str) -> OsString {
+    let mut bytes = Vec::with_capacity(encoded.len());
+    for c in encoded.chars() {
+        if ESCAPE_RANGE.contains(&c) {
+            let byte = u8::try_from(u32::from(c) - ESCAPE_BASE)
+                .expect("an escape character stands for one byte");
+            bytes.push(byte);
+        } else {
+            bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+    }
+    OsString::from_vec(bytes)
+}
+
+// The signature is the one argh's `from_str_fn` requires.
+#[allow(clippy::unnecessary_wraps)]
+fn decode_path(value: &str) -> Result<PathBuf, String> {
+    Ok(PathBuf::from(decode_arg(value)))
+}
+
+/// `argh::from_env`, but over `args_os` through `encode_arg`, where `from_env`
+/// exits on the first argument that is not valid UTF-8.
+fn parse_args() -> Args {
+    let strings: Vec<String> = std::env::args_os().map(|arg| encode_arg(&arg)).collect();
+    let Some((program, rest)) = strings.split_first() else {
+        eprintln!("No program name, argv is empty");
+        std::process::exit(1)
+    };
+    let command = Path::new(program)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(program);
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+    Args::from_args(&[command], &rest).unwrap_or_else(|early_exit| {
+        if early_exit.status.is_ok() {
+            println!("{}", early_exit.output);
+            std::process::exit(0)
+        }
+        eprintln!(
+            "{}\nRun {command} --help for more information.",
+            early_exit.output
+        );
+        std::process::exit(1)
+    })
+}
+
 fn main() -> ExitCode {
-    let args: Args = argh::from_env();
+    let args = parse_args();
     match dispatch(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -124,15 +209,14 @@ fn main() -> ExitCode {
 
 fn dispatch(args: &Args) -> Result<()> {
     let action = selected_action(args)?;
-    let config = args.config.as_deref().map(PathBuf::from);
-    let include: Vec<PathBuf> = args.include.iter().map(PathBuf::from).collect();
+    let config = args.config.clone();
 
     match action {
         Some(Action::PrintVersion) => {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(Action::PrintKeybindings) => print_keybindings(config, &include),
+        Some(Action::PrintKeybindings) => print_keybindings(config, &args.include),
         Some(Action::WriteDefaultConfig) => {
             report_written(&Config::write_default(config, args.force)?);
             Ok(())
@@ -143,8 +227,8 @@ fn dispatch(args: &Args) -> Result<()> {
         }
         None => run(
             config,
-            &include,
-            args.directory.as_deref().map(PathBuf::from).as_deref(),
+            &args.include,
+            args.directory.as_deref(),
             args.no_truecolor,
         ),
     }
@@ -153,7 +237,7 @@ fn dispatch(args: &Args) -> Result<()> {
 /// Names the file on stdout, resolved rather than as it was written, because
 /// the config directory follows `$XDG_CONFIG_HOME` and need not be the
 /// `~/.config` path the documentation names.
-fn report_written(path: &std::path::Path) {
+fn report_written(path: &Path) {
     println!("Wrote {}", path.display());
 }
 
@@ -277,7 +361,7 @@ mod tests {
     fn an_argument_the_action_ignores_is_rejected() {
         let args = Args {
             write_default_config: true,
-            include: vec!["theme.toml".to_string()],
+            include: vec![PathBuf::from("theme.toml")],
             ..args()
         };
         let error = usage_error(&args);
@@ -305,7 +389,7 @@ mod tests {
         // reads cannot change what it prints.
         let args = Args {
             version: true,
-            config: Some("config.toml".to_string()),
+            config: Some(PathBuf::from("config.toml")),
             ..args()
         };
         let error = usage_error(&args);
@@ -317,7 +401,7 @@ mod tests {
     fn a_directory_the_action_ignores_is_rejected() {
         let args = Args {
             print_keybindings: true,
-            directory: Some("/tmp".to_string()),
+            directory: Some(PathBuf::from("/tmp")),
             ..args()
         };
         assert!(usage_error(&args).contains("--print-keybindings"));
@@ -327,7 +411,7 @@ mod tests {
     fn writing_accepts_the_config_path_and_force() {
         let args = Args {
             write_default_config: true,
-            config: Some("/tmp/config.toml".to_string()),
+            config: Some(PathBuf::from("/tmp/config.toml")),
             force: true,
             ..args()
         };
@@ -341,8 +425,8 @@ mod tests {
     fn printing_keybindings_accepts_the_config_chain() {
         let args = Args {
             print_keybindings: true,
-            config: Some("/tmp/config.toml".to_string()),
-            include: vec!["theme.toml".to_string()],
+            config: Some(PathBuf::from("/tmp/config.toml")),
+            include: vec![PathBuf::from("theme.toml")],
             ..args()
         };
         assert_eq!(
@@ -358,5 +442,46 @@ mod tests {
             ..args()
         };
         assert!(usage_error(&args).contains("--force"));
+    }
+
+    #[test]
+    fn a_path_argument_that_is_not_utf8_reaches_the_args_intact() {
+        let directory = OsStr::from_bytes(b"/tmp/caf\xe9");
+        let config = OsStr::from_bytes(b"/tmp/\xff.toml");
+        let argv = [
+            encode_arg(OsStr::new("--config")),
+            encode_arg(config),
+            encode_arg(directory),
+        ];
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+
+        let parsed = Args::from_args(&["filectrl"], &argv).unwrap();
+
+        assert_eq!(Some(Path::new(config)), parsed.config.as_deref());
+        assert_eq!(Some(Path::new(directory)), parsed.directory.as_deref());
+    }
+
+    #[test]
+    fn encoding_round_trips_every_argument() {
+        let cases: [&[u8]; 5] = [
+            b"plain",
+            b"caf\xc3\xa9",
+            // Invalid bytes, including a truncated sequence.
+            b"\xe9\xff\xc3",
+            // Characters in the escape range itself, which must not decode as
+            // the bytes they would stand for.
+            "\u{F780}\u{F7FF}".as_bytes(),
+            b"",
+        ];
+        for bytes in cases {
+            let arg = OsStr::from_bytes(bytes);
+            assert_eq!(arg, decode_arg(&encode_arg(arg)), "{bytes:?}");
+        }
+        // Valid UTF-8 outside the escape range reaches argh unchanged, so flags
+        // and argh's messages about them read as typed.
+        assert_eq!(
+            "--config=caf\u{e9}",
+            encode_arg(OsStr::new("--config=caf\u{e9}"))
+        );
     }
 }

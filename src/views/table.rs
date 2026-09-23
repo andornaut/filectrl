@@ -17,22 +17,19 @@ mod widget;
 use ratatui::{layout::Rect, widgets::TableState};
 
 use self::{
-    columns::Columns, content::DirectoryContent, double_click::DoubleClick, marks::Marks,
-    navigation::PendingLoad, row_map::LineItemMap,
+    actions::PendingDelete, columns::Columns, content::DirectoryContent, double_click::DoubleClick,
+    marks::Marks, navigation::PendingLoad, row_map::LineItemMap, style::ClipboardHighlight,
 };
 use super::ScrollbarView;
+use crate::app::config::UiConfig;
 #[cfg(test)]
-use crate::app::config::Config;
-use crate::{
-    app::{clipboard::ClipboardEntry, config::UiConfig},
-    file_system::path_info::PathInfo,
-};
+use crate::{app::config::Config, file_system::path_info::PathInfo};
 
 pub(super) struct TableView {
-    clipboard_entry: Option<ClipboardEntry>,
+    clipboard: Option<ClipboardHighlight>,
     content: DirectoryContent,
     marks: Marks,
-    pending_delete: Vec<PathInfo>,
+    pending_delete: PendingDelete,
 
     table_area: Rect,
     table_state: TableState,
@@ -59,8 +56,10 @@ pub(super) struct TableView {
     /// `mapper`) only when `height_cache_key` changes, so scrolling a large
     /// directory stays O(visible rows) instead of O(items).
     cached_heights: Vec<usize>,
-    /// The (name column width, content revision) the cache was built for.
-    height_cache_key: Option<(u16, u64)>,
+    /// The (name column width, visible line count, content revision) the
+    /// cache was built for. An append leaves the revision alone and is picked
+    /// up from `cached_heights` being shorter than the listing.
+    height_cache_key: Option<(u16, usize, u64)>,
     scrollbar_view: ScrollbarView,
 }
 
@@ -70,10 +69,10 @@ impl TableView {
     /// click.
     pub(super) fn new(ui: UiConfig) -> Self {
         Self {
-            clipboard_entry: None,
+            clipboard: None,
             content: DirectoryContent::new(ui.show_hidden_files, ui.sort_directories_first),
             marks: Marks::default(),
-            pending_delete: Vec::new(),
+            pending_delete: PendingDelete::default(),
             table_area: Rect::default(),
             table_state: TableState::default(),
             first_visible_item: 0,

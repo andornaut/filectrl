@@ -12,6 +12,7 @@ use super::{
     widget::{item_height, row_widget_and_height, table_widget},
 };
 use crate::app::config::theme::Theme;
+use crate::file_system::path_info::PathInfo;
 use crate::views::View;
 
 const MIN_HEIGHT: u16 = 3; // header + 1 data row + scrollbar
@@ -73,16 +74,32 @@ impl TableView {
 
         // Per-item heights drive the window math and the line<->item mapper the
         // scrollbar and mouse code use. They depend only on the name column
-        // width and the listing, so caching them across frames keeps a height
-        // per item plus the mapper's line map off every keystroke.
-        let key = (name_width, self.content.revision());
-        if self.height_cache_key != Some(key) {
-            self.cached_heights = items
-                .iter()
-                .map(|item| item_height(name_width, item, is_bookmarks, search_root) as usize)
-                .collect();
-            self.mapper = LineItemMap::new(&self.cached_heights.clone(), visible_lines_count, 0);
+        // width, the viewport height (a row is capped at it) and the listing,
+        // so caching them across frames keeps a height per item plus the
+        // mapper's line map off every keystroke.
+        let height = |item: &PathInfo| {
+            item_height(
+                name_width,
+                visible_lines_count,
+                item,
+                is_bookmarks,
+                search_root,
+            ) as usize
+        };
+        let key = (name_width, visible_lines_count, self.content.revision());
+        if self.height_cache_key != Some(key) || self.cached_heights.len() > items.len() {
+            self.cached_heights = items.iter().map(height).collect();
+            self.mapper = LineItemMap::new(&self.cached_heights, visible_lines_count, 0);
             self.height_cache_key = Some(key);
+        } else if self.cached_heights.len() < items.len() {
+            // Only an append adds entries without bumping the revision, and it
+            // adds them after the last, so the cached heights still describe
+            // the items they were measured for. Measuring just the new entries
+            // keeps a streamed listing from remeasuring every earlier batch.
+            let appended_from = self.cached_heights.len();
+            self.cached_heights
+                .extend(items[appended_from..].iter().map(height));
+            self.mapper.extend(&self.cached_heights[appended_from..]);
         }
 
         // Own the scroll offset (rather than letting ratatui derive it from all
@@ -96,18 +113,17 @@ impl TableView {
         );
         self.first_visible_item = start;
 
-        let has_pending_delete = !self.pending_delete.is_empty();
         let rows: Vec<_> = items[start..end]
             .iter()
             .enumerate()
             .map(|(offset, item)| {
                 let i = start + offset;
-                let is_pending_delete =
-                    has_pending_delete && self.pending_delete.iter().any(|p| p == item);
+                let is_pending_delete = self.pending_delete.contains(item);
                 let (row, _height) = row_widget_and_height(
                     theme,
-                    self.clipboard_entry.as_ref(),
+                    self.clipboard.as_ref(),
                     name_width,
+                    visible_lines_count,
                     relative_to_datetime,
                     item,
                     self.marks.contains(i),
@@ -238,9 +254,17 @@ fn layout(area: Rect) -> (Rect, Rect, Rect) {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
     use test_case::test_case;
 
-    use super::{scrollbar_position, visible_window};
+    use super::{
+        super::{
+            TableView, columns::SortColumn, navigation::Reselect, row_map::LineItemMap,
+            widget::item_height,
+        },
+        scrollbar_position, visible_window,
+    };
+    use crate::{app::config::Config, file_system::path_info::PathInfo, test_support::TempDir};
 
     // While a drag is live the thumb tracks the pointer, so it stays under the
     // cursor even where the window top snaps past a wrapped row. On release it
@@ -279,5 +303,110 @@ mod tests {
         prev_first: usize,
     ) -> (usize, usize) {
         visible_window(heights, viewport_lines, selected, prev_first)
+    }
+
+    /// A table listing `dir`, loading but with nothing appended yet.
+    fn loading_table(dir: &TempDir) -> TableView {
+        Config::init_test();
+        let mut table = TableView::default();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table
+    }
+
+    fn entries(dir: &TempDir, names: &[&str]) -> Vec<PathInfo> {
+        names
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                std::fs::write(&path, b"x").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect()
+    }
+
+    fn render(table: &mut TableView, width: u16, height: u16) -> Buffer {
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        table.render_table_and_init_mapper(Config::global().theme(), area, &mut buf);
+        buf
+    }
+
+    fn row_text(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    #[test]
+    fn a_row_taller_than_the_viewport_is_cut_to_fit_and_rendered() {
+        let dir = TempDir::new("table_tall_row");
+        let mut table = loading_table(&dir);
+        // 45 characters in a 10 column name field wrap to five lines of nine
+        // characters and an ellipsis.
+        table.content.append(&entries(
+            &dir,
+            &["abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI"],
+        ));
+        table.finish_directory();
+        table.select(0);
+
+        // The header and three lines.
+        let buf = render(&mut table, 10, 4);
+
+        let rows: Vec<String> = (1..4).map(|y| row_text(&buf, y)).collect();
+        assert_eq!(vec!["abcdefghi…", "jklmnopqr…", "stuvwxyz0…"], rows);
+        // The mouse and the scrollbar read the same capped height.
+        assert_eq!(3, table.mapper.total_lines_count());
+    }
+
+    /// The heights and line map the render keeps equal what it would build
+    /// from nothing for the listing as it now stands.
+    fn assert_cache_is_a_full_rebuild(table: &TableView, visible_lines_count: usize) {
+        let heights: Vec<usize> = table
+            .content
+            .items_sorted()
+            .iter()
+            .map(|item| {
+                item_height(
+                    table.columns.name_width(),
+                    visible_lines_count,
+                    item,
+                    false,
+                    None,
+                ) as usize
+            })
+            .collect();
+        assert_eq!(heights, table.cached_heights);
+        let mut rebuilt = LineItemMap::new(&heights, visible_lines_count, 0);
+        rebuilt.set_window(table.first_visible_item, visible_lines_count);
+        assert_eq!(rebuilt, table.mapper);
+    }
+
+    #[test]
+    fn the_row_height_cache_follows_appends_and_reorders() {
+        let dir = TempDir::new("table_height_cache");
+        let mut table = loading_table(&dir);
+        // Batches arrive out of name order and mix one and two line rows, so
+        // the sorted order puts different heights at the same positions.
+        let batches = [
+            ["dddddddddddddddddddddddd", "a"],
+            ["cc", "bbbbbbbbbbbbbbbbbbbbbbbb"],
+            ["e", "ffffffffffffffffffffffff"],
+        ];
+        for batch in batches {
+            table.content.append(&entries(&dir, &batch));
+            render(&mut table, 20, 10);
+            assert_cache_is_a_full_rebuild(&table, 9);
+        }
+        let appended = table.cached_heights.clone();
+
+        table.finish_directory();
+        render(&mut table, 20, 10);
+
+        assert_ne!(appended, table.cached_heights, "the sort must move heights");
+        assert_cache_is_a_full_rebuild(&table, 9);
+
+        table.sort_by(SortColumn::Name);
+        render(&mut table, 20, 10);
+
+        assert_cache_is_a_full_rebuild(&table, 9);
     }
 }

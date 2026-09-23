@@ -260,6 +260,8 @@ Key | Opens with
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
+Each template runs with `sh -c`, and `%s` is substituted already quoted for the shell. Never place `%s` inside quotes in a template: the path's own quoting closes them, so a name such as `a;$(cmd)` would run `cmd`. To use the path inside a nested script, pass it as an argument instead, as the macOS `open_filectrl_window` below does.
+
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
 # %s is replaced at runtime: the current directory, the selected entry, or a
@@ -274,7 +276,7 @@ run_in_terminal = "alacritty --command %s"
 [openers.macos]
 open_directory = "open %s"
 open_file = "open %s"
-open_filectrl_window = "open -a Terminal %s"
+open_filectrl_window = "osascript -e 'on run argv' -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl \" & quoted form of item 1 of argv' -e 'end run' %s"
 run_in_terminal = "" # Linux only, ignored here
 ```
 

@@ -1,4 +1,4 @@
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(super) struct LineItemMap {
     first_visible_item: usize,
     visible_lines_count: usize,
@@ -15,17 +15,24 @@ impl LineItemMap {
         visible_lines_count: usize,
         first_visible_item: usize,
     ) -> Self {
-        let mut lines_to_items = Vec::new();
-        let mut item_first_lines = Vec::with_capacity(item_heights.len());
-        for (i, &height) in item_heights.iter().enumerate() {
-            item_first_lines.push(lines_to_items.len());
-            lines_to_items.extend(std::iter::repeat_n(i, height));
-        }
-        Self {
+        let mut map = Self {
             first_visible_item,
             visible_lines_count,
-            lines_to_items,
-            item_first_lines,
+            lines_to_items: Vec::new(),
+            item_first_lines: Vec::with_capacity(item_heights.len()),
+        };
+        map.extend(item_heights);
+        map
+    }
+
+    /// Append items after the last one mapped, leaving the lines of the items
+    /// already mapped where they are.
+    pub(super) fn extend(&mut self, item_heights: &[usize]) {
+        for &height in item_heights {
+            let item = self.item_first_lines.len();
+            self.item_first_lines.push(self.lines_to_items.len());
+            self.lines_to_items
+                .extend(std::iter::repeat_n(item, height));
         }
     }
 

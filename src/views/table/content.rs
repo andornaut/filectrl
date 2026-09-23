@@ -27,8 +27,10 @@ pub(super) struct DirectoryContent {
     /// nothing valid to show and so clears the listing up front.
     staged: Option<Vec<PathInfo>>,
     /// Bumped whenever `items_sorted` or display-affecting state (search root,
-    /// bookmarks mode) changes. Lets the view cache per-item row heights and
-    /// invalidate them with a cheap equality check.
+    /// bookmarks mode) changes, except by `append`. Lets the view cache
+    /// per-item row heights and invalidate them with a cheap equality check.
+    /// An append only adds entries after the last, so the view extends its
+    /// cache from the length it last saw instead of rebuilding it.
     revision: u64,
     /// Whether hidden (dotfile) entries are listed. Seeded from
     /// `ui.show_hidden_files` and toggled at runtime.
@@ -130,7 +132,6 @@ impl DirectoryContent {
                 .cloned(),
         );
         self.items.extend_from_slice(items);
-        self.revision += 1;
     }
 
     /// Apply a listing-mode transition (see `ListingMode::transition`).
@@ -649,9 +650,11 @@ mod tests {
         let r1 = content.revision();
         assert_ne!(r0, r1, "start_listing must bump the revision");
 
+        // An append adds entries after the last without moving any, which the
+        // view picks up from the length, so the cache it keys stays valid.
         content.append(&[fx.file_entry("a", 1)]);
         let r2 = content.revision();
-        assert_ne!(r1, r2, "append must bump the revision");
+        assert_eq!(r1, r2, "append must leave the revision alone");
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         let r3 = content.revision();

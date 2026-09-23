@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::MouseEvent;
 
 use super::TableView;
-use crate::command::result::CommandResult;
+use crate::command::{Command, result::CommandResult};
 
 impl TableView {
     pub(super) fn click_header(&mut self, x: u16) -> CommandResult {
@@ -22,8 +22,10 @@ impl TableView {
         let Some(path) = self.content.get(item) else {
             return CommandResult::Handled;
         };
+        // Open the entry clicked, not the cursor's: a key or a reload between
+        // the two clicks can move the cursor off the row being double-clicked.
         if self.double_click.click_and_is_double_click(path) {
-            return self.open_selected();
+            return Command::Open(path.clone()).into();
         }
 
         self.select(item)
@@ -113,6 +115,21 @@ mod tests {
         // window, which the table is built with rather than reading when the
         // click arrives.
         click(&mut table, 1);
+        let result = click(&mut table, 1);
+
+        let Ok(Command::Open(path)) = Command::try_from(result) else {
+            panic!("expected the row to open");
+        };
+        assert_eq!("a", path.display_name);
+    }
+
+    #[test]
+    fn a_double_click_opens_the_clicked_row_when_the_cursor_moved_between_clicks() {
+        let (_dir, mut table) = table_for_clicks();
+
+        click(&mut table, 1);
+        // A key press between the clicks moves the cursor off the row.
+        table.select(2);
         let result = click(&mut table, 1);
 
         let Ok(Command::Open(path)) = Command::try_from(result) else {

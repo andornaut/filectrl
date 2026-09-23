@@ -494,17 +494,24 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             }
             KeyCode::F(num)
         }
-        s if s.len() == 1 => {
-            let mut ch = s.chars().next().expect("s.len() == 1 guarantees a char");
+        // Counted in chars, not bytes, so a non-ASCII key such as "é" is one
+        // character rather than a multi-byte name.
+        s if s.chars().count() == 1 => {
+            let mut ch = s.chars().next().expect("the guard counted one char");
             // Terminals emit a plain shifted letter as the uppercase character,
             // so normalize "Shift+q" to the same combo as "Q". With further
             // modifiers (e.g. "Ctrl+Shift+a") the kitty protocol reports the
             // unshifted codepoint instead, so the letter stays lowercase.
-            if ch.is_ascii_lowercase() && modifiers == KeyModifiers::SHIFT {
-                ch = ch.to_ascii_uppercase();
+            // A letter whose uppercase is several characters (ß) has no
+            // shifted key, so it is left as it is.
+            if ch.is_lowercase() && modifiers == KeyModifiers::SHIFT {
+                let mut upper = ch.to_uppercase();
+                if let (Some(single), None) = (upper.next(), upper.next()) {
+                    ch = single;
+                }
             }
             // Uppercase letter without explicit Shift modifier → add SHIFT
-            if ch.is_ascii_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
+            if ch.is_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
                 modifiers |= KeyModifiers::SHIFT;
             }
             KeyCode::Char(ch)
@@ -623,6 +630,8 @@ mod tests {
     #[test_case("F24", KeyCode::F(24), KeyModifiers::NONE       ; "the last function key")]
     // "F" alone is the letter, not a function key missing its number.
     #[test_case("F", KeyCode::Char('F'), KeyModifiers::SHIFT     ; "F on its own is a character")]
+    #[test_case("\u{e9}", KeyCode::Char('\u{e9}'), KeyModifiers::NONE ; "a non-ASCII character")]
+    #[test_case("Alt+\u{2713}", KeyCode::Char('\u{2713}'), KeyModifiers::ALT ; "a modifier on a multibyte character")]
     fn a_spelling_parses_to_its_combo(spelling: &str, code: KeyCode, modifiers: KeyModifiers) {
         let combo = parse_key_combo(spelling).unwrap();
         assert_eq!(code, combo.code);
@@ -643,7 +652,6 @@ mod tests {
     // A multibyte char straddling the prefix-length byte index must not panic
     // the str slicing; it has to come back as a normal parse error.
     #[test_case("aaa\u{2713}x"     => "Unknown key: 'aaa\u{2713}x'" ; "a multibyte char straddling the prefix index")]
-    #[test_case("\u{2713}"         => "Unknown key: '\u{2713}'"     ; "a lone multibyte char")]
     fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // No terminal emits these, so they must fail config loading rather
         // than silently producing a binding that never fires. Which refusal
@@ -663,6 +671,17 @@ mod tests {
         assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
         assert_eq!(combo, parse_key_combo("Shift+Q").unwrap());
         assert_eq!(combo, parse_key_combo("Q").unwrap());
+    }
+
+    #[test]
+    fn parse_shift_normalizes_a_non_ascii_letter_to_uppercase() {
+        let combo = parse_key_combo("Shift+\u{e9}").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('\u{c9}'));
+        assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
+        assert_eq!(combo, parse_key_combo("\u{c9}").unwrap());
+        // "\u{df}" uppercases to two characters, so it has no shifted key.
+        let combo = parse_key_combo("Shift+\u{df}").unwrap();
+        assert_eq!(combo.code, KeyCode::Char('\u{df}'));
     }
 
     #[test]

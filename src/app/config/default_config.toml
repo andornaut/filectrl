@@ -21,10 +21,14 @@ refresh_debounce_milliseconds = 500
 search_max_depth = 20
 search_max_results = 10000
 
-# Programs to use to open files or directories:
-# %s will be replaced by the relevant path
+# Programs to use to open files or directories, run with `sh -c`:
+# %s is replaced by the relevant path, already quoted for the shell. Never put
+# %s inside quotes of your own: the path's quoting would close them, and the
+# shell would then interpret the name.
 [openers.linux]
-open_directory = "xterm -e 'cd %s'" # e.g. "alacritty --working-directory %s"
+# xterm has no working directory option, so the shell changes into the directory
+# and xterm inherits it
+open_directory = "cd %s && exec xterm" # e.g. "alacritty --working-directory %s"
 open_file = "xdg-open %s"
 open_filectrl_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
 # Used by "open with" for desktop entries that declare Terminal=true. Here %s is
@@ -35,8 +39,10 @@ run_in_terminal = "xterm -e %s" # e.g. "alacritty --command %s"
 [openers.macos]
 open_directory = "open -a Terminal %s"
 open_file = "open %s"
-# Activates Terminal and opens filectrl in a new window
-open_filectrl_window = "osascript -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl %s\"'"
+# Activates Terminal and opens filectrl in a new window. The path reaches the
+# script as an argument, outside any quotes, and `quoted form of` quotes it again
+# for the shell that Terminal runs it in.
+open_filectrl_window = "osascript -e 'on run argv' -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl \" & quoted form of item 1 of argv' -e 'end run' %s"
 # Linux only: macOS resolves applications through Launch Services
 run_in_terminal = ""
 

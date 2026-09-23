@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use chrono::{DateTime, Local};
 use ratatui::style::Style;
 
@@ -8,18 +11,52 @@ use crate::{
     file_system::path_info::{DateTimeAge, PathInfo, datetime_age},
 };
 
+/// Paths indexed for the membership test the render makes for every visible
+/// row. Built once, when the list it mirrors is set, rather than scanning that
+/// list per row per frame. Keyed by `path`, the only field `PathInfo` equality
+/// compares.
+#[derive(Default)]
+pub(super) struct PathSet(HashSet<PathBuf>);
+
+impl PathSet {
+    pub(super) fn new(paths: &[PathInfo]) -> Self {
+        Self(paths.iter().map(|path| path.path.clone()).collect())
+    }
+
+    pub(super) fn contains(&self, item: &PathInfo) -> bool {
+        self.0.contains(&item.path)
+    }
+}
+
+/// The clipboard as the table highlights it: whether pasting removes the
+/// source, and the paths it holds.
+pub(super) struct ClipboardHighlight {
+    is_cut: bool,
+    paths: PathSet,
+}
+
+impl From<&ClipboardEntry> for ClipboardHighlight {
+    fn from(entry: &ClipboardEntry) -> Self {
+        Self {
+            is_cut: matches!(entry, ClipboardEntry::Move(_)),
+            paths: PathSet::new(entry.paths()),
+        }
+    }
+}
+
 pub(super) fn clipboard_style(
     clipboard: &Clipboard,
-    clipboard_entry: Option<&ClipboardEntry>,
+    highlight: Option<&ClipboardHighlight>,
     item: &PathInfo,
 ) -> Option<Style> {
-    let entry = clipboard_entry.as_ref()?;
-    if !entry.paths().iter().any(|p| p == item) {
+    let highlight = highlight?;
+    if !highlight.paths.contains(item) {
         return None;
     }
-    Some(match entry {
-        ClipboardEntry::Copy(_) => clipboard.copy(),
-        ClipboardEntry::Move(_) => clipboard.cut(),
+    Some(if highlight.is_cut {
+        clipboard.cut()
+    } else {
+        clipboard.copy()
     })
 }
 
@@ -212,7 +249,7 @@ mod tests {
         let held = PathInfo::try_from("/tmp").unwrap();
         let other = PathInfo::try_from("/").unwrap();
 
-        let cut = ClipboardEntry::Move(vec![held.clone()]);
+        let cut = ClipboardHighlight::from(&ClipboardEntry::Move(vec![held.clone()]));
         assert_eq!(
             Some(clipboard.cut()),
             clipboard_style(clipboard, Some(&cut), &held)
@@ -223,7 +260,9 @@ mod tests {
             Some(clipboard.copy()),
             clipboard_style(
                 clipboard,
-                Some(&ClipboardEntry::Copy(vec![held.clone()])),
+                Some(&ClipboardHighlight::from(&ClipboardEntry::Copy(vec![
+                    held.clone()
+                ]))),
                 &held
             )
         );

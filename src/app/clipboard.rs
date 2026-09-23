@@ -1,4 +1,7 @@
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    path::Path,
+};
 
 use crate::file_system::path_info::PathInfo;
 use anyhow::{Context, Error, Result, anyhow};
@@ -12,6 +15,11 @@ pub struct Clipboard {
     /// The system clipboard, when present, remains the storage, which is what
     /// makes copy/paste work across filectrl windows.
     fallback: Option<String>,
+    /// The entry this process last wrote, beside the exact text written for
+    /// it. The text renders a name that is not valid UTF-8 lossily, so parsing
+    /// it back would name a different file; while the clipboard still holds
+    /// that text, the paths are taken from here instead.
+    last_entry: Option<(String, ClipboardEntry)>,
 }
 
 impl Default for Clipboard {
@@ -27,6 +35,7 @@ impl Default for Clipboard {
         Self {
             backend,
             fallback: None,
+            last_entry: None,
         }
     }
 }
@@ -48,11 +57,13 @@ impl Clipboard {
         Self {
             backend: None,
             fallback: None,
+            last_entry: None,
         }
     }
 
     pub fn clear(&mut self) -> Result<(), Error> {
         self.fallback = None;
+        self.last_entry = None;
         match &mut self.backend {
             Some(backend) => backend.clear(),
             None => Ok(()),
@@ -67,7 +78,7 @@ impl Clipboard {
     ///   this to the user rather than silently doing nothing
     pub fn get_clipboard_entry(&mut self) -> Result<Option<ClipboardEntry>> {
         match self.get_text() {
-            Some(text) => parse_clipboard_text(&text),
+            Some(text) => resolve_clipboard_text(self.last_entry.as_ref(), &text),
             None => Ok(None),
         }
     }
@@ -87,6 +98,7 @@ impl Clipboard {
 
     pub fn set_text(&mut self, text: &str) {
         self.fallback = Some(text.to_string());
+        self.last_entry = None;
         if let Some(backend) = &mut self.backend
             && let Err(e) = backend.set_string(text)
         {
@@ -97,6 +109,7 @@ impl Clipboard {
     pub fn set_clipboard_entry(&mut self, entry: &ClipboardEntry) -> Result<(), Error> {
         let text = entry.to_string();
         self.fallback = Some(text.clone());
+        self.last_entry = Some((text.clone(), entry.clone()));
         match &mut self.backend {
             Some(backend) => backend.set_string(&text),
             None => Ok(()),
@@ -133,6 +146,31 @@ impl Display for ClipboardEntry {
         }
         Ok(())
     }
+}
+
+/// Parses clipboard text, preferring `last_entry`'s exact paths when the text is
+/// still what was written for it. The paths are looked up again either way, so
+/// a path removed since the copy is reported the same as one parsed from text.
+fn resolve_clipboard_text(
+    last_entry: Option<&(String, ClipboardEntry)>,
+    text: &str,
+) -> Result<Option<ClipboardEntry>> {
+    let Some((_, entry)) = last_entry.filter(|(written, _)| written == text) else {
+        return parse_clipboard_text(text);
+    };
+    let paths: Vec<PathInfo> = entry
+        .paths()
+        .iter()
+        .map(|path| path_info(&path.path))
+        .collect::<Result<_>>()?;
+    Ok(Some(match entry {
+        ClipboardEntry::Copy(_) => ClipboardEntry::Copy(paths),
+        ClipboardEntry::Move(_) => ClipboardEntry::Move(paths),
+    }))
+}
+
+fn path_info(path: &Path) -> Result<PathInfo> {
+    PathInfo::try_from(path).with_context(|| format!("Failed to access {}", path.display()))
 }
 
 /// Parses clipboard text, distinguishing unrelated text (ignored) from a
@@ -173,7 +211,7 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
     let command_str = &parts[0];
     let paths: Vec<_> = parts[1..]
         .iter()
-        .map(|p| PathInfo::try_from(p.as_str()).with_context(|| format!("Failed to access {p}")))
+        .map(|p| path_info(Path::new(p)))
         .collect::<Result<Vec<_>, _>>()?;
     match command_str.as_str() {
         "cp" => Ok(ClipboardEntry::Copy(paths)),
@@ -329,6 +367,46 @@ mod tests {
             .expect("a filectrl-written entry is not unrelated text");
 
         assert_eq!(ClipboardEntry::Move(paths), parsed);
+    }
+
+    // Linux only: macOS file systems refuse a name that is not valid UTF-8.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_entry_this_process_wrote_keeps_a_name_that_is_not_utf8() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        use crate::test_support::TempDir;
+
+        let dir = TempDir::new("clipboard_not_utf8");
+        let path = dir.join(OsStr::from_bytes(b"caf\xe9.txt"));
+        std::fs::write(&path, b"x").unwrap();
+        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(path.as_path()).unwrap()]);
+
+        let mut clipboard = Clipboard::disabled();
+        clipboard.set_clipboard_entry(&entry).unwrap();
+
+        // The text holds U+FFFD in place of 0xe9, which names no file.
+        assert_eq!(Some(entry), clipboard.get_clipboard_entry().unwrap());
+    }
+
+    #[test]
+    fn text_written_since_the_entry_is_parsed_rather_than_taken_as_the_entry() {
+        use crate::test_support::TempDir;
+
+        let dir = TempDir::new("clipboard_other_text");
+        let (first, second) = (dir.join("first"), dir.join("second"));
+        std::fs::write(&first, b"x").unwrap();
+        std::fs::write(&second, b"x").unwrap();
+        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(first.as_path()).unwrap()]);
+        let written = (entry.to_string(), entry);
+
+        // Another window's entry: the text no longer matches, so it is what
+        // counts.
+        let other = ClipboardEntry::Move(vec![PathInfo::try_from(second.as_path()).unwrap()]);
+        assert_eq!(
+            Some(other.clone()),
+            resolve_clipboard_text(Some(&written), &other.to_string()).unwrap()
+        );
     }
 
     #[test]

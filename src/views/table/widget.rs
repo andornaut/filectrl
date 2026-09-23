@@ -10,12 +10,18 @@ use ratatui::{
 use super::{
     columns::{SortColumn, SortDirection},
     content::displayed_name,
-    style::{clipboard_style, header_style, modified_date_style, name_style, size_style},
+    style::{
+        ClipboardHighlight, clipboard_style, header_style, modified_date_style, name_style,
+        size_style,
+    },
 };
 use crate::{
-    app::{clipboard::ClipboardEntry, config::theme::Theme},
+    app::config::theme::Theme,
     file_system::path_info::PathInfo,
-    views::{as_dimension, unicode::split_with_ellipsis},
+    views::{
+        as_dimension,
+        unicode::{split_line_count, split_with_ellipsis},
+    },
 };
 
 pub(super) fn table_widget<'a>(
@@ -81,8 +87,9 @@ fn header_cell_widget(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn row_widget_and_height<'a>(
     theme: &'a Theme,
-    clipboard_entry: Option<&'a ClipboardEntry>,
+    clipboard: Option<&ClipboardHighlight>,
     name_column_width: u16,
+    max_lines: usize,
     relative_to_datetime: DateTime<Local>,
     item: &'a PathInfo,
     is_marked: bool,
@@ -93,7 +100,7 @@ pub(super) fn row_widget_and_height<'a>(
     let (name_style, date_style, size_style, row_style) = if is_pending_delete {
         let delete = theme.table.delete();
         (delete, delete, delete, delete)
-    } else if let Some(clipboard) = clipboard_style(&theme.clipboard, clipboard_entry, item) {
+    } else if let Some(clipboard) = clipboard_style(&theme.clipboard, clipboard, item) {
         (clipboard, clipboard, clipboard, clipboard)
     } else if is_marked {
         let marked = theme.table.marked();
@@ -110,10 +117,16 @@ pub(super) fn row_widget_and_height<'a>(
         )
     };
 
-    let name = name_lines(name_column_width, item, is_bookmarks, search_root)
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
+    let name = name_lines(
+        name_column_width,
+        max_lines,
+        item,
+        is_bookmarks,
+        search_root,
+    )
+    .into_iter()
+    .map(Line::from)
+    .collect::<Vec<_>>();
     let height = as_dimension(name.len());
     let row = Row::new([
         Cell::from(name).style(name_style),
@@ -126,29 +139,35 @@ pub(super) fn row_widget_and_height<'a>(
     (row, height)
 }
 
-/// The wrapped name-column lines for an item. Shared by `row_widget_and_height`
-/// (which renders them) and `item_height` (which only needs the count), so the
-/// two can never disagree about how tall a row is.
+/// The wrapped name-column lines for an item, at most `max_lines` of them. A
+/// row taller than the viewport is never drawn: ratatui scrolls past a selected
+/// row that cannot fit and renders no rows at all. Every line but the last ends
+/// in an ellipsis, so the cut keeps the marker that the name continues.
 fn name_lines(
     name_column_width: u16,
+    max_lines: usize,
     item: &PathInfo,
     is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> Vec<String> {
     let display = displayed_name(item, is_bookmarks, search_root);
-    split_with_ellipsis(&display, name_column_width as usize)
+    let mut lines = split_with_ellipsis(&display, name_column_width as usize);
+    lines.truncate(max_lines);
+    lines
 }
 
-/// The rendered height (number of wrapped name lines) of an item's row. Cheap
-/// (no styling or `Cell`/`Line` allocation), so it can be computed for every
-/// item each frame to drive scroll math without building all the `Row` widgets.
+/// The rendered height of an item's row: the number of lines `name_lines`
+/// returns, counted without building them, so it can be computed for every
+/// item to drive the scroll math without building all the `Row` widgets.
 pub(super) fn item_height(
     name_column_width: u16,
+    max_lines: usize,
     item: &PathInfo,
     is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> u16 {
-    as_dimension(name_lines(name_column_width, item, is_bookmarks, search_root).len())
+    let display = displayed_name(item, is_bookmarks, search_root);
+    as_dimension(split_line_count(&display, name_column_width as usize).min(max_lines))
 }
 
 #[cfg(test)]
@@ -163,10 +182,11 @@ mod tests {
 
     // `item_height` must always agree with the height `row_widget_and_height`
     // actually renders, since the windowing scroll math relies on it.
-    #[test_case("short.txt", 40 ; "fits on one line")]
-    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20 ; "wraps")]
-    #[test_case("中文文件名称非常长非常长非常长.txt", 12 ; "wide chars")]
-    fn item_height_matches_rendered_row_height(name: &str, width: u16) {
+    #[test_case("short.txt", 40, 10 ; "fits on one line")]
+    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 10 ; "wraps")]
+    #[test_case("中文文件名称非常长非常长非常长.txt", 12, 10 ; "wide chars")]
+    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 2 ; "capped at the viewport")]
+    fn item_height_matches_rendered_row_height(name: &str, width: u16, max_lines: usize) {
         Config::init_test();
         let theme = Config::global().theme();
         let mut item = PathInfo::try_from(Path::new(".")).unwrap();
@@ -176,6 +196,7 @@ mod tests {
             theme,
             None,
             width,
+            max_lines,
             Local::now(),
             &item,
             false,
@@ -183,6 +204,9 @@ mod tests {
             false,
             None,
         );
-        assert_eq!(item_height(width, &item, false, None), rendered_height);
+        assert_eq!(
+            item_height(width, max_lines, &item, false, None),
+            rendered_height
+        );
     }
 }

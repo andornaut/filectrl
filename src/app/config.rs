@@ -940,4 +940,65 @@ open_directory = "alacritty --working-directory %s"
 
         assert!(select_next_key(&merged, 'e'));
     }
+
+    /// Runs every path-carrying default opener, on both platforms, against a
+    /// directory whose name is hostile to a shell. Each program the templates
+    /// launch is replaced by a stub that records its working directory and
+    /// arguments, so the check is what the program would have received.
+    #[test]
+    fn the_default_openers_pass_a_hostile_name_through_intact() {
+        use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+
+        use crate::file_system::shell;
+
+        let dir = TempDir::new("config_openers");
+        let bin = dir.join("bin");
+        fs::create_dir(&bin).unwrap();
+        for program in ["xterm", "xdg-open", "osascript", "open"] {
+            let stub = bin.join(program);
+            fs::write(
+                &stub,
+                "#!/bin/sh\nprintf '%s\\0' \"$(pwd)\" \"$@\" > \"$STUB_OUT\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let target = dir.join("it's a $(touch pwned);\"x\"");
+        fs::create_dir(&target).unwrap();
+        let out = dir.join("out");
+
+        let value = parse_toml(DEFAULT_CONFIG_BASE).unwrap();
+        let openers: PlatformOpeners = value.get("openers").unwrap().clone().try_into().unwrap();
+        for openers in [&openers.linux, &openers.macos] {
+            for template in [
+                &openers.open_directory,
+                &openers.open_file,
+                &openers.open_filectrl_window,
+            ] {
+                let _ = fs::remove_file(&out);
+                let command = shell::template(template, &shell::quote(target.as_os_str()));
+                let status = std::process::Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(&command)
+                    .current_dir(dir.path())
+                    .env("PATH", &bin)
+                    .env("STUB_OUT", &out)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{template:?} failed");
+
+                let recorded = fs::read(&out).unwrap();
+                let fields: Vec<&[u8]> = recorded.split(|&byte| byte == 0).collect();
+                // The working directory for `cd %s && exec xterm`, the last
+                // argument for the rest.
+                assert!(
+                    fields.contains(&target.as_os_str().as_bytes()),
+                    "{template:?} did not receive the path intact: {:?}",
+                    String::from_utf8_lossy(&recorded)
+                );
+                assert!(!dir.join("pwned").exists(), "{template:?} ran the name");
+                assert!(!target.join("pwned").exists(), "{template:?} ran the name");
+            }
+        }
+    }
 }

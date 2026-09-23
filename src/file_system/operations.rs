@@ -167,13 +167,64 @@ fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Send
     });
 }
 
+/// Refuses a symlink rather than changing its target: `chmod(2)` follows the
+/// link, and Linux has no `lchmod`. The type is read afresh, since the listing
+/// the path came from may be stale.
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     let p = path.as_path();
+    if is_symlink(p, mode)? {
+        return Err(symlink_refusal(p));
+    }
     info!("Changing mode of {} to {mode:o}", p.display());
-    let permissions = fs::Permissions::from_mode(mode);
-    fs::set_permissions(p, permissions)?;
-    Ok(())
+    set_mode_without_following(p, mode)
+}
+
+/// Sets the mode with `fchmodat(AT_SYMLINK_NOFOLLOW)`, which the C library
+/// implements without following the final component and refuses on Linux with
+/// `EOPNOTSUPP` for a symlink, so a path swapped for one after `chmod` checked
+/// it is refused rather than followed. macOS sets the link's own mode instead,
+/// which leaves the target alone too.
+fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
+    use nix::{
+        errno::Errno,
+        fcntl::AT_FDCWD,
+        sys::stat::{FchmodatFlags, Mode, fchmodat},
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    // `mode_t` is u32 on Linux but u16 on macOS; the permission bits
+    // `from_bits_truncate` keeps fit in either.
+    #[allow(clippy::cast_possible_truncation)]
+    let bits = Mode::from_bits_truncate(mode as nix::libc::mode_t);
+    match fchmodat(AT_FDCWD, p, bits, FchmodatFlags::NoFollowSymlink) {
+        Ok(()) => Ok(()),
+        // A C library too old to set a mode without following the link
+        // refuses every path this way, not only a symlink, and one that needs
+        // `/proc` where it is not mounted reports ENOSYS. For those, fall back
+        // to checking the type and then a plain chmod.
+        Err(Errno::EOPNOTSUPP | Errno::ENOSYS) => {
+            if is_symlink(p, mode)? {
+                return Err(symlink_refusal(p));
+            }
+            fs::set_permissions(p, fs::Permissions::from_mode(mode))
+                .map_err(|error| chmod_failure(p, mode, &error))
+        }
+        Err(errno) => Err(chmod_failure(p, mode, &std::io::Error::from(errno))),
+    }
+}
+
+fn is_symlink(p: &Path, mode: u32) -> Result<bool> {
+    p.symlink_metadata()
+        .map(|metadata| metadata.is_symlink())
+        .map_err(|error| chmod_failure(p, mode, &error))
+}
+
+fn symlink_refusal(p: &Path) -> anyhow::Error {
+    anyhow!("Cannot chmod {}: it is a symlink", compact(p))
+}
+
+fn chmod_failure(p: &Path, mode: u32, error: &dyn std::fmt::Display) -> anyhow::Error {
+    anyhow!("Failed to chmod {} to {mode:o}: {error}", compact(p))
 }
 
 /// Takes the bookmarks directory rather than reading it from the global
@@ -486,6 +537,75 @@ mod tests {
 
         assert_eq!(0o700, mode_of(&target));
         assert_eq!(0o644, mode_of(&inner));
+    }
+
+    #[test]
+    fn chmod_refuses_a_symlink_and_leaves_its_target_alone() {
+        let dir = TempDir::new("ops_chmod_symlink");
+        let target = dir.join("target.txt");
+        fs::write(&target, b"x").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let info = PathInfo::try_from(link.as_path()).unwrap();
+
+        // `set_permissions` follows the link, so without the refusal this
+        // succeeds and makes the target world-writable.
+        let error = chmod(&info, 0o777)
+            .expect_err("a symlink must be refused")
+            .to_string();
+
+        assert!(error.starts_with("Cannot chmod"), "{error}");
+        assert!(error.ends_with("it is a symlink"), "{error}");
+        assert_eq!(0o600, mode_of(&target));
+    }
+
+    /// The check in `chmod` runs before the mode is set, so a path swapped for
+    /// a symlink in between reaches this step as a symlink. Linux refuses to
+    /// set a symlink's own mode; macOS sets it. Either way the target is left
+    /// alone.
+    #[test]
+    fn setting_the_mode_does_not_follow_a_symlink_that_passed_the_check() {
+        let dir = TempDir::new("ops_chmod_swapped");
+        let target = dir.join("target.txt");
+        fs::write(&target, b"x").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let result = set_mode_without_following(&link, 0o777);
+
+        assert_eq!(0o600, mode_of(&target));
+        if cfg!(target_os = "linux") {
+            let error = result.expect_err("a symlink must be refused").to_string();
+            assert!(error.ends_with("it is a symlink"), "{error}");
+        }
+    }
+
+    #[test]
+    fn setting_the_mode_changes_a_regular_file() {
+        let dir = TempDir::new("ops_chmod_plain");
+        let file = dir.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        set_mode_without_following(&file, 0o640).unwrap();
+
+        assert_eq!(0o640, mode_of(&file));
+    }
+
+    #[test]
+    fn chmod_reports_a_failure_it_did_not_decide() {
+        let dir = TempDir::new("ops_chmod_gone");
+        let file = dir.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        let info = PathInfo::try_from(file.as_path()).unwrap();
+        fs::remove_file(&file).unwrap();
+
+        let error = chmod(&info, 0o600).unwrap_err().to_string();
+
+        assert!(error.starts_with("Failed to chmod"), "{error}");
+        assert!(error.contains("to 600: "), "{error}");
     }
 
     // ── create_directory ────────────────────────────────────────────────────
