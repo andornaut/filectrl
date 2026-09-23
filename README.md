@@ -336,16 +336,16 @@ modifiers = ["bold"]
 Section | Description
 --- | ---
 `[theme]` / `[theme256]` | Base foreground, background, and modifiers
-`alert` | Alert bar (`base`, `error`, `info`, `warn`)
-`breadcrumbs` | Path breadcrumbs (`base`, `ancestor`, `basename`, `separator`)
+`alert` | Alert bar (its own style, plus `error`, `info`, `warn`)
+`breadcrumbs` | Path breadcrumbs (its own style, plus `ancestor`, `basename`, `bookmarks`, `search`, `separator`)
 `clipboard` | Clipboard status indicators (`copy`, `cut`, `delete`)
 `file_modified_date` | Date column by age (`less_than_minute`, `less_than_hour`, `less_than_day`, `less_than_month`, `less_than_year`, `greater_than_year`)
 `file_size` | Size column by magnitude (`bytes`, `kib`, `mib`, `gib`, `tib`, `pib`)
 `file_type` | Row colors by file type (`directory`, `executable`, `symlink`, `regular_file`, etc.)
-`help` | Help panel (`base`, `header`, `actions`, `shortcuts`)
-`notice` | Notice bar (`filter`, `progress`)
-`open_with` | Open with... picker (`base`, `detail`, `selected`, `shortcut`)
-`prompt` | Input prompt (`cursor`, `input`, `label`, `selected`)
+`help` | Help panel (its own style, plus `header`, `actions`, `shortcuts`)
+`notice` | Notice bar (`filter`, `progress`, `search`, `search_loading`)
+`open_with` | Open with... picker (its own style, plus `detail`, `selected`, `shortcut`)
+`prompt` | Input prompt (`cursor`, `delete`, `goto_suggestion`, `input`, `label`, `selected`)
 `scrollbar` | Scrollbar (`ends`, `thumb`, `track`, plus `show_ends` boolean)
 `status` | Status bar (`detail`, `label`)
 `table` | File table (`body`, `header`, `header_sorted`, `selected`, `marked`, `delete`, `bookmark`)
@@ -467,12 +467,16 @@ cargo check --target aarch64-apple-darwin
 
 Path | Covers
 --- | ---
-`file_types/` | Named pipe, symlinks, executable, and directory permission variants (other-writable, sticky)
+`file_types/` | Valid and broken symlinks, an executable, and a regular file
 `no_delete/` | Delete and rename permission errors. Needs `chmod 555 fixtures/no_delete` first; git does not track the read-only bit
 `scrolling/` | 48 entries with long filenames interspersed, for scrolling and multi-row truncation
 Elsewhere | Executables, symlinks, hidden files, Unicode names, special characters, long filenames
 
-Date-color and size-color buckets need fixtures git cannot store (mtimes, sparse files); create them locally with `touch -t` and `truncate`.
+Some cases need fixtures git cannot store; create them locally:
+
+- Date-color and size-color buckets (mtimes, sparse files): `touch -t` and `truncate`
+- A named pipe: `mkfifo`
+- Other-writable and sticky directories: `chmod o+w`, `chmod +t`
 
 ### Git hooks
 
@@ -480,7 +484,7 @@ Date-color and size-color buckets need fixtures git cannot store (mtimes, sparse
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 
-1. Edit the `[dev-dependencies.cargo-husky]` section of [Cargo.toml](./Cargo.toml)
+1. Edit the hook script in [`.cargo-husky/hooks/`](./.cargo-husky/hooks/), or the `cargo-husky` entry under `[dev-dependencies]` in [Cargo.toml](./Cargo.toml)
 1. `rm .git/hooks/pre-commit` (or other hook file)
 1. `cargo clean`
 1. `cargo test`

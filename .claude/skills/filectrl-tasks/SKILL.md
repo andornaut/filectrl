@@ -51,7 +51,7 @@ refused, `Cannot <verb> <object>: <reason>` when filectrl refused first.
 
 ## Modifying the git hooks
 
-1. Edit `[dev-dependencies.cargo-husky]` in `Cargo.toml`
+1. Edit the hook script in `.cargo-husky/hooks/`, or the `cargo-husky` entry under `[dev-dependencies]` in `Cargo.toml`
 2. Remove `.git/hooks/pre-commit`
 3. Run `cargo clean && cargo test`
 4. Verify the changes in `.git/hooks/pre-commit`
