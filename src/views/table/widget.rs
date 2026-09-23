@@ -182,15 +182,24 @@ mod tests {
 
     // `item_height` must always agree with the height `row_widget_and_height`
     // actually renders, since the windowing scroll math relies on it.
-    #[test_case("short.txt", 40, 10 ; "fits on one line")]
-    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 10 ; "wraps")]
-    #[test_case("中文文件名称非常长非常长非常长.txt", 12, 10 ; "wide chars")]
-    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 2 ; "capped at the viewport")]
-    fn item_height_matches_rendered_row_height(name: &str, width: u16, max_lines: usize) {
+    #[test_case("short.txt", 40, 10, None ; "fits on one line")]
+    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 10, None ; "wraps")]
+    #[test_case("中文文件名称非常长非常长非常长.txt", 12, 10, None ; "wide chars")]
+    #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 2, None ; "capped at the viewport")]
+    // Rendered as `sub/name.txt`, which wraps where the bare name would not.
+    #[test_case("name.txt", 10, 10, Some("/root") ; "a search result measured by its relative path")]
+    fn item_height_matches_rendered_row_height(
+        name: &str,
+        width: u16,
+        max_lines: usize,
+        search_root: Option<&str>,
+    ) {
         Config::init_test();
         let theme = Config::global().theme();
         let mut item = PathInfo::try_from(Path::new(".")).unwrap();
         item.display_name = name.to_string();
+        item.path = Path::new("/root/sub").join(name);
+        let search_root = search_root.map(Path::new);
 
         let (_, rendered_height) = row_widget_and_height(
             theme,
@@ -202,10 +211,10 @@ mod tests {
             false,
             false,
             false,
-            None,
+            search_root,
         );
         assert_eq!(
-            item_height(width, max_lines, &item, false, None),
+            item_height(width, max_lines, &item, false, search_root),
             rendered_height
         );
     }

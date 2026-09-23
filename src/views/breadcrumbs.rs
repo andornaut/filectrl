@@ -79,6 +79,7 @@ impl BreadcrumbsView {
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use test_case::test_case;
 
     use super::*;
     use crate::{
@@ -163,8 +164,9 @@ mod tests {
             Style::default(),
             Style::default(),
         );
+        // Off the left edge, so a column is read relative to the header.
         view.area = ratatui::layout::Rect {
-            x: 0,
+            x: 5,
             y: 0,
             width,
             height: u16::try_from(positions.len()).expect("the fixture is a few rows"),
@@ -172,25 +174,32 @@ mod tests {
         view.positions = positions;
     }
 
+    /// A click `x` columns into the header.
     fn click(view: &mut BreadcrumbsView, x: u16) -> CommandResult {
         view.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: x,
+            column: view.area.x + x,
             row: 0,
             modifiers: KeyModifiers::NONE,
         })
     }
 
-    #[test]
-    fn clicking_a_breadcrumb_while_a_tag_is_shown_addresses_the_directory_under_the_column() {
+    // "[Search] " is 9 columns and "[Bookmarks] " 12; each is followed by the
+    // root's separator, then "tmp".
+    #[test_case(ListingMode::Search, 11 ; "search")]
+    #[test_case(ListingMode::Bookmarks, 14 ; "bookmarks")]
+    fn clicking_a_breadcrumb_while_a_tag_is_shown_addresses_the_directory_under_the_column(
+        mode: ListingMode,
+        x: u16,
+    ) {
         Config::init_test();
-        let mut v = view(&["", "tmp"], ListingMode::Search);
+        let mut v = view(&["", "tmp"], mode);
         lay_out(&mut v, 40);
 
-        // "[Search] " occupies the first columns and names no directory, so a
+        // The tag occupies the first columns and names no directory, so a
         // click lands one breadcrumb earlier than its position says. Reading
         // the position directly would open the root for a click on "tmp".
-        let result = click(&mut v, 11);
+        let result = click(&mut v, x);
 
         let Ok(Command::Open(path)) = Command::try_from(result) else {
             panic!("expected the clicked breadcrumb to open");

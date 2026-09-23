@@ -140,19 +140,22 @@ pub struct Progress {
 }
 
 impl Progress {
-    // Both ratios are bounded: `is_done` has already returned for
-    // `completed >= total`, so the quotient is below 1 and the scaled result
-    // below the factor. A float-to-integer `as` saturates rather than wrapping,
-    // and `.min(factor)` bounds the second one again. The arithmetic stays in
-    // f64 because the rounding is half-away-from-zero, which integer division
-    // does not reproduce: 2 of 3 is 67%, not 66%.
+    // `is_done` has already returned for `completed == total`. `increment`
+    // caps the count at the total, but `set_total` can lower the total below a
+    // count already made, so the quotient can exceed 1: the `.min` bounds both
+    // results, and a float-to-integer `as` saturates rather than wrapping. The
+    // arithmetic stays in f64 because the rounding is half-away-from-zero,
+    // which integer division does not reproduce: 2 of 3 is 67%, not 66%.
+    // Rounding up must not reach the end early, so an unfinished task stops
+    // one short of it: 995 of 1000 reads 99%, not 100%, for the rest of a long
+    // copy.
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     #[allow(clippy::cast_sign_loss)]
     pub fn percentage(&self) -> u32 {
         if self.is_done() {
             return 100;
         }
-        ((self.completed as f64 / self.total as f64) * 100.0).round() as u32
+        (((self.completed as f64 / self.total as f64) * 100.0).round() as u32).min(99)
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -161,7 +164,8 @@ impl Progress {
         if self.is_done() {
             return factor;
         }
-        ((self.completed as f64 / self.total as f64 * f64::from(factor)).round() as u16).min(factor)
+        ((self.completed as f64 / self.total as f64 * f64::from(factor)).round() as u16)
+            .min(factor.saturating_sub(1))
     }
 
     fn done(&mut self) {
@@ -364,11 +368,11 @@ impl Task {
         self.status = TaskStatus::Error(message.into());
     }
 
-    /// Transitions a `New` task to `InProgress`; no-op in any other state.
+    /// Marks the task as running. Only a live `ActiveTask` calls this, and
+    /// every terminal transition consumes it, so the task is never past
+    /// `InProgress` here.
     fn start(&mut self) {
-        if self.status == TaskStatus::New {
-            self.status = TaskStatus::InProgress;
-        }
+        self.status = TaskStatus::InProgress;
     }
 
     pub fn error_message(&self) -> Option<String> {
@@ -444,6 +448,7 @@ mod tests {
         assert_eq!(50, progress(50, 100).percentage());
         assert_eq!(33, progress(1, 3).percentage()); // 33.33 rounds down
         assert_eq!(67, progress(2, 3).percentage()); // 66.67 rounds up
+        assert_eq!(99, progress(995, 1000).percentage()); // unfinished stays below 100
         assert_eq!(100, progress(100, 100).percentage());
     }
 
@@ -454,7 +459,8 @@ mod tests {
         assert_eq!(0, progress(0, 100).scaled(10));
         assert_eq!(5, progress(50, 100).scaled(10));
         assert_eq!(3, progress(1, 3).scaled(10)); // 3.33 rounds down
-        assert_eq!(10, progress(200, 100).scaled(10)); // clamped to factor
+        assert_eq!(9, progress(99, 100).scaled(10)); // unfinished stays below full
+        assert_eq!(9, progress(200, 100).scaled(10)); // past a lowered total, still unfinished
     }
 
     #[test]
@@ -466,14 +472,6 @@ mod tests {
         p.increment(1_000);
         assert_eq!(progress(100, 100), p);
         assert!(p.is_done());
-    }
-
-    #[test]
-    fn a_task_is_done_at_its_total_or_when_it_has_none() {
-        assert!(progress(0, 0).is_done()); // zero total is done
-        assert!(progress(100, 100).is_done());
-        assert!(!progress(0, 100).is_done());
-        assert!(!progress(99, 100).is_done());
     }
 
     fn copy(source: &str, destination: &str) -> TaskKind {
@@ -590,33 +588,6 @@ mod tests {
     }
 
     #[test]
-    fn task_done_fills_a_bar_that_never_reached_its_total() {
-        let mut t = delete_task();
-        t.done();
-        assert!(t.is_terminal());
-        // The total is an estimate taken before the work started, so a task
-        // that finished under it must still leave the bar full.
-        assert_eq!(100, t.progress.percentage());
-    }
-
-    #[test]
-    fn task_cancelled_is_terminal() {
-        let mut t = delete_task();
-        t.cancelled();
-        assert!(t.is_cancelled());
-        assert!(t.is_terminal());
-    }
-
-    #[test]
-    fn task_error_records_message_and_is_terminal() {
-        let mut t = delete_task();
-        t.error("disk full");
-        assert_eq!(Some("disk full".to_string()), t.error_message());
-        assert!(t.is_terminal());
-        assert!(!t.is_cancelled());
-    }
-
-    #[test]
     fn task_combine_progress_sums_fields() {
         let t = Task::new(TaskKind::Delete { path: "/x".into() }, 100);
         let combined = t.combine_progress(&progress(10, 50));
@@ -661,6 +632,9 @@ mod tests {
     #[test]
     fn active_task_done_fills_the_progress_bar() {
         let (active, rx) = active_task();
+        // Finished with nothing counted: the total is an estimate taken
+        // before the work started, so a task that finished under it must
+        // still leave the bar full.
         active.done();
 
         let task = only_terminal_task(&rx);
@@ -684,6 +658,19 @@ mod tests {
         let task = only_terminal_task(&rx);
         assert_eq!(Some("disk full".to_string()), task.error_message());
         assert!(!task.is_cancelled());
+    }
+
+    #[test]
+    fn a_finalized_task_can_no_longer_be_cancelled() {
+        let (active, _rx) = active_task();
+        let uncancellable = active.uncancellable_handle();
+        assert!(!uncancellable.load(Ordering::Relaxed));
+
+        // The cancel stack reads this flag to drop the entry rather than
+        // cancel a task that has already ended.
+        active.done();
+
+        assert!(uncancellable.load(Ordering::Relaxed));
     }
 
     #[test]

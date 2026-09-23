@@ -157,16 +157,10 @@ mod tests {
         assert_eq!(expected, name_width);
     }
 
-    #[test]
-    fn at_min_width_name_column_fills_the_full_width() {
-        let (constraints, name_width) = calculate_constraints(NAME_MIN_LEN);
-        assert_eq!(Constraint::Length(NAME_MIN_LEN), constraints[0]);
-        assert_eq!(NAME_MIN_LEN, name_width);
-    }
-
     // The name widths are literals rather than the formula the implementation
     // uses, which would agree with itself however it changed. Each row is the
-    // width at which that column first fits.
+    // width at which that column first fits, so the name column is narrower
+    // than the table and its constraint has to be the shrunk width.
     #[test_case(40, 1, MODIFIED_LEN, 27 ; "modified")]
     #[test_case(61, 2, SIZE_LEN, 40     ; "size")]
     #[test_case(72, 3, MODE_LEN, 40     ; "mode")]
@@ -178,6 +172,7 @@ mod tests {
     ) {
         let (constraints, name_width) = calculate_constraints(width);
         assert_eq!(Constraint::Length(expected_len), constraints[index]);
+        assert_eq!(Constraint::Length(expected_name_width), constraints[0]);
         assert_eq!(expected_name_width, name_width);
     }
 

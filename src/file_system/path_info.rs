@@ -78,7 +78,8 @@ fn compact_str(path: &Path) -> String {
     format!("{root}{head}{MAIN_SEPARATOR}…{MAIN_SEPARATOR}{tail}")
 }
 
-fn breadcrumbs(path: &Path) -> Vec<String> {
+/// Each component of `path` from the root down, the root as an empty string.
+pub(crate) fn breadcrumbs(path: &Path) -> Vec<String> {
     let mut parts: Vec<_> = path
         .ancestors()
         .map(|p| {
@@ -512,7 +513,7 @@ mod tests {
     #[test_case("0.9G",  1_000_000_000u64 ; "1 billion bytes (MB)")]
     #[test_case("1P",  1024u64.pow(5); "1 PiB")]
     #[test_case("1024P",   1024u64.pow(6); "greater than 1 PiB")]
-    fn humanize_bytes_success_with(expected: &str, bytes: u64) {
+    fn humanize_bytes_picks_the_unit_by_magnitude(expected: &str, bytes: u64) {
         let result = humanize_bytes(bytes, unit_index(bytes));
 
         assert_eq!(expected, result);
@@ -526,7 +527,11 @@ mod tests {
     #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-08-13 12:30:10"; "different month")]
     #[test_case("Jul 12, 2023", "2023-07-12 12:30:10", "2022-07-13 12:30:10"; "different year")]
     #[test_case("Jul 9", "2023-07-09 12:30:10", "2023-07-13 12:30:10"; "single digit day has no leading zero")]
-    fn humanize_datetime_is_correct(expected: &str, datetime: &str, relative_to: &str) {
+    fn humanize_datetime_shows_more_of_the_date_as_it_ages(
+        expected: &str,
+        datetime: &str,
+        relative_to: &str,
+    ) {
         let result = humanize_datetime(to_local_datetime(datetime), to_local_datetime(relative_to));
 
         assert_eq!(expected, result);
@@ -559,6 +564,14 @@ mod tests {
         assert_eq!(expected, age(seconds_ago));
     }
 
+    // breadcrumbs: root first, the root itself as an empty segment
+
+    #[test_case("/" => vec![String::new()] ; "the root alone")]
+    #[test_case("/a/b" => vec![String::new(), "a".to_string(), "b".to_string()] ; "root first, leaf last")]
+    fn breadcrumbs_run_from_the_root_down(path: &str) -> Vec<String> {
+        breadcrumbs(Path::new(path))
+    }
+
     // compact: home as `~`, long middles elided to first + last two
 
     #[test_case("/tmp/a.txt" => "\"/tmp/a.txt\"" ; "short absolute path is unchanged")]
@@ -568,7 +581,7 @@ mod tests {
     #[test_case("relative/one/two/three/a.txt" => "\"relative/…/three/a.txt\"" ; "a relative path keeps no leading separator")]
     #[test_case("/" => "\"/\"" ; "the root is unchanged")]
     #[test_case("a.txt" => "\"a.txt\"" ; "a bare name is unchanged")]
-    fn compact_is_correct(path: &str) -> String {
+    fn compact_elides_the_middle_of_a_long_path(path: &str) -> String {
         compact(Path::new(path)).to_string()
     }
 
@@ -608,7 +621,7 @@ mod tests {
     #[test_case("projects/.zshrc", "projects/zshrc" ; "strips a dot below the root")]
     #[test_case("a/.b/c", "a/b/c" ; "strips a dot on an interior segment")]
     #[test_case(".a/.b", "a/b" ; "strips a dot on every segment")]
-    fn name_comparator_is_correct(name: &str, expected: &str) {
+    fn name_comparator_ignores_case_and_leading_dots(name: &str, expected: &str) {
         assert_eq!(expected, name_comparator(name));
     }
 
@@ -639,6 +652,40 @@ mod tests {
         let target = PathInfo::try_from(&target).unwrap();
         assert!(!target.is_symlink());
         assert!(!target.is_symlink_broken());
+    }
+
+    /// A link whose target cannot be checked is not reported broken: only a
+    /// confirmed "does not exist" is. Under root the directory stays
+    /// searchable and the case degrades to an intact link.
+    #[test]
+    fn a_symlink_through_an_unsearchable_directory_is_not_broken() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        use crate::test_support::TempDir;
+
+        let fx = TempDir::new("path_info");
+        let locked = fx.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("target.txt"), b"x").unwrap();
+        let link = fx.join("link");
+        symlink(locked.join("target.txt"), &link).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let info = PathInfo::try_from(&link);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(!info.unwrap().is_symlink_broken());
+    }
+
+    #[test]
+    fn a_directory_name_carries_a_trailing_separator() {
+        let mut directory = PathInfo::with_mode(0o040_755);
+        directory.display_name = "docs".to_string();
+        let mut file = PathInfo::with_mode(0o100_644);
+        file.display_name = "docs".to_string();
+
+        assert_eq!(format!("docs{MAIN_SEPARATOR}"), directory.name());
+        assert_eq!("docs", file.name());
     }
 
     #[test]

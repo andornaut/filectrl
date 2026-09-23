@@ -24,27 +24,27 @@ use crate::{
 
 /// A temp tree containing the working directory, so navigating to the parent
 /// stays inside the fixture instead of walking into the real temp directory.
-struct Fixture {
+pub(super) struct Fixture {
     root: TempDir,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = TempDir::new("claims");
         std::fs::create_dir_all(root.join("cwd")).unwrap();
         std::fs::write(root.join("cwd").join("file.txt"), b"x").unwrap();
         Self { root }
     }
 
-    fn cwd(&self) -> PathBuf {
+    pub(super) fn cwd(&self) -> PathBuf {
         self.root.join("cwd")
     }
 
-    fn directory(&self) -> PathInfo {
+    pub(super) fn directory(&self) -> PathInfo {
         PathInfo::try_from(self.cwd().as_path()).unwrap()
     }
 
-    fn file(&self) -> PathInfo {
+    pub(super) fn file(&self) -> PathInfo {
         PathInfo::try_from(self.cwd().join("file.txt").as_path()).unwrap()
     }
 
@@ -64,7 +64,7 @@ impl Fixture {
 /// blanking the openers is enough to stop any command from shelling out
 /// (`open_in` returns early on an empty template) and redirecting `config_dir`
 /// keeps bookmark reads inside the fixture.
-fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
+pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
     let mut config = Config::builtin();
     config.config_dir = fixture.root.path().to_path_buf();
     config.openers = Openers {

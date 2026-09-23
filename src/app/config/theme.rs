@@ -390,6 +390,32 @@ mod tests {
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
     }
 
+    // Both orders, so neither the first nor the last pattern listed can pass
+    // for the longest.
+    #[test_case("*file=31:*Makefile=34" ; "longest listed last")]
+    #[test_case("*Makefile=34:*file=31" ; "longest listed first")]
+    fn the_longest_matching_name_pattern_wins(ls_colors: &str) {
+        let mut ft = FileType::default();
+        ft.apply_ls_colors(ls_colors, false);
+        assert_eq!(ft.pattern_styles("Makefile").unwrap().fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn a_style_config_carries_every_property_into_the_style() {
+        let style = Style::from(StyleConfig::new(
+            Some(Color::Red),
+            Some(Color::Blue),
+            Modifier::BOLD,
+        ));
+        assert_eq!(
+            Style::default()
+                .fg(Color::Red)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+            style
+        );
+    }
+
     // --- apply_ls_colors round-trips ---
 
     #[test]

@@ -1,5 +1,4 @@
 use std::{
-    env,
     io::{Result, Stdout, stdout},
     ops::{Deref, DerefMut},
     panic,
@@ -22,15 +21,13 @@ use ratatui::{
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 
-/// Check if the terminal supports truecolor (24-bit color)
-pub fn supports_truecolor() -> bool {
-    match env::var("COLORTERM") {
-        Ok(val) => {
-            let lower = val.to_lowercase();
-            lower.contains("truecolor") || lower.contains("24bit")
-        }
-        Err(_) => false,
-    }
+/// Whether `$COLORTERM`'s value says the terminal supports truecolor (24-bit
+/// color). Unset, or not valid UTF-8, means it does not.
+pub fn supports_truecolor(colorterm: Option<&str>) -> bool {
+    colorterm.is_some_and(|value| {
+        let lower = value.to_lowercase();
+        lower.contains("truecolor") || lower.contains("24bit")
+    })
 }
 
 /// Process-wide "already restored" guard: whichever cleanup path runs first
@@ -134,5 +131,21 @@ impl DerefMut for CleanupOnDropTerminal {
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
         Self::cleanup();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::supports_truecolor;
+
+    #[test_case(Some("truecolor") => true ; "truecolor")]
+    #[test_case(Some("24bit") => true ; "24bit")]
+    #[test_case(Some("TrueColor") => true ; "any case")]
+    #[test_case(Some("yes") => false ; "another value")]
+    #[test_case(None => false ; "unset")]
+    fn colorterm_decides_truecolor(colorterm: Option<&str>) -> bool {
+        supports_truecolor(colorterm)
     }
 }

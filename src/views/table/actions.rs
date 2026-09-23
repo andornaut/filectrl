@@ -289,6 +289,22 @@ mod tests {
     }
 
     #[test]
+    fn a_bookmark_cannot_be_added_from_the_bookmarks_view() {
+        let (dir, mut table) = marked_table();
+        table
+            .content
+            .set_bookmarks(vec![PathInfo::try_from(dir.path()).unwrap()]);
+
+        // The view keeps the directory it was opened from, which is not the
+        // listing on screen, so a prompt would offer to bookmark a directory
+        // the user is not looking at.
+        assert!(matches!(
+            Command::try_from(table.open_add_bookmark_prompt()),
+            Ok(Command::AlertWarn(_))
+        ));
+    }
+
+    #[test]
     fn chmod_leaves_the_mode_blank_for_a_marked_set() {
         let (_dir, table) = marked_table();
 

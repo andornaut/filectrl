@@ -452,6 +452,36 @@ mod tests {
     }
 
     #[test]
+    fn the_help_key_toggles_help() {
+        let mut root = view();
+
+        root.handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert!(root.is_help_visible);
+        root.handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert!(!root.is_help_visible);
+    }
+
+    #[test]
+    fn reset_view_closes_help() {
+        let mut root = view();
+        root.is_help_visible = true;
+
+        root.handle_command(&Command::ResetView);
+
+        assert!(!root.is_help_visible);
+    }
+
+    #[test]
+    fn the_prompt_takes_a_row_only_while_one_is_open() {
+        let mut root = view();
+        let normal = root.views().len();
+
+        root.mode = InputMode::Prompt;
+
+        assert_eq!(normal + 1, root.views().len());
+    }
+
+    #[test]
     fn reset_view_closes_the_open_with_picker() {
         let mut root = showing_open_with();
 

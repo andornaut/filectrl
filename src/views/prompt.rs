@@ -182,12 +182,8 @@ impl PromptView {
                 home.join(rest)
             };
         }
-        let path = Path::new(input);
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            Path::new(&self.basedir).join(input)
-        }
+        // `join` replaces the base with an absolute input.
+        Path::new(&self.basedir).join(input)
     }
 
     /// Splits the current input into `(dir_prefix, partial)` at the last `/`.
@@ -536,7 +532,7 @@ mod tests {
     #[test_case(0, 10, 5 => 6; "cursor past viewport scrolls forward")]
     #[test_case(0, 5,  5 => 1; "cursor at exact right boundary scrolls forward")]
     #[test_case(3, 3,  5 => 3; "cursor at left edge of viewport stays")]
-    fn next_scroll_top_cases(prev_top: u16, cursor: u16, len: u16) -> u16 {
+    fn next_scroll_top_keeps_the_cursor_in_view(prev_top: u16, cursor: u16, len: u16) -> u16 {
         next_scroll_top(prev_top, cursor, len)
     }
 
@@ -553,7 +549,7 @@ mod tests {
     #[test_case("ab日",   2 => 2; "mixed: col at wide char boundary")]
     #[test_case("ab日",   3 => 2; "mixed: col within wide char clamps")]
     #[test_case("ab日",   4 => 3; "mixed: col past wide char maps to char 3")]
-    fn display_col_to_char_idx_cases(text: &str, col: u16) -> u16 {
+    fn display_col_to_char_idx_counts_display_width(text: &str, col: u16) -> u16 {
         let view = prompt_with_action(PromptAction::Filter(text.to_string()));
         view.display_col_to_char_idx(col)
     }
@@ -650,6 +646,23 @@ mod tests {
     }
 
     #[test]
+    fn a_click_moves_the_cursor_to_the_clicked_column() {
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut view = prompt_with_action(PromptAction::Filter("hello".into()));
+        view.render_area = Rect::new(10, 0, 20, 1);
+
+        view.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(view.text_area.cursor(), (0, 2));
+    }
+
+    #[test]
     fn update_scroll_col_tracks_cursor_past_viewport() {
         // 11 ASCII chars, cursor at end (col 11); viewport width = 5
         // next_scroll_top(0, 11, 5) = 11 + 1 - 5 = 7
@@ -712,6 +725,46 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_suggested_before_a_name_is_typed() {
+        let fixture = GotoFixture::new();
+        let view = goto_prompt(fixture.dir.path());
+        assert!(view.suggestions.is_empty());
+        assert_eq!(None, view.current_suggestion());
+    }
+
+    /// Both leave the input empty, where nothing is suggested, so a list left
+    /// over from "Ap" shows they skipped the refresh.
+    #[test_case(Action::PromptCut ; "cutting all of it")]
+    #[test_case(Action::PromptReset ; "resetting to the empty initial text")]
+    fn an_edit_outside_the_textarea_refreshes_the_suggestions(action: Action) {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(fixture.dir.path());
+        type_str(&mut view, "Ap");
+        view.text_area.select_all();
+
+        view.handle_text_key(Some(action), KeyCode::Char('x'), KeyModifiers::ALT);
+
+        assert_eq!("", view.text_area.lines()[0]);
+        assert!(view.suggestions.is_empty());
+    }
+
+    #[test]
+    fn reopening_the_prompt_rereads_the_directory() {
+        let fixture = GotoFixture::new();
+        let mut view = goto_prompt(fixture.dir.path());
+        type_str(&mut view, "Ch");
+        assert!(view.suggestions.is_empty());
+
+        std::fs::write(fixture.dir.join("Cherry"), b"").unwrap();
+        view.handle_command(&Command::OpenPrompt(PromptAction::Goto {
+            directory: fixture.dir.path().to_string_lossy().into_owned(),
+        }));
+        type_str(&mut view, "Ch");
+
+        assert_eq!(Some(("erry".to_string(), 0, 1)), view.current_suggestion());
+    }
+
+    #[test]
     fn tab_accepts_directory_and_appends_slash() {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
@@ -748,19 +801,19 @@ mod tests {
     }
 
     #[test]
-    fn goto_submit_existing_directory_returns_open() {
+    fn enter_accepts_the_suggestion_then_opens_it() {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
-        type_str(&mut view, "Apple");
-        // Enter accepts the directory suggestion (appending `/`, like Tab)
-        // and then submits, opening that directory.
+        // "Apr" names nothing on disk, so only accepting the "Apricot"
+        // suggestion before submitting can open a directory.
+        type_str(&mut view, "Apr");
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         let Command::Open(info) = Command::try_from(result).unwrap() else {
             panic!("expected Command::Open");
         };
         assert_eq!(
             info.path.to_string_lossy().trim_end_matches('/'),
-            fixture.dir.join("Apple").to_string_lossy()
+            fixture.dir.join("Apricot").to_string_lossy()
         );
     }
 
@@ -795,10 +848,10 @@ mod tests {
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Nope");
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            Command::try_from(result).unwrap(),
-            Command::AlertWarn(_)
-        ));
+        let Ok(Command::AlertWarn(message)) = Command::try_from(result) else {
+            panic!("expected Command::AlertWarn");
+        };
+        assert!(message.starts_with("Path does not exist:"), "{message}");
     }
 
     #[test]
@@ -806,7 +859,8 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
-        assert!(view.current_suggestion().is_some());
+        // The untyped rest of the first match, marked as a directory.
+        assert_eq!(Some(("ple/".to_string(), 0, 2)), view.current_suggestion());
         // Mutate the text without refreshing, so the typed partial is no
         // longer a prefix of any cached suggestion.
         view.text_area.insert_str("XYZXYZXYZ");
@@ -836,7 +890,11 @@ mod tests {
     #[test_case("/abs/path", "/abs/", "path"; "absolute dir prefix")]
     #[test_case("a/b/c",     "a/b/",  "c"   ; "splits at the last separator")]
     #[test_case("/",         "/",     ""    ; "root only")]
-    fn split_input_cases(input: &str, expected_prefix: &str, expected_partial: &str) {
+    fn split_input_splits_at_the_last_separator(
+        input: &str,
+        expected_prefix: &str,
+        expected_partial: &str,
+    ) {
         assert_eq!(
             PromptView::split_input(input),
             (expected_prefix, expected_partial)

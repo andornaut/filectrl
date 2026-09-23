@@ -90,3 +90,115 @@ impl CommandHandler for Handlers {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use test_case::test_case;
+
+    use super::*;
+    use crate::app::claims::{Fixture, test_handlers};
+
+    fn handlers(fixture: &Fixture) -> Handlers {
+        let (tx, _rx) = mpsc::channel();
+        test_handlers(tx, fixture)
+    }
+
+    #[test]
+    fn a_paste_becomes_the_operation_the_clipboard_entry_names() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let (srcs, dest) = (vec![fixture.file()], fixture.directory());
+
+        handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+            srcs.clone(),
+        ))));
+        assert_eq!(
+            CommandResult::from(Command::Copy {
+                srcs: srcs.clone(),
+                dest: dest.clone()
+            }),
+            handlers.handle_command(&Command::Paste(dest.clone()))
+        );
+
+        handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Move(
+            srcs.clone(),
+        ))));
+        assert_eq!(
+            CommandResult::from(Command::Move {
+                srcs,
+                dest: dest.clone()
+            }),
+            handlers.handle_command(&Command::Paste(dest))
+        );
+    }
+
+    #[test]
+    fn a_paste_with_nothing_to_paste_and_no_system_clipboard_warns() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+
+        assert_eq!(
+            CommandResult::from(Command::AlertWarn(
+                "Cannot paste: no system clipboard available".into()
+            )),
+            handlers.handle_command(&Command::Paste(fixture.directory()))
+        );
+    }
+
+    #[test_case(&Command::ResetView ; "resetting the view")]
+    #[test_case(&Command::SetClipboardEntry(None) ; "clearing the entry")]
+    fn the_clipboard_entry_is_cleared_by(clear: &Command) {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+            vec![fixture.file()],
+        ))));
+
+        assert_eq!(CommandResult::Handled, handlers.handle_command(clear));
+
+        // Nothing is left to paste, so the paste warns instead of copying.
+        assert!(matches!(
+            Command::try_from(handlers.handle_command(&Command::Paste(fixture.directory()))),
+            Ok(Command::AlertWarn(_))
+        ));
+    }
+
+    #[test]
+    fn only_a_delete_prompt_clears_the_clipboard() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+
+        assert_eq!(
+            CommandResult::from(Command::SetClipboardEntry(None)),
+            handlers.handle_command(&Command::OpenPrompt(PromptAction::Delete(1)))
+        );
+        assert_eq!(
+            CommandResult::NotHandled,
+            handlers.handle_command(&Command::OpenPrompt(PromptAction::CreateDirectory))
+        );
+    }
+
+    #[test]
+    fn clipboard_text_is_read_back_as_written() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+
+        handlers.handle_command(&Command::SetClipboardText("text".into()));
+
+        assert_eq!(
+            CommandResult::from(Command::ClipboardText("text".into())),
+            handlers.handle_command(&Command::GetClipboardText)
+        );
+    }
+
+    #[test_case(KeyCode::Char('q'), KeyModifiers::NONE => CommandResult::from(Command::Quit) ; "quit")]
+    #[test_case(KeyCode::Char('K'), KeyModifiers::SHIFT => CommandResult::from(Command::CancelTask) ; "cancel task")]
+    #[test_case(KeyCode::Esc, KeyModifiers::NONE => CommandResult::from(Command::ResetView) ; "reset view")]
+    #[test_case(KeyCode::Char('j'), KeyModifiers::NONE => CommandResult::NotHandled ; "an action another handler owns")]
+    fn a_global_key_becomes_its_command(code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+        let fixture = Fixture::new();
+        handlers(&fixture).handle_key(code, modifiers)
+    }
+}

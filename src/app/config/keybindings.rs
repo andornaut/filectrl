@@ -719,6 +719,30 @@ mod tests {
         }
     }
 
+    #[test_case("G" => "G" ; "an uppercase letter implies its shift")]
+    #[test_case("Shift+Tab" => "Shift+Tab" ; "backtab names its shift once")]
+    #[test_case("Space" => "Space" ; "space is named rather than blank")]
+    #[test_case("PgUp" => "PgUp" ; "page up")]
+    #[test_case("PageDown" => "PgDn" ; "page down in its short spelling")]
+    #[test_case("Alt+x" => "Alt+x" ; "alt")]
+    #[test_case("Ctrl+Alt+Shift+Down" => "Ctrl+Alt+Shift+\u{2193}" ; "every modifier in order")]
+    fn a_combo_displays_as(spelling: &str) -> String {
+        format_key_combo(&parse_key_combo(spelling).unwrap())
+    }
+
+    #[test_case(KeyCode::Left => Some(Action::GoToParentDirectory) ; "left")]
+    #[test_case(KeyCode::Right => Some(Action::Open) ; "right")]
+    #[test_case(KeyCode::Down => Some(Action::SelectNext) ; "down")]
+    #[test_case(KeyCode::Up => Some(Action::SelectPrevious) ; "up")]
+    #[test_case(KeyCode::Home => Some(Action::SelectFirst) ; "home")]
+    #[test_case(KeyCode::End => Some(Action::SelectLast) ; "end")]
+    #[test_case(KeyCode::PageUp => Some(Action::PageUp) ; "page up")]
+    #[test_case(KeyCode::PageDown => Some(Action::PageDown) ; "page down")]
+    #[test_case(KeyCode::Esc => Some(Action::ResetView) ; "esc")]
+    fn a_hardcoded_normal_key_resolves_to_its_action(code: KeyCode) -> Option<Action> {
+        hardcoded_normal_action(code, KeyModifiers::NONE)
+    }
+
     #[test]
     fn default_config_keybindings_have_no_conflicts() {
         default_keybindings();
@@ -821,6 +845,14 @@ mod tests {
             hint.contains(" or "),
             "hint should join keys with ' or ': {hint}"
         );
+    }
+
+    #[test]
+    fn a_hint_marks_an_uppercase_key() {
+        // SelectLast is bound to "G". The quoted letter alone does not say
+        // that it needs Shift.
+        let hint = default_keybindings().hint_for(&[Action::SelectLast]);
+        assert!(hint.contains("\"G\" (Uppercase)"), "{hint}");
     }
 
     /// An uppercase binding parses to the letter plus SHIFT, but a terminal may

@@ -284,6 +284,8 @@ fn should_clear(last_written: Option<&str>, read_current: impl FnOnce() -> Optio
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     /// Reports whether the clipboard was read, so the cases that must decide
@@ -327,12 +329,35 @@ mod tests {
         assert_eq!((false, false), should_clear_reading(Some(""), Some("")));
     }
 
-    #[test]
-    fn parse_clipboard_text_ignores_unrelated_text() {
-        assert!(parse_clipboard_text("some copied text").unwrap().is_none());
-        assert!(parse_clipboard_text("").unwrap().is_none());
-        // "cp" without a path is not treated as an entry
-        assert!(parse_clipboard_text("cp").unwrap().is_none());
+    #[test_case("some copied text" ; "prose")]
+    #[test_case("" ; "nothing")]
+    #[test_case("cp" ; "an operation without a path")]
+    // Unclosed quotes without an operation token stay silent, however many
+    // tokens follow: an apostrophe in copied prose is not a truncation.
+    #[test_case("don't" ; "an apostrophe")]
+    #[test_case("don't copy that" ; "an apostrophe then more tokens")]
+    // An ordinary copied shell line: filectrl writes absolute paths only, so a
+    // failing relative-path "entry" is unrelated text, not an error.
+    #[test_case("cp filectrl-nonexistent-dir/ dist/" ; "a relative shell line")]
+    #[test_case("\tmv filectrl-nonexistent-dir/ dist/" ; "an indented relative shell line")]
+    // An absolute path alone does not make an entry: only "cp"/"mv" does.
+    #[test_case("see /filectrl-does-not-exist-xyz" ; "prose naming an absolute path")]
+    fn unrelated_text_is_not_an_entry(text: &str) {
+        assert!(parse_clipboard_text(text).unwrap().is_none());
+    }
+
+    #[test_case("mv '/filectrl-does-not-exist-xyz'" => "Failed to access /filectrl-does-not-exist-xyz" ; "a missing path")]
+    // The entry parser splits on any whitespace, so classification must not
+    // depend on a literal "cp "/"mv " space prefix.
+    #[test_case("mv\t'/filectrl-does-not-exist-xyz'" => "Failed to access /filectrl-does-not-exist-xyz" ; "a tab-separated missing path")]
+    // A filectrl-written entry mangled by a clipboard manager: the quote never
+    // closes, so tokenizing fails, but the operation token makes it clearly an
+    // entry, not prose.
+    #[test_case("cp '/path wi" => "Malformed clipboard entry: \"cp '/path wi\"" ; "a truncated quoted entry")]
+    fn a_malformed_entry_is_an_error(text: &str) -> String {
+        parse_clipboard_text(text)
+            .expect_err("an entry that cannot be pasted must be reported")
+            .to_string()
     }
 
     #[test]
@@ -371,8 +396,11 @@ mod tests {
 
     // Linux only: macOS file systems refuse a name that is not valid UTF-8.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn an_entry_this_process_wrote_keeps_a_name_that_is_not_utf8() {
+    #[test_case(ClipboardEntry::Copy ; "a copy")]
+    #[test_case(ClipboardEntry::Move ; "a cut")]
+    fn an_entry_this_process_wrote_keeps_a_name_that_is_not_utf8(
+        operation: fn(Vec<PathInfo>) -> ClipboardEntry,
+    ) {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
         use crate::test_support::TempDir;
@@ -380,7 +408,7 @@ mod tests {
         let dir = TempDir::new("clipboard_not_utf8");
         let path = dir.join(OsStr::from_bytes(b"caf\xe9.txt"));
         std::fs::write(&path, b"x").unwrap();
-        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(path.as_path()).unwrap()]);
+        let entry = operation(vec![PathInfo::try_from(path.as_path()).unwrap()]);
 
         let mut clipboard = Clipboard::disabled();
         clipboard.set_clipboard_entry(&entry).unwrap();
@@ -406,51 +434,6 @@ mod tests {
         assert_eq!(
             Some(other.clone()),
             resolve_clipboard_text(Some(&written), &other.to_string()).unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_clipboard_text_errors_on_tab_separated_missing_path() {
-        // The entry parser splits on any whitespace, so classification must
-        // not depend on a literal "cp "/"mv " space prefix.
-        assert!(parse_clipboard_text("mv\t'/filectrl-does-not-exist-xyz'").is_err());
-    }
-
-    #[test]
-    fn parse_clipboard_text_errors_on_truncated_quoted_entry() {
-        // A filectrl-written entry mangled by a clipboard manager: the quote
-        // never closes, so tokenizing fails, but the operation token makes
-        // it clearly an entry, not prose.
-        assert!(parse_clipboard_text("cp '/path wi").is_err());
-        // Unclosed quotes without an operation token stay silent, however many
-        // tokens follow: an apostrophe in copied prose is not a truncation.
-        assert!(parse_clipboard_text("don't").unwrap().is_none());
-        assert!(parse_clipboard_text("don't copy that").unwrap().is_none());
-    }
-
-    #[test]
-    fn parse_clipboard_text_ignores_relative_path_shell_lines() {
-        // An ordinary copied shell line: filectrl writes absolute paths only,
-        // so a failing relative-path "entry" is unrelated text, not an error.
-        assert!(
-            parse_clipboard_text("cp filectrl-nonexistent-dir/ dist/")
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            parse_clipboard_text("\tmv filectrl-nonexistent-dir/ dist/")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn parse_clipboard_text_errors_on_missing_path() {
-        let result = parse_clipboard_text("mv '/filectrl-does-not-exist-xyz'");
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("filectrl-does-not-exist-xyz"),
-            "error should name the path: {error}"
         );
     }
 }

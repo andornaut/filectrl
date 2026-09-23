@@ -242,7 +242,7 @@ mod tests {
     #[test_case("",        ""                    ; "empty string is unchanged")]
     #[test_case("G/End",   "G (Uppercase)/End"   ; "annotates only the single-letter half")]
     #[test_case("g/G",     "g/G (Uppercase)"     ; "annotates the uppercase half of a pair")]
-    fn annotate_uppercase_cases(input: &str, expected: &str) {
+    fn annotate_uppercase_marks_single_uppercase_letters(input: &str, expected: &str) {
         assert_eq!(annotate_uppercase(input), expected);
     }
 
@@ -263,6 +263,28 @@ mod tests {
         assert!(text.contains("Quit:"), "{text}");
         assert!(text.contains("Select next, previous row:"), "{text}");
         assert!(text.contains("\u{2193}/j"), "{text}");
+    }
+
+    /// Every key column starts where the header's "Keybindings" does, in both
+    /// sections, so the printed list reads as two columns.
+    #[test]
+    fn the_printed_keys_line_up_under_the_header() {
+        let text = help_text(false);
+        let header_column = text.find("Keybindings").expect("a header");
+
+        for line in text.lines().filter(|line| line.contains(": ")) {
+            let after_label = line.find(": ").unwrap() + 2;
+            let keys_column =
+                after_label + line[after_label..].len() - line[after_label..].trim_start().len();
+            assert_eq!(header_column, keys_column, "{line:?}");
+        }
+        for header in text.lines().filter(|line| line.ends_with("Keybindings")) {
+            assert_eq!(
+                header_column,
+                header.find("Keybindings").unwrap(),
+                "{header:?}"
+            );
+        }
     }
 
     #[test]

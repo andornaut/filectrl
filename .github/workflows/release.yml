@@ -81,10 +81,6 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install XCB dependencies
-        if: matrix.os == 'ubuntu-latest' && !matrix.cross
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
       - name: Install cross
         if: matrix.cross
         uses: taiki-e/install-action@v2.87.8

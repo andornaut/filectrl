@@ -8,6 +8,10 @@ use super::TableView;
 pub(super) struct Marks {
     set: BTreeSet<usize>,
     range_anchor: Option<usize>,
+    /// The marks made before range mode began, kept under the range so that a
+    /// range adds to a selection rather than replacing it. Taken afresh each
+    /// time range mode begins, so it is only read while `range_anchor` is set.
+    range_base: BTreeSet<usize>,
 }
 
 impl Marks {
@@ -29,17 +33,18 @@ impl Marks {
             return false;
         }
         self.range_anchor = Some(item);
+        self.range_base = self.set.clone();
         self.set.insert(item);
         true
     }
 
-    /// Update marks to span from the range anchor to `cursor`.
-    /// No-op if not in range mode.
+    /// Update marks to the ones made before range mode plus the span from the
+    /// range anchor to `cursor`. No-op if not in range mode.
     pub(super) fn update_range(&mut self, cursor: usize) {
         if let Some(anchor) = self.range_anchor {
             let start = anchor.min(cursor);
             let end = anchor.max(cursor);
-            self.set = (start..=end).collect();
+            self.set = self.range_base.iter().copied().chain(start..=end).collect();
         }
     }
 
@@ -168,6 +173,42 @@ mod tests {
         for i in 2..=5 {
             assert!(marks.contains(i));
         }
+    }
+
+    fn marked(marks: &Marks) -> Vec<usize> {
+        marks.iter().copied().collect()
+    }
+
+    #[test]
+    fn a_range_adds_to_the_marks_made_before_it() {
+        let mut marks = Marks::default();
+        marks.toggle(0);
+        marks.enter_range(4);
+        marks.update_range(6);
+        assert_eq!(vec![0, 4, 5, 6], marked(&marks));
+    }
+
+    #[test]
+    fn a_second_range_keeps_the_first() {
+        let mut marks = Marks::default();
+        marks.enter_range(0);
+        marks.update_range(1);
+        marks.enter_range(1); // exit, keeping 0-1
+        marks.enter_range(5);
+        marks.update_range(6);
+        assert_eq!(vec![0, 1, 5, 6], marked(&marks));
+    }
+
+    /// Shrinking the range unmarks only what the range marked: an entry marked
+    /// beforehand stays marked when the range no longer covers it.
+    #[test]
+    fn shrinking_a_range_keeps_an_earlier_mark_it_had_covered() {
+        let mut marks = Marks::default();
+        marks.toggle(5);
+        marks.enter_range(3);
+        marks.update_range(7);
+        marks.update_range(3);
+        assert_eq!(vec![3, 5], marked(&marks));
     }
 
     #[test]

@@ -88,6 +88,7 @@ mod tests {
     #[test_case(r#"["bold", "italic"]"# => Modifier::BOLD | Modifier::ITALIC ; "combined")]
     #[test_case(r#"["BOLD"]"# => Modifier::BOLD ; "all caps")]
     #[test_case(r#"["Italic"]"# => Modifier::ITALIC ; "title case")]
+    #[test_case(r#"["blink", "rapid_blink"]"# => Modifier::SLOW_BLINK | Modifier::RAPID_BLINK ; "the two blinks are distinct")]
     fn modifier_deserializes(list: &str) -> Modifier {
         try_modifier(list).unwrap()
     }

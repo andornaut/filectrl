@@ -146,6 +146,8 @@ mod tests {
     #[test_case(REGULAR => "File" ; "a plain file")]
     #[test_case(DIRECTORY => "Directory,Executable" ; "a directory carries its execute bit")]
     #[test_case(EXECUTABLE => "File,Executable" ; "an executable file")]
+    #[test_case(0o100_645 => "File,Executable" ; "any execute bit makes it executable")]
+    #[test_case(0o100_664 => "File" ; "group write is not other write")]
     #[test_case(FIFO => "FIFO" ; "a fifo")]
     #[test_case(SOCKET => "Socket" ; "a socket")]
     #[test_case(BLOCK_DEVICE => "Block" ; "a block device")]

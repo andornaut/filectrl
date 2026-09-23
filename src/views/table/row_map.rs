@@ -164,6 +164,22 @@ mod tests {
         map(&[1; 5], visible).first_visible_line_ending_at(last_line)
     }
 
+    // heights [2, 1, 3, 1, 1] scrolled to item 1 in a viewport of four: the
+    // window starts at item 1's first line, 2, not at line 1, and spans lines
+    // 2-5. Its middle rounds down, to line 3.
+    #[test]
+    fn a_scrolled_window_is_measured_from_its_first_items_first_line() {
+        let m = LineItemMap::new(&[2, 1, 3, 1, 1], 4, 1);
+        assert_eq!(
+            (2, 3, 5),
+            (
+                m.first_visible_line(),
+                m.middle_visible_line(),
+                m.last_visible_line()
+            )
+        );
+    }
+
     #[test_case(&[1; 5], 3, 1 => 3 ; "a full viewport starting at line 1 ends at 3")]
     #[test_case(&[1, 1, 1], 10, 0 => 2 ; "a viewport taller than the content clamps to the last line")]
     fn last_visible_line_starting_at(

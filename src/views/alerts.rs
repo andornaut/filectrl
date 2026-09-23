@@ -175,6 +175,8 @@ impl View for AlertsView {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     fn view() -> AlertsView {
@@ -205,6 +207,48 @@ mod tests {
             format!("msg{}", MAX_NUMBER_ALERTS + 1)
         );
         assert_eq!(v.alerts.back().unwrap().1, "msg2");
+    }
+
+    /// One short alert, whose single line the border wraps when there is room
+    /// for it.
+    #[test_case(10 => 3 ; "a tall area adds the border")]
+    #[test_case(3 => 3 ; "the border needs three rows")]
+    #[test_case(2 => 1 ; "a shorter area drops the border")]
+    #[test_case(0 => 0 ; "no room hides the alerts")]
+    fn height_fits_the_alerts_to_the_area(area_height: u16) -> u16 {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "boom".into());
+        v.height(Rect::new(0, 0, 40, area_height))
+    }
+
+    #[test]
+    fn a_wrapped_alert_bullets_only_its_first_line() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "abcdefghij".into());
+
+        // Nine columns leave six beside the three-column prefix.
+        let lines: Vec<String> = v
+            .alerts(9)
+            .into_iter()
+            .map(|(_, line)| line.to_string())
+            .collect();
+
+        assert_eq!(vec![" • abcde…", "   fghij"], lines);
+    }
+
+    #[test]
+    fn a_click_clears_the_alerts() {
+        let mut v = view();
+        v.add_alert(AlertKind::Error, "boom".into());
+
+        v.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(v.alerts.is_empty());
     }
 
     #[test]

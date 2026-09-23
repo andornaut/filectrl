@@ -74,8 +74,9 @@ mod tests {
     use std::path::PathBuf;
 
     use ratatui::style::Style;
+    use test_case::test_case;
 
-    use super::{DEFAULT_MARKER, NO_APPLICATIONS, build_rows};
+    use super::{NO_APPLICATIONS, build_rows};
     use crate::{
         app::config::{Config, theme::OpenWith},
         file_system::open_with::AppCandidate,
@@ -126,10 +127,14 @@ mod tests {
         assert!(text(&rows[10]).starts_with("    App10"));
     }
 
-    #[test]
-    fn the_default_application_is_marked() {
-        let rows = build_rows(theme(), 0, 40, &[candidate("Viewer", true)]);
-        assert!(text(&rows[0]).contains(DEFAULT_MARKER));
+    // Unselected, so the row is built from its separate spans.
+    #[test_case("prog" => " 2. Viewer  prog (default)" ; "after the program")]
+    #[test_case("" => " 2. Viewer  (default)" ; "alone when there is no program")]
+    fn the_default_application_is_marked(detail: &str) -> String {
+        let mut viewer = candidate("Viewer", true);
+        viewer.detail = detail.to_string();
+        let rows = build_rows(theme(), 0, 0, &[candidate("App0", false), viewer]);
+        text(&rows[1])
     }
 
     #[test]

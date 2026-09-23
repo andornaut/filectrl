@@ -82,9 +82,10 @@ mod tests {
 
     // Five single-line items in a viewport of three, so the window shows items
     // 0-2. The first press lands on the last visible item; only once the cursor
-    // is already there does a press advance a whole page.
+    // is already there does a press advance a whole page. The cursor starts
+    // mid-window, where a page measured from it would land on item 3 instead.
     #[test_case(&[1; 5], 3, 0, 4 => None ; "at the last item")]
-    #[test_case(&[1; 5], 3, 0, 0 => Some(2) ; "jumps to the last visible item")]
+    #[test_case(&[1; 5], 3, 0, 1 => Some(2) ; "jumps to the last visible item")]
     #[test_case(&[1; 5], 3, 0, 2 => Some(4) ; "pages once already at the last visible item")]
     // Items 2 and 3 fill the viewport. Item 4 overflows the page measured
     // from item 3, and backing off from it would land on the cursor.
@@ -104,9 +105,10 @@ mod tests {
         next_page(&map(heights, visible, first), selected, heights.len())
     }
 
-    // The mirror of the above: the first press lands on the first visible item.
+    // The mirror of the above: the first press lands on the first visible item,
+    // not item 1, where a page measured back from the cursor would land.
     #[test_case(&[1; 5], 3, 0, 0, 0 => None ; "at the first item")]
-    #[test_case(&[1; 5], 3, 2, 4, 2 => Some(2) ; "jumps to the first visible item")]
+    #[test_case(&[1; 5], 3, 2, 3, 2 => Some(2) ; "jumps to the first visible item")]
     #[test_case(&[1; 5], 3, 2, 2, 2 => Some(0) ; "pages once already at the first visible item")]
     // Item 0 is four lines tall, so a window anchored on it would scroll past
     // the item the page was measured from; the snap moves forward instead.

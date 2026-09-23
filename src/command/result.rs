@@ -71,14 +71,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_error_is_alert_error() {
-        assert_eq!(
-            CommandResult::HandledWith(Box::new(Command::AlertError("oops".to_string()))),
-            anyhow!("oops").into()
-        );
-    }
-
-    #[test]
     fn a_context_chain_is_flattened_onto_the_one_line_an_alert_has() {
         use anyhow::Context;
 

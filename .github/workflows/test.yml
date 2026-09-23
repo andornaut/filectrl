@@ -63,13 +63,6 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2.9.2
 
-      # The XCB libraries are how the clipboard reaches X11, so they are a Linux
-      # build dependency. macOS reaches its pasteboard through the system
-      # framework and has nothing to install.
-      - name: Install XCB dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
       - name: Run tests
         run: cargo test
 
@@ -103,9 +96,6 @@ jobs:
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2.9.2
-
-      - name: Install XCB dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Run tests
         run: cargo test
@@ -153,10 +143,6 @@ jobs:
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2.9.2
-
-      # clippy compiles the crate, so it needs what a build needs.
-      - name: Install XCB dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Check formatting
         run: cargo fmt --check

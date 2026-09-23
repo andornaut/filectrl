@@ -126,7 +126,7 @@ impl Config {
         let config_dir = crate::test_support::TempDir::reserved("config")
             .path()
             .to_path_buf();
-        Self::parse(RuntimeEnv::default(), "", Some(config_dir), &[])
+        Self::parse(RuntimeEnv::default(), None, "", Some(config_dir), &[])
             .expect("the embedded default config should parse")
     }
 
@@ -165,6 +165,7 @@ impl Config {
         match fs::read_to_string(&path) {
             Ok(content) => Self::parse(
                 env,
+                Some(&path),
                 &content,
                 path.parent().map(std::path::Path::to_path_buf),
                 include_paths,
@@ -223,8 +224,12 @@ impl Config {
         Ok(path)
     }
 
+    /// `config_file` is the file `content` was read from, if any. An include
+    /// cycle that leads back to it is broken there, rather than merging the
+    /// config again on top of the files it included.
     fn parse(
         env: RuntimeEnv<'_>,
+        config_file: Option<&Path>,
         content: &str,
         config_dir: Option<PathBuf>,
         include_paths: &[PathBuf],
@@ -233,8 +238,8 @@ impl Config {
         // include_files from the user config → CLI --include paths.
         let defaults = merge_default_config()?;
         let mut value = merge_toml_values(defaults.clone(), parse_toml(content)?);
-        value = Self::merge_config_includes(value, config_dir.as_deref())?;
-        value = merge_include_paths(value, include_paths)?;
+        value = Self::merge_config_includes(config_file, value, config_dir.as_deref())?;
+        value = merge_include_paths(config_file, value, include_paths)?;
         // Reject typo'd / unknown keys before deserializing so a broken config
         // fails loudly instead of silently falling back to defaults.
         reject_unknown_keys(&value, &defaults, "")?;
@@ -243,9 +248,13 @@ impl Config {
 
     /// Resolves and merges files listed in the value's own `include_files`
     /// array. Relative entries resolve against `config_dir`.
-    fn merge_config_includes(value: Value, config_dir: Option<&Path>) -> Result<Value> {
+    fn merge_config_includes(
+        config_file: Option<&Path>,
+        value: Value,
+        config_dir: Option<&Path>,
+    ) -> Result<Value> {
         let includes = Self::resolve_include_files(&value, config_dir)?;
-        merge_include_paths(value, &includes)
+        merge_include_paths(config_file, value, &includes)
     }
 
     /// The directory containing the resolved config file. Bookmarks live in a
@@ -358,13 +367,14 @@ impl Config {
         match fs::read_to_string(&default_path) {
             Ok(content) => Self::parse(
                 env,
+                Some(&default_path),
                 &content,
                 default_path.parent().map(std::path::Path::to_path_buf),
                 include_paths,
             ),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 debug!("No config file found, using the built-in config");
-                Self::parse(env, "", None, include_paths)
+                Self::parse(env, None, "", None, include_paths)
             }
             Err(error) => Err(anyhow!(
                 "Failed to read config file {}: {error}",
@@ -411,13 +421,22 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
 /// Merges the given include files on top of an existing config value.
 /// Each include file's own `include_files` are resolved (relative to that
 /// file's directory) and merged recursively. A visited set keyed by
-/// canonicalized path breaks cycles and skips duplicate includes.
-fn merge_include_paths(mut value: Value, include_paths: &[PathBuf]) -> Result<Value> {
-    let mut visited = HashSet::new();
+/// canonicalized path breaks cycles and skips duplicate includes. It starts
+/// with `config_file`, which is already merged.
+fn merge_include_paths(
+    config_file: Option<&Path>,
+    mut value: Value,
+    include_paths: &[PathBuf],
+) -> Result<Value> {
+    let mut visited: HashSet<PathBuf> = config_file.map(canonical_or_raw).into_iter().collect();
     for path in include_paths {
         value = merge_include_file(value, path, &mut visited)?;
     }
     Ok(value)
+}
+
+fn canonical_or_raw(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
@@ -425,7 +444,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     // Fall back to the raw path if canonicalization fails: a missing file or
     // permission error will then surface from `fs::read_to_string` below with
     // a more informative message.
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical = canonical_or_raw(path);
 
     // Resolve this file's own include_files relative to its real directory.
     // Deriving the directory from the canonical (absolute, when canonicalize
@@ -489,11 +508,22 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
     Ok(())
 }
 
-/// Style properties that may appear on any style table. The embedded default
+/// Style properties that may appear on a style table. The embedded default
 /// omits them where they are unset (`[theme.alert]` lists only `fg`), so they
-/// are permitted on any table inside a theme rather than validated against the
-/// default's shape, which would wrongly reject a user adding `bg` there.
+/// are not validated key by key against the default's shape, which would
+/// wrongly reject a user adding `bg` there. See `takes_style_keys` for where
+/// they belong.
 const STYLE_KEYS: &[&str] = &["fg", "bg", "modifiers"];
+
+/// Whether a theme table, as the default `schema` has it, is a style: a leaf
+/// (`[theme.table.selected]`), or a section styled itself as well as holding
+/// sub-styles (`[theme.alert]`, whose default sets `fg`). A container such as
+/// `[theme.clipboard]` is neither, and a style key there would be dropped by
+/// deserialization.
+fn takes_style_keys(schema: &toml::map::Map<String, Value>) -> bool {
+    schema.values().all(|value| !value.is_table())
+        || STYLE_KEYS.iter().any(|key| schema.contains_key(*key))
+}
 
 /// Whether `path` names somewhere inside a theme, which is the only place a
 /// style property belongs. Allowing the names everywhere would let `[ui] bg`
@@ -516,7 +546,10 @@ fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> 
         if path.is_empty() && key == "include_files" {
             continue;
         }
-        if is_theme_path(path) && STYLE_KEYS.contains(&key.as_str()) {
+        if is_theme_path(path)
+            && STYLE_KEYS.contains(&key.as_str())
+            && takes_style_keys(schema_table)
+        {
             continue;
         }
         let key_path = if path.is_empty() {
@@ -560,7 +593,10 @@ pub fn merge_toml_values(base: Value, overlay: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{
+        crossterm::event::{KeyCode, KeyModifiers},
+        style::Color,
+    };
     use test_case::test_case;
 
     use super::{keybindings::Action, *};
@@ -588,8 +624,8 @@ open_directory = "alacritty --working-directory %s"
 [openers.macos]
 open_directory = "alacritty --working-directory %s"
 "#;
-        let defaults = Config::parse(RuntimeEnv::default(), "", None, &[]).unwrap();
-        let merged = Config::parse(RuntimeEnv::default(), partial, None, &[]).unwrap();
+        let defaults = Config::parse(RuntimeEnv::default(), None, "", None, &[]).unwrap();
+        let merged = Config::parse(RuntimeEnv::default(), None, partial, None, &[]).unwrap();
 
         // The named key is replaced, and the ones the partial does not mention
         // keep the built-in defaults rather than being blanked by the merge.
@@ -604,7 +640,7 @@ open_directory = "alacritty --working-directory %s"
     /// Parse a config that is expected to fail, returning the error message.
     /// (`Config` is not `Debug`, so `unwrap_err` is unavailable.)
     fn parse_err(toml: &str) -> String {
-        match Config::parse(RuntimeEnv::default(), toml, None, &[]) {
+        match Config::parse(RuntimeEnv::default(), None, toml, None, &[]) {
             Ok(_) => panic!("expected config parse to fail"),
             Err(error) => error.to_string(),
         }
@@ -616,7 +652,7 @@ open_directory = "alacritty --working-directory %s"
     #[test_case(DEFAULT_CONFIG_BASE ; "config")]
     #[test_case(DEFAULT_THEME ; "theme")]
     fn a_written_default_parses_and_keeps_its_comments(content: &str) {
-        Config::parse(RuntimeEnv::default(), content, None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), None, content, None, &[]).unwrap();
         assert!(content.contains('#'), "comments should be preserved");
     }
 
@@ -640,6 +676,10 @@ open_directory = "alacritty --working-directory %s"
     #[test_case("fg = \"#ff0000\"\n", "fg" ; "style name at the top level")]
     #[test_case("[ui]\nbg = 42\n", "ui.bg" ; "style name in a non-theme table")]
     #[test_case("[file_system]\nmodifiers = [\"bold\"]\n", "file_system.modifiers" ; "modifiers in a non-theme table")]
+    // A theme table that only groups styles is not a style itself, so a style
+    // property there would be dropped just the same.
+    #[test_case("[theme.clipboard]\nfg = \"Red\"\n", "theme.clipboard.fg" ; "style name on a theme container")]
+    #[test_case("[theme256.file_modified_date]\nbg = \"4\"\n", "theme256.file_modified_date.bg" ; "style name on a theme256 container")]
     fn unknown_key_is_rejected(toml: &str, expected: &str) {
         let err = parse_err(toml);
         assert!(err.contains(expected), "error should name the key: {err}");
@@ -648,10 +688,13 @@ open_directory = "alacritty --working-directory %s"
     #[test_case("[theme.alert]\nbg = \"#000000\"\nmodifiers = [\"bold\"]\n" ; "nested theme table")]
     #[test_case("[theme256.alert]\nbg = \"#000000\"\n" ; "nested theme256 table")]
     #[test_case("[theme]\nfg = \"#ffffff\"\n" ; "theme root")]
+    // The default leaves this leaf empty, so only its being a leaf says it is
+    // a style.
+    #[test_case("[theme.file_type.missing]\nfg = \"Red\"\n" ; "a leaf the default leaves empty")]
     fn style_property_absent_from_default_is_accepted(toml: &str) {
         // The default `[theme.alert]` lists only `fg`; adding `bg`/`modifiers`
         // must not be mistaken for an unknown key.
-        Config::parse(RuntimeEnv::default(), toml, None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), None, toml, None, &[]).unwrap();
     }
 
     #[test_case("include_files = \"theme.toml\"" ; "string instead of array")]
@@ -680,6 +723,7 @@ open_directory = "alacritty --working-directory %s"
         // a valid configuration rather than the degenerate case of the check.
         Config::parse(
             RuntimeEnv::default(),
+            None,
             "[file_system]\nbuffer_min_bytes = 100\nbuffer_max_bytes = 100\n",
             None,
             &[],
@@ -687,15 +731,59 @@ open_directory = "alacritty --working-directory %s"
         .unwrap();
     }
 
+    // A zero bound descends into nothing or collects nothing, so a search
+    // would report no results instead of the config failing to load.
+    #[test_case("search_max_depth" ; "depth")]
+    #[test_case("search_max_results" ; "results")]
+    fn a_search_bound_of_zero_is_rejected(key: &str) {
+        let err = parse_err(&format!("[file_system]\n{key} = 0\n"));
+        assert_eq!(format!("file_system.{key} must be greater than 0"), err);
+    }
+
     #[test]
-    fn a_search_depth_of_zero_is_rejected() {
-        // A depth of zero descends into nothing, so a search would report no
-        // results instead of the config failing to load.
-        let err = parse_err("[file_system]\nsearch_max_depth = 0\n");
-        assert!(
-            err.contains("search_max_depth"),
-            "error should name the key: {err}"
+    fn the_theme_read_is_the_one_for_the_terminals_color_support() {
+        let toml = "[theme]\nfg = \"#010203\"\n[theme256]\nfg = \"#040506\"\n";
+        let parse = |is_truecolor| {
+            let env = RuntimeEnv {
+                is_truecolor,
+                ls_colors: None,
+            };
+            Config::parse(env, None, toml, None, &[]).unwrap()
+        };
+
+        assert_eq!(Some(Color::Rgb(1, 2, 3)), parse(true).theme().base().fg);
+        assert_eq!(Some(Color::Rgb(4, 5, 6)), parse(false).theme().base().fg);
+    }
+
+    #[test]
+    fn the_openers_are_the_ones_for_the_build_target() {
+        let toml = "[openers.linux]\nopen_file = \"linux %s\"\n[openers.macos]\nopen_file = \"macos %s\"\n";
+        let config = Config::parse(RuntimeEnv::default(), None, toml, None, &[]).unwrap();
+        let expected = if cfg!(target_os = "macos") {
+            "macos %s"
+        } else {
+            "linux %s"
+        };
+        assert_eq!(expected, config.openers.open_file);
+    }
+
+    #[test_case(true, Some(Color::Red) ; "applied when they take precedence")]
+    #[test_case(false, Some(Color::Rgb(1, 2, 3)) ; "ignored otherwise")]
+    fn ls_colors_reach_both_themes(take_precedence: bool, expected: Option<Color>) {
+        let env = RuntimeEnv {
+            is_truecolor: false,
+            ls_colors: Some("di=31"),
+        };
+        let toml = format!(
+            "[theme.file_type]\nls_colors_take_precedence = {take_precedence}\n\
+             [theme.file_type.directory]\nfg = \"#010203\"\n\
+             [theme256.file_type]\nls_colors_take_precedence = {take_precedence}\n\
+             [theme256.file_type.directory]\nfg = \"#010203\"\n"
         );
+        let config = Config::parse(env, None, &toml, None, &[]).unwrap();
+
+        assert_eq!(expected, config.theme.file_type.directory().fg);
+        assert_eq!(expected, config.theme256.file_type.directory().fg);
     }
 
     // ── writing the defaults ────────────────────────────────────────────────
@@ -768,16 +856,19 @@ open_directory = "alacritty --working-directory %s"
     #[test]
     fn writing_a_default_refuses_to_follow_a_symlink() {
         let dir = TempDir::new("config_symlink");
-        let real = dir.join("real.toml");
+        let target = dir.join("dotfiles.toml");
         let link = dir.join("config.toml");
-        fs::write(&real, b"# hand written\n").unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // Dangling, so only a check that does not follow the link finds
+        // anything there. A config symlinked into a dotfiles repository is a
+        // file to refuse, not one to write through to its target.
+        std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        // A config symlinked into a dotfiles repository is a file to refuse,
-        // not one to write through: `create_new` would follow it and replace
-        // the checked-in file instead.
-        assert!(Config::write_default(Some(link), false).is_err());
-        assert_eq!("# hand written\n", fs::read_to_string(&real).unwrap());
+        let error = Config::write_default(Some(link), false)
+            .expect_err("a symlink must not be written through")
+            .to_string();
+
+        assert!(error.contains("already exists; pass --force"), "{error}");
+        assert!(!target.exists());
     }
 
     // ── loading, and what a bad path reports ────────────────────────────────
@@ -939,6 +1030,75 @@ open_directory = "alacritty --working-directory %s"
         let merged = Config::load(RuntimeEnv::default(), Some(a), &[]).unwrap();
 
         assert!(select_next_key(&merged, 'e'));
+    }
+
+    /// The config is merged first, so a cycle that leads back to it must stop
+    /// there: merging it again would put it on top of the file it included.
+    #[test]
+    fn an_include_cycle_back_to_the_config_keeps_the_include_on_top() {
+        let dir = TempDir::new("config_cycle_main");
+        let config = dir.join("config.toml");
+        let include = dir.join("include.toml");
+        fs::write(
+            &config,
+            format!(
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"e\"\n",
+                include.display()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &include,
+            format!(
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"i\"\n",
+                config.display()
+            ),
+        )
+        .unwrap();
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
+
+        assert!(select_next_key(&merged, 'i'));
+        assert!(!select_next_key(&merged, 'e'));
+    }
+
+    #[test]
+    fn a_relative_include_file_resolves_from_the_file_that_lists_it() {
+        let dir = TempDir::new("config_relative_include");
+        fs::create_dir(dir.join("sub")).unwrap();
+        let config = dir.join("config.toml");
+        // Listed by the config, so resolved from the config's directory.
+        fs::write(&config, "include_files = [\"sub/listed.toml\"]\n").unwrap();
+        // Listed by a file in `sub/`, so resolved from `sub/`: neither the
+        // config's directory nor the working directory holds a `nested.toml`.
+        fs::write(
+            dir.join("sub").join("listed.toml"),
+            "include_files = [\"nested.toml\"]\n",
+        )
+        .unwrap();
+        binds_select_next(&dir, "sub/nested.toml", 'e');
+
+        let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
+
+        assert!(select_next_key(&merged, 'e'));
+    }
+
+    #[test]
+    fn a_relative_config_path_resolves_from_the_working_directory() {
+        let name = "filectrl-absent-config-xyz.toml";
+
+        let error = load_err(Some(PathBuf::from(name)), &[]);
+
+        // Absolutized, so that the config's directory, which bookmarks and
+        // relative includes resolve from, is never the empty path.
+        let absolute = std::env::current_dir().unwrap().join(name);
+        assert!(
+            error.starts_with(&format!(
+                "Failed to read config file {}:",
+                absolute.display()
+            )),
+            "{error}"
+        );
     }
 
     /// Runs every path-carrying default opener, on both platforms, against a

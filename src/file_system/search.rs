@@ -254,7 +254,8 @@ mod tests {
         std::fs::write(root.join("README.md"), b"").unwrap();
         std::fs::write(root.join("notes.txt"), b"").unwrap();
 
-        let (commands, _) = run(&default_limits(), &root, "eadm");
+        // Mixed case, so lowercasing only one side cannot match.
+        let (commands, _) = run(&default_limits(), &root, "eAdM");
 
         assert_eq!(vec!["README.md".to_string()], matched_names(&commands));
     }
@@ -291,6 +292,8 @@ mod tests {
     #[test]
     fn the_depth_limit_stops_the_descent_and_warns_once() {
         let root = nested_tree("search_depth_hit", 4);
+        // A second directory past the limit, beside level2.
+        std::fs::create_dir(root.join("level0/level1/sibling")).unwrap();
         let limits = Limits {
             max_depth: 2,
             ..default_limits()

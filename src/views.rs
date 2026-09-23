@@ -201,6 +201,11 @@ mod tests {
     }
 
     #[test]
+    fn a_count_too_large_for_the_terminal_saturates() {
+        assert_eq!(u16::MAX, super::as_dimension(usize::from(u16::MAX) + 1));
+    }
+
+    #[test]
     fn listing_mode_transitions_cover_the_mode_changing_commands() {
         let dir = PathInfo::try_from("/tmp").unwrap();
         assert_eq!(

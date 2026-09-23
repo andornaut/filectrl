@@ -22,9 +22,19 @@ impl ScrollbarView {
             // Nothing is drawn, so clear the hit-test area: clicks in this
             // column must not be treated as scrollbar interactions.
             self.area = Rect::default();
+            self.track = Rect::default();
             return;
         }
         self.area = area;
+        self.track = if theme.scrollbar.show_ends() {
+            Rect {
+                y: area.y.saturating_add(1),
+                height: area.height.saturating_sub(2),
+                ..area
+            }
+        } else {
+            area
+        };
 
         self.state = self
             .state

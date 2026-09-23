@@ -334,7 +334,11 @@ mod tests {
 
     use std::os::fd::AsFd;
 
-    use super::{Command, EventSource, event_loop, panic_message, watch_signal_pipe};
+    use test_case::test_case;
+
+    use super::{
+        Command, EventSource, event_loop, panic_message, receive_commands, watch_signal_pipe,
+    };
 
     const INTERVAL: Duration = Duration::from_millis(500);
     // Long enough that the watcher is blocked in `read` before the byte is
@@ -430,6 +434,42 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_channel_stops_the_reader() {
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let mut source = FakeEventSource::new(vec![Ok(true), Ok(true)])
+            .with_events(vec![Event::Resize(10, 20), Event::Resize(30, 40)]);
+
+        event_loop(&tx, INTERVAL, &mut source);
+
+        // The app is shutting down, so the first undeliverable event ends the
+        // loop rather than the reader reading on.
+        assert_eq!(1, source.events.len());
+    }
+
+    #[test]
+    fn everything_already_queued_is_received_as_one_batch() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Command::SearchTick).unwrap();
+        tx.send(Command::ResetView).unwrap();
+
+        assert_eq!(
+            vec![Command::SearchTick, Command::ResetView],
+            receive_commands(&rx)
+        );
+    }
+
+    #[test]
+    fn a_disconnected_channel_is_received_as_quit() {
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+
+        // `recv` fails at once on a disconnected channel, so an empty batch
+        // would spin `App::run` instead of ending it.
+        assert_eq!(vec![Command::Quit], receive_commands(&rx));
+    }
+
+    #[test]
     fn a_byte_already_written_quits_without_waiting() {
         let (tx, rx) = mpsc::channel();
         let (read_fd, write_fd) = nix::unistd::pipe().expect("a pipe should be creatable");
@@ -470,24 +510,10 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn panic_message_extracts_str_payload() {
-        let payload: Box<dyn std::any::Any + Send> = Box::new("boom");
-        assert_eq!(panic_message(payload.as_ref()), "boom");
-    }
-
-    #[test]
-    fn panic_message_extracts_string_payload() {
-        let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("kaboom"));
-        assert_eq!(panic_message(payload.as_ref()), "kaboom");
-    }
-
-    #[test]
-    fn panic_message_falls_back_for_other_payloads() {
-        let payload: Box<dyn std::any::Any + Send> = Box::new(42u32);
-        assert_eq!(
-            panic_message(payload.as_ref()),
-            "<non-string panic payload>"
-        );
+    #[test_case(&"boom" => "boom" ; "a str payload")]
+    #[test_case(&String::from("kaboom") => "kaboom" ; "a String payload")]
+    #[test_case(&42u32 => "<non-string panic payload>" ; "any other payload")]
+    fn a_panic_payload_renders_as_its_message(payload: &(dyn std::any::Any + Send)) -> String {
+        panic_message(payload).to_string()
     }
 }

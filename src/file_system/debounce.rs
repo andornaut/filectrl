@@ -125,8 +125,10 @@ mod tests {
         fn second_call_below_threshold_does_not_trigger() {
             let mut d = ProgressDebouncer::new(5, FLOOR, 1_000_000); // threshold = 50_000 bytes
             let now = Instant::now();
-            d.should_trigger(now, 1); // first call always triggers
-            assert!(!d.should_trigger(now + LATER, 1_000)); // well below threshold
+            // First call always triggers, and a trigger restarts the count: the
+            // 49_999 it carried must not count towards the next threshold.
+            d.should_trigger(now, 49_999);
+            assert!(!d.should_trigger(now + LATER, 1_000));
         }
 
         #[test]

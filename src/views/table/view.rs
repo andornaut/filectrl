@@ -257,6 +257,10 @@ mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
     use test_case::test_case;
 
+    use ratatui::crossterm::event::{
+        KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+
     use super::{
         super::{
             TableView, columns::SortColumn, navigation::Reselect, row_map::LineItemMap,
@@ -264,7 +268,12 @@ mod tests {
         },
         scrollbar_position, visible_window,
     };
-    use crate::{app::config::Config, file_system::path_info::PathInfo, test_support::TempDir};
+    use crate::{
+        app::{clipboard::ClipboardEntry, config::Config},
+        command::{Command, handler::CommandHandler},
+        file_system::path_info::PathInfo,
+        test_support::TempDir,
+    };
 
     // While a drag is live the thumb tracks the pointer, so it stays under the
     // cursor even where the window top snaps past a wrapped row. On release it
@@ -290,6 +299,7 @@ mod tests {
     #[test_case(&[1; 10], 3, 1, 5 => (1, 4) ; "the selection moved above the window")]
     #[test_case(&[1; 10], 3, 7, 0 => (5, 8) ; "the selection moved below, so it sits at the bottom")]
     #[test_case(&[1; 100], 3, 99, 0 => (97, 100) ; "a jump to the end anchors at the end")]
+    #[test_case(&[1; 5], 3, 9, 0 => (2, 5) ; "a selection past the end anchors at the end")]
     // A row taller than the viewport can never fit whole, so the window shows
     // its top rather than scrolling past it.
     #[test_case(&[1, 5, 1], 3, 1, 0 => (1, 2) ; "an item taller than the viewport")]
@@ -380,8 +390,129 @@ mod tests {
         assert_eq!(rebuilt, table.mapper);
     }
 
+    /// A table listing `names`, loaded and sorted.
+    fn loaded_table(dir: &TempDir, names: &[&str]) -> TableView {
+        let mut table = loading_table(dir);
+        table.content.append(&entries(dir, names));
+        table.finish_directory();
+        table
+    }
+
+    // Thirty rows with nine visible, the window scrolled to rows 5-13. From
+    // the cursor on row 7 every selection key lands on a different row, so an
+    // arm dispatching a key to the wrong movement is caught. The paging rows
+    // start on the window's edges, where a page moves past the window rather
+    // than to its edge, which the visible-row keys would also reach.
+    #[test_case(7, KeyCode::Char('j') => 8 ; "next row")]
+    #[test_case(7, KeyCode::Char('k') => 6 ; "previous row")]
+    #[test_case(7, KeyCode::Char('g') => 0 ; "first row")]
+    #[test_case(7, KeyCode::Char('G') => 29 ; "last row")]
+    #[test_case(7, KeyCode::Char('z') => 14 ; "middle row of the listing")]
+    #[test_case(7, KeyCode::Char('H') => 5 ; "top visible row")]
+    #[test_case(7, KeyCode::Char('M') => 9 ; "middle visible row")]
+    #[test_case(7, KeyCode::Char('L') => 13 ; "bottom visible row")]
+    #[test_case(13, KeyCode::PageDown => 21 ; "page down from the bottom row")]
+    #[test_case(5, KeyCode::PageUp => 0 ; "page up from the top row")]
+    fn each_movement_key_moves_the_cursor_its_own_way(cursor: usize, code: KeyCode) -> usize {
+        let dir = TempDir::new("table_movement_keys");
+        let names: Vec<String> = (0..30).map(|i| format!("{i:02}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut table = loaded_table(&dir, &names);
+        table.select(13);
+        render(&mut table, 20, 10);
+        table.select(cursor);
+        render(&mut table, 20, 10);
+
+        let modifiers = if matches!(code, KeyCode::Char(c) if c.is_ascii_uppercase()) {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::NONE
+        };
+        table.handle_key(code, modifiers);
+
+        table.table_state.selected().unwrap()
+    }
+
     #[test]
-    fn the_row_height_cache_follows_appends_and_reorders() {
+    fn a_click_after_scrolling_lands_on_the_row_drawn_under_it() {
+        let dir = TempDir::new("table_scrolled_click");
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+        let mut table = loaded_table(&dir, &names);
+        // Three lines under the header. Selecting the last row scrolls the
+        // window to `h`-`j`; moving up one stays inside it, so the window holds
+        // still rather than re-anchoring the cursor at the bottom.
+        table.select(9);
+        render(&mut table, 20, 4);
+        table.select(8);
+        render(&mut table, 20, 4);
+
+        table.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(
+            Some("h"),
+            table.selected_path().map(|path| path.display_name.as_str())
+        );
+    }
+
+    /// One row per state, in a window scrolled off the top of the listing, so
+    /// a row looked up by its position in the window rather than the listing
+    /// would take another row's state. Where states overlap, the one that says
+    /// what the next keypress does wins: a pending delete over the clipboard,
+    /// the clipboard over a mark.
+    #[test]
+    fn each_row_is_drawn_in_the_style_of_its_state() {
+        let dir = TempDir::new("table_row_styles");
+        let mut table = loaded_table(&dir, &["a", "b", "c", "d", "e", "f"]);
+        let items = table.content.items_sorted().to_vec();
+        table.select(4);
+        table.delete(); // `e` awaits confirmation
+        table.select(3);
+        table.toggle_mark();
+        table.select(5);
+        table.toggle_mark();
+        table.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+            vec![items[4].clone(), items[5].clone()],
+        ))));
+        // Selecting the last row scrolls the window to `c`-`f`; moving the
+        // cursor to `c` keeps it there.
+        render(&mut table, 20, 5);
+        table.select(2);
+
+        let buf = render(&mut table, 20, 5);
+
+        let theme = Config::global().theme();
+        let background = |y: u16| buf[(0, y)].bg;
+        assert_eq!(
+            [
+                theme.table.selected().bg,
+                theme.table.marked().bg,
+                theme.table.delete().bg,
+                theme.clipboard.copy().bg,
+            ],
+            [1, 2, 3, 4].map(|y| Some(background(y)))
+        );
+    }
+
+    #[test]
+    fn the_header_points_the_way_the_sorted_column_runs() {
+        let dir = TempDir::new("table_header");
+        let mut table = loaded_table(&dir, &["a"]);
+
+        let ascending = row_text(&render(&mut table, 20, 4), 0);
+        table.sort_by(SortColumn::Name);
+        let descending = row_text(&render(&mut table, 20, 4), 0);
+
+        assert!(ascending.starts_with("[N]ame⌃"), "{ascending:?}");
+        assert!(descending.starts_with("[N]ame⌄"), "{descending:?}");
+    }
+
+    #[test]
+    fn the_row_height_cache_follows_appends_reorders_and_resizes() {
         let dir = TempDir::new("table_height_cache");
         let mut table = loading_table(&dir);
         // Batches arrive out of name order and mix one and two line rows, so
@@ -407,6 +538,16 @@ mod tests {
         table.sort_by(SortColumn::Name);
         render(&mut table, 20, 10);
 
+        assert_cache_is_a_full_rebuild(&table, 9);
+
+        // Wide enough that the long names no longer wrap.
+        let wrapped = table.cached_heights.clone();
+        render(&mut table, 30, 10);
+
+        assert_ne!(
+            wrapped, table.cached_heights,
+            "the widening must unwrap rows"
+        );
         assert_cache_is_a_full_rebuild(&table, 9);
     }
 }

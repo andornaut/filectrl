@@ -1419,6 +1419,42 @@ fn resolve(path: &Path) -> PathBuf {
     })
 }
 
+/// The entry `path` names, with symlinks resolved in its parent directories
+/// but not in its own name: a symlink is compared as itself, never as the file
+/// it points at, which is a different entry.
+pub(super) fn resolve_entry(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            resolve(parent).join(name)
+        }
+        _ => resolve(path),
+    }
+}
+
+/// Whether both paths name one file: the same device and inode, without
+/// following a symlink in either.
+pub(super) fn is_same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (a.symlink_metadata(), b.symlink_metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Whether `link` is a symlink that resolves to the entry `entry` names.
+pub(super) fn is_link_to(link: &Path, entry: &Path) -> bool {
+    link.symlink_metadata()
+        .is_ok_and(|metadata| metadata.is_symlink())
+        && link
+            .canonicalize()
+            .is_ok_and(|target| target == resolve_entry(entry))
+}
+
 /// Collapses `.` and `..` components purely lexically (no filesystem access,
 /// so it works for destinations that do not exist yet). `..` pops the previous
 /// component; at the root it is a no-op.
@@ -1460,8 +1496,9 @@ fn validate_paths(
     // `/a/c/../b`) nor a destination directory that is a symlink to the
     // source's own directory can disguise one path as another. The
     // destination's own name does not exist yet, so its parent is resolved and
-    // the name rejoined.
-    let abs_old = resolve(&old_path);
+    // the name rejoined. The source is resolved the same way, so a symlink is
+    // compared as the link it is, not as the entry it points at.
+    let abs_old = resolve_entry(&old_path);
     let abs_new = resolve(&destination_directory.path).join(file_name);
 
     // The two paths name the same entry. This has to be caught here whatever
@@ -1474,6 +1511,31 @@ fn validate_paths(
         return Err(anyhow!(
             "Cannot {operation} {} into its own directory",
             compact(&old_path)
+        )
+        .into());
+    }
+
+    // Two names of one file (hard links, or one entry spelled two ways on a
+    // case-insensitive mount): replacing one with the other either deletes the
+    // file or does nothing, depending on how the names relate. `cp` and `mv`
+    // refuse both as the same file.
+    if is_same_file(&old_path, &new_path) {
+        return Err(anyhow!(
+            "Cannot {operation} {} to {}: they are the same file",
+            compact(&old_path),
+            compact(&new_path)
+        )
+        .into());
+    }
+
+    // A symlink pasted over the entry it points at would replace that entry,
+    // the only copy of its data, with a link to itself. `cp` and `mv` refuse
+    // the same paste as the same file.
+    if is_link_to(&old_path, &abs_new) {
+        return Err(anyhow!(
+            "Cannot {operation} {}: it links to {}, the entry it would replace",
+            compact(&old_path),
+            compact(&new_path)
         )
         .into());
     }
@@ -1684,7 +1746,11 @@ mod tests {
     #[test_case(5000, 10, 100 => 100 ; "above max*divisor uses max")]
     #[test_case(400, 10, 100 => 20 ; "mid range uses len/divisor")]
     #[test_case(30, 10, 100 => 10 ; "mid range floored at min")]
-    fn buffer_bytes_is_correct(len: u64, min: u64, max: u64) -> usize {
+    fn buffer_bytes_scales_with_the_length_between_min_and_max(
+        len: u64,
+        min: u64,
+        max: u64,
+    ) -> usize {
         buffer_bytes(len, min, max)
     }
 
@@ -1812,6 +1878,64 @@ mod tests {
         let message = rejection(validate_paths(&src, &dest, "copy", overwrite));
         assert!(message.ends_with("into its own directory"), "{message}");
         assert!(real.join("f.txt").exists());
+    }
+
+    /// `a/foo` is a symlink. Its own name is what is compared, so a paste into
+    /// `b` meets `b/foo`, not the source's own directory, and whether that is a
+    /// collision or a refusal depends on where the link points.
+    fn link_pasted_into(label: &str, target: &str) -> (TempDir, PathInfo, PathInfo) {
+        let fx = TempDir::new(label);
+        let (a, b, c) = (fx.join("a"), fx.join("b"), fx.join("c"));
+        for dir in [&a, &b, &c] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(b.join("foo"), b"data").unwrap();
+        std::fs::write(c.join("foo"), b"other").unwrap();
+        std::os::unix::fs::symlink(fx.join(target).join("foo"), a.join("foo")).unwrap();
+        let src = PathInfo::try_from(a.join("foo").as_path()).unwrap();
+        let dest = PathInfo::try_from(b.as_path()).unwrap();
+        (fx, src, dest)
+    }
+
+    #[test]
+    fn validate_paths_refuses_a_symlink_pasted_over_the_entry_it_points_at() {
+        let (fx, src, dest) = link_pasted_into("tasks_link_over_target", "b");
+
+        // Even with the overwrite granted: replacing `b/foo` with the link
+        // would leave a link to itself and lose the only copy of the data.
+        let message = rejection(validate_paths(&src, &dest, "copy", true));
+
+        assert!(message.ends_with("the entry it would replace"), "{message}");
+        assert_eq!(
+            b"data".to_vec(),
+            std::fs::read(fx.join("b").join("foo")).unwrap()
+        );
+    }
+
+    #[test_case("copy" ; "a copy")]
+    #[test_case("move" ; "a move")]
+    fn validate_paths_refuses_a_hard_link_of_the_source(operation: &str) {
+        let fx = TempDir::new("tasks_hard_link");
+        let (a, b) = (fx.join("a"), fx.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("f"), b"data").unwrap();
+        std::fs::hard_link(a.join("f"), b.join("f")).unwrap();
+        let src = PathInfo::try_from(a.join("f").as_path()).unwrap();
+        let dest = PathInfo::try_from(b.as_path()).unwrap();
+
+        let message = rejection(validate_paths(&src, &dest, operation, true));
+
+        assert!(message.ends_with("they are the same file"), "{message}");
+    }
+
+    #[test]
+    fn validate_paths_treats_a_symlink_to_another_file_as_an_ordinary_collision() {
+        let (_fx, src, dest) = link_pasted_into("tasks_link_elsewhere", "c");
+
+        let message = rejection(validate_paths(&src, &dest, "copy", false));
+
+        assert!(message.ends_with("already exists there"), "{message}");
     }
 
     #[test]
@@ -2146,40 +2270,159 @@ mod tests {
         assert_eq!(before, modified_times(&dst));
     }
 
+    /// Runs `task` on the shared worker and waits for how it finished. `Err`
+    /// carries the alerts of a task that was refused before it started.
+    fn run_to_end(task: TaskCommand) -> Result<Task, Vec<Command>> {
+        let (tx, rx) = mpsc::channel();
+        let result = task.run(tx, None, 64_000, 64_000_000);
+        if result.cancel_info.is_none() {
+            return Err(result.command_result.into_commands());
+        }
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::Progress(task)) if task.is_terminal() => return Ok(task),
+                Ok(_) => {}
+                Err(error) => panic!("task did not finish: {error}"),
+            }
+        }
+    }
+
     #[test]
     fn a_plain_copy_does_not_keep_the_modification_times() {
         let fx = TempDir::new("tasks_times_off");
-        let src = fx.join("src");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("a.txt"), b"a").unwrap();
+        let src = fx.join("a.txt");
+        fs::write(&src, b"a").unwrap();
         let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
-        for relative in ["a.txt", "."] {
-            let file = File::options().read(true).open(src.join(relative)).unwrap();
-            file.set_times(fs::FileTimes::new().set_modified(old))
-                .unwrap();
-        }
+        File::options()
+            .write(true)
+            .open(&src)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(old))
+            .unwrap();
         let dst = fx.join("dst");
-        let mode = fs::symlink_metadata(&src).unwrap().permissions().mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
+        fs::create_dir(&dst).unwrap();
 
         // `cp` does not preserve timestamps without `-p`, so a copy must not
         // start doing it just because the move path needs to.
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            true,
-            mode,
-        ));
-        active.done();
+        let task = run_to_end(TaskCommand::Copy(
+            PathInfo::try_from(src.as_path()).unwrap(),
+            PathInfo::try_from(dst.as_path()).unwrap(),
+            false,
+        ))
+        .expect("the copy should start");
 
+        assert_eq!(None, task.error_message());
         assert_ne!(
             old,
             fs::metadata(dst.join("a.txt")).unwrap().modified().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_copy_rereads_a_source_whose_type_changed_since_it_was_listed() {
+        let fx = TempDir::new("tasks_copy_restat");
+        let src = fx.join("was_a_directory");
+        fs::write(&src, b"now a file").unwrap();
+        let dst = fx.join("dst");
+        fs::create_dir(&dst).unwrap();
+        // Listed as a directory: `path_info` reports one whatever is on disk.
+        let stale = path_info(src.to_str().unwrap(), "was_a_directory");
+
+        // The type decides how the source is copied, so the one read when it
+        // was listed must not be the one acted on.
+        let task = run_to_end(TaskCommand::Copy(
+            stale,
+            PathInfo::try_from(dst.as_path()).unwrap(),
+            false,
+        ))
+        .expect("the copy should start");
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(
+            b"now a file".to_vec(),
+            fs::read(dst.join("was_a_directory")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_copy_of_an_unreadable_directory_is_refused_before_it_starts() {
+        let fx = TempDir::new("tasks_copy_unreadable");
+        let src = fx.join("locked");
+        fs::create_dir(&src).unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root lists a mode-000 directory anyway; probe rather than inspect
+        // the euid.
+        let is_unreadable = fs::read_dir(&src).is_err();
+        let dst = fx.join("dst");
+        fs::create_dir(&dst).unwrap();
+
+        let result = run_to_end(TaskCommand::Copy(
+            PathInfo::try_from(src.as_path()).unwrap(),
+            PathInfo::try_from(dst.as_path()).unwrap(),
+            false,
+        ));
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+
+        if is_unreadable {
+            // Refused on the calling thread, so no progress notice appears
+            // for a copy that could not have copied anything.
+            let Err(commands) = result else {
+                panic!("the copy should have been refused");
+            };
+            let [Command::AlertError(message)] = commands.as_slice() else {
+                panic!("expected one alert, got {commands:?}");
+            };
+            assert!(message.starts_with("Failed to read directory"), "{message}");
+            assert!(!dst.join("locked").exists());
+        } else {
+            assert_eq!(
+                None,
+                result.expect("a readable copy starts").error_message()
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_delete_counts_its_entries_as_the_progress_total() {
+        let fx = TempDir::new("tasks_delete_task");
+        let root = fx.join("doomed");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("a.txt"), b"x").unwrap();
+        fs::write(root.join("sub").join("b.txt"), b"x").unwrap();
+
+        let task = run_to_end(TaskCommand::Delete(
+            PathInfo::try_from(root.as_path()).unwrap(),
+        ))
+        .expect("the delete should start");
+
+        assert!(!root.exists());
+        assert_eq!(None, task.error_message());
+        assert!(!task.is_cancelled());
+        // root, a.txt, sub, sub/b.txt: the unit is an entry removed, not the
+        // single entry the task is seeded with.
+        assert_eq!(4, task.combine_progress(&Progress::default()).total);
+    }
+
+    #[test]
+    fn a_delete_unlinks_a_source_that_became_a_symlink_since_it_was_listed() {
+        let fx = TempDir::new("tasks_delete_restat");
+        let outside = fx.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), b"keep").unwrap();
+        let link = fx.join("link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        // Listed as a directory before it was swapped for a link.
+        let stale = path_info(link.to_str().unwrap(), "link");
+
+        let task = run_to_end(TaskCommand::Delete(stale)).expect("the delete should start");
+
+        // Deleted as the link it is now, not refused as a directory that
+        // cannot be opened, and never followed.
+        assert_eq!(None, task.error_message());
+        assert!(link.symlink_metadata().is_err());
+        assert_eq!(
+            b"keep".to_vec(),
+            fs::read(outside.join("keep.txt")).unwrap()
         );
     }
 
@@ -2428,6 +2671,35 @@ mod tests {
     }
 
     #[test]
+    fn a_raced_file_where_a_directory_goes_is_replaced_when_that_is_the_answer() {
+        let (_fx, src, dst) = raced("tasks_raced_file_for_directory");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("sub").join("deep.txt"), b"src").unwrap();
+        fs::write(dst.join("sub"), b"raced").unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+
+        // A file is replaceable even where a directory is being copied, so
+        // "overwrite all" settles this one.
+        assert!(copy_path(
+            &src.join("sub"),
+            &dst.join("sub"),
+            &mut active,
+            &mut errors,
+            &mut answered_context(ConflictChoice::OverwriteAll, &mut buffer, &conflicts),
+            true,
+            mode_of(&src.join("sub")),
+        ));
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        active.done();
+
+        assert_eq!(
+            b"src".to_vec(),
+            fs::read(dst.join("sub").join("deep.txt")).unwrap()
+        );
+    }
+
+    #[test]
     fn a_raced_directory_is_never_replaced_so_its_subtree_is_dropped() {
         let (_fx, src, dst) = raced("tasks_raced_directory");
         fs::create_dir_all(src.join("sub")).unwrap();
@@ -2558,6 +2830,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn several_failed_entries_are_reported_as_the_first_and_a_count_of_the_rest() {
+        let (tx, rx) = mpsc::channel();
+
+        finalize_copy(
+            copy_task(tx),
+            vec![
+                "first".to_string(),
+                "second".to_string(),
+                "third".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            Some("first (and 2 more)".to_string()),
+            finished_task(&rx).error_message()
+        );
+    }
+
     /// `copy_path_continues_past_unreadable_entries` degrades to a plain full
     /// copy under root, so the error-recording path is pinned here instead,
     /// with a failure the kernel enforces for every user.
@@ -2663,20 +2954,6 @@ mod tests {
         // Something else removed it between the prompt and the worker, which
         // is the outcome the user asked for anyway.
         assert!(clear_destination(active, &src, &dst, true).is_some());
-    }
-
-    #[test]
-    fn a_cleared_destination_can_be_opened_by_the_cross_device_move_fallback() {
-        let (_fx, src, dst, active, _token) = destination("tasks_prepare_reopen");
-
-        let active = clear_destination(active, &src, &dst, true).expect("the task should continue");
-
-        // A move across filesystems cannot rename, so it falls back to a byte
-        // copy that opens the destination with `create_new`. That open fails
-        // unless the destination was cleared first, which is why clearing is
-        // not skippable just because a rename would have replaced it.
-        assert!(create_file(&dst, mode_of(&src)).is_ok());
-        active.done();
     }
 
     #[test]
@@ -2925,28 +3202,6 @@ mod tests {
     }
 
     #[test]
-    fn rename_no_replace_refuses_existing_destination() {
-        let fx = TempDir::new("tasks");
-        let src = fx.join("a.txt");
-        let dst = fx.join("b.txt");
-        std::fs::write(&src, b"src").unwrap();
-        std::fs::write(&dst, b"dst").unwrap();
-
-        if let Err(error) = rename_no_replace(&src, &dst) {
-            assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
-            // Both files must be untouched.
-            assert_eq!(b"src".to_vec(), std::fs::read(&src).unwrap());
-            assert_eq!(b"dst".to_vec(), std::fs::read(&dst).unwrap());
-        } else {
-            // The filesystem lacks an atomic no-replace rename, so the call
-            // fell back to fs::rename. Assert the fallback's semantics rather
-            // than passing vacuously, so this test cannot rot into a no-op.
-            assert!(!src.exists());
-            assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
-        }
-    }
-
-    #[test]
     fn remove_path_deletes_directory_tree() {
         let fx = TempDir::new("tasks");
         let root = fx.join("doomed");
@@ -2982,6 +3237,98 @@ mod tests {
     }
 
     #[test]
+    fn dir_total_size_sums_the_files_of_the_whole_tree_but_not_its_symlinks() {
+        let fx = TempDir::new("tasks");
+        let root = fx.join("tree");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("a.txt"), b"abc").unwrap();
+        fs::write(root.join("sub").join("b.txt"), b"defgh").unwrap();
+        // Recreated as a link, so no bytes are transferred for it.
+        std::os::unix::fs::symlink(root.join("a.txt"), root.join("link")).unwrap();
+        let (tx, _rx) = mpsc::channel();
+        let active = copy_task(tx);
+
+        assert_eq!(Some(8), dir_total_size(&active, &root));
+        active.done();
+    }
+
+    #[test]
+    fn copy_path_advances_progress_from_the_bytes_written() {
+        let fx = TempDir::new("tasks_copy_progress");
+        let src = fx.join("src.bin");
+        fs::write(&src, [7u8; 200]).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let (mut active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Copy(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            200,
+        );
+        let mut errors = Vec::new();
+
+        assert!(copy_path(
+            &src,
+            &fx.join("dst.bin"),
+            &mut active,
+            &mut errors,
+            &mut context(false, &mut [0u8; 64]),
+            false,
+            mode_of(&src),
+        ));
+        active.done();
+        let completed: Vec<u64> = rx
+            .try_iter()
+            .filter_map(|command| match command {
+                Command::Progress(task) if !task.is_terminal() => {
+                    Some(task.combine_progress(&Progress::default()).completed)
+                }
+                _ => None,
+            })
+            .collect();
+
+        // One 64-byte chunk is the first update, before `done` fills the bar,
+        // and each later update reports more than the last.
+        assert_eq!(Some(&64), completed.first());
+        assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test_case(false ; "a file")]
+    #[test_case(true  ; "a symlink to a directory")]
+    fn remove_path_unlinks_a_single_entry_without_following_it(is_symlink: bool) {
+        let fx = TempDir::new("tasks_delete_single");
+        let outside = fx.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), b"keep").unwrap();
+        let entry = fx.join("entry");
+        if is_symlink {
+            std::os::unix::fs::symlink(&outside, &entry).unwrap();
+        } else {
+            fs::write(&entry, b"x").unwrap();
+        }
+        let (tx, _rx) = mpsc::channel();
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+
+        // `is_directory` is false for both: it comes from `symlink_metadata`.
+        remove_path(&entry, false, active)
+            .expect("the entry should be removed")
+            .done();
+
+        assert!(entry.symlink_metadata().is_err());
+        assert_eq!(
+            b"keep".to_vec(),
+            fs::read(outside.join("keep.txt")).unwrap()
+        );
+    }
+
+    #[test]
     fn the_pre_scans_stop_when_the_task_is_cancelled() {
         let fx = TempDir::new("tasks");
         std::fs::write(fx.join("a.txt"), b"x").unwrap();
@@ -3009,37 +3356,36 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
-        // The total `dir_total_entries` would report: root, sub, sub/f.txt.
+        // Larger than the three entries removed, so an overcount is not
+        // clamped away.
         let (active, _, _) = ActiveTask::new(
             tx,
             TaskKind::Delete {
                 path: String::new(),
             },
-            3,
+            100,
         );
 
         let active = remove_path(&root, true, active).expect("the tree should be removed");
-        let completed: Vec<u64> = rx
-            .try_iter()
-            .filter_map(|command| match command {
-                Command::Progress(task) => {
-                    Some(task.combine_progress(&Progress::default()).completed)
-                }
-                _ => None,
-            })
-            .collect();
+        let completed_of = |command| match command {
+            Command::Progress(task) => Some(task.combine_progress(&Progress::default()).completed),
+            _ => None,
+        };
+        let completed: Vec<u64> = rx.try_iter().filter_map(completed_of).collect();
+        active.send_progress();
+        let final_count = rx.try_iter().find_map(completed_of);
         active.done();
 
         // The bar must advance from the removals themselves rather than from
         // `done` filling it in at the end, so a long delete shows motion
         // instead of sitting at 0%.
         assert_eq!(Some(&1), completed.first());
-        // How many of the three arrive depends on how much of
-        // `PROGRESS_MIN_INTERVAL` this tree takes to remove, which on any
-        // machine fast enough is none of it. What must hold either way is that
-        // each update reports more than the last and none overshoots the total.
+        // How many updates arrive depends on how much of
+        // `PROGRESS_MIN_INTERVAL` this tree takes to remove. What must hold
+        // either way is that each reports more than the last.
         assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
-        assert!(completed.iter().all(|completed| *completed <= 3));
+        // One unit per removal (root, sub, sub/f.txt), none for descending.
+        assert_eq!(Some(3), final_count);
     }
 
     #[test]

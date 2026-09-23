@@ -124,7 +124,20 @@ pub(super) struct Associations {
 /// `mime_chain` runs most specific to least specific: the guessed type, then
 /// its parents from the subclass graph, then `all/allfiles` and `all/all`.
 /// `levels` runs highest precedence first.
+#[cfg(test)]
 pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associations {
+    associations_where(|_| true, levels, mime_chain)
+}
+
+/// `associations`, where a configured default counts only when `is_usable`
+/// accepts its desktop file. A default the picker would not offer (hidden, or
+/// its `TryExec` missing) then falls through to the next one, as `xdg-mime`
+/// and `gio` do, rather than taking the marker to a row that is not shown.
+pub(super) fn associations_where(
+    is_usable: impl Fn(&Path) -> bool,
+    levels: &[Level],
+    mime_chain: &[String],
+) -> Associations {
     let mut ordered: Vec<DesktopId> = Vec::new();
     let mut seen: HashSet<DesktopId> = HashSet::new();
     // Collected in (type, then precedence) order and validated at the end.
@@ -177,20 +190,27 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
 
     // The most specific type's highest precedence default wins and is offered
     // first, whatever position the directory scan gave it. Only a default whose
-    // desktop file exists counts, so an entry left by an uninstalled application
-    // does not take the marker with it.
+    // desktop file exists and is usable counts, so an entry left by an
+    // uninstalled application does not take the marker with it.
     //
     // The spec also requires the default to be an associated application, but
     // every desktop honours an explicit default anyway, so one that is not
     // associated is promoted rather than skipped.
     let default = default_candidates
         .into_iter()
-        .find(|id| resolve(levels, id).is_some());
+        .find(|id| resolve(levels, id).is_some_and(&is_usable));
     if let Some(id) = &default {
         ordered.retain(|existing| existing != id);
         ordered.insert(0, id.clone());
     }
-    let default = default.or_else(|| ordered.first().cloned());
+    // The spec's fallback, the most preferred association, is held to the
+    // same test, so the marker never lands on a row that is not shown.
+    let default = default.or_else(|| {
+        ordered
+            .iter()
+            .find(|id| resolve(levels, id).is_some_and(&is_usable))
+            .cloned()
+    });
     Associations { default, ordered }
 }
 
@@ -308,7 +328,43 @@ mod tests {
             ids(&["b.desktop", "a.desktop", "c.desktop"]),
             result.ordered
         );
-        assert_eq!(Some("b.desktop".to_string()), result.default);
+        // Only `c.desktop` has a desktop file, and the picker drops an id it
+        // cannot resolve, so the fallback default skips the two ranked above.
+        assert_eq!(Some("c.desktop".to_string()), result.default);
+    }
+
+    #[test]
+    fn an_id_added_at_two_levels_is_ranked_once() {
+        let added = || {
+            MimeAppsList::parse(
+                false,
+                "[Added Associations]\ntext/plain=a.desktop;b.desktop",
+            )
+        };
+        let levels = vec![level(vec![added()], None), level(vec![added()], None)];
+        assert_eq!(
+            ids(&["a.desktop", "b.desktop"]),
+            associations(&levels, &ids(&[TEXT])).ordered
+        );
+    }
+
+    #[test]
+    fn canonicalizing_merges_an_alias_into_its_canonical_key() {
+        let mut list = MimeAppsList::parse(
+            false,
+            "[Added Associations]\n\
+             text/plain=b.desktop\n\
+             text/x-alias=a.desktop\n\
+             [Removed Associations]\n\
+             text/x-alias=r.desktop\n",
+        );
+
+        list.canonicalize_keys(|mime| if mime == "text/x-alias" { TEXT } else { mime }.to_string());
+
+        // Keys iterate in order, so the canonical key's own ids come first.
+        assert_eq!(ids(&["b.desktop", "a.desktop"]), list.added[TEXT]);
+        assert_eq!(ids(&["r.desktop"]), list.removed[TEXT]);
+        assert_eq!(1, list.added.len());
     }
 
     #[test]
@@ -495,7 +551,8 @@ mod tests {
                     false,
                     "[Default Applications]\ntext/plain=gone.desktop",
                 )],
-                Some(app_dir(&[("a.desktop", &[TEXT])])),
+                // Installed, so only the removal can keep it from the default.
+                Some(app_dir(&[("a.desktop", &[TEXT]), ("gone.desktop", &[])])),
             ),
         ];
         let result = associations(&levels, &ids(&[TEXT]));

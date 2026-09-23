@@ -92,8 +92,13 @@ impl HelpView {
             .min(self.max_scroll);
     }
 
+    /// From the offset as drawn: a resize that lowered `max_scroll` leaves the
+    /// stored offset above it, and render clamps only what it draws.
     fn scroll_up(&mut self, lines: u16) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+        self.scroll_offset = self
+            .scroll_offset
+            .min(self.max_scroll)
+            .saturating_sub(lines);
     }
 
     fn handle_scroll_action(&mut self, action: Action) -> CommandResult {
@@ -138,6 +143,41 @@ mod tests {
             view.max_scroll, view.scroll_offset,
             "scrolled past the last line"
         );
+    }
+
+    #[test]
+    fn scrolling_up_after_the_document_got_shorter_moves_from_what_is_drawn() {
+        let mut view = help();
+        view.handle_scroll_action(Action::SelectLast);
+        // A taller terminal: the render pass lowers the maximum, and the view
+        // is drawn at 5 from then on.
+        view.max_scroll = 5;
+
+        view.handle_scroll_action(Action::SelectPrevious);
+
+        assert_eq!(4, view.scroll_offset);
+    }
+
+    #[test]
+    fn the_wheel_scrolls_one_line_at_a_time() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+
+        use crate::command::handler::CommandHandler;
+
+        let mut view = help();
+        let mut wheel = |kind| {
+            view.handle_mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            });
+        };
+        wheel(MouseEventKind::ScrollDown);
+        wheel(MouseEventKind::ScrollDown);
+        wheel(MouseEventKind::ScrollUp);
+
+        assert_eq!(1, view.scroll_offset);
     }
 
     #[test]

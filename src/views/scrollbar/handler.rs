@@ -39,13 +39,14 @@ impl ScrollbarView {
             return None;
         }
 
-        let last_relative = self.area.height.saturating_sub(1);
+        let last_relative = self.track.height.saturating_sub(1);
         if last_relative == 0 {
             return None;
         }
-        // Clamped before scaling, so a drag past the end lands on the last
-        // position rather than beyond it.
-        let relative_y = y.saturating_sub(self.area.y).min(last_relative);
+        // Measured over the track, not the end arrows. Clamped before scaling,
+        // so a drag past either end, or a click on an arrow, lands on the
+        // nearest position rather than beyond it.
+        let relative_y = y.saturating_sub(self.track.y).min(last_relative);
         // Integer arithmetic rather than a float ratio: the numerator is at
         // most `last_relative * max_position`, and adding half the denominator
         // before dividing rounds to nearest as the float version did.
@@ -64,32 +65,73 @@ mod tests {
     use super::ScrollbarView;
 
     fn scrollbar_at(y: u16, height: u16) -> ScrollbarView {
+        let area = Rect {
+            x: 0,
+            y,
+            width: 1,
+            height,
+        };
         ScrollbarView {
-            area: Rect {
-                x: 0,
-                y,
-                width: 1,
-                height,
-            },
+            area,
+            track: area,
             ..Default::default()
         }
     }
 
     #[test]
-    fn max_position_zero_returns_none() {
+    fn a_zero_range_has_no_position_to_drag_to() {
         let s = scrollbar_at(0, 5);
         assert_eq!(None, s.handle_drag(0, 0));
     }
 
-    // height=10 over a max position of 99, so a row maps to 99/9 of the range.
+    // height=10 over a max position of 100, so a row maps to 100/9 of the
+    // range, which is not a whole number: truncating and rounding differ.
     #[test_case(0, Some(0)     ; "the top row selects the first position")]
-    #[test_case(9, Some(99)    ; "the bottom row selects the last position")]
-    // relative=5, percentage=5/9 = 0.556, position = round(0.556 * 99)
-    #[test_case(5, Some(55)    ; "a middle row selects proportionally")]
-    #[test_case(100, Some(99)  ; "a drag past the bottom clamps to the last position")]
+    #[test_case(9, Some(100)   ; "the bottom row selects the last position")]
+    // relative=5, position = 5 * 100 / 9 = 55.6, rounded to nearest
+    #[test_case(5, Some(56)    ; "a middle row selects proportionally")]
+    #[test_case(100, Some(100) ; "a drag past the bottom clamps to the last position")]
     fn a_drag_maps_a_row_to_a_position(y: u16, expected: Option<usize>) {
         let s = scrollbar_at(0, 10);
-        assert_eq!(expected, s.handle_drag(y, 99));
+        assert_eq!(expected, s.handle_drag(y, 100));
+    }
+
+    #[test]
+    fn a_one_row_scrollbar_has_no_range_to_drag_over() {
+        let s = scrollbar_at(0, 1);
+        assert_eq!(None, s.handle_drag(0, 99));
+    }
+
+    #[test]
+    fn only_a_press_on_the_scrollbar_starts_a_drag_and_a_release_ends_it() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut s = scrollbar_at(0, 10);
+        let mut mouse = |kind, column| {
+            s.handle_mouse(
+                MouseEvent {
+                    kind,
+                    column,
+                    row: 9,
+                    modifiers: KeyModifiers::NONE,
+                },
+                99,
+            )
+        };
+        let press = MouseEventKind::Down(MouseButton::Left);
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+        let release = MouseEventKind::Up(MouseButton::Left);
+
+        // Column 5 is beside the one-column scrollbar.
+        assert_eq!(None, mouse(press, 5));
+        assert_eq!(None, mouse(drag, 5));
+
+        assert_eq!(Some(99), mouse(press, 0));
+        // A drag keeps scrolling once started, wherever the pointer is.
+        assert_eq!(Some(99), mouse(drag, 5));
+
+        assert_eq!(None, mouse(release, 0));
+        assert_eq!(None, mouse(drag, 0));
     }
 
     #[test]
@@ -99,5 +141,46 @@ mod tests {
         assert_eq!(Some(0), s.handle_drag(5, 99));
         // drag at y=14 → relative=9 → last position
         assert_eq!(Some(99), s.handle_drag(14, 99));
+    }
+
+    /// With end arrows drawn, the track is the rows between them, so its first
+    /// and last rows are the ends of the range and the arrows clamp to them.
+    #[test_case(1, Some(0)   ; "the first track row selects the first position")]
+    #[test_case(8, Some(99)  ; "the last track row selects the last position")]
+    #[test_case(0, Some(0)   ; "the top arrow clamps to the first position")]
+    #[test_case(9, Some(99)  ; "the bottom arrow clamps to the last position")]
+    fn a_track_between_end_arrows_maps_its_own_rows(y: u16, expected: Option<usize>) {
+        let mut s = scrollbar_at(0, 10);
+        s.track = Rect {
+            y: 1,
+            height: 8,
+            ..s.area
+        };
+        assert_eq!(expected, s.handle_drag(y, 99));
+    }
+
+    #[test]
+    fn rendering_with_end_arrows_leaves_them_out_of_the_track() {
+        use crate::{
+            app::config::{Config, RuntimeEnv},
+            test_support::TempDir,
+        };
+
+        let dir = TempDir::new("scrollbar_ends");
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            "[theme.scrollbar]\nshow_ends = true\n[theme256.scrollbar]\nshow_ends = true\n",
+        )
+        .unwrap();
+        let config = Config::load(RuntimeEnv::default(), Some(path), &[]).unwrap();
+        let area = Rect::new(3, 2, 1, 10);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        let mut s = ScrollbarView::default();
+
+        s.render(config.theme(), area, &mut buf, 0, 99, 10);
+
+        assert_eq!(Rect::new(3, 3, 1, 8), s.track);
+        assert_eq!(area, s.area);
     }
 }

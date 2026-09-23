@@ -41,7 +41,7 @@ pub fn run(
         .map(validate_initial_directory)
         .transpose()?;
 
-    let is_truecolor = supports_truecolor() && !no_truecolor;
+    let is_truecolor = supports_truecolor(env::var("COLORTERM").ok().as_deref()) && !no_truecolor;
     let ls_colors = env::var("LS_COLORS").ok();
     let env = RuntimeEnv {
         is_truecolor,
@@ -141,10 +141,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_initial_directory_accepts_a_directory() {
-        let dir = env::temp_dir();
-        let result = validate_initial_directory(&dir).unwrap();
-        assert_eq!(result, dir.canonicalize().unwrap());
+    fn validate_initial_directory_accepts_a_directory_as_its_canonical_path() {
+        let dir = test_support::TempDir::new("initial_directory");
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        // Spelled with a `..` component, so only the canonicalized path equals
+        // the directory.
+        let result = validate_initial_directory(&dir.join("sub").join("..")).unwrap();
+        assert_eq!(dir.path().canonicalize().unwrap(), result);
     }
 
     /// An attempt that the OS refused, so the message carries its cause.

@@ -337,6 +337,14 @@ mod tests {
         assert_eq!(Some(0), search_loading_position(4, Duration::ZERO));
     }
 
+    #[test]
+    fn a_terminal_narrower_than_the_speed_divisor_still_moves_the_indicator() {
+        assert_eq!(
+            Some(1),
+            search_loading_position(20, Duration::from_millis(80))
+        );
+    }
+
     // Left-truncation keeps the tail (destination) visible as the width
     // shrinks, e.g. `…oper/Downloads/` then `…per/Downloads/`.
     #[test_case(60, "/tmp/a to /home/developer/Downloads/"; "unchanged when it fits")]
@@ -352,21 +360,6 @@ mod tests {
         assert_eq!(
             expected,
             truncate_detail("Copying ", "/tmp/a to /home/developer/Downloads/", width)
-        );
-    }
-
-    #[test_case(80, "/home/developer/projects/old/cache/data.bin"; "unchanged when it fits")]
-    #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
-    #[test_case(20, "…e/data.bin"; "left-truncated further")]
-    #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
-    fn truncate_detail_delete(width: u16, expected: &str) {
-        assert_eq!(
-            expected,
-            truncate_detail(
-                "Deleting ",
-                "/home/developer/projects/old/cache/data.bin",
-                width
-            )
         );
     }
 
@@ -393,6 +386,7 @@ mod tests {
 
     #[test_case(80, "/home/developer/projects/old/cache/data.bin"; "full when it fits")]
     #[test_case(30, "…s/old/cache/data.bin"; "left-truncated to the tail")]
+    #[test_case(20, "…e/data.bin"; "left-truncated further")]
     #[test_case(9, "…"; "only an ellipsis when budget below minimum")]
     fn operation_detail_delete(width: u16, expected: &str) {
         let kind = TaskKind::Delete {

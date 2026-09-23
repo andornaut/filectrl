@@ -256,15 +256,9 @@ impl DirectoryContent {
         // listing looks unsorted (`z/apple.txt` above `a/zebra.txt`). The filter
         // matches the displayed name for the same reason. Read before the sort
         // borrows `items_sorted` mutably.
-        let is_bookmarks = self.is_showing_bookmarks();
         let search_root = self.search_root.clone();
-        let name_key = |item: &PathInfo| {
-            name_comparator(&displayed_name_stem(
-                item,
-                is_bookmarks,
-                search_root.as_deref(),
-            ))
-        };
+        let name_key =
+            |item: &PathInfo| name_comparator(&displayed_name_stem(item, search_root.as_deref()));
         // Sorted by key rather than by comparator: the name key allocates twice
         // to build, and a comparator builds one per side of every comparison,
         // which a listing of any size pays n log n times over. `Reverse` rather
@@ -370,8 +364,8 @@ pub(super) fn displayed_name<'a>(
     is_bookmarks: bool,
     search_root: Option<&Path>,
 ) -> Cow<'a, str> {
-    let stem = displayed_name_stem(item, is_bookmarks, search_root);
-    if displays_trailing_separator(item, is_bookmarks, &stem) {
+    let stem = displayed_name_stem(item, search_root);
+    if displays_trailing_separator(item, is_bookmarks) {
         Cow::Owned(format!("{stem}{MAIN_SEPARATOR}"))
     } else {
         stem
@@ -380,15 +374,11 @@ pub(super) fn displayed_name<'a>(
 
 /// `displayed_name` without the trailing separator, which the filter matches
 /// by rule instead of by building the joined string for every directory entry.
-fn displayed_name_stem<'a>(
-    item: &'a PathInfo,
-    is_bookmarks: bool,
-    search_root: Option<&Path>,
-) -> Cow<'a, str> {
+/// A search root is only set in search mode, so it never applies to the
+/// bookmarks view.
+fn displayed_name_stem<'a>(item: &'a PathInfo, search_root: Option<&Path>) -> Cow<'a, str> {
     match search_root {
-        // Bookmarks win: that listing is the bookmarks directory, so a search
-        // root does not describe its entries.
-        Some(root) if !is_bookmarks => item
+        Some(root) => item
             .path
             .strip_prefix(root)
             .unwrap_or(&item.path)
@@ -397,9 +387,9 @@ fn displayed_name_stem<'a>(
     }
 }
 
-/// Whether `displayed_name` appends a separator to `stem`.
-fn displays_trailing_separator(item: &PathInfo, is_bookmarks: bool, stem: &str) -> bool {
-    !is_bookmarks && item.is_directory() && !stem.ends_with(MAIN_SEPARATOR)
+/// Whether `displayed_name` appends a separator to the stem.
+fn displays_trailing_separator(item: &PathInfo, is_bookmarks: bool) -> bool {
+    !is_bookmarks && item.is_directory()
 }
 
 /// Snapshot of the visibility predicate (see `DirectoryContent::visibility`).
@@ -430,15 +420,14 @@ impl Visibility {
         if self.filter_lowercase.is_empty() {
             return true;
         }
-        let stem = displayed_name_stem(path, self.is_bookmarks, self.search_root.as_deref());
+        let stem = displayed_name_stem(path, self.search_root.as_deref());
         if contains_ignore_case(&stem, &self.filter_lowercase) {
             return true;
         }
         let Some(prefix) = self.filter_lowercase.strip_suffix(MAIN_SEPARATOR) else {
             return false;
         };
-        displays_trailing_separator(path, self.is_bookmarks, &stem)
-            && ends_with_ignore_case(&stem, prefix)
+        displays_trailing_separator(path, self.is_bookmarks) && ends_with_ignore_case(&stem, prefix)
     }
 }
 
@@ -596,25 +585,70 @@ mod tests {
         assert_eq!(names(&content), vec!["large", "medium", "small"]);
     }
 
-    #[test]
-    fn filter_retains_case_insensitive_substring_matches() {
+    // The filter is stored as typed. Outside ASCII, only lowercasing it
+    // matches an uppercase filter against a name compared in lowercase.
+    #[test_case("ap", &["Apple", "Apricot"] ; "lowercase")]
+    #[test_case("AP", &["Apple", "Apricot"] ; "uppercase")]
+    #[test_case("ÉQ", &["Équipe"] ; "uppercase outside ascii")]
+    fn filter_retains_case_insensitive_substring_matches(filter: &str, expected: &[&str]) {
         Config::init_test();
         let fx = Fixture::new();
         let items = vec![
             fx.file_entry("Apple", 1),
             fx.file_entry("Apricot", 1),
             fx.file_entry("Banana", 1),
+            fx.file_entry("Équipe", 1),
         ];
         let mut content = content();
         content.set_items(fx.directory(), items);
-        content.set_filter("ap".to_string());
+        content.set_filter(filter.to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
-        assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+        assert_eq!(names(&content), expected);
 
         content.clear_filter();
         content.sort(SortColumn::Name, SortDirection::Ascending);
-        assert_eq!(content.len(), 3);
+        assert_eq!(content.len(), 4);
+    }
+
+    #[test]
+    fn sort_by_modified_orders_by_age() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let now = chrono::Local::now();
+        let aged = |name: &str, hours: i64| {
+            let mut entry = fx.file_entry(name, 1);
+            entry.modified = Some(now - chrono::Duration::hours(hours));
+            entry
+        };
+        let items = vec![aged("hour", 1), aged("day", 24), aged("now", 0)];
+        let mut content = content();
+        content.set_items(fx.directory(), items);
+
+        content.sort(SortColumn::Modified, SortDirection::Ascending);
+        assert_eq!(names(&content), vec!["day", "hour", "now"]);
+
+        content.sort(SortColumn::Modified, SortDirection::Descending);
+        assert_eq!(names(&content), vec!["now", "hour", "day"]);
+    }
+
+    #[test]
+    fn directories_are_grouped_first_only_under_a_name_sort() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let items = vec![
+            fx.file_entry("small", 1),
+            fx.dir_entry("dir"),
+            fx.file_entry("large", 1_000_000),
+        ];
+        let mut content = DirectoryContent::new(true, true);
+        content.set_items(fx.directory(), items);
+
+        content.sort(SortColumn::Size, SortDirection::Descending);
+
+        // A directory's own size varies by filesystem, so only the entry that
+        // outweighs any empty directory has a fixed place: first.
+        assert_eq!("large", names(&content)[0]);
     }
 
     #[test]
@@ -823,6 +857,52 @@ mod tests {
         // is gone.
         content.set_mode(ListingMode::Normal);
         assert!(names(&content).is_empty());
+    }
+
+    #[test_case(ListingMode::Normal ; "for the plain listing")]
+    #[test_case(ListingMode::Bookmarks ; "for the bookmarks")]
+    fn leaving_a_search_drops_its_root(mode: ListingMode) {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = content();
+        content.set_items(fx.directory(), vec![]);
+        content.start_search();
+        assert!(content.search_root().is_some());
+
+        content.set_mode(mode);
+
+        // Names are rendered relative to the root, so a stale one would show
+        // the next listing's entries as paths from wherever the search ran.
+        assert_eq!(None, content.search_root());
+    }
+
+    #[test]
+    fn starting_a_search_drops_the_filter() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = content();
+        content.set_items(fx.directory(), vec![]);
+        content.set_filter("zzz".to_string());
+
+        content.start_search();
+        content.append(&[fx.file_entry("hit", 1)]);
+
+        // The search has its own query; a filter left from the directory
+        // would hide what it found.
+        assert_eq!(names(&content), vec!["hit"]);
+    }
+
+    #[test]
+    fn showing_the_bookmarks_drops_the_filter() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut content = content();
+        content.set_filter("zzz".to_string());
+
+        content.set_bookmarks(vec![fx.dir_entry("mark")]);
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        assert_eq!(names(&content), vec!["mark"]);
     }
 
     #[test]

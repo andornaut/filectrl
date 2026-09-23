@@ -1,25 +1,12 @@
-use std::path::Path;
-
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use super::{BreadcrumbsView, widget::clicked_index};
 use crate::{
     app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
+    file_system::path_info::breadcrumbs,
     views::ListingMode,
 };
-
-fn path_breadcrumbs(path: &Path) -> Vec<String> {
-    let mut parts: Vec<_> = path
-        .ancestors()
-        .map(|p| {
-            p.file_name()
-                .map_or(String::new(), |n| n.to_string_lossy().into_owned())
-        })
-        .collect();
-    parts.reverse();
-    parts
-}
 
 impl CommandHandler for BreadcrumbsView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -41,7 +28,7 @@ impl CommandHandler for BreadcrumbsView {
             Command::StartSearch(_) | Command::ResetView => CommandResult::Handled,
             Command::Bookmarks { .. } => {
                 let dir = Config::global().bookmarks_dir();
-                self.breadcrumbs = path_breadcrumbs(&dir);
+                self.breadcrumbs = breadcrumbs(&dir);
                 self.positions.clear();
                 CommandResult::Handled
             }

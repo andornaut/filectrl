@@ -142,6 +142,7 @@ mod tests {
     #[test_case("107" => style(None, Some(Color::White), Modifier::empty()) ; "bright white background is White")]
     #[test_case("32;42" => style(Some(Color::Green), Some(Color::Green), Modifier::empty()) ; "foreground then background")]
     #[test_case("01" => style(None, None, Modifier::BOLD) ; "bold")]
+    #[test_case("1" => style(None, None, Modifier::BOLD) ; "bold without its leading zero")]
     #[test_case("06" => style(None, None, Modifier::RAPID_BLINK) ; "rapid blink")]
     #[test_case("09" => style(None, None, Modifier::CROSSED_OUT) ; "crossed out")]
     #[test_case("01;32" => style(Some(Color::Green), None, Modifier::BOLD) ; "modifier then foreground")]
@@ -166,6 +167,8 @@ mod tests {
     #[test_case("38;5;300" ; "256 index out of range")]
     #[test_case("38;2;255" ; "rgb sequence missing green and blue")]
     #[test_case("38;2;300;31;40" ; "rgb component out of range")]
+    // "1" is the mode, not bold.
+    #[test_case("38;1" ; "an unrecognized extended color mode")]
     fn parse_produces_no_style(line: &str) {
         assert_eq!(NONE, parse(line));
     }

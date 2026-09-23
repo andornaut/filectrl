@@ -24,9 +24,12 @@ pub(super) struct PendingLoad {
     prev_selected: Option<PathInfo>,
     prev_selected_index: Option<usize>,
     /// The marked entries, to be found again once the new listing is sorted.
-    /// Only populated for a reload of the same directory; a navigation leaves
-    /// it empty, because a mark on an entry of another directory means nothing.
+    /// Populated by `finish_directory` from the marks live when the load ends:
+    /// a reload's, or those made on the new listing while it streamed in.
     prev_marked: Vec<PathInfo>,
+    /// Whether the cursor was moved while a navigation streamed in, so that
+    /// where it was left wins over reselecting the child we came from.
+    cursor_moved: bool,
 }
 
 impl TableView {
@@ -36,18 +39,14 @@ impl TableView {
     /// selection is restored, and whether the load is staged.
     pub(super) fn begin_directory(&mut self, new_directory: PathInfo, reselect: Reselect) {
         // Capture the pre-load state BEFORE clearing the listing.
+        // The cursor index and the marks are left for `finish_directory`: only
+        // a reload (Reselect::Keep) uses them, and a reload is staged, so what
+        // carries across is their state when it finishes.
         self.pending_load = PendingLoad {
             reselect,
             prev_directory: self.content.directory().cloned(),
             prev_selected: self.selected_path().cloned(),
-            prev_selected_index: self.table_state.selected(),
-            // Reselect::Keep is exactly the reload of the same directory, so it
-            // is also what says the marks describe entries the new listing will
-            // hold again.
-            prev_marked: match reselect {
-                Reselect::Keep => self.marked_paths(),
-                Reselect::Top => Vec::new(),
-            },
+            ..PendingLoad::default()
         };
 
         // Reselect::Keep is the reload of a directory whose listing is still
@@ -69,6 +68,19 @@ impl TableView {
         self.content.start_listing(new_directory, staged);
     }
 
+    /// Records that input moved the cursor while a navigation streams in, so
+    /// that `finish_directory` keeps it there. Read from the selection before
+    /// and after the input rather than from where the cursor ends up, since
+    /// moving away and back to the top row is still a choice the user made.
+    pub(super) fn note_cursor_move(&mut self, before: Option<usize>) {
+        if self.content.is_loading()
+            && !self.content.is_staged()
+            && self.table_state.selected() != before
+        {
+            self.pending_load.cursor_moved = true;
+        }
+    }
+
     /// Finish a streamed directory load: sort the accumulated entries once and
     /// restore the selection captured by `begin_directory`.
     pub(super) fn finish_directory(&mut self) -> CommandResult {
@@ -81,6 +93,15 @@ impl TableView {
             self.pending_load.prev_selected = self.selected_path().cloned();
             self.pending_load.prev_selected_index = self.table_state.selected();
             self.pending_load.prev_marked = self.marked_paths();
+        } else {
+            // A navigation streams onto a live listing: the first batch puts
+            // the cursor on the top row, and anything done to the listing
+            // since is the user's, made on entries of the new directory. The
+            // sort below would otherwise move the rows out from under it.
+            self.pending_load.prev_marked = self.marked_paths();
+            if self.pending_load.cursor_moved {
+                self.pending_load.prev_selected = self.selected_path().cloned();
+            }
         }
         self.content
             .finalize_listing(self.columns.sort_column(), self.columns.sort_direction());
@@ -107,8 +128,10 @@ impl TableView {
     fn restore_selection(&mut self) -> CommandResult {
         let pending = std::mem::take(&mut self.pending_load);
 
-        // If we navigated to an ancestor directory, select the child we came from.
-        if let Some(prev_directory) = pending.prev_directory
+        // If we navigated to an ancestor directory, select the child we came
+        // from, unless the cursor was already moved while the listing loaded.
+        if !pending.cursor_moved
+            && let Some(prev_directory) = pending.prev_directory
             && let Some(new_directory) = self.content.directory()
         {
             let prev_path = prev_directory.as_path();
@@ -249,6 +272,9 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    use test_case::test_case;
+
     use super::{Reselect, SortColumn, TableView};
     use crate::{
         app::config::Config,
@@ -295,6 +321,11 @@ mod tests {
             .iter()
             .map(|item| item.display_name.clone())
             .collect()
+    }
+
+    /// A keypress through the table's own handler, as the user makes it.
+    fn press(table: &mut TableView, key: char) {
+        table.handle_key(KeyCode::Char(key), KeyModifiers::NONE);
     }
 
     fn selected_basename(table: &TableView) -> Option<String> {
@@ -427,13 +458,37 @@ mod tests {
         table
     }
 
-    #[test]
-    fn delete_clears_marks_and_resets_the_mark_count_notice() {
+    fn copy_op(srcs: Vec<PathInfo>, dest: PathInfo) -> Command {
+        Command::Copy { srcs, dest }
+    }
+
+    fn move_op(srcs: Vec<PathInfo>, dest: PathInfo) -> Command {
+        Command::Move { srcs, dest }
+    }
+
+    fn chmod_op(paths: Vec<PathInfo>, _: PathInfo) -> Command {
+        Command::Chmod {
+            paths,
+            mode: "644".into(),
+        }
+    }
+
+    fn delete_op(paths: Vec<PathInfo>, _: PathInfo) -> Command {
+        Command::Delete(paths)
+    }
+
+    #[test_case(copy_op ; "a copy")]
+    #[test_case(move_op ; "a move")]
+    #[test_case(chmod_op ; "a chmod")]
+    #[test_case(delete_op ; "a delete")]
+    fn an_operation_consumes_the_marks_and_resets_the_mark_count_notice(
+        operation: fn(Vec<PathInfo>, PathInfo) -> Command,
+    ) {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
 
-        let result = table.handle_command(&Command::Delete(table.marked_paths()));
+        let result = table.handle_command(&operation(table.marked_paths(), fx.directory()));
 
         assert!(!table.has_marks());
         assert_mark_reset_snapshot(&result);
@@ -539,6 +594,129 @@ mod tests {
         // Going up puts the cursor on the directory just left, not on the top
         // of the parent listing, so a second press of the same key walks back
         // out along the path the user came in on.
+        assert_eq!(Some("sub".to_string()), selected_basename(&table));
+    }
+
+    /// Arrival order `c`, `a`, `b` sorts to `a`, `b`, `c` on completion, so a
+    /// cursor or mark held by position would land on another entry, and the
+    /// fallback would select `a`.
+    #[test]
+    fn the_cursor_and_marks_set_while_a_listing_loads_survive_its_completion() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("c", 1), fx.file("a", 1), fx.file("b", 1)],
+            generation: 1,
+        });
+        press(&mut table, 'j');
+        press(&mut table, 'v');
+        press(&mut table, 'j');
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        assert_eq!(Some("b".to_string()), selected_basename(&table));
+        assert_eq!(
+            vec!["a"],
+            super::super::display_names(&table.marked_paths())
+        );
+    }
+
+    #[test]
+    fn a_cursor_moved_while_the_parent_loads_is_not_sent_back_to_the_child() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let child = fx.nested("sub", "inside");
+        let mut table = TableView::default();
+        table.set_directory(
+            PathInfo::try_from(child.as_path().parent().unwrap()).unwrap(),
+            std::slice::from_ref(&child),
+            Reselect::Top,
+        );
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        fx.nested("aaa", "inside");
+        table.handle_command(&Command::ListingBatch {
+            items: vec![
+                PathInfo::try_from(fx.directory().as_path().join("aaa").as_path()).unwrap(),
+                fx.file("z", 1),
+                PathInfo::try_from(fx.directory().as_path().join("sub").as_path()).unwrap(),
+            ],
+            generation: 1,
+        });
+        press(&mut table, 'j');
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        assert_eq!(Some("z".to_string()), selected_basename(&table));
+    }
+
+    /// Moving away and back to the top row is still a choice: the cursor stays
+    /// on `aaa` rather than returning to `sub`, the child it came from.
+    #[test]
+    fn a_cursor_moved_back_to_the_top_while_the_parent_loads_stays_there() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let child = fx.nested("sub", "inside");
+        let mut table = TableView::default();
+        table.set_directory(
+            PathInfo::try_from(child.as_path().parent().unwrap()).unwrap(),
+            std::slice::from_ref(&child),
+            Reselect::Top,
+        );
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        fx.nested("aaa", "inside");
+        table.handle_command(&Command::ListingBatch {
+            items: vec![
+                PathInfo::try_from(fx.directory().as_path().join("aaa").as_path()).unwrap(),
+                fx.file("z", 1),
+                PathInfo::try_from(fx.directory().as_path().join("sub").as_path()).unwrap(),
+            ],
+            generation: 1,
+        });
+        press(&mut table, 'j');
+        press(&mut table, 'k');
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        assert_eq!(Some("aaa".to_string()), selected_basename(&table));
+    }
+
+    #[test]
+    fn jumping_to_an_ancestor_selects_the_child_on_the_path_it_came_from() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let inside = fx.nested("sub/deeper", "inside");
+        let mut table = TableView::default();
+        table.set_directory(
+            PathInfo::try_from(inside.as_path().parent().unwrap()).unwrap(),
+            std::slice::from_ref(&inside),
+            Reselect::Top,
+        );
+
+        // Two levels up in one step, as the goto prompt or a breadcrumb does.
+        // The directory left, `sub/deeper`, is not in this listing; `sub`, the
+        // entry the path went through, is. `aaa` sorts first, so the fallback
+        // would select it.
+        fx.nested("aaa", "inside");
+        table.set_directory(
+            fx.directory(),
+            &[
+                PathInfo::try_from(fx.dir.join("aaa").as_path()).unwrap(),
+                PathInfo::try_from(fx.dir.join("sub").as_path()).unwrap(),
+            ],
+            Reselect::Top,
+        );
+
         assert_eq!(Some("sub".to_string()), selected_basename(&table));
     }
 
@@ -699,6 +877,9 @@ mod tests {
             directory: fx.directory(),
             generation: 1,
         });
+        // Marks are held by index, so any kept while the new listing streams
+        // in would land on whichever entries arrive first.
+        assert!(!table.has_marks());
         table.handle_command(&Command::ListingBatch {
             items: vec![fx.file("a", 1), fx.file("b", 1)],
             generation: 1,
@@ -706,6 +887,28 @@ mod tests {
         table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
 
         assert!(!table.has_marks());
+    }
+
+    #[test]
+    fn navigating_away_drops_the_filter() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1), fx.file("b", 1)],
+            generation: 1,
+        });
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        // A filter typed for one directory would hide entries of the next.
+        assert_eq!(vec!["a", "b"], visible_names(&table));
     }
 
     #[test]
@@ -734,13 +937,14 @@ mod tests {
     }
 
     #[test]
-    fn refreshed_directory_while_searching_keeps_the_marks_and_the_notice() {
+    fn a_refresh_while_searching_keeps_the_results_streaming_and_the_marks() {
         Config::init_test();
         let fx = Fixture::new();
         let mut table = table_with_two_marks(&fx);
         // start_search is called directly, so the two marks carry into the
         // search listing exactly as they would after marking results.
         table.content.start_search();
+        table.handle_command(&Command::SearchStarted { generation: 5 });
         assert_eq!(table.marks.len(), 2);
 
         // A watcher event fires while search results are displayed. The listing
@@ -754,6 +958,13 @@ mod tests {
 
         assert_eq!(table.marks.len(), 2);
         assert_eq!(result, CommandResult::Handled);
+        // Nor does the refresh take over the stream: the search's next batch
+        // is still shown, rather than held for a directory load.
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.nested("sub", "hit")],
+            generation: 5,
+        });
+        assert_eq!(vec!["hit"], visible_names(&table));
     }
 
     #[test]
@@ -835,6 +1046,19 @@ mod tests {
 
         assert_eq!(CommandResult::Handled, result);
         assert_eq!(2, table.marks.len());
+    }
+
+    #[test]
+    fn clearing_the_filter_lists_every_entry_again() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+        assert_eq!(vec!["a"], visible_names(&table));
+
+        table.handle_command(&Command::FilterChanged(String::new()));
+
+        assert_eq!(vec!["a", "b", "c"], visible_names(&table));
     }
 
     #[test]
@@ -952,6 +1176,20 @@ mod tests {
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_search_query_leaves_the_listing_alone() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_with_two_marks(&fx);
+
+        let result = table.handle_command(&Command::StartSearch(String::new()));
+
+        assert_eq!(CommandResult::Handled, result);
+        assert!(!table.content.is_searching());
+        assert_eq!(vec!["a", "b", "c"], visible_names(&table));
+        assert_eq!(2, table.marks.len());
     }
 
     #[test]
@@ -1229,6 +1467,27 @@ mod tests {
 
         table.handle_command(&Command::ListingBatch {
             items: vec![fx.file("fresh", 1)],
+            generation: 2,
+        });
+        assert_eq!(table.content.len(), 1);
+    }
+
+    #[test]
+    fn a_stale_completion_does_not_end_the_current_load() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 2,
+        });
+
+        // The load this one superseded finishes late.
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+
+        assert!(table.content.is_loading());
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1)],
             generation: 2,
         });
         assert_eq!(table.content.len(), 1);

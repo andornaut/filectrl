@@ -326,6 +326,8 @@ mod tests {
     struct Spy {
         name: &'static str,
         consume_key: bool,
+        /// Accepts, and so claims, every mouse event.
+        accept_mouse: bool,
         /// Derives `.1` in response to `.0`. Keyed on the incoming command
         /// rather than deriving unconditionally, so a chain driven through
         /// `broadcast_command` terminates instead of feeding itself forever.
@@ -340,6 +342,7 @@ mod tests {
             Self {
                 name,
                 consume_key: false,
+                accept_mouse: false,
                 derive_on: None,
                 derive_many: Vec::new(),
                 log: log.clone(),
@@ -374,6 +377,15 @@ mod tests {
                 CommandResult::NotHandled
             }
         }
+
+        fn handle_mouse(&mut self, _event: MouseEvent) -> CommandResult {
+            self.log.borrow_mut().push(self.name);
+            CommandResult::Handled
+        }
+
+        fn should_handle_mouse(&self, _event: MouseEvent) -> bool {
+            self.accept_mouse
+        }
     }
 
     fn mouse(kind: MouseEventKind) -> MouseEvent {
@@ -406,6 +418,72 @@ mod tests {
         assert!(handled);
         // root is visited (and declines), a consumes the key, b is skipped.
         assert_eq!(vec!["root", "a"], *log.borrow());
+    }
+
+    #[test]
+    fn a_key_the_parent_claims_does_not_reach_its_children() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        root.consume_key = true;
+        let mut a = Spy::new("a", &log);
+        a.consume_key = true;
+        root.children = vec![a];
+
+        let mut derived = Vec::new();
+        recursively_handle_command(
+            &mut derived,
+            &Command::Key(KeyCode::Char('x'), KeyModifiers::NONE),
+            InputMode::Normal,
+            &mut root,
+        );
+
+        assert_eq!(vec!["root"], *log.borrow());
+    }
+
+    #[test]
+    fn a_key_skips_every_handler_that_does_not_take_keys_in_the_mode() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        // The default `should_handle_key` takes keys in Normal mode only, so
+        // no spy may see a key typed into a prompt.
+        let mut root = Spy::new("root", &log);
+        root.consume_key = true;
+        root.children = vec![Spy::new("a", &log)];
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::Key(KeyCode::Char('x'), KeyModifiers::NONE),
+            InputMode::Prompt,
+            &mut root,
+        );
+
+        assert!(!handled);
+        assert!(log.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_mouse_event_reaches_every_handler_that_accepts_it() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut root = Spy::new("root", &log);
+        let mut a = Spy::new("a", &log);
+        a.accept_mouse = true;
+        let mut b = Spy::new("b", &log);
+        b.accept_mouse = true;
+        root.children = vec![a, b];
+
+        let mut derived = Vec::new();
+        let handled = recursively_handle_command(
+            &mut derived,
+            &Command::Mouse(mouse(MouseEventKind::ScrollDown)),
+            InputMode::Normal,
+            &mut root,
+        );
+
+        // Root declines the event; both children accept it, and the second is
+        // not skipped for the first having claimed it, since a wheel event
+        // over one view also scrolls the table.
+        assert!(handled);
+        assert_eq!(vec!["a", "b"], *log.borrow());
     }
 
     #[test]

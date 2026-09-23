@@ -860,6 +860,11 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     if is_same_entry(&destination, &src.path) {
         return None;
     }
+    // Likewise another name of the same file, or a symlink whose target holds
+    // the name: the paste is refused, not offered as a collision.
+    if tasks::is_same_file(&src.path, &destination) || tasks::is_link_to(&src.path, &destination) {
+        return None;
+    }
     Some(if metadata.is_dir() {
         Occupant::Directory
     } else {
@@ -867,14 +872,11 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     })
 }
 
-/// Whether both paths name the same directory entry once symlinks are resolved.
-/// False when either cannot be resolved, which for an existing path means only
-/// a dangling link or an unreadable parent.
+/// Whether both paths name the same directory entry, reached through
+/// symlinked parents or not. A symlink is its own entry, never the one it
+/// points at.
 fn is_same_entry(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
+    tasks::resolve_entry(a) == tasks::resolve_entry(b)
 }
 
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
@@ -888,7 +890,7 @@ fn parse_octal_mode(mode_str: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{os::unix::fs::PermissionsExt, path::Path};
 
     use test_case::test_case;
 
@@ -1276,6 +1278,41 @@ mod tests {
     }
 
     #[test]
+    fn a_symlink_in_the_way_is_a_collision_even_when_it_points_at_the_source() {
+        let fx = CopyFixture::new("fs_occupant_link_to_source");
+        std::os::unix::fs::symlink(&fx.src.path, fx.dest.path.join("a.txt")).unwrap();
+
+        // The link is its own entry: pasting would replace the link, not the
+        // file it points at, so it is a collision to ask about.
+        assert_eq!(
+            Some(Occupant::Replaceable),
+            existing_destination(&fx.dest, &fx.src)
+        );
+    }
+
+    #[test]
+    fn a_symlink_source_whose_target_holds_the_name_is_not_a_collision() {
+        let fx = CopyFixture::new("fs_occupant_link_over_target");
+        fs::write(fx.dest.path.join("a.txt"), b"data").unwrap();
+        let link_dir = fx.src.path.parent().unwrap().join("links");
+        fs::create_dir(&link_dir).unwrap();
+        std::os::unix::fs::symlink(fx.dest.path.join("a.txt"), link_dir.join("a.txt")).unwrap();
+        let link = PathInfo::try_from(link_dir.join("a.txt").as_path()).unwrap();
+
+        // Offering to replace it would promise a paste that validation then
+        // refuses, since it would replace the file the link points at.
+        assert_eq!(None, existing_destination(&fx.dest, &link));
+    }
+
+    #[test]
+    fn a_hard_link_of_the_source_is_not_a_collision() {
+        let fx = CopyFixture::new("fs_occupant_hard_link");
+        fs::hard_link(&fx.src.path, fx.dest.path.join("a.txt")).unwrap();
+
+        assert_eq!(None, existing_destination(&fx.dest, &fx.src));
+    }
+
+    #[test]
     fn a_symlinked_directory_in_the_way_is_replaceable() {
         let fx = CopyFixture::new("fs_occupant_symlink");
         fx.occupy_with_directory("target");
@@ -1382,8 +1419,14 @@ mod tests {
         let fx = CopyFixture::new("fs_conflict_skip_all");
         fx.occupy("a.txt");
         fx.occupy("b.txt");
+        let free = fx.src.path.parent().unwrap().join("c.txt");
+        fs::write(&free, b"src").unwrap();
         file_system.handle_command(&Command::Copy {
-            srcs: vec![fx.src.clone(), fx.other.clone()],
+            srcs: vec![
+                PathInfo::try_from(free.as_path()).unwrap(),
+                fx.src.clone(),
+                fx.other.clone(),
+            ],
             dest: fx.dest.clone(),
         });
 
@@ -1391,13 +1434,18 @@ mod tests {
             .handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll))
             .into_commands();
 
-        // The second collision must not prompt, and nothing started, so the
-        // clipboard is left alone.
-        assert!(commands.is_empty(), "{commands:?}");
+        // The second collision must not prompt. Skipping is a choice, not a
+        // failure, so the clipboard is cleared rather than reduced to the
+        // skipped sources.
+        assert!(
+            matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
+            "{commands:?}"
+        );
         assert!(file_system.pending_paste.is_none());
+        await_terminal_task(&rx);
+        assert_eq!(b"src".to_vec(), fx.pasted("c.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -1769,15 +1817,277 @@ mod tests {
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         file_system.current_search_generation = 4;
-        file_system.cancellables = cancellables("s");
+        file_system.cancellables = cancellables("ts");
 
         // A superseded search exiting must not drop the entry belonging to the
         // one that replaced it, or the cancel key would find nothing to stop.
         file_system.on_search_exited(3);
-        assert_eq!(1, file_system.cancellables.len());
+        assert_eq!(2, file_system.cancellables.len());
 
+        // The file operation is not the search's to clear.
         file_system.on_search_exited(4);
-        assert!(file_system.cancellables.is_empty());
+        assert!(matches!(
+            file_system.cancellables.as_slice(),
+            [Cancellable::Task(_)]
+        ));
+    }
+
+    fn task_info(file_system: &FileSystem, index: usize) -> &CancelInfo {
+        match &file_system.cancellables[index] {
+            Cancellable::Task(info) => info,
+            Cancellable::Search(_) => panic!("expected a task at {index}"),
+        }
+    }
+
+    #[test]
+    fn the_cancel_key_cancels_the_running_task_and_drops_it() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("tt");
+        let running = task_info(&file_system, 0).token.clone();
+        let queued = task_info(&file_system, 1).token.clone();
+
+        let commands = file_system
+            .handle_command(&Command::CancelTask)
+            .into_commands();
+
+        let [Command::AlertInfo(message)] = commands.as_slice() else {
+            panic!("expected one notice, got {commands:?}");
+        };
+        assert!(message.starts_with("Cancelled: "), "{message}");
+        assert!(running.is_cancelled());
+        assert!(!queued.is_cancelled());
+        assert_eq!(1, file_system.cancellables.len());
+    }
+
+    #[test]
+    fn a_task_past_the_point_of_cancelling_stays_and_says_so() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("t");
+        let info = task_info(&file_system, 0);
+        info.uncancellable.store(true, Ordering::Relaxed);
+        let token = info.token.clone();
+
+        let commands = file_system
+            .handle_command(&Command::CancelTask)
+            .into_commands();
+
+        // Its terminal update is what removes it, so it stays on the stack.
+        let [Command::AlertInfo(message)] = commands.as_slice() else {
+            panic!("expected one notice, got {commands:?}");
+        };
+        assert!(message.starts_with("Cannot cancel: "), "{message}");
+        assert!(!token.is_cancelled());
+        assert_eq!(1, file_system.cancellables.len());
+    }
+
+    #[test]
+    fn a_search_that_already_finished_is_left_for_its_exit_to_clear() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("s");
+        // A finished search cancels its own token on the way out.
+        let Cancellable::Search(token) = &file_system.cancellables[0] else {
+            panic!("expected a search");
+        };
+        token.cancel();
+
+        let result = file_system.handle_command(&Command::CancelTask);
+
+        // Silent, and still registered: its ExitedSearch is already on the
+        // way and drops the entry.
+        assert!(matches!(result, CommandResult::Handled));
+        assert_eq!(1, file_system.cancellables.len());
+    }
+
+    #[test]
+    fn starting_a_search_replaces_the_previous_one() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_search_replace");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.cancellables = cancellables("s");
+        let Cancellable::Search(previous) = &file_system.cancellables[0] else {
+            panic!("expected a search");
+        };
+        let previous = previous.clone();
+
+        let commands = file_system.search("query").into_commands();
+
+        let [Command::SearchStarted { generation }] = commands.as_slice() else {
+            panic!("expected SearchStarted, got {commands:?}");
+        };
+        // Only the new search's exit may clear the search state.
+        assert_eq!(*generation, file_system.current_search_generation);
+        assert!(previous.is_cancelled());
+        let [Cancellable::Search(current)] = file_system.cancellables.as_slice() else {
+            panic!("expected only the new search to be registered");
+        };
+        assert!(!current.is_cancelled());
+        file_system.cancel_search();
+        drop(rx);
+    }
+
+    #[test]
+    fn chmod_refuses_a_mode_that_is_not_octal() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_chmod_invalid");
+        let file = root.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let commands = file_system
+            .handle_command(&Command::Chmod {
+                paths: vec![PathInfo::try_from(file.as_path()).unwrap()],
+                mode: "rwx".to_string(),
+            })
+            .into_commands();
+
+        let [Command::AlertError(message)] = commands.as_slice() else {
+            panic!("expected one alert, got {commands:?}");
+        };
+        assert_eq!("Invalid octal mode: \"rwx\"", message);
+        assert_eq!(
+            0o600,
+            fs::metadata(&file).unwrap().permissions().mode() & 0o7777
+        );
+    }
+
+    #[test]
+    fn chmod_reports_a_failed_entry_and_still_changes_the_rest() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_chmod_partial");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        let file = root.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        let present = PathInfo::try_from(file.as_path()).unwrap();
+        let mut gone = present.clone();
+        gone.path = root.join("gone.txt");
+
+        let commands = file_system
+            .handle_command(&Command::Chmod {
+                paths: vec![gone, present],
+                mode: "640".to_string(),
+            })
+            .into_commands();
+
+        // The failure rides the same broadcast as the refresh, ahead of it.
+        let [
+            Command::AlertError(message),
+            Command::RefreshedDirectory { .. },
+        ] = commands.as_slice()
+        else {
+            panic!("expected the failure and the refresh, got {commands:?}");
+        };
+        assert!(message.starts_with("Failed to chmod"), "{message}");
+        assert_eq!(
+            0o640,
+            fs::metadata(&file).unwrap().permissions().mode() & 0o7777
+        );
+        file_system.cancel_current_load();
+        drop(rx);
+    }
+
+    #[test]
+    fn changing_to_a_directory_that_cannot_be_read_stays_where_it_was() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_cd_unreadable");
+        let here = PathInfo::try_from(root.path()).unwrap();
+        file_system.cd(here.clone(), true);
+        let mut missing = here.clone();
+        missing.path = root.join("missing");
+
+        let commands = file_system.cd(missing, true).into_commands();
+
+        let [Command::AlertError(message)] = commands.as_slice() else {
+            panic!("expected one alert, got {commands:?}");
+        };
+        assert!(
+            message.starts_with("Failed to change to directory"),
+            "{message}"
+        );
+        assert_eq!(here.path, file_system.current_directory().path);
+        assert_eq!(None, previous_path(&file_system));
+        file_system.cancel_current_load();
+    }
+
+    #[test]
+    fn going_to_the_parent_navigates_there() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_parent");
+        fs::create_dir(root.join("sub")).unwrap();
+        file_system.cd(
+            PathInfo::try_from(root.join("sub").as_path()).unwrap(),
+            true,
+        );
+
+        let commands = file_system
+            .handle_command(&Command::GoToParentDirectory)
+            .into_commands();
+
+        // A navigation rather than a refresh, so "-" can return to sub.
+        let [Command::NavigatedDirectory { directory, .. }] = commands.as_slice() else {
+            panic!("expected NavigatedDirectory, got {commands:?}");
+        };
+        assert_eq!(root.path(), directory.path);
+        assert_eq!(Some(root.join("sub")), previous_path(&file_system));
+        file_system.cancel_current_load();
+    }
+
+    #[test]
+    fn opening_a_directory_navigates_into_it() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_open_directory");
+        fs::create_dir(root.join("sub")).unwrap();
+
+        let commands = file_system
+            .handle_command(&Command::Open(
+                PathInfo::try_from(root.join("sub").as_path()).unwrap(),
+            ))
+            .into_commands();
+
+        let [Command::NavigatedDirectory { directory, .. }] = commands.as_slice() else {
+            panic!("expected NavigatedDirectory, got {commands:?}");
+        };
+        assert_eq!(root.join("sub").canonicalize().unwrap(), directory.path);
+        file_system.cancel_current_load();
+    }
+
+    #[test]
+    fn navigating_away_drops_a_refresh_deferred_for_the_old_directory() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_reload_dropped");
+        fs::create_dir(root.join("sub")).unwrap();
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.current_load = Some((7, CancellationToken::new()));
+        file_system.handle_command(&Command::RefreshDirectory);
+
+        file_system.cd(
+            PathInfo::try_from(root.join("sub").as_path()).unwrap(),
+            true,
+        );
+
+        // The new load reads the new directory; re-reading it once that
+        // completes would be a second load for nothing.
+        assert!(!file_system.reload_pending);
+        file_system.cancel_current_load();
     }
 
     #[test]

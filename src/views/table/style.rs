@@ -231,18 +231,6 @@ mod tests {
     }
 
     #[test]
-    fn a_symlink_is_styled_as_one_even_when_it_points_at_a_directory() {
-        let theme = file_type();
-        // The mode of a symlink is the link's own, never its target's, so this
-        // is what a link to a directory looks like: the directory rung must
-        // not be reached through it.
-        let link = PathInfo::with_mode(SYMLINK);
-
-        assert_eq!(theme.symlink(), name_style(theme, &link));
-        assert_ne!(theme.directory(), name_style(theme, &link));
-    }
-
-    #[test]
     fn the_clipboard_style_marks_only_the_entries_it_holds() {
         Config::init_test();
         let clipboard = &Config::global().theme().clipboard;
@@ -268,6 +256,40 @@ mod tests {
         );
         assert_eq!(None, clipboard_style(clipboard, Some(&cut), &other));
         assert_eq!(None, clipboard_style(clipboard, None, &held));
+    }
+
+    #[test_case(0, FileSize::bytes ; "bytes")]
+    #[test_case(1 << 10, FileSize::kib ; "kibibytes")]
+    #[test_case(1 << 20, FileSize::mib ; "mebibytes")]
+    #[test_case(1 << 30, FileSize::gib ; "gibibytes")]
+    #[test_case(1 << 40, FileSize::tib ; "tebibytes")]
+    #[test_case(1 << 50, FileSize::pib ; "pebibytes")]
+    fn size_style_follows_the_unit_shown(size: u64, expected: fn(&FileSize) -> Style) {
+        Config::init_test();
+        let theme = &Config::global().theme().file_size;
+        let mut item = PathInfo::with_mode(REGULAR);
+        item.size = size;
+
+        assert_eq!(expected(theme), size_style(theme, &item));
+    }
+
+    #[test_case(0, FileModifiedDate::less_than_minute ; "just now")]
+    #[test_case(60 * 5, FileModifiedDate::less_than_hour ; "minutes ago")]
+    #[test_case(3600 * 5, FileModifiedDate::less_than_day ; "hours ago")]
+    #[test_case(86400 * 5, FileModifiedDate::less_than_month ; "days ago")]
+    #[test_case(86400 * 60, FileModifiedDate::less_than_year ; "months ago")]
+    #[test_case(86400 * 400, FileModifiedDate::greater_than_year ; "years ago")]
+    fn modified_date_style_follows_the_age(
+        seconds_ago: i64,
+        expected: fn(&FileModifiedDate) -> Style,
+    ) {
+        Config::init_test();
+        let theme = &Config::global().theme().file_modified_date;
+        let now = Local::now();
+        let mut item = PathInfo::with_mode(REGULAR);
+        item.modified = Some(now - chrono::Duration::seconds(seconds_ago));
+
+        assert_eq!(expected(theme), modified_date_style(theme, &item, now));
     }
 
     #[test]

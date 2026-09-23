@@ -396,6 +396,114 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_search_keeps_its_notice_through_the_walkers_exit() {
+        let mut v = view();
+        v.handle_command(&Command::StartSearch("q".into()));
+        v.handle_command(&Command::SearchStarted { generation: 1 });
+
+        v.handle_command(&Command::CancelSearch);
+        assert_eq!(tags(&v.notices), vec!["search_cancelled"]);
+
+        // The cancelled walker still exits; the relabelled notice stays until
+        // the user clears it.
+        v.handle_command(&Command::ExitedSearch { generation: 1 });
+        assert_eq!(tags(&v.notices), vec!["search_cancelled"]);
+    }
+
+    #[test]
+    fn clearing_the_marks_keeps_the_clipboard() {
+        let mut v = view();
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+        });
+        v.clipboard_entry = Some(clipboard_entry());
+
+        // Only marking something displaces the clipboard; unmarking does not.
+        let result = v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 0,
+        });
+
+        assert_eq!(CommandResult::Handled, result);
+        assert!(v.clipboard_entry.is_some());
+    }
+
+    #[test]
+    fn the_delete_prompt_hides_the_marked_notice_until_it_is_answered() {
+        let mut v = view();
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+        });
+
+        // The prompt states the count itself.
+        v.handle_command(&Command::OpenPrompt(crate::command::PromptAction::Delete(
+            2,
+        )));
+        assert!(v.notices.is_empty());
+
+        v.handle_command(&Command::CancelPrompt);
+        assert_eq!(tags(&v.notices), vec!["marked"]);
+    }
+
+    #[test]
+    fn navigating_clears_the_filter_and_the_marks_but_not_the_clipboard() {
+        let mut v = view();
+        v.handle_command(&Command::FilterChanged("f".into()));
+        v.mark_count = 2;
+        v.clipboard_entry = Some(clipboard_entry());
+
+        v.handle_command(&Command::NavigatedDirectory {
+            directory: PathInfo::try_from("/tmp").unwrap(),
+            generation: 1,
+        });
+
+        // A clipboard survives navigation: that is how a paste reaches another
+        // directory.
+        assert_eq!(tags(&v.notices), vec!["clipboard"]);
+    }
+
+    #[test]
+    fn reset_view_clears_the_clipboard_filter_and_marks() {
+        let mut v = view();
+        v.handle_command(&Command::FilterChanged("f".into()));
+        v.mark_count = 2;
+        v.clipboard_entry = Some(clipboard_entry());
+
+        v.handle_command(&Command::ResetView);
+
+        assert!(v.notices.is_empty());
+        assert_eq!(0, v.mark_count);
+    }
+
+    #[test]
+    fn a_click_resets_the_view_only_on_a_dismissable_notice() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut v = view();
+        let (tx, _rx) = mpsc::channel();
+        let (_at, initial, _cancel) = ActiveTask::new(tx, copy_kind(), 100);
+        v.handle_command(&Command::Progress(initial));
+        v.handle_command(&Command::FilterChanged("f".into()));
+        assert_eq!(tags(&v.notices), vec!["progress", "operations", "filter"]);
+        // Below the top of the screen, so a row is read relative to the view.
+        v.area = Rect::new(0, 5, 40, 3);
+        let mut click = |row| {
+            v.handle_mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+
+        // Progress is not something the reset clears.
+        assert_eq!(CommandResult::Handled, click(5));
+        assert_eq!(CommandResult::from(Command::ResetView), click(7));
+    }
+
+    #[test]
     fn updates_for_cleared_tasks_are_not_resurrected() {
         let mut v = view();
         let (tx, rx) = mpsc::channel();

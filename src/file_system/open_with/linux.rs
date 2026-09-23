@@ -152,7 +152,10 @@ pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
 fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
     let chain = mime_chain(path);
     debug!("Resolved {} to MIME types: {chain:?}", path.display());
-    let associations = mimeapps::associations(&sources.levels, &chain);
+    let is_usable = |file: &Path| {
+        DesktopEntry::from_path(file, None::<&[&str]>).is_ok_and(|entry| is_offerable(&entry))
+    };
+    let associations = mimeapps::associations_where(is_usable, &sources.levels, &chain);
     let locales = get_languages_from_env();
     associations
         .ordered
@@ -519,9 +522,10 @@ mod tests {
     };
 
     use super::{
-        DesktopEntry, Sources, TEXT_PLAIN, candidates_from, dedupe_dirs, desktops_of, dir_of,
-        dirs_of, glob_name, in_terminal, is_executable, is_offerable, parents_of, parse_subclasses,
-        scan_mime_types, to_candidate,
+        ALL, ALL_FILES, DesktopEntry, Sources, TEXT_PLAIN, candidates_from, dedupe_dirs,
+        desktops_of, dir_of, dirs_of, glob_name, in_terminal, index_applications, is_executable,
+        is_offerable, lists_in, mime_chain, parents_of, parse_subclasses, scan_mime_types,
+        to_candidate,
     };
     use crate::{app::config::Config, test_support::TempDir};
 
@@ -573,6 +577,92 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_application_runs_inside_the_configured_terminal() {
+        Config::init_test();
+        let dir = TempDir::new("open_with_terminal");
+        let entry = desktop_entry(
+            &dir,
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTerminal=true\n",
+        );
+
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry).unwrap();
+
+        // The shipped `run_in_terminal` is `xterm -e %s`.
+        assert_eq!(
+            vec![
+                OsString::from("sh"),
+                OsString::from("-c"),
+                OsString::from("xterm -e view /tmp/file.txt"),
+            ],
+            candidate.argv
+        );
+    }
+
+    #[test]
+    fn a_symlink_back_to_an_ancestor_is_indexed_once() {
+        let dir = TempDir::new("open_with_index_loop");
+        std::fs::write(
+            dir.join("viewer.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(dir.path(), dir.join("loop")).unwrap();
+
+        let index = index_applications(dir.path());
+
+        assert_eq!(
+            vec!["viewer.desktop"],
+            index.by_id.keys().map(String::as_str).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_desktop_specific_list_outranks_the_generic_one_and_only_sets_a_default() {
+        use super::mimeapps::{AppDirIndex, Level, associations};
+
+        let dir = TempDir::new("open_with_lists");
+        std::fs::write(
+            dir.join("gnome-mimeapps.list"),
+            "[Default Applications]\ntext/plain=b.desktop\n\
+             [Added Associations]\ntext/plain=ignored.desktop\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("mimeapps.list"),
+            "[Default Applications]\ntext/plain=a.desktop\n",
+        )
+        .unwrap();
+        let mut apps = AppDirIndex::default();
+        for id in ["a.desktop", "b.desktop", "ignored.desktop"] {
+            apps.by_id.insert(id.to_string(), dir.join(id));
+        }
+        let levels = vec![Level {
+            apps: Some(apps),
+            lists: lists_in(&strings(&["gnome"]), dir.path()),
+        }];
+
+        let result = associations(&levels, &strings(&[TEXT_PLAIN]));
+
+        assert_eq!(Some("b.desktop".to_string()), result.default);
+        assert_eq!(strings(&["b.desktop"]), result.ordered);
+    }
+
+    /// The fallback types close every chain whatever the database guesses, and
+    /// only a file matches every file.
+    #[test]
+    fn the_chain_ends_with_the_fallback_types() {
+        let dir = TempDir::new("open_with_chain");
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(mime_chain(&file).ends_with(&strings(&[ALL_FILES, ALL])));
+        let directory = mime_chain(dir.path());
+        assert_eq!(Some(&ALL.to_string()), directory.last());
+        assert!(!directory.iter().any(|mime| mime == ALL_FILES));
+    }
+
+    #[test]
     fn glob_name_keeps_the_extension_of_a_name_that_is_not_utf8() {
         use std::os::unix::ffi::OsStrExt;
 
@@ -612,6 +702,7 @@ mod tests {
     #[test_case(0o644, false ; "a readable file with no execute bit")]
     #[test_case(0o755, true  ; "an executable file")]
     #[test_case(0o100, true  ; "executable by its owner alone")]
+    #[test_case(0o001, true  ; "executable by others alone")]
     fn is_executable_reads_the_execute_bits(mode: u32, expected: bool) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -682,6 +773,81 @@ mod tests {
         assert!(named("Editor").is_default);
         assert!(!named("Viewer").is_default);
         assert!(!named("Blank").is_default);
+    }
+
+    #[test]
+    fn a_hidden_default_falls_through_to_the_next_one() {
+        Config::init_test();
+        let dir = TempDir::new("open_with_hidden_default");
+        let applications = dir.join("applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let write = |name: &str, body: &str| std::fs::write(applications.join(name), body).unwrap();
+        // A user override that deletes the entry, still named as the default.
+        write(
+            "gone.desktop",
+            "[Desktop Entry]\nType=Application\nName=Gone\nExec=gone %f\nMimeType=all/all;\nHidden=true\n",
+        );
+        write(
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
+        );
+        write(
+            "editor.desktop",
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=edit %f\nMimeType=all/all;\n",
+        );
+        write(
+            "mimeapps.list",
+            "[Default Applications]\nall/all=gone.desktop;viewer.desktop\n",
+        );
+        let file = dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
+
+        let candidates = candidates_from(&sources, &file);
+
+        let defaults: Vec<&str> = candidates
+            .iter()
+            .filter(|candidate| candidate.is_default)
+            .map(|candidate| candidate.name.as_str())
+            .collect();
+        assert_eq!(vec!["Viewer"], defaults);
+        assert_eq!("Viewer", candidates[0].name);
+    }
+
+    /// No configured default at all: the fallback is the most preferred
+    /// association, which skips an entry the picker will not show.
+    #[test]
+    fn a_hidden_top_association_is_not_the_fallback_default() {
+        Config::init_test();
+        let dir = TempDir::new("open_with_hidden_fallback");
+        let applications = dir.join("applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let write = |name: &str, body: &str| std::fs::write(applications.join(name), body).unwrap();
+        write(
+            "gone.desktop",
+            "[Desktop Entry]\nType=Application\nName=Gone\nExec=gone %f\nMimeType=all/all;\nHidden=true\n",
+        );
+        write(
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
+        );
+        // Ranks `gone` first, ahead of the directory scan.
+        write(
+            "mimeapps.list",
+            "[Added Associations]\nall/all=gone.desktop;viewer.desktop\n",
+        );
+        let file = dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
+
+        let candidates = candidates_from(&sources, &file);
+
+        let defaults: Vec<&str> = candidates
+            .iter()
+            .filter(|candidate| candidate.is_default)
+            .map(|candidate| candidate.name.as_str())
+            .collect();
+        assert_eq!(vec!["Viewer"], defaults);
     }
 
     #[test]

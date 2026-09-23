@@ -122,6 +122,40 @@ impl CommandHandler for TableView {
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+        let before = self.table_state.selected();
+        let result = self.dispatch_key(code, modifiers);
+        self.note_cursor_move(before);
+        result
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
+        let before = self.table_state.selected();
+        let result = self.dispatch_mouse(event);
+        self.note_cursor_move(before);
+        result
+    }
+
+    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
+        let is_scroll = matches!(
+            event.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        );
+        is_scroll
+            // While dragging, Drag/Up events outside the table must still be
+            // routed here so the drag tracks and its state is released.
+            || self.scrollbar_view.is_dragging()
+            || self.table_area.contains(Position {
+                x: event.column,
+                y: event.row,
+            })
+            || self.scrollbar_view.is_clicked(event.column, event.row)
+    }
+}
+
+// The bodies of the longest `handle_command` arms. They live here rather than
+// inline so the match stays a dispatch table that can be read in one screen.
+impl TableView {
+    fn dispatch_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         // Hardcoded bindings take precedence, then config bindings.
         let action = hardcoded_normal_action(code, modifiers)
             .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
@@ -174,7 +208,7 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
+    fn dispatch_mouse(&mut self, event: MouseEvent) -> CommandResult {
         let x = event.column.saturating_sub(self.table_area.x);
         let y = event.row.saturating_sub(self.table_area.y);
 
@@ -204,26 +238,6 @@ impl CommandHandler for TableView {
         }
     }
 
-    fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        let is_scroll = matches!(
-            event.kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        );
-        is_scroll
-            // While dragging, Drag/Up events outside the table must still be
-            // routed here so the drag tracks and its state is released.
-            || self.scrollbar_view.is_dragging()
-            || self.table_area.contains(Position {
-                x: event.column,
-                y: event.row,
-            })
-            || self.scrollbar_view.is_clicked(event.column, event.row)
-    }
-}
-
-// The bodies of the longest `handle_command` arms. They live here rather than
-// inline so the match stays a dispatch table that can be read in one screen.
-impl TableView {
     fn refreshed_directory(&mut self, directory: &PathInfo, generation: u64) -> CommandResult {
         // While searching, the listing holds results from a different
         // root, not this directory. Ignore watcher/refresh events so a
@@ -320,7 +334,10 @@ impl TableView {
 mod tests {
     use super::super::{display_names, marked_table};
     use super::*;
-    use crate::command::progress::{ActiveTask, Task, TaskKind};
+    use crate::{
+        app::clipboard::ClipboardEntry,
+        command::progress::{ActiveTask, Task, TaskKind},
+    };
 
     /// The delete prompt is a confirmation: `delete` stashes what it resolved,
     /// and only the answer decides whether that stash is acted on. The stash
@@ -385,6 +402,22 @@ mod tests {
                 if matches!(**command, Command::SelectionChanged { .. })),
             "expected a selection snapshot, got {result:?}"
         );
+    }
+
+    #[test]
+    fn resetting_drops_the_marks_and_the_clipboard_highlight() {
+        let (_dir, mut table) = marked_table();
+        table.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+            table.marked_paths(),
+        ))));
+        assert!(table.clipboard.is_some());
+
+        table.handle_command(&Command::ResetView);
+
+        // Esc empties the clipboard, so a highlight left behind would mark
+        // rows as copied that a paste no longer touches.
+        assert!(!table.has_marks());
+        assert!(table.clipboard.is_none());
     }
 
     #[test]

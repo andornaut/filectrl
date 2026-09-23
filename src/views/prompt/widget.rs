@@ -33,7 +33,11 @@ mod tests {
     #[test_case("ple/",  0, 1 => "ple/"          ; "single suggestion shows only the suffix")]
     #[test_case("ple/",  0, 3 => "ple/ (1 of 3)" ; "multiple suggestions append a 1-based counter")]
     #[test_case("ricot", 1, 2 => "ricot (2 of 2)"; "counter reflects the active index")]
-    fn suggestion_overlay_text_cases(suffix: &str, index: usize, total: usize) -> String {
+    fn suggestion_overlay_counts_only_multiple_suggestions(
+        suffix: &str,
+        index: usize,
+        total: usize,
+    ) -> String {
         suggestion_overlay_text(suffix.to_string(), index, total)
     }
 }

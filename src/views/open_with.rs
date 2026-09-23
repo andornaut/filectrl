@@ -235,6 +235,30 @@ mod tests {
         assert_eq!(1, view.selected);
     }
 
+    #[test]
+    fn a_click_selects_the_row_under_it_but_not_the_blank_space_below() {
+        use ratatui::{
+            crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
+            layout::Rect,
+        };
+
+        let mut view = picker(3);
+        view.content_area = Rect::new(0, 1, 40, 5);
+        let mut click = |row| {
+            view.handle_mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row,
+                modifiers: KeyModifiers::NONE,
+            });
+            view.selected
+        };
+
+        assert_eq!(1, click(2));
+        // Row 4 of the area is below the third and last candidate.
+        assert_eq!(1, click(5));
+    }
+
     // A 20 candidate list in a 5 row viewport, so a page is 5 rows and the
     // ends of the list are reachable in one keystroke.
     #[test_case(Action::SelectNext, 0, 1       ; "next moves one row down")]

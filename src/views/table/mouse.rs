@@ -60,22 +60,26 @@ impl TableView {
 #[cfg(test)]
 mod tests {
     use ratatui::{
+        buffer::Buffer,
         crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
         layout::Rect,
     };
+    use test_case::test_case;
 
     use super::super::{TableView, columns::SortDirection, marked_table, row_map::LineItemMap};
     use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
     /// A three row listing (`a`, `b`, `c`) laid out the way a render would: the
-    /// header on row 0 and one line per item below it, in a viewport with room
-    /// to spare so the rows past the end are still inside the table area.
+    /// header on the table's first row and one line per item below it, in a
+    /// viewport with room to spare so the rows past the end are still inside
+    /// the table area. The table starts below the top of the screen, as it does
+    /// under the breadcrumbs, so a click's row has to be made table-relative.
     fn table_for_clicks() -> (crate::test_support::TempDir, TableView) {
         let (dir, mut table) = marked_table();
         table.clear_marks();
         table.table_area = Rect {
             x: 0,
-            y: 0,
+            y: 2,
             width: 80,
             height: 10,
         };
@@ -83,13 +87,19 @@ mod tests {
         (dir, table)
     }
 
-    fn click(table: &mut TableView, row: u16) -> CommandResult {
-        table.handle_mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 1,
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
             row,
             modifiers: KeyModifiers::NONE,
-        })
+        }
+    }
+
+    /// A left click on `row` of the table, counted from its header row.
+    fn click(table: &mut TableView, row: u16) -> CommandResult {
+        let row = table.table_area.y + row;
+        table.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1, row))
     }
 
     fn selected(table: &TableView) -> Option<String> {
@@ -105,6 +115,56 @@ mod tests {
         click(&mut table, 1);
 
         assert_eq!(Some("a".to_string()), selected(&table));
+    }
+
+    #[test_case(MouseEventKind::ScrollUp, "a" ; "up moves the cursor up")]
+    #[test_case(MouseEventKind::ScrollDown, "c" ; "down moves the cursor down")]
+    fn the_scroll_wheel_moves_the_cursor(kind: MouseEventKind, expected: &str) {
+        let (_dir, mut table) = table_for_clicks();
+        table.select(1);
+
+        table.handle_mouse(mouse(kind, 1, 5));
+
+        assert_eq!(Some(expected.to_string()), selected(&table));
+    }
+
+    /// Row `b` wraps to three lines, so the lines are `a`, `b` x3, `c`, and a
+    /// two-line viewport leaves three positions for the thumb. The scrollbar is
+    /// four rows tall, one per position, in the column right of the table.
+    #[test]
+    fn dragging_the_scrollbar_moves_the_window_top_and_the_cursor_together() {
+        let (_dir, mut table) = table_for_clicks();
+        table.mapper = LineItemMap::new(&[1, 3, 1], 2, 0);
+        let scrollbar = Rect::new(80, table.table_area.y + 1, 1, 4);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 81, 20));
+        table.scrollbar_view.render(
+            crate::app::config::Config::global().theme(),
+            scrollbar,
+            &mut buf,
+            0,
+            3,
+            2,
+        );
+        let top = scrollbar.y;
+
+        // The second track row is line 1, the first line of `b`.
+        table.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 80, top + 1));
+        assert_eq!(Some("b".to_string()), selected(&table));
+        assert_eq!(1, table.first_visible_item);
+        assert_eq!(Some(1), table.drag_line);
+
+        // The third is line 2, inside `b`'s wrapped row, which snaps forward to
+        // the next row so the last window is reachable.
+        table.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 80, top + 2));
+        assert_eq!(Some("c".to_string()), selected(&table));
+        assert_eq!(2, table.first_visible_item);
+
+        // A release off the table still reaches it, or the drag would never
+        // end and the thumb would stay pinned to the last dragged line.
+        let release = mouse(MouseEventKind::Up(MouseButton::Left), 200, 50);
+        assert!(table.should_handle_mouse(release));
+        table.handle_mouse(release);
+        assert_eq!(None, table.drag_line);
     }
 
     #[test]

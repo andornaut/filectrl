@@ -301,6 +301,8 @@ fn reject_unused(args: &Args, action: Action) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     /// Every field defaulted, so a test names only what it is exercising.
@@ -357,54 +359,39 @@ mod tests {
         assert!(error.contains("--write-default-themes"), "{error}");
     }
 
-    #[test]
-    fn an_argument_the_action_ignores_is_rejected() {
-        let args = Args {
-            write_default_config: true,
-            include: vec![PathBuf::from("theme.toml")],
-            ..args()
-        };
-        let error = usage_error(&args);
-        assert!(error.contains("--include"), "{error}");
-        assert!(error.contains("--write-default-config"), "{error}");
+    /// `action`'s flag, plus the argument that `name` names as it appears in
+    /// the usage error.
+    fn args_with(action: Action, name: &str) -> Args {
+        let mut args = args();
+        match action {
+            Action::PrintKeybindings => args.print_keybindings = true,
+            Action::PrintVersion => args.version = true,
+            Action::WriteDefaultConfig => args.write_default_config = true,
+            Action::WriteDefaultThemes => args.write_default_themes = true,
+        }
+        match name {
+            "--config" => args.config = Some(PathBuf::from("config.toml")),
+            "--include" => args.include = vec![PathBuf::from("theme.toml")],
+            "--force" => args.force = true,
+            "--no-truecolor" => args.no_truecolor = true,
+            "A directory argument" => args.directory = Some(PathBuf::from("/tmp")),
+            _ => unreachable!("no such argument: {name}"),
+        }
+        args
     }
 
-    #[test]
-    fn a_run_only_flag_is_rejected_by_an_acting_flag() {
-        // --no-truecolor only changes how the TUI renders, so it cannot
-        // change what --print-keybindings prints.
-        let args = Args {
-            print_keybindings: true,
-            no_truecolor: true,
-            ..args()
-        };
-        let error = usage_error(&args);
-        assert!(error.contains("--no-truecolor"), "{error}");
-        assert!(error.contains("--print-keybindings"), "{error}");
-    }
-
-    #[test]
-    fn version_takes_no_config() {
-        // --version prints a constant, so even the flag every other action
-        // reads cannot change what it prints.
-        let args = Args {
-            version: true,
-            config: Some(PathBuf::from("config.toml")),
-            ..args()
-        };
-        let error = usage_error(&args);
-        assert!(error.contains("--config"), "{error}");
-        assert!(error.contains("--version"), "{error}");
-    }
-
-    #[test]
-    fn a_directory_the_action_ignores_is_rejected() {
-        let args = Args {
-            print_keybindings: true,
-            directory: Some(PathBuf::from("/tmp")),
-            ..args()
-        };
-        assert!(usage_error(&args).contains("--print-keybindings"));
+    // --no-truecolor only changes how the TUI renders, and --version prints a
+    // constant, so even the flag every other action reads cannot change it.
+    #[test_case(Action::WriteDefaultConfig, "--include" ; "include with a write")]
+    #[test_case(Action::PrintKeybindings, "--force" ; "force with printing")]
+    #[test_case(Action::PrintKeybindings, "--no-truecolor" ; "a run-only flag with printing")]
+    #[test_case(Action::PrintVersion, "--config" ; "config with version")]
+    #[test_case(Action::PrintKeybindings, "A directory argument" ; "a directory with printing")]
+    fn an_argument_the_action_ignores_is_rejected(action: Action, name: &str) {
+        assert_eq!(
+            format!("{name} has no effect with {}.", action.flag()),
+            usage_error(&args_with(action, name))
+        );
     }
 
     #[test]

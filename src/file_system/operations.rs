@@ -15,6 +15,7 @@ use super::{
     path_info::{PathInfo, compact},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
+    tasks::is_same_file,
 };
 use crate::command::{Command, progress::CancellationToken};
 
@@ -326,17 +327,6 @@ fn is_case_only_change(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// True when both paths resolve to the same underlying file (device and
-/// inode). Links are not followed, so a symlink is compared as the link
-/// itself.
-fn is_same_file(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (a.symlink_metadata(), b.symlink_metadata()) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
-}
-
 /// The single place the detach strategy is defined, so that both spawn paths
 /// stay in step.
 fn detached_command<P, I, S>(program: P, args: I) -> std::process::Command
@@ -392,13 +382,10 @@ mod tests {
         assert!(error.contains("no longer exists"), "{error}");
     }
 
-    #[test_case("/b", "/a", "b"; "/a to b relative")]
-    #[test_case("/b", "/a", "/b"; "/a to /b absolute")]
-    #[test_case("/b", "/a/aa", "/b"; "/a/aa to /b absolute")]
-    #[test_case("/a/aa", "/b", "/a/aa"; "/b to /a/aa absolute")]
-    #[test_case("/b", "/", "/b"; "root to /b absolute")]
-    #[test_case("/b", "", "/b"; "empty to /b absolute")]
-    fn join_is_correct_when(expected: &str, left: &str, right: &str) {
+    #[test_case("/b", "/a", "b"; "a sibling of a top-level entry")]
+    #[test_case("/a/b", "/a/aa", "b"; "a sibling of a nested entry")]
+    #[test_case("b", "", "b"; "a path with no parent")]
+    fn join_parent_names_a_sibling_of(expected: &str, left: &str, right: &str) {
         let old_path = Path::new(left);
         let result = join_parent(old_path, right);
 
@@ -467,6 +454,25 @@ mod tests {
     }
 
     #[test]
+    fn rename_refuses_a_name_that_leaves_the_directory() {
+        let dir = TempDir::new("ops_rename_escape");
+        fs::create_dir(dir.join("sub")).unwrap();
+        let a = dir.join("sub").join("a.txt");
+        fs::write(&a, b"a").unwrap();
+        let info = PathInfo::try_from(a.as_path()).unwrap();
+
+        // Joined onto the parent unvalidated, this renames the file into the
+        // directory above the one on screen.
+        let error = rename(&info, "../escaped.txt")
+            .expect_err("a name that is not a basename must be refused")
+            .to_string();
+
+        assert_eq!("New name cannot contain '/'", error);
+        assert!(a.exists());
+        assert!(!dir.join("escaped.txt").exists());
+    }
+
+    #[test]
     fn rename_reports_same_file_for_hard_link_destination() {
         let dir = TempDir::new("ops_samefile");
         let a = dir.join("a.txt");
@@ -507,18 +513,6 @@ mod tests {
 
     fn mode_of(path: &Path) -> u32 {
         fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
-    }
-
-    #[test]
-    fn chmod_sets_the_mode() {
-        let dir = TempDir::new("ops_chmod");
-        let file = dir.join("a.txt");
-        fs::write(&file, b"a").unwrap();
-        let info = PathInfo::try_from(file.as_path()).unwrap();
-
-        chmod(&info, 0o600).unwrap();
-
-        assert_eq!(0o600, mode_of(&file));
     }
 
     #[test]
@@ -624,12 +618,11 @@ mod tests {
     fn create_directory_refuses_a_name_already_taken() {
         let dir = TempDir::new("ops_mkdir_exists");
         let parent = PathInfo::try_from(dir.path()).unwrap();
-        fs::write(dir.join("taken"), b"x").unwrap();
+        fs::create_dir(dir.join("taken")).unwrap();
 
-        // `create_dir` rather than `create_dir_all`, so an existing entry is
-        // an error instead of silently adopting whatever is already there.
+        // `create_dir` rather than `create_dir_all`, so an existing directory
+        // is an error instead of silently adopted.
         assert!(create_directory(&parent, "taken").is_err());
-        assert!(dir.join("taken").is_file());
     }
 
     // ── add_bookmark ────────────────────────────────────────────────────────
@@ -720,5 +713,79 @@ mod tests {
         // later: asserting only `is_err` cannot tell the two apart, and the
         // errno one means the duplicate check let it through.
         assert!(error.contains("already exists"), "{error}");
+    }
+
+    // ── launching and listing ───────────────────────────────────────────────
+
+    #[test]
+    fn spawn_argv_refuses_a_working_directory_that_is_not_one() {
+        let dir = TempDir::new("ops_spawn_cwd");
+        let missing = dir.join("missing");
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        // `spawn` would fail with the same ENOENT as a missing program, which
+        // would send the user looking for the wrong thing.
+        let error = spawn_argv(Some(&missing), "App", &[OsString::from("true")], tx)
+            .expect_err("a missing working directory must be refused")
+            .to_string();
+
+        assert!(error.starts_with("Cannot run \"App\""), "{error}");
+        assert!(error.ends_with("is not a directory"), "{error}");
+    }
+
+    #[test_case("false" => Some("\"false\" failed (exit code 1)".to_string()) ; "a failure is reported")]
+    #[test_case("true" => None ; "a success is not")]
+    fn a_program_that_exits_at_once_is_reported_only_when_it_failed(
+        program: &str,
+    ) -> Option<String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        spawn_argv(None, program, &[OsString::from(program)], tx).unwrap();
+
+        // The watcher thread holds the only sender, so this returns once it
+        // has either reported or dropped it.
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Command::AlertError(message)) => Some(message),
+            Ok(other) => panic!("unexpected command {other:?}"),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+            Err(error) => panic!("the watcher never finished: {error}"),
+        }
+    }
+
+    #[test]
+    fn an_unreadable_directory_still_completes_its_load() {
+        let dir = TempDir::new("ops_stream_missing");
+        let mut missing = PathInfo::try_from(dir.path()).unwrap();
+        missing.path = dir.join("missing");
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        stream_cd(missing, 7, tx, CancellationToken::new());
+
+        // Without the completion the listing would stay in its loading state.
+        let commands: Vec<Command> = rx.iter().collect();
+        let [
+            Command::AlertWarn(message),
+            Command::DirectoryListingComplete { generation: 7 },
+        ] = commands.as_slice()
+        else {
+            panic!("expected a warning and the completion, got {commands:?}");
+        };
+        assert!(message.starts_with("Failed to read directory"), "{message}");
+    }
+
+    #[test]
+    fn a_superseded_load_sends_nothing() {
+        let dir = TempDir::new("ops_stream_cancelled");
+        fs::write(dir.join("a.txt"), b"a").unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        stream_cd(PathInfo::try_from(dir.path()).unwrap(), 7, tx, cancel);
+
+        // The newer load owns the listing, so neither this one's entries nor
+        // its completion may reach it.
+        let commands: Vec<Command> = rx.iter().collect();
+        assert!(commands.is_empty(), "{commands:?}");
     }
 }

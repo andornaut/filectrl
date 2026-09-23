@@ -87,7 +87,7 @@ impl TableView {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{TableView, display_names, marked_table};
+    use super::super::{TableView, display_names, marked_table, row_map::LineItemMap};
 
     fn marked(table: &TableView) -> Vec<String> {
         display_names(&table.marked_paths())
@@ -138,6 +138,56 @@ mod tests {
         table.select_last();
 
         assert_eq!(Some("d".to_string()), selected(&table));
+    }
+
+    /// Four one-line rows in a four-line window: the first, middle and last
+    /// visible rows are three different entries, and the middle is not the
+    /// centre row rounded up.
+    #[test]
+    fn the_visible_row_keys_land_on_the_rows_the_window_shows() {
+        let (_dir, mut table) = even_table();
+        table.mapper = LineItemMap::new(&[1; 4], 4, 0);
+
+        table.select_first_visible_item();
+        let first = selected(&table);
+        table.select_middle_visible_item();
+        let middle = selected(&table);
+        table.select_last_visible_item();
+        let last = selected(&table);
+
+        assert_eq!(
+            [Some("a"), Some("b"), Some("d")].map(|name| name.map(String::from)),
+            [first, middle, last]
+        );
+    }
+
+    #[test]
+    fn page_up_lands_on_the_top_of_a_scrolled_window() {
+        let (_dir, mut table) = table();
+        // Scrolled down one row, as a render leaves it: `b` is the top row.
+        table.first_visible_item = 1;
+        table.mapper = LineItemMap::new(&[1; 3], 2, 1);
+        table.select(2);
+
+        table.previous_page();
+
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn the_mark_key_ends_range_mode_and_keeps_the_range() {
+        let (_dir, mut table) = table();
+        table.select(0);
+        table.enter_range_mode();
+        table.select_next();
+
+        table.toggle_mark();
+        table.select_next();
+
+        // The key that started the range is the one that fixes it: the cursor
+        // row stays marked, and moving on no longer sweeps.
+        assert!(!table.marks.in_range_mode());
+        assert_eq!(vec!["a", "b"], marked(&table));
     }
 
     #[test]
