@@ -94,7 +94,10 @@ pub(super) fn clipboard_widget<'a>(
         pluralize_items(paths.len())
     } else {
         let available_width = width.saturating_sub(prefix.cell_width());
-        truncate_left(&paths[0].path.to_string_lossy(), available_width as usize)
+        truncate_left(
+            &crate::file_system::path_info::visible_path(&paths[0].path),
+            available_width as usize,
+        )
     };
 
     let left = Line::from(vec![

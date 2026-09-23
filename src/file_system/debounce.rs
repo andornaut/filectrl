@@ -94,6 +94,10 @@ impl TimeDebouncer {
         })
     }
 
+    pub fn set_threshold(&mut self, threshold: Duration) {
+        self.threshold = threshold;
+    }
+
     pub fn has_delayed_event(&self) -> bool {
         self.has_delayed_event
     }

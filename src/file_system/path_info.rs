@@ -20,38 +20,16 @@ fn display_name(path: &Path) -> String {
     path.file_name().map_or(String::new(), visible_name)
 }
 
-/// A file name as it is shown: lossy for bytes that are not UTF-8, with every
-/// character that would hide or disguise what the name is spelled out as an
-/// escape. A bidi control reorders the text drawn after it, so `a\u{202e}txt.exe`
-/// would read as `aexe.txt`; an invisible character makes two names look the
-/// same; and a control character is dropped by the renderer, with the same
-/// effect. Joiners are left alone, since scripts and emoji need them.
+/// A file name as it is shown: lossy for bytes that are not UTF-8, and passed
+/// through `crate::visible`.
 pub(crate) fn visible_name(name: &OsStr) -> String {
-    let lossy = name.to_string_lossy();
-    if !lossy.contains(is_disguising) {
-        return lossy.into_owned();
-    }
-    let mut visible = String::with_capacity(lossy.len() + 8);
-    for c in lossy.chars() {
-        if is_disguising(c) {
-            visible.extend(c.escape_unicode());
-        } else {
-            visible.push(c);
-        }
-    }
-    visible
+    crate::visible(&name.to_string_lossy()).into_owned()
 }
 
-fn is_disguising(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            // Bidi marks, embeddings, overrides and isolates.
-            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-            // Invisible: zero width space, word joiner, byte order mark, soft
-            // hyphen, and the line and paragraph separators.
-            | '\u{200b}' | '\u{2060}' | '\u{feff}' | '\u{00ad}' | '\u{2028}' | '\u{2029}'
-        )
+/// A whole path as it is shown, for a view that has room for it: lossy for
+/// bytes that are not UTF-8, and passed through `crate::visible`.
+pub(crate) fn visible_path(path: &Path) -> String {
+    crate::visible(&path.to_string_lossy()).into_owned()
 }
 
 /// Trailing components a compacted path always keeps: the parent and the entry
@@ -71,9 +49,21 @@ pub fn compact(path: &Path) -> Compact<'_> {
     Compact(path)
 }
 
+/// Quoted, with a quote or backslash in the path escaped so the quotes
+/// delimit it, and every character `crate::is_disguising` names spelled out.
 impl Display for Compact<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", compact_str(self.0))
+        use fmt::Write;
+
+        f.write_char('"')?;
+        for c in compact_str(self.0).chars() {
+            match c {
+                '"' | '\\' => write!(f, "\\{c}")?,
+                c if crate::is_disguising(c) => write!(f, "{}", c.escape_default())?,
+                c => f.write_char(c)?,
+            }
+        }
+        f.write_char('"')
     }
 }
 
@@ -654,7 +644,7 @@ mod tests {
     #[test_case("invoice\u{202e}fdp.exe" => "invoice\\u{202e}fdp.exe" ; "a bidi override is escaped")]
     #[test_case("a\u{2067}b\u{2069}" => "a\\u{2067}b\\u{2069}" ; "bidi isolates are escaped")]
     #[test_case("report\u{200b}.pdf" => "report\\u{200b}.pdf" ; "a zero width space is escaped")]
-    #[test_case("report\n.pdf" => "report\\u{a}.pdf" ; "a control character is escaped")]
+    #[test_case("report\n.pdf" => "report\\n.pdf" ; "a control character is escaped")]
     fn visible_name_spells_out_what_would_disguise_it(name: &str) -> String {
         visible_name(OsStr::new(name))
     }

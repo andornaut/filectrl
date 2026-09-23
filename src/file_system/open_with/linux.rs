@@ -12,15 +12,18 @@ use std::{
 };
 
 use freedesktop_desktop_entry::{DesktopEntry, get_languages_from_env};
-use log::debug;
+use log::{debug, warn};
 use xdg_mime::SharedMimeInfo;
 
 use super::{
     AppCandidate,
-    exec::{ExecContext, expand, file_uri},
+    exec::{ExecContext, Refused, expand, file_uri},
     mimeapps::{self, AppDirIndex, Level, MimeAppsList},
 };
-use crate::{app::config::Config, file_system::shell};
+use crate::{
+    app::config::Config,
+    file_system::{path_info::compact, shell},
+};
 
 /// Matches every file, per the mime-apps spec's fallback types.
 const ALL_FILES: &str = "all/allfiles";
@@ -137,19 +140,22 @@ fn sources() -> &'static Sources {
     })
 }
 
-pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
+/// The applications for `path`, and a message for each installed one refused
+/// because its `Exec` would let the file name run as code.
+pub(super) fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
     let started = Instant::now();
-    let candidates = candidates_from(sources(), path);
+    let mut refused = Vec::new();
+    let candidates = candidates_from(sources(), path, &mut refused);
     debug!(
         "Found {} application(s) for {} in {:?}",
         candidates.len(),
         path.display(),
         started.elapsed()
     );
-    candidates
+    (candidates, refused)
 }
 
-fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
+fn candidates_from(sources: &Sources, path: &Path, refused: &mut Vec<String>) -> Vec<AppCandidate> {
     let chain = mime_chain(path);
     debug!("Resolved {} to MIME types: {chain:?}", path.display());
     let is_usable = |file: &Path| {
@@ -166,7 +172,7 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
                 .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
                 .ok()?;
             let is_default = associations.default.as_deref() == Some(id);
-            to_candidate(&locales, path, is_default, &entry)
+            to_candidate(&locales, path, is_default, &entry, refused)
         })
         .collect()
 }
@@ -258,11 +264,14 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
     entry.try_exec().is_none_or(is_installed)
 }
 
+/// `refused` collects the message for an entry `expand` refuses as unsafe,
+/// which is also logged; any other reason to skip one is logged at debug only.
 fn to_candidate(
     locales: &[String],
     path: &Path,
     is_default: bool,
     entry: &DesktopEntry,
+    refused: &mut Vec<String>,
 ) -> Option<AppCandidate> {
     let file = entry.path.as_path();
     if !is_offerable(entry) {
@@ -283,7 +292,15 @@ fn to_candidate(
         uri: &file_uri(path),
     };
     let mut argv = expand(&context, entry.exec()?)
-        .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
+        .inspect_err(|error| {
+            if error.is::<Refused>() {
+                let message = format!("Cannot offer {}: {error}", compact(file));
+                warn!("{message}");
+                refused.push(message);
+            } else {
+                debug!("Skipping {}: {error}", file.display());
+            }
+        })
         .ok()?;
     if entry.terminal() {
         // A terminal application launched with null stdio does nothing at all,
@@ -313,15 +330,18 @@ fn to_candidate(
 }
 
 /// Wrap `argv` in the configured terminal. Unlike the path openers, `%s` stands
-/// for a command line, so it takes the arguments joined and quoted individually
-/// where needed: `xterm -e %s` becomes `xterm -e vim '/a b'`, not
-/// `xterm -e 'vim /a b'`. `None` when no terminal is configured.
+/// for a command, so it takes every word of `argv`, each its own argument:
+/// `xterm -e %s` runs `xterm -e vim '/a b'`, not `xterm -e 'vim /a b'`. `None`
+/// when no terminal is configured.
 fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     if template.is_empty() {
         return None;
     }
-    let command = shell::template(template, &shell::join(argv));
-    Some(vec![OsString::from("sh"), OsString::from("-c"), command])
+    Some(shell::command(
+        template,
+        shell::Parameters::All,
+        argv.iter().cloned(),
+    ))
 }
 
 /// Whether a `TryExec` value names an executable that exists. Only an absolute
@@ -456,9 +476,12 @@ fn env_dir(name: &str) -> Option<PathBuf> {
 
 /// An unset variable and one set to the empty string mean the same thing: the
 /// caller falls back to the spec's default rather than to the current
-/// directory, which is what an empty `PathBuf` would name.
+/// directory, which is what an empty `PathBuf` would name. A relative path is
+/// ignored the same way, as the XDG Base Directory spec requires: it would
+/// resolve against the current directory, and a tree filectrl was started in
+/// (a clone, an unpacked archive) would then supply the applications offered.
 fn dir_of(value: Option<OsString>) -> Option<PathBuf> {
-    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+    value.map(PathBuf::from).filter(|dir| dir.is_absolute())
 }
 
 fn env_dirs(name: &str, fallback: &str) -> Vec<PathBuf> {
@@ -466,13 +489,14 @@ fn env_dirs(name: &str, fallback: &str) -> Vec<PathBuf> {
 }
 
 /// Split a `$PATH`-shaped value, falling back to `fallback` when it is unset or
-/// empty. Empty components are dropped: `a::b` names two directories, not three,
-/// and the empty one would resolve to the current directory.
+/// empty. Empty and relative components are dropped, as in `dir_of`: `a::b`
+/// names two directories, not three, and the empty one would resolve to the
+/// current directory.
 fn dirs_of(value: Option<OsString>, fallback: &str) -> Vec<PathBuf> {
     let value = value.filter(|value| !value.is_empty());
     let value = value.unwrap_or_else(|| fallback.into());
     env::split_paths(&value)
-        .filter(|dir| !dir.as_os_str().is_empty())
+        .filter(|dir| dir.is_absolute())
         .collect()
 }
 
@@ -560,6 +584,30 @@ mod tests {
         assert_eq!(expected, is_offerable(&entry), "{body:?}");
     }
 
+    /// Installed and otherwise offerable, so the user is told why it is not.
+    /// One merely malformed is only logged.
+    #[test_case("Exec=sh -c %f\n", true ; "a code in a shell's script is reported")]
+    #[test_case("Exec=view \"unmatched\n", false ; "a malformed exec is not")]
+    fn an_entry_refused_as_unsafe_is_reported(exec: &str, reported: bool) {
+        Config::init_test();
+        let dir = TempDir::new("open_with_refused");
+        let body = format!("[Desktop Entry]\nType=Application\nName=Viewer\n{exec}");
+        let entry = desktop_entry(&dir, "viewer.desktop", &body);
+        let mut refused = Vec::new();
+
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry, &mut refused);
+
+        assert_eq!(None, candidate);
+        assert_eq!(reported, !refused.is_empty(), "{refused:?}");
+        if reported {
+            assert!(refused[0].starts_with("Cannot offer"), "{refused:?}");
+            assert!(
+                refused[0].ends_with("cannot be passed safely"),
+                "{refused:?}"
+            );
+        }
+    }
+
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n", true
         ; "an application is offered")]
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nHidden=true\n", false
@@ -571,7 +619,13 @@ mod tests {
         let dir = TempDir::new("open_with_entry");
         let entry = desktop_entry(&dir, "viewer.desktop", body);
 
-        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry);
+        let candidate = to_candidate(
+            &[],
+            Path::new("/tmp/file.txt"),
+            false,
+            &entry,
+            &mut Vec::new(),
+        );
 
         assert_eq!(expected, candidate.is_some(), "{body:?}");
     }
@@ -586,14 +640,24 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTerminal=true\n",
         );
 
-        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry).unwrap();
+        let candidate = to_candidate(
+            &[],
+            Path::new("/tmp/file.txt"),
+            false,
+            &entry,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         // The shipped `run_in_terminal` is `xterm -e %s`.
         assert_eq!(
             vec![
                 OsString::from("sh"),
                 OsString::from("-c"),
-                OsString::from("xterm -e view /tmp/file.txt"),
+                OsString::from("xterm -e \"$@\""),
+                OsString::from("sh"),
+                OsString::from("view"),
+                OsString::from("/tmp/file.txt"),
             ],
             candidate.argv
         );
@@ -760,7 +824,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[data]);
 
-        let candidates = candidates_from(&sources, &file);
+        let candidates = candidates_from(&sources, &file, &mut Vec::new());
 
         let named = |name: &str| {
             candidates
@@ -803,7 +867,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
 
-        let candidates = candidates_from(&sources, &file);
+        let candidates = candidates_from(&sources, &file, &mut Vec::new());
 
         let defaults: Vec<&str> = candidates
             .iter()
@@ -840,7 +904,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[dir.path().to_path_buf()]);
 
-        let candidates = candidates_from(&sources, &file);
+        let candidates = candidates_from(&sources, &file, &mut Vec::new());
 
         let defaults: Vec<&str> = candidates
             .iter()
@@ -859,7 +923,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let sources = Sources::from_dirs(&[], &[data]);
 
-        let candidates = candidates_from(&sources, &file);
+        let candidates = candidates_from(&sources, &file, &mut Vec::new());
 
         let working_dir = |name: &str| {
             candidates
@@ -877,6 +941,7 @@ mod tests {
     #[test_case(None, None                          ; "unset falls back to the spec default")]
     #[test_case(Some(""), None                      ; "empty falls back rather than naming the current directory")]
     #[test_case(Some("/x/data"), Some("/x/data")    ; "a directory is taken as given")]
+    #[test_case(Some("data"), None                  ; "a relative directory is ignored")]
     fn dir_of_reads_a_single_directory_variable(value: Option<&str>, expected: Option<&str>) {
         let expected = expected.map(PathBuf::from);
 
@@ -888,6 +953,7 @@ mod tests {
     #[test_case(Some("/a:/b"), &["/a", "/b"]          ; "each component is a directory")]
     #[test_case(Some("/a::/b"), &["/a", "/b"]         ; "an empty component is dropped")]
     #[test_case(Some(":/a"), &["/a"]                  ; "a leading separator is not a directory")]
+    #[test_case(Some("share:/a"), &["/a"]             ; "a relative component is dropped")]
     fn dirs_of_splits_a_search_path(value: Option<&str>, expected: &[&str]) {
         let expected: Vec<PathBuf> = expected.iter().map(PathBuf::from).collect();
 
@@ -920,17 +986,15 @@ mod tests {
         );
     }
 
-    #[test_case(&["vim", "/a/b.txt"], "sh -c xterm -e vim /a/b.txt" ; "no quoting needed")]
-    #[test_case(&["vim", "/a b.txt"], "sh -c xterm -e vim '/a b.txt'" ; "only the argument that needs it is quoted")]
-    #[test_case(&["vim"], "sh -c xterm -e vim" ; "a single argument")]
-    fn in_terminal_substitutes_a_command_line(argv: &[&str], expected: &str) {
-        let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
+    #[test]
+    fn in_terminal_passes_the_command_as_arguments() {
+        let argv = [OsString::from("vim"), OsString::from("/a b.txt")];
         let wrapped = in_terminal("xterm -e %s", &argv).unwrap();
-        let words: Vec<String> = wrapped
+        let expected: Vec<OsString> = ["sh", "-c", "xterm -e \"$@\"", "sh", "vim", "/a b.txt"]
             .iter()
-            .map(|word| word.to_string_lossy().into_owned())
+            .map(OsString::from)
             .collect();
-        assert_eq!(expected, words.join(" "));
+        assert_eq!(expected, wrapped);
     }
 
     #[test]

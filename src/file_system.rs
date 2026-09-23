@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::Ordering, mpsc::Sender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -203,6 +203,9 @@ pub struct FileSystem {
     /// that stops it. Cancelled when a new load starts so stale batches don't
     /// bleed across, and cleared when the load reports itself complete.
     current_load: Option<(u64, CancellationToken)>,
+    /// When the in-flight load started, which paces the watcher by how long a
+    /// listing of this directory takes.
+    load_started: Option<Instant>,
     /// Set when a refresh arrives while a load is already streaming, so the
     /// load runs to completion and the refresh is re-issued afterwards.
     reload_pending: bool,
@@ -245,6 +248,7 @@ impl FileSystem {
             directory: None,
             previous_directory: None,
             current_load: None,
+            load_started: None,
             reload_pending: false,
             current_search_generation: 0,
             next_generation: 0,
@@ -352,6 +356,7 @@ impl FileSystem {
         let generation = self.bump_generation();
         let token = CancellationToken::new();
         self.current_load = Some((generation, token.clone()));
+        self.load_started = Some(Instant::now());
         operations::stream_cd(
             directory.clone(),
             generation,
@@ -402,6 +407,9 @@ impl FileSystem {
             return CommandResult::NotHandled;
         }
         self.current_load = None;
+        if let (Some(started), Some(watcher)) = (self.load_started.take(), &self.watcher) {
+            watcher.pace(started.elapsed());
+        }
         if std::mem::take(&mut self.reload_pending) {
             return self.refresh();
         }
@@ -908,6 +916,7 @@ mod tests {
             directory: None,
             previous_directory: None,
             current_load: None,
+            load_started: None,
             reload_pending: false,
             current_search_generation: 0,
             next_generation: 0,

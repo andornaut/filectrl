@@ -98,11 +98,14 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     if template.is_empty() {
         return Ok(());
     }
-    let command = shell::template(template, &shell::quote(path.path.as_os_str()));
-    // Only for the message: the command line itself is passed to the shell as
-    // raw bytes, so a path that is not valid UTF-8 still reaches the program.
-    let label = format!("Command {:?}", command.to_string_lossy());
-    let child = spawn_detached("sh", [OsStr::new("-c"), command.as_os_str()])
+    let argv = shell::command(
+        template,
+        shell::Parameters::One,
+        [path.path.as_os_str().to_os_string()],
+    );
+    let label = format!("Command {template:?}");
+    let child = detached_command(&argv[0], &argv[1..])
+        .spawn()
         .map_err(|error| anyhow!("Failed to run {label}: {error}"))?;
     watch_for_immediate_failure(child, label, command_tx);
     Ok(())
@@ -185,13 +188,15 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
 /// `EOPNOTSUPP` for a symlink, so a path swapped for one after `chmod` checked
 /// it is refused rather than followed. macOS sets the link's own mode instead,
 /// which leaves the target alone too.
+///
+/// An `EOPNOTSUPP` is never retried with a chmod that follows links: a link
+/// swapped in again before the retry would have its target changed.
 fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
     use nix::{
         errno::Errno,
         fcntl::AT_FDCWD,
         sys::stat::{FchmodatFlags, Mode, fchmodat},
     };
-    use std::os::unix::fs::PermissionsExt;
 
     // `mode_t` is u32 on Linux but u16 on macOS; the permission bits
     // `from_bits_truncate` keeps fit in either.
@@ -199,17 +204,7 @@ fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
     let bits = Mode::from_bits_truncate(mode as nix::libc::mode_t);
     match fchmodat(AT_FDCWD, p, bits, FchmodatFlags::NoFollowSymlink) {
         Ok(()) => Ok(()),
-        // A C library too old to set a mode without following the link
-        // refuses every path this way, not only a symlink, and one that needs
-        // `/proc` where it is not mounted reports ENOSYS. For those, fall back
-        // to checking the type and then a plain chmod.
-        Err(Errno::EOPNOTSUPP | Errno::ENOSYS) => {
-            if is_symlink(p, mode)? {
-                return Err(symlink_refusal(p));
-            }
-            fs::set_permissions(p, fs::Permissions::from_mode(mode))
-                .map_err(|error| chmod_failure(p, mode, &error))
-        }
+        Err(Errno::EOPNOTSUPP) if is_symlink(p, mode)? => Err(symlink_refusal(p)),
         Err(errno) => Err(chmod_failure(p, mode, &std::io::Error::from(errno))),
     }
 }
@@ -342,15 +337,6 @@ where
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     command
-}
-
-fn spawn_detached<P, I, S>(program: P, args: I) -> Result<Child>
-where
-    P: AsRef<OsStr>,
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    detached_command(program, args).spawn().map_err(Into::into)
 }
 
 fn join_parent(left: &Path, right: &str) -> PathBuf {

@@ -63,34 +63,22 @@ struct CopyContext<'a> {
     /// errors: skipping is a choice rather than a failure, but a move still
     /// must not remove a source whose entries never reached the destination.
     skipped: usize,
-    /// The source entries copied, for a move to remove afterwards. `None` for
-    /// a copy, which removes nothing.
-    copied: Option<Copied>,
-}
-
-impl CopyContext<'_> {
-    fn record(&mut self, file: &File) {
-        if self.copied.is_some()
-            && let Ok(stat) = fstat(file)
-        {
-            self.record_stat(&stat);
-        }
-    }
-
-    fn record_stat(&mut self, stat: &rustix::fs::Stat) {
-        if let Some(copied) = &mut self.copied {
-            copied.insert(stat);
-        }
-    }
+    /// The directories this copy created, which it never descends into as a
+    /// source: a destination swapped for a link into the source tree, or a
+    /// bind mount of it, would otherwise copy the copy into itself without end.
+    created: std::collections::HashSet<DirId>,
+    /// The top-level source that was copied, which is the entry a move removes
+    /// afterwards and no other.
+    root: Option<DirId>,
 }
 
 /// What a tree copy left behind: the entries that could not be written, how
-/// many a standing "skip all" left alone, and for a move what was copied.
+/// many a standing "skip all" left alone, and which entry was copied.
 #[derive(Default)]
 struct CopyOutcome {
     errors: Vec<String>,
     skipped: usize,
-    copied: Copied,
+    root: Option<DirId>,
 }
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
@@ -424,7 +412,7 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
             };
             active.set_total(total);
         }
-        if let Some((active, _)) = remove_path(&path, is_directory, active, Removal::All) {
+        if let Some(active) = remove_path(&path, is_directory, active, Removal::Delete) {
             active.done();
         }
     });
@@ -497,7 +485,8 @@ fn copy_with_progress(
         preserve,
         source,
         skipped: 0,
-        copied: preserve.then(Copied::default),
+        created: std::collections::HashSet::new(),
+        root: None,
     };
     let mut errors = Vec::new();
     if !copy_path(
@@ -517,7 +506,7 @@ fn copy_with_progress(
         CopyOutcome {
             errors,
             skipped: context.skipped,
-            copied: context.copied.unwrap_or_default(),
+            root: context.root,
         },
     ))
 }
@@ -529,31 +518,20 @@ fn copy_with_progress(
 /// are copied and takes as long as the tree is large, so it observes the token
 /// itself rather than leaving a cancel acknowledged but still running.
 fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
-    let mut total = 0;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(path) = stack.pop() {
-        if active.is_cancelled() {
-            return None;
+    let mut total: u64 = 0;
+    scan_tree(active, root, |dir, name, is_directory| {
+        if is_directory {
+            return;
         }
-        let Ok(entries) = fs::read_dir(&path) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if active.is_cancelled() {
-                return None;
-            }
-            // `DirEntry::metadata` does not follow symlinks and avoids a
-            // second path lookup per entry.
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            } else if !metadata.is_symlink() {
-                total += metadata.len();
-            }
+        let stat = dir
+            .fd()
+            .and_then(|fd| statat(fd, name, AtFlags::SYMLINK_NOFOLLOW));
+        if let Ok(stat) = stat
+            && FileType::from_raw_mode(stat.st_mode) != FileType::Symlink
+        {
+            total = total.saturating_add(u64::try_from(stat.st_size).unwrap_or(0));
         }
-    }
+    })?;
     Some(total)
 }
 
@@ -562,28 +540,66 @@ fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
 /// cheaper than `dir_total_size`; a directory that cannot be listed counts as
 /// the single entry it is. Returns `None` when the task was cancelled.
 fn dir_total_entries(active: &ActiveTask, root: &Path) -> Option<u64> {
-    let mut total = 1; // `root` itself, which appears in no listing.
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(path) = stack.pop() {
+    let mut total: u64 = 1; // `root` itself, which appears in no listing.
+    scan_tree(active, root, |_, _, _| total += 1)?;
+    Some(total)
+}
+
+/// Walks the tree below `root` for a pre-scan, calling `visit` with each
+/// entry's directory, its name, and whether it is a directory. The walk is the
+/// delete walk's: relative to open directories, never through a symlink (a
+/// directory swapped for one after it was listed is not descended into), and
+/// holding only the directory being read open. A directory that cannot be
+/// opened is skipped, and one whose parent cannot be reopened ends the walk
+/// early, which leaves a smaller total rather than an error. Returns `None`
+/// when the task was cancelled.
+fn scan_tree(
+    active: &ActiveTask,
+    root: &Path,
+    mut visit: impl FnMut(&Dir, &CStr, bool),
+) -> Option<()> {
+    let level = |listed: std::io::Result<Option<(Dir, Entries)>>| match listed {
+        Ok(Some((dir, entries))) => Some(DirId::of_dir(&dir).ok().map(|id| Level {
+            dir: Some(dir),
+            id,
+            name: None,
+            entries: entries.into_iter(),
+        })),
+        Ok(None) => None,
+        Err(_) => Some(None),
+    };
+    let Some(root) = level(open_and_list(active, None, root))? else {
+        return Some(());
+    };
+    let mut stack = vec![root];
+    while let Some(top) = stack.last_mut() {
         if active.is_cancelled() {
             return None;
         }
-        let Ok(entries) = fs::read_dir(&path) else {
+        let Some((name, is_directory)) = top.entries.next() else {
+            let level = stack.pop().expect("stack is non-empty");
+            let Some(parent) = stack.last_mut() else {
+                break;
+            };
+            let child = level
+                .dir
+                .as_ref()
+                .expect("the level being read holds its fd");
+            match reopen_parent(child, parent.id) {
+                Ok(dir) => parent.dir = Some(dir),
+                Err(_) => break,
+            }
             continue;
         };
-        for entry in entries.flatten() {
-            if active.is_cancelled() {
-                return None;
-            }
-            total += 1;
-            // `file_type` does not follow symlinks, matching the delete walk:
-            // a link to a directory is unlinked rather than descended into.
-            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
-                stack.push(entry.path());
-            }
+        let dir = top.dir.as_ref().expect("the level being read holds its fd");
+        visit(dir, &name, is_directory);
+        if is_directory && let Some(child) = level(open_and_list(active, Some(dir), &name))? {
+            // Closed until the walk returns here, through `reopen_parent`.
+            top.dir = None;
+            stack.push(child);
         }
     }
-    Some(total)
+    Some(())
 }
 
 /// Unwraps a `Result`, or finalizes `$active` with `"{$ctx}: {error}"` and
@@ -664,25 +680,26 @@ fn finish_cross_device_move(
     // way to finish the move. Mark it so a cancel keypress during this stage
     // does not claim to have cancelled anything.
     active.set_uncancellable();
-    // Only what was copied, and only while unchanged: an entry written into
-    // the source during the copy never reached the destination, so removing
-    // it would lose it. `mv` has the same race and does lose it.
-    let Some((active, kept)) = remove_path(
-        old_path,
-        is_directory,
-        active,
-        Removal::Copied(&outcome.copied),
-    ) else {
-        return;
-    };
-    if kept == 0 {
-        active.done();
-    } else {
-        let entries = if kept == 1 { "entry" } else { "entries" };
+    // Only the entry that was copied: another renamed onto its name since
+    // would be lost with nothing to show for it. The check narrows that window
+    // rather than closing it, as it does for `mv`.
+    let current = statat(CWD, old_path, AtFlags::SYMLINK_NOFOLLOW)
+        .ok()
+        .map(|stat| DirId {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+        });
+    if current.is_none() || current != outcome.root {
         active.error(format!(
-            "Kept {kept} {entries} of {} that changed during the move",
+            "Cannot remove {}: it was replaced after it was copied",
             compact(old_path)
         ));
+        return;
+    }
+    // Like `mv`, an entry written into the source while it was being copied is
+    // removed with the rest.
+    if let Some(active) = remove_path(old_path, is_directory, active, Removal::MovedSource) {
+        active.done();
     }
 }
 
@@ -719,6 +736,12 @@ fn finalize_copy(active: ActiveTask, errors: Vec<String>) {
 /// leading the copy out of the tree: reading a file outside the source, or
 /// creating one or changing a mode outside the destination. Only the top-level
 /// parents, which the user chose, are opened by path.
+///
+/// An entry's mode and owner are read from the file actually copied, never
+/// from an earlier stat of its name: another file renamed over the name in
+/// between would otherwise be given the first one's mode. `listed_mode` is the
+/// type the task was started for, and a source that is no longer of that type
+/// is refused.
 fn copy_path(
     old_path: &Path,
     new_path: &Path,
@@ -726,7 +749,7 @@ fn copy_path(
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
     is_directory: bool,
-    source_mode: u32,
+    listed_mode: u32,
 ) -> bool {
     let failed = |error: &dyn std::fmt::Display| {
         format!(
@@ -743,7 +766,12 @@ fn copy_path(
         return true;
     };
     let opened = open_parent(old_path).and_then(|src| {
-        let stat = statat(&src, &src_name, AtFlags::SYMLINK_NOFOLLOW)?;
+        // The file `prepare_destination` opened is the one copied, so its
+        // metadata is the one that counts.
+        let stat = match &context.source {
+            Some(file) => fstat(file)?,
+            None => statat(&src, &src_name, AtFlags::SYMLINK_NOFOLLOW)?,
+        };
         Ok((src, open_parent(new_path)?, stat))
     });
     let (src_parent, dst_parent, stat) = match opened {
@@ -753,11 +781,17 @@ fn copy_path(
             return true;
         }
     };
-    let source = Source {
-        mode: source_mode,
-        uid: stat.st_uid,
-        gid: stat.st_gid,
-    };
+    context.root = Some(DirId {
+        dev: stat.st_dev,
+        ino: stat.st_ino,
+    });
+    if raw_type(stat_mode(&stat)) != raw_type(listed_mode) {
+        errors.push(format!(
+            "Cannot copy {}: its type changed since it was selected",
+            compact(old_path)
+        ));
+        return true;
+    }
     let mut paths = Paths {
         old: old_path.to_path_buf(),
         new: new_path.to_path_buf(),
@@ -769,9 +803,9 @@ fn copy_path(
         dst_name: &dst_name,
     };
     if !is_directory {
-        return copy_entry(&at, &paths, active, errors, context, &source);
+        return copy_entry(&at, &paths, active, errors, context, &stat);
     }
-    let Some(level) = enter_directory(&at, &paths, active, errors, context, &source) else {
+    let Some(level) = enter_directory(&at, &paths, active, errors, context, &stat) else {
         return true;
     };
     // Only the directories being worked in are held open.
@@ -840,7 +874,6 @@ fn copy_tree(
                 continue;
             }
         };
-        let source = Source::of(&stat);
         let at = At {
             src,
             dst,
@@ -848,7 +881,7 @@ fn copy_tree(
             dst_name: &name,
         };
         if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
-            if let Some(child) = enter_directory(&at, paths, active, errors, context, &source) {
+            if let Some(child) = enter_directory(&at, paths, active, errors, context, &stat) {
                 // Closed until the walk returns here.
                 top.src = None;
                 top.dst = None;
@@ -856,7 +889,7 @@ fn copy_tree(
                 // The child's path stays pushed until it is finished.
                 continue;
             }
-        } else if !copy_entry(&at, paths, active, errors, context, &source) {
+        } else if !copy_entry(&at, paths, active, errors, context, &stat) {
             cancelled = true;
         }
         paths.pop();
@@ -870,20 +903,34 @@ fn copy_tree(
 ///
 /// The destination is created owner-writable and searchable so its children
 /// can be created, and `finish_directory` gives it its mode once they are.
-/// For a copy it starts with the source's other bits, which the umask trims:
-/// `finish_directory` reads back what the umask left.
+/// For a copy it starts with the other bits `stat` gives the source, which the
+/// umask trims: `finish_directory` reads back what the umask left. The source
+/// opened must be the directory `stat` describes, and its own metadata is what
+/// the copy finishes with. A directory this copy created is refused before
+/// anything is created for it.
 fn enter_directory(
     at: &At<'_>,
     paths: &Paths,
     active: &ActiveTask,
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
-    source: &Source,
+    stat: &rustix::fs::Stat,
 ) -> Option<CopyLevel> {
+    let id = DirId {
+        dev: stat.st_dev,
+        ino: stat.st_ino,
+    };
+    if context.created.contains(&id) {
+        errors.push(format!(
+            "Cannot copy {}: it is inside the copy being made",
+            compact(&paths.old)
+        ));
+        return None;
+    }
     let creation = if context.preserve {
         0o700
     } else {
-        (source.mode & 0o777) | 0o700
+        (stat_mode(stat) & 0o777) | 0o700
     };
     let created = match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
         // Something took this name while the copy was running: the destination
@@ -899,8 +946,12 @@ fn enter_directory(
         }
         result => result.map_err(Into::into),
     };
-    let dst = match created.and_then(|()| open_directory_file(at.dst, at.dst_name)) {
-        Ok(dst) => dst,
+    let opened = created.and_then(|()| {
+        let dst = open_directory_file(at.dst, at.dst_name)?;
+        Ok((DirId::of(&dst)?, dst))
+    });
+    let (dst_id, dst) = match opened {
+        Ok(opened) => opened,
         Err(error) => {
             // The subtree cannot be copied at all; skip it and continue with
             // the siblings.
@@ -911,31 +962,47 @@ fn enter_directory(
             return None;
         }
     };
-    let opened = open_directory_file(at.src, at.src_name).and_then(|src| {
-        let names = list_names(active, &src)?;
-        Ok((DirId::of(&src)?, DirId::of(&dst)?, src, names))
-    });
-    match opened {
-        Ok((src_id, dst_id, src, names)) => {
-            context.record(&src);
-            Some(CopyLevel {
-                src: Some(src),
-                dst: Some(dst),
-                src_id,
-                dst_id,
-                source: *source,
-                names: names.into_iter(),
-            })
-        }
+    context.created.insert(dst_id);
+    // Abandons the subtree, leaving the destination directory empty and with
+    // its final mode.
+    let give_up = |errors: &mut Vec<String>, context: &CopyContext<'_>, message: String| {
+        errors.push(message);
+        finish_directory(None, &dst, &Source::of(stat), context);
+    };
+    let read_failure = |error: &dyn std::fmt::Display| {
+        format!("Failed to read directory {}: {error}", compact(&paths.old))
+    };
+    let opened = open_directory_file(at.src, at.src_name).and_then(|src| Ok((fstat(&src)?, src)));
+    let (opened, src) = match opened {
+        Ok(opened) => opened,
         Err(error) => {
-            errors.push(format!(
-                "Failed to read directory {}: {error}",
-                compact(&paths.old)
-            ));
-            finish_directory(None, &dst, source, context);
-            None
+            give_up(errors, context, read_failure(&error));
+            return None;
         }
+    };
+    if (opened.st_dev, opened.st_ino) != (id.dev, id.ino) {
+        let message = format!(
+            "Cannot copy {}: it was replaced while being copied",
+            compact(&paths.old)
+        );
+        give_up(errors, context, message);
+        return None;
     }
+    let names = match list_names(active, &src) {
+        Ok(names) => names,
+        Err(error) => {
+            give_up(errors, context, read_failure(&error));
+            return None;
+        }
+    };
+    Some(CopyLevel {
+        src: Some(src),
+        dst: Some(dst),
+        src_id: id,
+        dst_id,
+        source: Source::of(&opened),
+        names: names.into_iter(),
+    })
 }
 
 /// Gives a copied directory its final mode, and for a move the source's
@@ -952,26 +1019,29 @@ fn finish_directory(src: Option<&File>, dst: &File, source: &Source, context: &C
     apply_final_mode(dst, source, context);
 }
 
-/// Copies the non-directory entry `at` names: a symlink, a regular file, or a
-/// special file. Returns `false` only when cancelled.
+/// Copies the non-directory entry `at` names, of the type `stat` gives it: a
+/// symlink, a regular file, or a special file. Returns `false` only when
+/// cancelled.
 fn copy_entry(
     at: &At<'_>,
     paths: &Paths,
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
-    source: &Source,
+    stat: &rustix::fs::Stat,
 ) -> bool {
-    // Check symlink first: the mode comes from an `lstat`, so a symlink (even
-    // one pointing at a directory) is recreated as a link rather than followed.
-    if unix_mode::is_symlink(source.mode) {
-        copy_symlink(at, paths, errors, context);
-        true
-    } else if unix_mode::is_file(source.mode) {
-        copy_file(at, paths, active, errors, context, source)
-    } else {
-        copy_special(at, paths, errors, context, source);
-        true
+    // The type comes from an `lstat`, so a symlink (even one pointing at a
+    // directory) is recreated as a link rather than followed.
+    match FileType::from_raw_mode(stat.st_mode) {
+        FileType::Symlink => {
+            copy_symlink(at, paths, errors, context);
+            true
+        }
+        FileType::RegularFile => copy_file(at, paths, active, errors, context),
+        _ => {
+            copy_special(at, paths, errors, context, stat);
+            true
+        }
     }
 }
 
@@ -984,9 +1054,7 @@ fn copy_symlink(
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
 ) {
-    let read = statat(at.src, at.src_name, AtFlags::SYMLINK_NOFOLLOW)
-        .and_then(|stat| Ok((stat, readlinkat(at.src, at.src_name, Vec::new())?)));
-    let (stat, target) = match read {
+    let target = match readlinkat(at.src, at.src_name, Vec::new()) {
         Ok(read) => read,
         Err(error) => {
             errors.push(format!(
@@ -1009,9 +1077,8 @@ fn copy_symlink(
         result => result
             .map_err(|error| format!("Failed to create symlink {}: {error}", compact(&paths.new))),
     };
-    match created {
-        Ok(()) => context.record_stat(&stat),
-        Err(message) => errors.push(message),
+    if let Err(message) = created {
+        errors.push(message);
     }
 }
 
@@ -1020,13 +1087,14 @@ fn copy_symlink(
 /// is written (see `create_file_at`), and gets its final mode through the
 /// handle once the copy stops, however it stops. Failures are recorded in
 /// `errors`; returns `false` only when cancelled.
+///
+/// The mode and owner applied are those of the file opened.
 fn copy_file(
     at: &At<'_>,
     paths: &Paths,
     active: &mut ActiveTask,
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
-    source: &Source,
 ) -> bool {
     let total_size = active.total_size();
     let failed = |error: &dyn std::fmt::Display| {
@@ -1042,13 +1110,15 @@ fn copy_file(
         Some(file) => Ok(file),
         None => open_source_file(at.src, at.src_name),
     };
-    let mut old_file = match opened {
-        Ok(file) => file,
+    let opened = opened.and_then(|file| Ok((fstat(&file)?, file)));
+    let (stat, mut old_file) = match opened {
+        Ok(opened) => opened,
         Err(error) => {
             errors.push(failed(&error));
             return true;
         }
     };
+    let source = &Source::of(&stat);
     let mut new_file = match create_file_at(at.dst, at.dst_name, source.mode, context.preserve) {
         Ok(file) => file,
         // A name already taken inside the tree being copied. The top-level
@@ -1098,9 +1168,6 @@ fn copy_file(
                 if context.preserve {
                     apply_times(&old_file, &new_file);
                 }
-                if let Ok(stat) = fstat(&old_file) {
-                    context.record_stat(&stat);
-                }
                 break true;
             }
             Ok(bytes) => match new_file.write_all(&context.buffer[..bytes]) {
@@ -1135,9 +1202,9 @@ fn copy_special(
     paths: &Paths,
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
-    source: &Source,
+    stat: &rustix::fs::Stat,
 ) {
-    let file_type = FileType::from_raw_mode(raw_type(source.mode));
+    let file_type = FileType::from_raw_mode(stat.st_mode);
     if !matches!(
         file_type,
         FileType::Fifo | FileType::Socket | FileType::BlockDevice | FileType::CharacterDevice
@@ -1148,18 +1215,9 @@ fn copy_special(
         ));
         return;
     }
-    // Device nodes need the source's device numbers; the rest take zero.
-    let stat = match statat(at.src, at.src_name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(stat) => stat,
-        Err(error) => {
-            errors.push(format!(
-                "Failed to read metadata for {}: {error}",
-                compact(&paths.old)
-            ));
-            return;
-        }
-    };
-    let make = || make_node(at, paths, file_type, source.mode, stat.st_rdev);
+    // Everything comes from the one `lstat` the type came from. Device nodes
+    // need the source's device numbers; the rest take zero.
+    let make = || make_node(at, paths, file_type, stat_mode(stat), stat.st_rdev);
     let created = match make() {
         // Raced; settled from the standing answer, or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
@@ -1177,9 +1235,8 @@ fn copy_special(
             )
         }),
     };
-    match created {
-        Ok(()) => context.record_stat(&stat),
-        Err(message) => errors.push(message),
+    if let Err(message) = created {
+        errors.push(message);
     }
 }
 
@@ -1477,69 +1534,31 @@ impl CopyLevel {
     }
 }
 
-/// The source entries a move copied, by device and inode, each with the size
-/// and modification time it was copied at (`None` for a directory, whose own
-/// removal changes both). The end of a cross-device move removes only these,
-/// and only while unchanged, so an entry written into the source while it was
-/// being copied is kept rather than lost.
-#[derive(Default)]
-struct Copied(std::collections::HashMap<(rustix::fs::Dev, u64), Option<Stamp>>);
-
+/// Which operation `remove_path` finishes.
 #[derive(Clone, Copy, PartialEq)]
-struct Stamp {
-    size: i128,
-    modified: i128,
-    modified_nsec: i128,
-}
-
-impl Copied {
-    fn insert(&mut self, stat: &rustix::fs::Stat) {
-        let stamp = (FileType::from_raw_mode(stat.st_mode) != FileType::Directory).then(|| Stamp {
-            size: i128::from(stat.st_size),
-            modified: i128::from(stat.st_mtime),
-            modified_nsec: i128::from(stat.st_mtime_nsec),
-        });
-        self.0.insert((stat.st_dev, stat.st_ino), stamp);
-    }
-
-    /// Whether the entry `stat` describes was copied and is unchanged since.
-    fn holds(&self, stat: &rustix::fs::Stat) -> bool {
-        let mut current = Self::default();
-        current.insert(stat);
-        let key = (stat.st_dev, stat.st_ino);
-        self.0
-            .get(&key)
-            .is_some_and(|copied| Some(copied) == current.0.get(&key))
-    }
-}
-
-/// Which entries `remove_path` removes.
-#[derive(Clone, Copy)]
-enum Removal<'a> {
-    /// Everything under the path: a delete, which a cancel stops between
-    /// entries and which advances the task's progress per entry.
-    All,
-    /// Only what a cross-device move copied, and only while unchanged since:
-    /// its source, which is past the point where a cancel could stop it, and
-    /// whose progress is already complete.
-    Copied(&'a Copied),
+enum Removal {
+    /// A delete, which a cancel stops between entries and which advances the
+    /// task's progress per entry.
+    Delete,
+    /// The source of a cross-device move, which is past the point where a
+    /// cancel could stop it, and whose progress is already complete.
+    MovedSource,
 }
 
 /// Removes a file or directory tree. Cancelling mid-delete leaves whatever has
 /// not been removed yet. Iterative (explicit stack), so directory depth cannot
 /// overflow the thread stack.
 ///
-/// Returns `Some` with the task and how many entries `removal` kept, leaving
-/// finalization to the caller. Returns `None` when cancelled or on error, in
-/// which case the task has already been finalized via `active.cancelled()` /
-/// `active.error()`.
+/// Returns `Some` with the task, leaving finalization to the caller. Returns
+/// `None` when cancelled or on error, in which case the task has already been
+/// finalized via `active.cancelled()` / `active.error()`.
 fn remove_path(
     path: &Path,
     is_directory: bool,
     mut active: ActiveTask,
-    removal: Removal<'_>,
-) -> Option<(ActiveTask, usize)> {
-    let cancellable = matches!(removal, Removal::All);
+    removal: Removal,
+) -> Option<ActiveTask> {
+    let cancellable = removal == Removal::Delete;
     if cancellable && active.is_cancelled() {
         active.cancelled();
         return None;
@@ -1576,21 +1595,12 @@ fn remove_path(
         DirId::of_dir(&dir),
         format!("Failed to read directory {}", compact(path))
     );
-    if let Removal::Copied(copied) = removal
-        && !dir
-            .fd()
-            .and_then(fstat)
-            .is_ok_and(|stat| copied.holds(&stat))
-    {
-        return Some((active, 1));
-    }
     let mut stack = vec![Level {
         dir: Some(dir),
         id,
         name: None,
         entries: entries.into_iter(),
     }];
-    let mut kept = 0;
     // One unit of progress per entry removed, against the total counted by
     // `dir_total_entries` before the walk. Debounced so a wide tree does not
     // put one progress command per entry ahead of terminal input.
@@ -1609,8 +1619,6 @@ fn remove_path(
             let level = stack.pop().expect("stack is non-empty");
             match remove_level(path, &mut stack, level) {
                 Ok(()) => advance(&mut active, &mut debouncer, cancellable),
-                // A move keeps a directory holding an entry it kept.
-                Err((_, error)) if !cancellable && is_not_empty(&error) => {}
                 Err((failed, error)) => {
                     active.error(format!("Failed to delete {}: {error}", compact(&failed)));
                     return None;
@@ -1622,15 +1630,6 @@ fn remove_path(
             .last()
             .and_then(|level| level.dir.as_ref())
             .expect("the level being worked in holds its fd");
-        match removal.check(parent, &name) {
-            Check::Remove => {}
-            // Gone already: nothing to remove, and nothing to keep.
-            Check::Gone => continue,
-            Check::Keep => {
-                kept += 1;
-                continue;
-            }
-        }
         if is_dir {
             let (dir, entries) = list_or_abort!(
                 active,
@@ -1668,7 +1667,7 @@ fn remove_path(
         );
         advance(&mut active, &mut debouncer, cancellable);
     }
-    Some((active, kept))
+    Some(active)
 }
 
 /// Counts one entry removed by a delete. A move's removals count nothing: its
@@ -1685,54 +1684,16 @@ fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer,
 /// `remove_path` for anything that is not a directory. Symlinks are removed as
 /// links (never followed): `is_directory` comes from `symlink_metadata`, so a
 /// link to a directory takes this path.
-fn remove_file_entry(
-    path: &Path,
-    mut active: ActiveTask,
-    removal: Removal<'_>,
-) -> Option<(ActiveTask, usize)> {
-    if let Removal::Copied(copied) = removal
-        && !statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(|stat| copied.holds(&stat))
-    {
-        return Some((active, 1));
-    }
+fn remove_file_entry(path: &Path, mut active: ActiveTask, removal: Removal) -> Option<ActiveTask> {
     try_or_abort!(
         active,
         fs::remove_file(path),
         format!("Failed to delete {}", compact(path))
     );
-    if matches!(removal, Removal::All) {
+    if removal == Removal::Delete {
         active.increment(1);
     }
-    Some((active, 0))
-}
-
-/// What `remove_path` does with one entry.
-enum Check {
-    Remove,
-    Gone,
-    Keep,
-}
-
-impl Removal<'_> {
-    fn check(self, dir: &Dir, name: &CStr) -> Check {
-        let Removal::Copied(copied) = self else {
-            return Check::Remove;
-        };
-        match dir
-            .fd()
-            .and_then(|fd| statat(fd, name, AtFlags::SYMLINK_NOFOLLOW))
-        {
-            Ok(stat) if copied.holds(&stat) => Check::Remove,
-            Err(Errno::NOENT) => Check::Gone,
-            _ => Check::Keep,
-        }
-    }
-}
-
-/// Whether removing a directory failed because it still has entries.
-fn is_not_empty(error: &std::io::Error) -> bool {
-    let code = error.raw_os_error();
-    code == Some(Errno::NOTEMPTY.raw_os_error()) || code == Some(Errno::EXIST.raw_os_error())
+    Some(active)
 }
 
 /// The path of `name` in the directory at the top of `stack`, for a message.
@@ -1773,8 +1734,6 @@ fn remove_level(
     let reopened =
         reopen_parent(child, parent.id).map_err(|error| (level_path(root, stack), error))?;
     drop(dir);
-    // Held again before the unlink, so a directory a move keeps still leaves
-    // its parent with the fd the walk continues through.
     let parent = stack.last_mut().expect("the parent is on the stack");
     let removed = unlink(parent.dir.insert(reopened), &name, AtFlags::REMOVEDIR);
     removed.map_err(|error| (entry_path(root, stack, &name), error))
@@ -1794,9 +1753,9 @@ struct Level {
     entries: <Entries as IntoIterator>::IntoIter,
 }
 
-/// The device and inode of a directory, to tell whether a directory reopened
-/// by name is the one that was listed.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The device and inode of an entry, to tell whether one reopened by name is
+/// the one that was listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct DirId {
     dev: rustix::fs::Dev,
     ino: u64,
@@ -1935,10 +1894,8 @@ fn rename_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
 /// paths that do not exist yet; falls back to the original path if it cannot
 /// be absolutized.
 fn display_path(path: &Path) -> String {
-    std::path::absolute(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .display()
-        .to_string()
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    crate::visible(&path.to_string_lossy()).into_owned()
 }
 
 /// The path with symlinks and `..` components resolved. Falls back to a lexical
@@ -2564,7 +2521,8 @@ mod tests {
             preserve: preserve_times,
             source: None,
             skipped: 0,
-            copied: None,
+            created: std::collections::HashSet::default(),
+            root: None,
         }
     }
 
@@ -2977,7 +2935,8 @@ mod tests {
             preserve: false,
             source: None,
             skipped: 0,
-            copied: None,
+            created: std::collections::HashSet::default(),
+            root: None,
         }
     }
 
@@ -3072,7 +3031,8 @@ mod tests {
             preserve: false,
             source: None,
             skipped: 0,
-            copied: None,
+            created: std::collections::HashSet::default(),
+            root: None,
         };
 
         // A worker never asks: the queue that could have prompted is gone by
@@ -3160,7 +3120,8 @@ mod tests {
             preserve: false,
             source: None,
             skipped: 0,
-            copied: None,
+            created: std::collections::HashSet::default(),
+            root: None,
         };
 
         assert!(copy_path(
@@ -3315,76 +3276,46 @@ mod tests {
         last.expect("the task sent no progress")
     }
 
-    /// An outcome that copied each of `paths` as they are now.
-    fn copied(paths: &[PathBuf]) -> CopyOutcome {
-        let mut copied = Copied::default();
-        for path in paths {
-            copied.insert(&statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW).unwrap());
-        }
+    /// A clean outcome of copying the entry `path` names now.
+    fn copied(path: &Path) -> CopyOutcome {
+        let stat = statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW).unwrap();
         CopyOutcome {
-            copied,
+            root: Some(DirId {
+                dev: stat.st_dev,
+                ino: stat.st_ino,
+            }),
             ..CopyOutcome::default()
         }
     }
 
     #[test]
-    fn a_cross_device_move_removes_its_source_once_every_entry_arrived() {
+    fn a_cross_device_move_removes_its_source_after_a_clean_copy() {
         let (_fx, src, rx, active) = moved("tasks_move_complete");
-        let outcome = copied(&[src.clone(), src.join("a.txt")]);
 
-        finish_cross_device_move(active, outcome, &src, true);
+        finish_cross_device_move(active, copied(&src), &src, true);
 
         assert!(!src.exists());
         assert_eq!(None, finished_task(&rx).error_message());
     }
 
-    /// What reached the destination is removed; what changed in the source
-    /// since it was copied is not, whether it was added or rewritten.
+    /// Something renames another directory onto the source's name once the
+    /// copy is done. That one was never copied, so it is kept.
     #[test]
-    fn a_cross_device_move_keeps_what_changed_in_its_source_during_the_copy() {
-        let (_fx, src, rx, active) = moved("tasks_move_changed");
-        fs::create_dir(src.join("sub")).unwrap();
-        fs::write(src.join("sub").join("copied.txt"), b"x").unwrap();
-        fs::write(src.join("rewritten.txt"), b"before").unwrap();
-        let outcome = copied(&[
-            src.clone(),
-            src.join("a.txt"),
-            src.join("sub"),
-            src.join("sub").join("copied.txt"),
-            src.join("rewritten.txt"),
-        ]);
-        fs::write(src.join("sub").join("added.txt"), b"late").unwrap();
-        fs::write(src.join("rewritten.txt"), b"after, and longer").unwrap();
+    fn a_cross_device_move_keeps_a_source_replaced_after_the_copy() {
+        let (fx, src, rx, active) = moved("tasks_move_replaced");
+        let outcome = copied(&src);
+        fs::rename(&src, fx.join("copied")).unwrap();
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("other.txt"), b"other").unwrap();
 
         finish_cross_device_move(active, outcome, &src, true);
 
-        assert!(!src.join("a.txt").exists());
-        assert!(!src.join("sub").join("copied.txt").exists());
-        assert_eq!(
-            b"late".to_vec(),
-            fs::read(src.join("sub").join("added.txt")).unwrap()
+        assert!(src.join("other.txt").exists());
+        let message = finished_task(&rx).error_message().expect("the move fails");
+        assert!(
+            message.ends_with("it was replaced after it was copied"),
+            "{message}"
         );
-        assert_eq!(
-            b"after, and longer".to_vec(),
-            fs::read(src.join("rewritten.txt")).unwrap()
-        );
-        let message = finished_task(&rx)
-            .error_message()
-            .expect("the kept entries must be reported");
-        assert!(message.starts_with("Kept 2 entries of "), "{message}");
-    }
-
-    #[test]
-    fn a_cross_device_move_of_a_file_keeps_it_when_it_changed_during_the_copy() {
-        let (_fx, src, rx, active) = moved("tasks_move_file_changed");
-        let file = src.join("a.txt");
-        let outcome = copied(std::slice::from_ref(&file));
-        fs::write(&file, b"rewritten").unwrap();
-
-        finish_cross_device_move(active, outcome, &file, false);
-
-        assert_eq!(b"rewritten".to_vec(), fs::read(&file).unwrap());
-        assert!(finished_task(&rx).error_message().is_some());
     }
 
     #[test]
@@ -3812,7 +3743,7 @@ mod tests {
             1,
         );
 
-        assert!(remove_path(&root, true, active, Removal::All).is_some());
+        assert!(remove_path(&root, true, active, Removal::Delete).is_some());
         assert!(!root.exists());
     }
 
@@ -3913,9 +3844,8 @@ mod tests {
         );
 
         // `is_directory` is false for both: it comes from `symlink_metadata`.
-        remove_path(&entry, false, active, Removal::All)
+        remove_path(&entry, false, active, Removal::Delete)
             .expect("the entry should be removed")
-            .0
             .done();
 
         assert!(entry.symlink_metadata().is_err());
@@ -3963,8 +3893,8 @@ mod tests {
             100,
         );
 
-        let (active, _) =
-            remove_path(&root, true, active, Removal::All).expect("the tree should be removed");
+        let active =
+            remove_path(&root, true, active, Removal::Delete).expect("the tree should be removed");
         let completed_of = |command| match command {
             Command::Progress(task) => Some(task.combine_progress(&Progress::default()).completed),
             _ => None,
@@ -4002,7 +3932,7 @@ mod tests {
         );
         token.cancel();
 
-        assert!(remove_path(&root, true, active, Removal::All).is_none());
+        assert!(remove_path(&root, true, active, Removal::Delete).is_none());
         assert!(root.join("sub").join("f.txt").exists());
     }
 
@@ -4048,7 +3978,7 @@ mod tests {
             1,
         );
 
-        let finished = remove_path(&root, true, active, Removal::All);
+        let finished = remove_path(&root, true, active, Removal::Delete);
 
         let error = finished
             .is_none()
@@ -4136,7 +4066,7 @@ mod tests {
             1,
         );
 
-        assert!(remove_path(&root, true, active, Removal::All).is_some());
+        assert!(remove_path(&root, true, active, Removal::Delete).is_some());
 
         // The link goes with the tree; what it points at is outside it.
         assert!(!root.exists());
@@ -4342,7 +4272,7 @@ mod tests {
         // A move, whose final mode is the source's 0o777 whatever the umask.
         let mut context = context(true, &mut buffer);
         let (src_parent, dst_parent) = (open_parent(&src).unwrap(), open_parent(&dst).unwrap());
-        let source = Source::of(&statat(&src_parent, c"src", AtFlags::SYMLINK_NOFOLLOW).unwrap());
+        let source = statat(&src_parent, c"src", AtFlags::SYMLINK_NOFOLLOW).unwrap();
         let mut paths = Paths {
             old: src.clone(),
             new: dst.clone(),
@@ -4392,7 +4322,7 @@ mod tests {
         let mut buffer = [0u8; 64];
         let mut context = context(false, &mut buffer);
         let (src_parent, dst_parent) = (open_parent(&src).unwrap(), open_parent(&dst).unwrap());
-        let source = Source::of(&statat(&src_parent, c"src", AtFlags::SYMLINK_NOFOLLOW).unwrap());
+        let source = statat(&src_parent, c"src", AtFlags::SYMLINK_NOFOLLOW).unwrap();
         let mut paths = Paths {
             old: src.clone(),
             new: dst.clone(),
@@ -4477,5 +4407,192 @@ mod tests {
         .unwrap();
 
         assert!(reopen_parent_of(&child, expected).is_err());
+    }
+
+    /// Pastes `old` into `dest` the way the worker does, from a selection made
+    /// before `change` runs: a copy, or the cross-device arm of
+    /// `run_move_task`, which removes what it copied. Returns the destination
+    /// and the finished task.
+    fn paste_after(
+        old: &Path,
+        dest: &Path,
+        is_move: bool,
+        change: impl FnOnce(),
+    ) -> (PathBuf, Task) {
+        let verb = if is_move { "move" } else { "copy" };
+        let path = restat_source(verb, old).ok().unwrap();
+        let dest = PathInfo::try_from(dest).unwrap();
+        let (old_path, new_path) = validate_paths(&path, &dest, verb, false).ok().unwrap();
+        change();
+        let (tx, rx) = mpsc::channel();
+        let (active, source) = prepare_destination(
+            copy_task(tx),
+            verb,
+            &old_path,
+            &new_path,
+            false,
+            path.mode(),
+        )
+        .unwrap();
+        if let Some((active, outcome)) = copy_with_progress(
+            &old_path,
+            &new_path,
+            active,
+            source,
+            path.size,
+            path.is_directory(),
+            path.mode(),
+            is_move,
+            None,
+            1024,
+            1024,
+        ) {
+            if is_move {
+                finish_cross_device_move(active, outcome, &old_path, path.is_directory());
+            } else {
+                finalize_copy(active, outcome.errors);
+            }
+        }
+        (new_path, finished_task(&rx))
+    }
+
+    /// A FIFO selected for a move is a regular file by the time the worker
+    /// runs. Recreating it as a FIFO and removing the file would lose its data.
+    #[test]
+    fn a_move_refuses_a_source_whose_type_changed_since_it_was_selected() {
+        let fx = TempDir::new("tasks_move_type_changed");
+        let old = fx.join("item");
+        nix::unistd::mkfifo(&old, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
+        fs::create_dir(fx.join("dest")).unwrap();
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {
+            fs::remove_file(&old).unwrap();
+            fs::write(&old, b"data").unwrap();
+        });
+
+        assert_eq!(b"data".as_slice(), fs::read(&old).unwrap());
+        assert!(new_path.symlink_metadata().is_err());
+        let message = task.error_message().expect("the move fails");
+        assert!(
+            message.ends_with("its type changed since it was selected"),
+            "{message}"
+        );
+    }
+
+    /// Another file is renamed over the selected name before the worker runs.
+    /// It is copied with its own mode, never the selected file's: a copy of a
+    /// 0600 file must not come out readable by others, and a move of one must
+    /// not get the other file's setuid or execute bits.
+    #[test_case(false ; "a copy")]
+    #[test_case(true ; "a move")]
+    fn a_file_renamed_over_the_selection_is_copied_with_its_own_mode(is_move: bool) {
+        let fx = TempDir::new("tasks_renamed_over");
+        let old = fx.join("notes");
+        fs::write(&old, b"selected").unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o755)).unwrap();
+        let secret = fx.join("secret");
+        fs::write(&secret, b"secret").unwrap();
+        fs::set_permissions(&secret, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::create_dir(fx.join("dest")).unwrap();
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), is_move, || {
+            fs::rename(&secret, &old).unwrap();
+        });
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(b"secret".as_slice(), fs::read(&new_path).unwrap());
+        assert_eq!(0o600, mode_of(&new_path) & 0o7777);
+    }
+
+    /// The destination directory is swapped for a link into the source after
+    /// the paste was validated. The copy refuses to descend into the directory
+    /// it created rather than copying its own output without end.
+    #[test]
+    fn a_copy_never_descends_into_a_directory_it_created() {
+        let fx = TempDir::new("tasks_copy_into_itself");
+        let src = fx.join("s");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        let dest = fx.join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let (_, task) = paste_after(&src, &dest, false, || {
+            fs::remove_dir(&dest).unwrap();
+            std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
+        });
+
+        let message = task.error_message().expect("the copy reports the refusal");
+        assert!(
+            message.ends_with("it is inside the copy being made"),
+            "{message}"
+        );
+        assert!(src.join("sub/s/sub").is_dir());
+        assert!(!src.join("sub/s/sub/s").exists());
+        assert!(src.join("sub/s/sub").read_dir().unwrap().next().is_none());
+    }
+
+    /// A directory the pre-scan listed is swapped for a link to one outside
+    /// the tree before the scan reads it. The link is not followed.
+    #[test]
+    fn the_pre_scan_does_not_follow_a_directory_swapped_for_a_symlink() {
+        let fx = TempDir::new("tasks_scan_swapped");
+        let root = fx.join("root");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let outside = fx.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"x").unwrap();
+        let (tx, _rx) = mpsc::channel();
+        let active = copy_task(tx);
+        let mut seen = Vec::new();
+
+        scan_tree(&active, &root, |_, name, _| {
+            seen.push(name.to_owned());
+            if name == c"sub" {
+                fs::rename(root.join("sub"), fx.join("sub.orig")).unwrap();
+                std::os::unix::fs::symlink(&outside, root.join("sub")).unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(vec![c"sub".to_owned()], seen);
+    }
+
+    /// Another directory is renamed over one the copy listed, between the
+    /// listing and the open. It is refused rather than copied under metadata
+    /// that describes a different directory.
+    #[test]
+    fn a_directory_replaced_after_it_was_listed_is_refused() {
+        let fx = TempDir::new("tasks_directory_replaced");
+        let src = fx.join("src");
+        fs::create_dir(&src).unwrap();
+        let other = fx.join("other");
+        fs::create_dir(&other).unwrap();
+        let (src_parent, dst_parent) = (open_parent(&src).unwrap(), open_parent(&src).unwrap());
+        let stat = statat(&src_parent, c"src", AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        fs::rename(&other, &src).unwrap();
+        let (tx, _rx) = mpsc::channel();
+        let active = copy_task(tx);
+        let mut errors = Vec::new();
+        let mut buffer = [0u8; 64];
+        let mut context = context(false, &mut buffer);
+        let at = At {
+            src: &src_parent,
+            dst: &dst_parent,
+            src_name: c"src",
+            dst_name: c"dst",
+        };
+        let paths = Paths {
+            old: src.clone(),
+            new: fx.join("dst"),
+        };
+
+        let level = enter_directory(&at, &paths, &active, &mut errors, &mut context, &stat);
+        active.done();
+
+        assert!(level.is_none());
+        assert_eq!(1, errors.len());
+        assert!(
+            errors[0].ends_with("it was replaced while being copied"),
+            "{errors:?}"
+        );
     }
 }

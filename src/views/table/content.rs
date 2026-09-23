@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
-use crate::file_system::path_info::{PathInfo, name_comparator};
+use crate::file_system::path_info::{PathInfo, name_comparator, visible_path};
 use crate::views::ListingMode;
 
 /// Deliberately not `Default`: the two settings below have no meaningful
@@ -378,11 +378,9 @@ pub(super) fn displayed_name<'a>(
 /// bookmarks view.
 fn displayed_name_stem<'a>(item: &'a PathInfo, search_root: Option<&Path>) -> Cow<'a, str> {
     match search_root {
-        Some(root) => item
-            .path
-            .strip_prefix(root)
-            .unwrap_or(&item.path)
-            .to_string_lossy(),
+        Some(root) => Cow::Owned(visible_path(
+            item.path.strip_prefix(root).unwrap_or(&item.path),
+        )),
         _ => Cow::Borrowed(&item.display_name),
     }
 }
@@ -1121,6 +1119,18 @@ mod tests {
         content.set_filter("orts/inn".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["inner.txt"]);
+    }
+
+    /// A search result shows its path below the root, which is spelled out
+    /// the same way as a plain listing's name is.
+    #[test]
+    fn a_search_result_spells_out_a_disguising_name() {
+        let fx = Fixture::new();
+        let item = fx.nested_file_entry("sub", "a\u{202e}b");
+
+        let name = displayed_name(&item, false, Some(fx.dir.path()));
+
+        assert_eq!("sub/a\\u{202e}b", name);
     }
 
     /// Bookmark rows render bare names, so there is no trailing separator for

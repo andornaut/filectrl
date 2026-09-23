@@ -19,7 +19,6 @@ use toml::Value;
 
 use self::keybindings::{KeyBindings, TomlKeybindings};
 use self::theme::Theme;
-use crate::file_system::shell;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
@@ -322,7 +321,6 @@ impl Config {
             .map_err(|error| anyhow!("Failed to deserialize the config: {error}"))?;
 
         validate_file_system(&raw.file_system)?;
-        validate_openers(&raw.openers)?;
 
         let openers = if cfg!(target_os = "macos") {
             raw.openers.macos
@@ -511,28 +509,6 @@ fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
         return Err(anyhow!(
             "file_system.search_max_results must be greater than 0"
         ));
-    }
-    Ok(())
-}
-
-/// Refuses an opener template with `%s` inside quotes, where the substituted
-/// path's own quoting would close them and let a file name run as shell code.
-/// Both platforms are checked, so a config shared between them fails on either.
-fn validate_openers(openers: &PlatformOpeners) -> Result<()> {
-    for (platform, openers) in [("linux", &openers.linux), ("macos", &openers.macos)] {
-        for (key, template) in [
-            ("open_directory", &openers.open_directory),
-            ("open_file", &openers.open_file),
-            ("open_filectrl_window", &openers.open_filectrl_window),
-            ("run_in_terminal", &openers.run_in_terminal),
-        ] {
-            if shell::has_quoted_placeholder(template) {
-                return Err(anyhow!(
-                    "openers.{platform}.{key} must not place %s inside quotes or after a \\: \
-                     it is substituted already quoted, so its quoting would close yours"
-                ));
-            }
-        }
     }
     Ok(())
 }
@@ -767,26 +743,6 @@ open_directory = "alacritty --working-directory %s"
     fn a_search_bound_of_zero_is_rejected(key: &str) {
         let err = parse_err(&format!("[file_system]\n{key} = 0\n"));
         assert_eq!(format!("file_system.{key} must be greater than 0"), err);
-    }
-
-    #[test_case("linux", "open_file", "xdg-open '%s'" ; "single quotes")]
-    #[test_case("linux", "open_directory", "cd \"%s\" && exec xterm" ; "double quotes")]
-    #[test_case("macos", "open_filectrl_window", "open \\%s" ; "a backslash")]
-    #[test_case("linux", "run_in_terminal", "sh -c 'xterm -e %s'" ; "a quoted script")]
-    fn an_opener_with_a_quoted_placeholder_is_rejected(platform: &str, key: &str, template: &str) {
-        let toml = format!("[openers.{platform}]\n{key} = {template:?}\n");
-        let err = parse_err(&toml);
-        assert!(
-            err.starts_with(&format!("openers.{platform}.{key} must not place %s")),
-            "{err}"
-        );
-    }
-
-    #[test_case("xdg-open %s" ; "unquoted")]
-    #[test_case("sh -c 'xdg-open \"$1\"' sh %s" ; "quotes closed before it")]
-    fn an_opener_with_an_unquoted_placeholder_is_accepted(template: &str) {
-        let toml = format!("[openers.linux]\nopen_file = {template:?}\n");
-        Config::parse(RuntimeEnv::default(), None, &toml, None, &[]).unwrap();
     }
 
     #[test]
@@ -1201,10 +1157,14 @@ open_directory = "alacritty --working-directory %s"
                 &openers.open_filectrl_window,
             ] {
                 let _ = fs::remove_file(&out);
-                let command = shell::template(template, &shell::quote(target.as_os_str()));
+                let argv = shell::command(
+                    template,
+                    shell::Parameters::One,
+                    [target.as_os_str().to_os_string()],
+                );
+                // `PATH` holds only the stubs, so the shell is named in full.
                 let status = std::process::Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(&command)
+                    .args(&argv[1..])
                     .current_dir(dir.path())
                     .env("PATH", &bin)
                     .env("STUB_OUT", &out)

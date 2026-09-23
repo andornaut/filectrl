@@ -1,80 +1,83 @@
-//! Building shell command lines that carry a path unchanged.
+//! Running a configured shell template on a path.
 //!
-//! Everything here works on raw bytes rather than `str`. A path need not be
-//! valid UTF-8, and `to_string_lossy` replaces the offending bytes with U+FFFD,
-//! which hands the program a path that does not exist. The rest of the file
-//! system code already takes care to pass names around as `OsStr` for the same
-//! reason.
+//! The path is never written into the script. `%s` becomes a reference to a
+//! positional parameter and the path is passed after the script as an
+//! argument, so the shell only ever expands it and never parses it: no file
+//! name can run as a command, whatever quoting, here-document or backticks the
+//! template puts around `%s`. Only a template that hands the text to another
+//! parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash
+//! arithmetic such as `$(( %s ))`, which evaluates `x[$(cmd)]`.
+//!
+//! The values are passed as raw bytes, so a path that is not valid UTF-8
+//! reaches the program intact.
 
-use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::ffi::OsString;
 
-/// Bytes that need no quoting to survive word splitting and expansion.
-fn is_safe(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'%' | b'+' | b',' | b'-' | b'.' | b'/' | b':' | b'=' | b'@' | b'_'
-        )
+/// Which positional parameters `%s` stands for.
+#[derive(Clone, Copy)]
+pub(crate) enum Parameters {
+    /// One value: `$1`.
+    One,
+    /// Every value, each its own word: `$@`. Only the Linux terminal wrapper
+    /// passes a command; macOS launches through `open`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    All,
 }
 
-/// Quotes `value` so a shell reads it as exactly one word, leaving it alone
-/// when it needs no quoting so that a logged command line stays readable.
-pub(crate) fn quote(value: &OsStr) -> OsString {
-    let bytes = value.as_bytes();
-    if !bytes.is_empty() && bytes.iter().copied().all(is_safe) {
-        return value.to_os_string();
-    }
-    let mut quoted = Vec::with_capacity(bytes.len() + 2);
-    quoted.push(b'\'');
-    for &byte in bytes {
-        // A single quote cannot appear inside single quotes, so close the
-        // quoting, emit an escaped quote, and reopen it.
-        if byte == b'\'' {
-            quoted.extend_from_slice(b"'\\''");
-        } else {
-            quoted.push(byte);
+impl Parameters {
+    /// The text that expands to exactly these parameters within `quote`.
+    fn reference(self, quote: &Quote) -> &'static str {
+        match (self, quote) {
+            (Parameters::One, Quote::None) => "\"$1\"",
+            (Parameters::One, Quote::Double) => "$1",
+            (Parameters::One, Quote::Single) => "'\"$1\"'",
+            (Parameters::All, Quote::None) => "\"$@\"",
+            (Parameters::All, Quote::Double) => "$@",
+            (Parameters::All, Quote::Single) => "'\"$@\"'",
         }
     }
-    quoted.push(b'\'');
-    OsString::from_vec(quoted)
 }
 
-/// Substitutes every `%s` in a shell template with `replacement`, which the
-/// caller has already quoted if it needs to be.
-pub(crate) fn template(template: &str, replacement: &OsStr) -> OsString {
-    let mut expanded = OsString::with_capacity(template.len() + replacement.len());
-    let mut rest = template;
-    while let Some(index) = rest.find("%s") {
-        expanded.push(&rest[..index]);
-        expanded.push(replacement);
-        rest = &rest[index + 2..];
-    }
-    expanded.push(rest);
-    expanded
-}
-
-/// Whether a `%s` in `template` sits inside quotes or after a backslash. The
-/// substituted path carries its own single quotes, which there would close the
-/// template's quoting rather than open their own, so a name such as `a;$(cmd)`
-/// would run `cmd`.
-pub(crate) fn has_quoted_placeholder(template: &str) -> bool {
+/// The argv that runs `template` with `sh -c`, `%s` standing for `values`. The
+/// reference is written to expand to exactly the value wherever `%s` sits:
+/// quoted when it is outside quotes, bare inside double quotes, and closing and
+/// reopening single quotes around itself inside them. After a backslash, a
+/// newline goes first, so the backslash continues the line rather than
+/// escaping the reference. A misjudged quote state (inside `$(...)`, say) can
+/// only split the value into words or garble it, never run it.
+pub(crate) fn command(
+    template: &str,
+    parameters: Parameters,
+    values: impl IntoIterator<Item = OsString>,
+) -> Vec<OsString> {
+    let mut script = String::with_capacity(template.len() + 8);
     let mut quotes = Quotes::default();
     let mut chars = template.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '%' && quotes.is_open() && chars.peek() == Some(&'s') {
-            return true;
+        if c == '%' && chars.next_if_eq(&'s').is_some() {
+            if std::mem::take(&mut quotes.escaped) {
+                script.push('\n');
+            }
+            script.push_str(parameters.reference(&quotes.state));
+            continue;
         }
         quotes.advance(c);
+        script.push(c);
     }
-    false
+    let mut argv = vec![
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from(script),
+        // `$0`, which the shell names itself by in its messages.
+        OsString::from("sh"),
+    ];
+    argv.extend(values);
+    argv
 }
 
-/// The quote state of a script as `sh` reads it, advanced over its literal
-/// characters. Substituted values are not fed through it: a shell-quoted value
-/// opens and closes its own quotes.
+/// The quote state of a script as `sh` reads it, advanced over its characters.
 #[derive(Default)]
-pub(crate) struct Quotes {
+struct Quotes {
     state: Quote,
     escaped: bool,
 }
@@ -88,7 +91,7 @@ enum Quote {
 }
 
 impl Quotes {
-    pub(crate) fn advance(&mut self, c: char) {
+    fn advance(&mut self, c: char) {
         if self.escaped {
             self.escaped = false;
             return;
@@ -104,86 +107,103 @@ impl Quotes {
             _ => return,
         };
     }
-
-    /// Whether a quote, or a backslash escape, is open at this point.
-    pub(crate) fn is_open(&self) -> bool {
-        self.escaped || self.state != Quote::None
-    }
-}
-
-/// Joins `argv` into one shell command line, quoting each word that needs it.
-///
-/// Only the Linux terminal wrapper needs this: macOS launches through `open`
-/// with an argv and never builds a command line.
-#[cfg(target_os = "linux")]
-pub(crate) fn join(argv: &[OsString]) -> OsString {
-    let mut joined = OsString::new();
-    for (index, word) in argv.iter().enumerate() {
-        if index > 0 {
-            joined.push(" ");
-        }
-        joined.push(quote(word));
-    }
-    joined
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
+    use std::{
+        ffi::{OsStr, OsString},
+        os::unix::ffi::OsStrExt,
+        process::Command,
+    };
 
     use test_case::test_case;
 
     use super::*;
 
-    /// An `OsStr` holding a byte sequence that is not valid UTF-8, which is
-    /// what a lossy conversion would destroy.
-    fn invalid_utf8() -> &'static OsStr {
-        OsStr::from_bytes(b"caf\xe9.txt")
+    /// A name that runs `touch pwned` if a shell ever parses it, and closes
+    /// either kind of quote first.
+    const HOSTILE: &str = "a b'\"$(touch pwned)`touch pwned`";
+
+    /// Runs `template` on `values` in a scratch directory holding `rec`, a
+    /// program that prints its arguments NUL-terminated. Returns the words it
+    /// printed and whether anything ran `touch`.
+    fn run(template: &str, parameters: Parameters, values: &[&OsStr]) -> (Vec<Vec<u8>>, bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = crate::test_support::TempDir::new("shell_command");
+        let rec = dir.join("rec");
+        std::fs::write(&rec, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let argv = command(
+            template,
+            parameters,
+            values.iter().map(|value| value.to_os_string()),
+        );
+        let output = Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let words = output
+            .stdout
+            .split(|&byte| byte == 0)
+            .filter(|word| !word.is_empty())
+            .map(<[u8]>::to_vec)
+            .collect();
+        (words, dir.join("pwned").exists())
     }
 
-    #[test_case("plain" => "plain" ; "a safe word is left unquoted")]
-    #[test_case("/a/b.txt" => "/a/b.txt" ; "a plain path needs no quoting")]
-    #[test_case("/a b.txt" => "'/a b.txt'" ; "a space forces quoting")]
-    #[test_case("" => "''" ; "an empty value is quoted")]
-    #[test_case("a$b" => "'a$b'" ; "an expansion character is quoted")]
-    #[test_case("it's" => "'it'\\''s'" ; "an embedded single quote is escaped")]
-    #[test_case("a;rm -rf /" => "'a;rm -rf /'" ; "a command separator is quoted")]
-    fn quote_produces(value: &str) -> String {
-        quote(OsStr::new(value)).to_string_lossy().into_owned()
+    // Wherever `%s` sits, the value is only expanded, so nothing in it runs.
+    // Some of these do not pass it intact (a here-document keeps the quotes
+    // around the reference as text), which is the template's own concern.
+    #[test_case("./rec %s" ; "unquoted")]
+    #[test_case("./rec \"%s\"" ; "inside double quotes")]
+    #[test_case("./rec '%s'" ; "inside single quotes")]
+    #[test_case("./rec \"$(./rec %s)\"" ; "in a command substitution")]
+    #[test_case("./rec `./rec %s`" ; "in backticks")]
+    #[test_case("cat <<EOF\n%s\nEOF" ; "in a here document")]
+    #[test_case("true # it's\n./rec %s" ; "after a comment holding a quote")]
+    #[test_case("./rec $'\\'' %s" ; "after an ansi c quote")]
+    fn a_hostile_name_is_never_run(template: &str) {
+        let (_, ran) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
+        assert!(!ran);
+    }
+
+    #[test_case("./rec %s", "" ; "unquoted")]
+    #[test_case("./rec \"%s\"", "" ; "inside double quotes")]
+    #[test_case("./rec '%s'", "" ; "inside single quotes")]
+    #[test_case("./rec \"--file=%s\"", "--file=" ; "embedded in a double quoted word")]
+    #[test_case("./rec '--file=%s'", "--file=" ; "embedded in a single quoted word")]
+    #[test_case("./rec \\%s", "" ; "after a backslash")]
+    #[test_case("./rec \"\\%s\"", "" ; "after a backslash inside double quotes")]
+    fn the_value_arrives_as_one_word(template: &str, prefix: &str) {
+        let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
+        assert_eq!(vec![format!("{prefix}{HOSTILE}").into_bytes()], words);
     }
 
     #[test]
-    fn quote_preserves_bytes_that_are_not_utf8() {
-        let quoted = quote(invalid_utf8());
-        // Quoted because 0xe9 is not in the safe set, and the byte itself has
-        // to survive: this is the whole reason the module works on bytes.
-        assert_eq!(b"'caf\xe9.txt'".as_slice(), quoted.as_bytes());
-    }
-
-    #[test_case("cp %s /dest", "/a b" => "cp '/a b' /dest" ; "one placeholder")]
-    #[test_case("%s and %s", "x" => "x and x" ; "every placeholder is substituted")]
-    #[test_case("no placeholder", "x" => "no placeholder" ; "no placeholder is a no-op")]
-    #[test_case("", "x" => "" ; "an empty template stays empty")]
-    fn template_produces(text: &str, replacement: &str) -> String {
-        template(text, &quote(OsStr::new(replacement)))
-            .to_string_lossy()
-            .into_owned()
+    fn every_value_arrives_as_its_own_word() {
+        let values = [OsStr::new("vim"), OsStr::new(HOSTILE)];
+        let (words, ran) = run("./rec %s", Parameters::All, &values);
+        assert_eq!(vec![b"vim".to_vec(), HOSTILE.as_bytes().to_vec()], words);
+        assert!(!ran);
     }
 
     #[test]
-    fn template_preserves_bytes_that_are_not_utf8() {
-        let expanded = template("cp %s /dest", &quote(invalid_utf8()));
-        assert_eq!(b"cp 'caf\xe9.txt' /dest".as_slice(), expanded.as_bytes());
+    fn a_value_that_is_not_utf8_arrives_intact() {
+        let name = OsStr::from_bytes(b"caf\xe9.txt");
+        let (words, _) = run("./rec %s", Parameters::One, &[name]);
+        assert_eq!(vec![name.as_bytes().to_vec()], words);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn join_quotes_only_the_words_that_need_it() {
-        let argv = [
-            OsString::from("vim"),
-            OsString::from("/a b.txt"),
-            OsString::from("--flag=1"),
-        ];
-        assert_eq!("vim '/a b.txt' --flag=1", join(&argv).to_string_lossy());
+    fn the_script_is_passed_before_the_values() {
+        let argv = command("xdg-open %s", Parameters::One, [OsString::from("/a b")]);
+        let expected: Vec<OsString> = ["sh", "-c", "xdg-open \"$1\"", "sh", "/a b"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert_eq!(expected, argv);
     }
 }

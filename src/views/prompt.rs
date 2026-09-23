@@ -15,6 +15,10 @@ use crate::{
     file_system::path_info::{PathInfo, compact},
 };
 
+/// Paths a confirmation of a paste from elsewhere lists, one per line, before
+/// it counts the rest.
+const MAX_LISTED_PASTE_PATHS: usize = 5;
+
 #[derive(Default)]
 pub(super) struct PromptView {
     actions: PromptAction,
@@ -56,15 +60,30 @@ impl PromptView {
                     ClipboardEntry::Copy(_) => "copy",
                     ClipboardEntry::Move(_) => "move",
                 };
-                let what = match entry.paths() {
-                    [path] => compact(&path.path).to_string(),
-                    paths => format!(
-                        "{} starting with {}",
-                        pluralize_items(paths.len()),
-                        compact(&paths[0].path)
-                    ),
-                };
-                format!(" Clipboard from elsewhere: {verb} {what} here? (y/n) ")
+                let paths = entry.paths();
+                if let [path] = paths {
+                    return format!(
+                        " Clipboard from elsewhere: {verb} {} here? (y/n) ",
+                        compact(&path.path)
+                    );
+                }
+                // Every path is named, up to a few lines' worth: the text came
+                // from another program, which chose what follows the first.
+                let mut lines = vec![format!(
+                    " Clipboard from elsewhere: {verb} {} here? (y/n) ",
+                    pluralize_items(paths.len())
+                )];
+                lines.extend(
+                    paths
+                        .iter()
+                        .take(MAX_LISTED_PASTE_PATHS)
+                        .map(|path| format!("   {}", compact(&path.path))),
+                );
+                if paths.len() > MAX_LISTED_PASTE_PATHS {
+                    let more = paths.len() - MAX_LISTED_PASTE_PATHS;
+                    lines.push(format!("   and {more} more"));
+                }
+                lines.join("\n")
             }
             PromptAction::Conflict {
                 name,
@@ -169,11 +188,11 @@ impl PromptView {
                         Ok(info) => Command::Open(info),
                         Err(error) => Command::AlertWarn(format!(
                             "Failed to access {}: {error}",
-                            path.display()
+                            compact(&path)
                         )),
                     }
                 } else {
-                    Command::AlertWarn(format!("Path does not exist: {}", path.display()))
+                    Command::AlertWarn(format!("Path does not exist: {}", compact(&path)))
                 }
             }
             PromptAction::Rename { path, .. } => Command::Rename {
@@ -238,6 +257,9 @@ impl PromptView {
                 let mut all: Vec<(String, bool)> = entries
                     .flatten()
                     .map(|entry| {
+                        // Completed into the input, so it has to be the name
+                        // itself rather than its escaped form.
+                        #[allow(clippy::disallowed_methods)]
                         let name = entry.file_name().to_string_lossy().into_owned();
                         let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
                         (name, is_dir)
@@ -344,6 +366,7 @@ fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
@@ -524,17 +547,47 @@ mod tests {
         );
         assert_eq!(expected, view.label());
 
-        let (dir, entry, dest) = foreign_paste(&["a", "b"]);
-        let first = compact(&entry.paths()[0].path).to_string();
-        let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
-        assert_eq!(
-            format!(" Clipboard from elsewhere: move 2 items starting with {first} here? (y/n) "),
-            view.label()
-        );
         drop(dir);
     }
 
+    /// Another program chose every path after the first, so each is named.
+    #[test]
+    fn a_paste_from_elsewhere_lists_its_paths_and_counts_the_rest() {
+        let names = ["a", "b", "c", "d", "e", "f", "g"];
+        let (dir, entry, dest) = foreign_paste(&names);
+        let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
+
+        let label = view.label();
+
+        let mut expected = vec![" Clipboard from elsewhere: move 7 items here? (y/n) ".to_string()];
+        for name in &names[..MAX_LISTED_PASTE_PATHS] {
+            expected.push(format!("   {}", compact(&dir.join(name))));
+        }
+        expected.push("   and 2 more".to_string());
+        assert_eq!(expected, label.lines().collect::<Vec<_>>());
+    }
+
     // ── copy and cut ─────────────────────────────────────────────────────────
+
+    /// A paste is text, so its line break does not submit the prompt and the
+    /// letters after it are not read as keys.
+    #[test]
+    fn a_paste_is_inserted_as_one_line_of_text() {
+        let mut view = prompt_with_action(PromptAction::Filter(String::new()));
+
+        let result = view.handle_paste("important\r\n\u{1b}dy");
+
+        assert_eq!(CommandResult::Handled, result);
+        assert_eq!("importantdy", view.text_area.lines()[0]);
+    }
+
+    #[test]
+    fn a_paste_into_a_confirmation_is_not_an_answer() {
+        let mut view = prompt_with_action(PromptAction::Delete(1));
+
+        assert_eq!(CommandResult::Handled, view.handle_paste("y"));
+        assert_eq!("", view.text_area.lines()[0]);
+    }
 
     /// "hello world" with "world" selected.
     fn prompt_with_selection() -> PromptView {

@@ -60,14 +60,18 @@ impl OpenWithView {
         self.is_visible
     }
 
-    /// Enumerate the applications for `path` and show the picker.
-    pub(super) fn show(&mut self, path: &PathInfo) {
-        self.candidates = candidates_for(path.as_path());
+    /// Enumerate the applications for `path` and show the picker. Returns a
+    /// message for each installed application left out as unsafe to run on
+    /// it, for the caller to raise.
+    pub(super) fn show(&mut self, path: &PathInfo) -> Vec<String> {
+        let (candidates, refused) = candidates_for(path.as_path());
+        self.candidates = candidates;
         self.inner_height = 0;
         self.is_visible = true;
         self.scroll_offset = 0;
         self.selected = 0;
         self.title = format!("Open {} with", path.name());
+        refused
     }
 
     pub(super) fn hide(&mut self) {

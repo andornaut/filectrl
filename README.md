@@ -88,7 +88,7 @@ Names must be unique, cannot be empty, and cannot contain a path separator.
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes and timestamps (setuid and setgid only when the copy has the original's owner and group), and removes only what it copied, keeping any entry that changed in the original while the copy ran.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes and timestamps (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it. An original that was replaced by another entry after the copy is kept, and the move reports it.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
@@ -106,6 +106,10 @@ Key | Action
 - <kbd>S</kbd> and <kbd>O</kbd> also cover copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. Only <kbd>S</kbd> settles a directory. Anything left unsettled is reported when the copy finishes.
 - A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 - Whatever is not pasted (collisions you abandon, entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately do not. If nothing was pasted at all, the clipboard is unchanged.
+
+### Chmod
+
+Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than having its target changed. Setting a mode without following links needs glibc 2.32 or newer, or `/proc` mounted; where neither holds (an old distribution, or a container without `/proc`), chmod fails with "Operation not supported".
 
 ### Multi-select
 
@@ -216,6 +220,8 @@ Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. Moving the cursor off the end of the input dismisses it.
 
+Text pasted through the terminal (bracketed paste) goes into a text prompt as one line, with its line breaks removed. A paste anywhere else, including a y/n prompt, is ignored, so pasted text never acts as keys.
+
 > [!NOTE]
 > <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with a letter (a `"Ctrl+Shift+a"` binding, say) requires a terminal that supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (e.g. Alacritty): the legacy encoding sends one byte for both <kbd>Ctrl</kbd>+<kbd>a</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>a</kbd>, so the Shift cannot survive it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with an arrow key does not need the protocol, because the legacy encoding does carry modifiers for arrows.
 >
@@ -262,13 +268,13 @@ Key | Opens with
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
-Each template runs with `sh -c`, and `%s` is substituted already quoted for the shell. A template with `%s` inside quotes or after a backslash is refused when the config loads: the path's own quoting would close them, so a name such as `a;$(cmd)` would run `cmd`. To use the path inside a nested script, pass it as an argument instead, as the macOS `open_filectrl_window` below does. The check cannot see text the template reads a second time: `eval`, a here-document, or a nested `sh -c %s` or `ssh` would run the name as code despite the quoting.
+Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$1"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits, quoted or not. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
-# %s is replaced at runtime: the current directory, the selected entry, or a
-# new window's directory. In run_in_terminal alone it is a command line
-# rather than a path (see "Open with..." below).
+# %s stands for the current directory, the selected entry, or a new window's
+# directory. In run_in_terminal alone it stands for a command, each word its
+# own argument (see "Open with..." below).
 [openers.linux]
 open_directory = "alacritty --working-directory %s"
 open_file = "pcmanfm %s"
@@ -298,12 +304,12 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` gives a shell (`sh`, `bash`, `zsh` and the like) a `-c` script containing a field code such as `%f` is not offered either, since no quoting survives everything a script can do with the name. One that passes the name after the script (`sh -c 'mpv "$1"' sh %f`) is.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` puts a field code such as `%f` in an argument written with quotes or escapes, or in the script a shell (`sh`, `bash`, `zsh` and the like) is given with `-c`, is not offered either, and a warning names it: such an argument is a script for some interpreter (`sh -c "mpv %f"`), and no quoting survives everything a script can do with the name. A quoted argument that is only the code (`"%f"`) is offered, and so is one that passes the name after the script (`sh -c 'mpv "$1"' sh %f`). Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
 Two `openers` settings shape the list, and setting either to `""` drops its effect:
 
-- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` is a command line: `xterm -e %s` becomes `xterm -e vim '/some file.txt'`. The terminal must run the words after its option as a program and its arguments, as `xterm -e` and `alacritty --command` do. One that joins them into a string for a shell to parse again would run a file name as shell code.
+- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` stands for the command, each word its own argument: `xterm -e %s` runs `xterm` with the arguments `-e`, `vim` and `/some file.txt`. The terminal must run the words after its option as a program and its arguments, as `xterm -e` and `alacritty --command` do. One that joins them into a string for a shell to parse again would run a file name as shell code.
 - `openers.open_file` (or `openers.open_directory` for a directory) is offered last, showing its command template beside the setting name, so the picker still works with no application database. Without it, a path that matches nothing shows "No applications found".
 
 ### Theming

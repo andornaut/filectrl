@@ -30,6 +30,8 @@ doc_markdown = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
+# Enabled per module where it applies; see clippy.toml.
+disallowed_methods = "allow"
 
 [dependencies]
 anyhow = "1.0.104"

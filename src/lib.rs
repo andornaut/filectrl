@@ -124,7 +124,7 @@ fn configure_logging() {
                 record.level(),
                 path.strip_prefix(MODULE_PREFIX).unwrap_or(path),
                 record.line().unwrap_or_default(),
-                escape_controls(&record.args().to_string())
+                visible(&record.args().to_string())
             )
         })
         .init();
@@ -137,23 +137,68 @@ fn configure_logging() {
     }
 }
 
-/// Escapes the control characters in a log message. Messages carry file names,
-/// and the log is written to stderr, which is often the terminal itself: an
-/// escape sequence in a name would otherwise be run by the terminal. A newline
-/// is escaped too, so that a name cannot forge a log record.
-fn escape_controls(message: &str) -> Cow<'_, str> {
-    escape_controls_except(message, |_| false)
+/// Whether `c` would hide or disguise the text around it when shown: a control
+/// character, which a terminal runs as a command and the renderer drops; a bidi
+/// control, which reorders what is drawn after it, so `a\u{202e}txt.exe` reads
+/// as `aexe.txt`; a line or paragraph separator; or a character that draws
+/// nothing, so two different names look the same. The zero width joiner and
+/// non-joiner, variation selectors and tag characters are left alone, since
+/// scripts and emoji are spelled with them.
+pub fn is_disguising(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            // Format characters and default ignorables, less the ones above.
+            '\u{00ad}'
+                | '\u{034f}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061c}'
+                | '\u{06dd}'
+                | '\u{070f}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08e2}'
+                | '\u{115f}'..='\u{1160}'
+                | '\u{17b4}'..='\u{17b5}'
+                | '\u{180e}'
+                | '\u{200b}'
+                | '\u{200e}'..='\u{200f}'
+                // Line and paragraph separators, then the bidi embeddings and
+                // overrides.
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{3164}'
+                | '\u{feff}'
+                | '\u{ffa0}'
+                | '\u{fff0}'..='\u{fffb}'
+                | '\u{110bd}'
+                | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0000}'..='\u{e001f}'
+                | '\u{e0080}'..='\u{e00ff}'
+                | '\u{e01f0}'..='\u{e0fff}'
+        )
 }
 
-/// Escapes the control characters in text printed to the terminal, which can
+/// `text` with every character `is_disguising` names spelled out as an escape,
+/// so it shows exactly what it holds. The one function every piece of text
+/// from outside filectrl passes through on its way to the screen or the log: a
+/// file name, a message naming one, a desktop entry's name. A newline is
+/// escaped too, so a name cannot forge a log record or a second line.
+pub fn visible(text: &str) -> Cow<'_, str> {
+    escape_disguising(text, |_| false)
+}
+
+/// `visible` for text printed to the terminal outside the interface, which can
 /// carry a path from the command line, a symlink or a config file. A newline is
 /// kept, since usage text and some error messages span lines.
 pub fn escape_for_terminal(text: &str) -> Cow<'_, str> {
-    escape_controls_except(text, |c| c == '\n')
+    escape_disguising(text, |c| c == '\n')
 }
 
-fn escape_controls_except(text: &str, keep: impl Fn(char) -> bool) -> Cow<'_, str> {
-    let is_escaped = |c: char| c.is_control() && !keep(c);
+fn escape_disguising(text: &str, keep: impl Fn(char) -> bool) -> Cow<'_, str> {
+    let is_escaped = |c: char| is_disguising(c) && !keep(c);
     if !text.contains(is_escaped) {
         return Cow::Borrowed(text);
     }
@@ -218,8 +263,11 @@ mod tests {
     #[test_case("a\u{1b}]52;c;eA==\u{7}b" => "a\\u{1b}]52;c;eA==\\u{7}b" ; "an escape sequence is escaped")]
     #[test_case("a\u{9b}2Jb" => "a\\u{9b}2Jb" ; "a C1 control is escaped")]
     #[test_case("a\nb\tc" => "a\\nb\\tc" ; "a newline and a tab are escaped")]
-    fn escape_controls_produces(message: &str) -> String {
-        escape_controls(message).into_owned()
+    #[test_case("a\u{202e}b" => "a\\u{202e}b" ; "a bidi override is escaped")]
+    #[test_case("a\u{2063}b\u{3164}c" => "a\\u{2063}b\\u{3164}c" ; "invisible characters are escaped")]
+    #[test_case("a\u{200d}b\u{fe0f}" => "a\u{200d}b\u{fe0f}" ; "a joiner and a variation selector are kept")]
+    fn visible_produces(message: &str) -> String {
+        visible(message).into_owned()
     }
 
     #[test_case("a\nb" => "a\nb" ; "a newline is kept")]

@@ -11,8 +11,8 @@ use ratatui::{
     crossterm::{
         cursor::Show,
         event::{
-            DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
-            PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+            KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -53,6 +53,7 @@ fn restore_terminal() {
         stdout(),
         Show,
         PopKeyboardEnhancementFlags,
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
     );
@@ -98,6 +99,10 @@ impl CleanupOnDropTerminal {
                 stdout,
                 EnterAlternateScreen,
                 EnableMouseCapture,
+                // Without it a paste arrives as keystrokes, and a line break in
+                // it as Enter, so pasted text could answer prompts and run
+                // bindings.
+                EnableBracketedPaste,
                 PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
             )?;
 

@@ -114,6 +114,9 @@ pub enum ConflictChoice {
 pub enum Command {
     // Terminal input events
     Key(KeyCode, KeyModifiers),
+    /// Text the terminal delivered as one bracketed paste, so a line break in
+    /// it is text rather than Enter.
+    PasteText(String),
     Mouse(MouseEvent),
     Resize {
         width: u16,
@@ -266,6 +269,7 @@ impl Command {
                     Some(Self::Mouse(*mouse_event))
                 }
             }
+            Event::Paste(text) => Some(Self::PasteText(text.clone())),
             Event::Resize(w, h) => Some(Self::Resize {
                 width: *w,
                 height: *h,

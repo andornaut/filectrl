@@ -221,6 +221,13 @@ fn recursively_handle_command(
                 CommandResult::NotHandled
             }
         }
+        Command::PasteText(text) => {
+            if handler.should_handle_key(mode) {
+                handler.handle_paste(text)
+            } else {
+                CommandResult::NotHandled
+            }
+        }
         Command::Mouse(mouse_event) => {
             if handler.should_handle_mouse(*mouse_event) {
                 handler.handle_mouse(*mouse_event)
@@ -243,7 +250,7 @@ fn recursively_handle_command(
     // wherever the cursor is, so a wheel event over another view must reach both,
     // and short-circuiting would make that depend on sibling order. Non-key
     // commands are always broadcast to every handler.
-    let is_key = matches!(command, Command::Key(_, _));
+    let is_key = matches!(command, Command::Key(_, _) | Command::PasteText(_));
     let mut key_consumed = is_key && claimed;
     handler.visit_command_handlers(&mut |child| {
         if key_consumed {
@@ -260,12 +267,13 @@ fn recursively_handle_command(
 }
 
 // Terminal events that may go unhandled without error:
-// - Key/Mouse: not all inputs are bound to actions
+// - Key/PasteText/Mouse: not all inputs are bound to actions, and a paste
+//   outside a text prompt is ignored
 // - Resize: wakes the render loop; ratatui redraws automatically
 fn is_ignorable_unhandled(command: &Command) -> bool {
     matches!(
         command,
-        Command::Key(_, _) | Command::Mouse(_) | Command::Resize { .. }
+        Command::Key(_, _) | Command::PasteText(_) | Command::Mouse(_) | Command::Resize { .. }
     )
 }
 
@@ -288,8 +296,8 @@ fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
 /// came back as went out, all unclaimed, and every one is an input event.
 ///
 /// A claimed command may have changed the screen, so any batch holding one
-/// redraws. An unclaimed input event cannot have: `handle_key` and `handle_mouse`
-/// return `NotHandled` only from arms that touch no state, which is what an
+/// redraws. An unclaimed input event cannot have: `handle_key`, `handle_paste`
+/// and `handle_mouse` return `NotHandled` only from arms that touch no state, which is what an
 /// unbound keystroke or a click landing on no view hits.
 ///
 /// `Resize` is excluded, though it too goes unhandled: it is the notification
@@ -297,9 +305,12 @@ fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
 fn changed_nothing_visible(received: usize, remaining: &[Command]) -> bool {
     !remaining.is_empty()
         && remaining.len() == received
-        && remaining
-            .iter()
-            .all(|command| matches!(command, Command::Key(_, _) | Command::Mouse(_)))
+        && remaining.iter().all(|command| {
+            matches!(
+                command,
+                Command::Key(_, _) | Command::PasteText(_) | Command::Mouse(_)
+            )
+        })
 }
 
 fn should_quit(commands: &[Command]) -> bool {
@@ -662,6 +673,10 @@ mod tests {
             None,
             Command::maybe_from(&Event::Mouse(mouse(MouseEventKind::Moved)))
         );
+        assert_eq!(
+            Some(Command::PasteText("a\nb".into())),
+            Command::maybe_from(&Event::Paste("a\nb".into()))
+        );
         assert_eq!(None, Command::maybe_from(&Event::FocusGained));
     }
 
@@ -678,6 +693,7 @@ mod tests {
             width: 1,
             height: 1
         }));
+        assert!(is_ignorable_unhandled(&Command::PasteText("x".into())));
         assert!(!is_ignorable_unhandled(&Command::Quit));
         assert!(!is_ignorable_unhandled(&Command::AlertInfo("x".into())));
     }

@@ -52,20 +52,42 @@ pub struct AppCandidate {
 }
 
 /// The applications that can open `path`, most preferred first, always followed
-/// by the configured opener when one is set.
-pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
+/// by the configured opener when one is set, and a message for each installed
+/// application left out because opening the file with it could run the file's
+/// name as code.
+pub fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
     // Resolve symlinks so that the type is sniffed from the target. The result
     // is always absolute, which desktop entries expect and which keeps a path
     // from ever being read as a command line flag.
     let path = std::fs::canonicalize(path)
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf());
-    let mut candidates = platform_candidates(&path);
+    let (mut candidates, refused) = platform_candidates(&path);
+    // On the full names, so two that differ only past the cut both stay.
     dedupe_by_name(&mut candidates);
+    for candidate in &mut candidates {
+        candidate.name = shown_name(&candidate.name);
+    }
     if let Some(fallback) = configured_opener(&path) {
         candidates.push(fallback);
     }
-    candidates
+    (candidates, refused)
+}
+
+/// Longest application name shown, so the detail after it that tells two
+/// entries apart always has room.
+const MAX_NAME_CHARS: usize = 48;
+
+/// An application's name as the picker shows it and compares it: passed
+/// through `crate::visible`, so an invisible character cannot make two names
+/// look the same, and cut at `MAX_NAME_CHARS`.
+fn shown_name(name: &str) -> String {
+    let mut name = crate::visible(name).into_owned();
+    if let Some((end, _)) = name.char_indices().nth(MAX_NAME_CHARS) {
+        name.truncate(end);
+        name.push('…');
+    }
+    name
 }
 
 /// Drop every candidate whose name a better ranked one already used. Several
@@ -77,18 +99,20 @@ fn dedupe_by_name(candidates: &mut Vec<AppCandidate>) {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
+fn platform_candidates(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
     linux::candidates_for(path)
 }
 
+/// Launch Services hands back applications, not command lines, so nothing is
+/// refused.
 #[cfg(target_os = "macos")]
-fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
-    macos::candidates_for(path)
+fn platform_candidates(path: &Path) -> (Vec<AppCandidate>, Vec<String>) {
+    (macos::candidates_for(path), Vec::new())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
-    Vec::new()
+fn platform_candidates(_: &Path) -> (Vec<AppCandidate>, Vec<String>) {
+    (Vec::new(), Vec::new())
 }
 
 /// The `openers` template for this kind of path, offered last so that the
@@ -105,9 +129,12 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
         debug!("No configured opener for {}", path.display());
         return None;
     }
-    let command = shell::template(template, &shell::quote(path.as_os_str()));
     Some(AppCandidate {
-        argv: vec![OsString::from("sh"), OsString::from("-c"), command],
+        argv: shell::command(
+            template,
+            shell::Parameters::One,
+            [path.as_os_str().to_os_string()],
+        ),
         // The setting it comes from, so it is obvious which config key to
         // change.
         detail: format!("openers.{key}"),
@@ -121,7 +148,9 @@ fn configured_opener(path: &Path) -> Option<AppCandidate> {
 mod tests {
     use std::ffi::OsString;
 
-    use super::{AppCandidate, dedupe_by_name};
+    use test_case::test_case;
+
+    use super::{AppCandidate, dedupe_by_name, shown_name};
 
     fn candidate(name: &str, detail: &str) -> AppCandidate {
         AppCandidate {
@@ -131,6 +160,14 @@ mod tests {
             name: name.to_string(),
             working_dir: None,
         }
+    }
+
+    /// An invisible character would make two rows read the same, and a long
+    /// name would push the detail that tells them apart off screen.
+    #[test_case("Text\u{2063} Editor" => "Text\\u{2063} Editor" ; "an invisible character is spelled out")]
+    #[test_case(&"x".repeat(60) => format!("{}…", "x".repeat(48)) ; "a long name is cut")]
+    fn shown_name_produces(name: &str) -> String {
+        shown_name(name)
     }
 
     #[test]

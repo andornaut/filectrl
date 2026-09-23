@@ -14,7 +14,9 @@ log_level = "off"
 # Buffer sizes for file operations
 buffer_max_bytes = 64000000 # 64 MB
 buffer_min_bytes = 64000 # 64 KB
-# Minimum time between filesystem updates to avoid excessive refreshes
+# Minimum time between filesystem updates to avoid excessive refreshes. A
+# directory that is slow to list waits at least four times as long as its last
+# listing took.
 refresh_debounce_milliseconds = 500
 # Bounds on a recursive search: how many directory levels below the search root
 # are visited, and how many matches are collected before the walk stops
@@ -22,19 +24,19 @@ search_max_depth = 20
 search_max_results = 10000
 
 # Programs to use to open files or directories, run with `sh -c`:
-# %s is replaced by the relevant path, already quoted for the shell. A template
-# with %s inside quotes of your own, or after a backslash, is refused: the path's
-# quoting would close them, and the shell would then interpret the name. Text
-# read a second time (eval, a here-document, a nested sh -c %s) is not covered.
+# %s stands for the relevant path, which the shell receives as an argument
+# ("$1") rather than as part of the command, so a file name never runs as code.
+# Only a template that hands it to another parser (eval, a nested sh -c, ssh,
+# bash arithmetic such as $(( %s ))) can still run it.
 [openers.linux]
 # xterm has no working directory option, so the shell changes into the directory
 # and xterm inherits it
 open_directory = "cd %s && exec xterm" # e.g. "alacritty --working-directory %s"
 open_file = "xdg-open %s"
 open_filectrl_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
-# Used by "open with" for desktop entries that declare Terminal=true. Here %s is
-# replaced by a command line rather than by a path. Set it to "" to leave such
-# applications out of the picker.
+# Used by "open with" for desktop entries that declare Terminal=true. Here %s
+# stands for the command to run, each word its own argument, rather than for a
+# path. Set it to "" to leave such applications out of the picker.
 run_in_terminal = "xterm -e %s" # e.g. "alacritty --command %s"
 
 [openers.macos]

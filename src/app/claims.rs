@@ -88,7 +88,7 @@ pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers 
 /// One instance of every `Command` variant that a handler must claim.
 ///
 /// Deliberately absent:
-/// - `Key`, `Mouse`, `Resize`: terminal input that may go unbound, which
+/// - `Key`, `PasteText`, `Mouse`, `Resize`: terminal input that may go unbound, which
 ///   `is_ignorable_unhandled` exempts.
 /// - `Quit`: it must stay *unclaimed*. `App::run` detects it in the unhandled
 ///   list and returns before `must_not_contain_unhandled` runs, so a handler
@@ -206,7 +206,11 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
 fn every_variant_is_accounted_for(command: &Command) {
     match command {
         // Exempt (see `claimable_commands`).
-        Command::Key(_, _) | Command::Mouse(_) | Command::Resize { .. } | Command::Quit => {}
+        Command::Key(_, _)
+        | Command::PasteText(_)
+        | Command::Mouse(_)
+        | Command::Resize { .. }
+        | Command::Quit => {}
         // Must be claimed.
         Command::OpenCurrentDirectory
         | Command::OpenNewWindow

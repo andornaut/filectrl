@@ -1,3 +1,6 @@
+// Text shown here goes through `crate::visible`; see clippy.toml.
+#![warn(clippy::disallowed_methods)]
+
 mod alerts;
 mod breadcrumbs;
 mod help;

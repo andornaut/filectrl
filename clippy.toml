@@ -1,0 +1,8 @@
+# Enabled only under src/views (see the top of src/views.rs), where text
+# reaches the screen: a path shown there goes through `crate::visible`, via
+# `visible_name`, `visible_path` or `compact`.
+disallowed-methods = [
+    { path = "std::path::Path::display", reason = "show a path through `compact` or `visible_path`" },
+    { path = "std::path::Path::to_string_lossy", reason = "show a path through `compact` or `visible_path`" },
+    { path = "std::ffi::OsStr::to_string_lossy", reason = "show a name through `visible_name`" },
+]

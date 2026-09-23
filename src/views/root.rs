@@ -150,8 +150,13 @@ impl CommandHandler for RootView {
             Command::OpenWithPrompt(path) => {
                 // RootView owns the picker, so showing it is a direct call
                 // rather than a broadcast.
-                self.open_with.show(path);
-                CommandResult::Handled
+                let refused = self.open_with.show(path);
+                let alerts: Vec<Command> = refused.into_iter().map(Command::AlertWarn).collect();
+                if alerts.is_empty() {
+                    CommandResult::Handled
+                } else {
+                    alerts.into()
+                }
             }
             Command::ResetView => {
                 self.is_help_visible = false;

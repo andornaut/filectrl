@@ -11,8 +11,15 @@ use crate::app::config::theme::Theme;
 use crate::command::PromptAction;
 
 impl View for PromptView {
+    /// One row, or one per line of a confirmation that lists what it asks
+    /// about.
     fn constraint(&self, _: Rect) -> Constraint {
-        Constraint::Length(1)
+        let lines = if self.actions.is_confirmation() {
+            self.label().lines().count()
+        } else {
+            1
+        };
+        Constraint::Length(u16::try_from(lines).unwrap_or(1))
     }
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {

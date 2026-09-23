@@ -14,6 +14,12 @@ pub trait CommandHandler {
         CommandResult::NotHandled
     }
 
+    /// Only invoked if self.should_handle_key() returns true, since a paste is
+    /// typed input delivered at once.
+    fn handle_paste(&mut self, _text: &str) -> CommandResult {
+        CommandResult::NotHandled
+    }
+
     fn handle_mouse(&mut self, _event: MouseEvent) -> CommandResult {
         // Only invoked if self.should_handle_mouse() returns true
         CommandResult::NotHandled

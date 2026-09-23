@@ -17,14 +17,7 @@ impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::OpenPrompt(kind) => self.open(kind),
-            Command::ClipboardText(text) => {
-                self.text_area.set_yank_text(text);
-                self.text_area.paste();
-                // Pasting changes the input, so the Goto suggestions must be
-                // recomputed like any other edit (no-op for other prompts).
-                self.refresh_suggestions();
-                CommandResult::Handled
-            }
+            Command::ClipboardText(text) => self.insert_text(text),
             _ => CommandResult::NotHandled,
         }
     }
@@ -88,6 +81,15 @@ impl CommandHandler for PromptView {
         self.handle_text_key(action, code, modifiers)
     }
 
+    /// A paste into a text prompt is inserted as text. One into a y/n prompt
+    /// is ignored rather than read as answers, whatever letters it holds.
+    fn handle_paste(&mut self, text: &str) -> CommandResult {
+        if self.actions.is_confirmation() {
+            return CommandResult::Handled;
+        }
+        self.insert_text(text)
+    }
+
     fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
         let visual_col = event.column.saturating_sub(self.render_area.x);
         let char_idx = self.display_col_to_char_idx(visual_col.saturating_add(self.scroll_col));
@@ -122,6 +124,20 @@ impl CommandHandler for PromptView {
 }
 
 impl PromptView {
+    /// Inserts `text` at the cursor, without its line breaks and other control
+    /// characters: the input is one line, a pasted name that was copied with
+    /// its newline would otherwise not match, and a tab or escape is never
+    /// meant as part of a name.
+    fn insert_text(&mut self, text: &str) -> CommandResult {
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        self.text_area.set_yank_text(text);
+        self.text_area.paste();
+        // Pasting changes the input, so the Goto suggestions must be
+        // recomputed like any other edit (no-op for other prompts).
+        self.refresh_suggestions();
+        CommandResult::Handled
+    }
+
     /// The text-editing half of `handle_key`, after the single-keypress prompts
     /// have had their turn. `action` is `code` and `modifiers` looked up in the
     /// prompt keybindings.

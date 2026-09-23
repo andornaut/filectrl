@@ -53,7 +53,7 @@ impl TableView {
                 Ok(path) => Command::Open(path).into(),
                 Err(error) => Command::AlertError(format!(
                     "Failed to open the home directory {}: {error:#}",
-                    base_dirs.home_dir().display()
+                    compact(base_dirs.home_dir())
                 ))
                 .into(),
             },
@@ -61,6 +61,8 @@ impl TableView {
         }
     }
 
+    // The input starts from the path itself, which submitting has to resolve.
+    #[allow(clippy::disallowed_methods)]
     pub(super) fn open_goto_prompt(&self) -> CommandResult {
         let directory = self
             .content
@@ -114,6 +116,7 @@ impl TableView {
                 // The name itself rather than `display_name`, which spells out
                 // disguising characters: submitting the prompt unchanged must
                 // not rename the file to its escaped form.
+                #[allow(clippy::disallowed_methods)]
                 let name = path
                     .path
                     .file_name()

@@ -3,7 +3,10 @@ use std::{
     path::Path,
 };
 
-use crate::{command::Command, file_system::path_info::PathInfo};
+use crate::{
+    command::Command,
+    file_system::path_info::{PathInfo, compact},
+};
 use anyhow::{Context, Error, Result, anyhow};
 use arboard::Clipboard as ArboardClipboard;
 use log::warn;
@@ -183,7 +186,7 @@ fn resolve_clipboard_text(
 }
 
 fn path_info(path: &Path) -> Result<PathInfo> {
-    PathInfo::try_from(path).with_context(|| format!("Failed to access {}", path.display()))
+    PathInfo::try_from(path).with_context(|| format!("Failed to access {}", compact(path)))
 }
 
 /// Parses clipboard text, distinguishing unrelated text (ignored) from a
@@ -365,10 +368,10 @@ mod tests {
         assert!(parse_clipboard_text(&text).unwrap().is_none(), "{text}");
     }
 
-    #[test_case("mv '/filectrl-does-not-exist-xyz'" => "Failed to access /filectrl-does-not-exist-xyz" ; "a missing path")]
+    #[test_case("mv '/filectrl-does-not-exist-xyz'" => "Failed to access \"/filectrl-does-not-exist-xyz\"" ; "a missing path")]
     // The entry parser splits on any whitespace, so classification must not
     // depend on a literal "cp "/"mv " space prefix.
-    #[test_case("mv\t'/filectrl-does-not-exist-xyz'" => "Failed to access /filectrl-does-not-exist-xyz" ; "a tab-separated missing path")]
+    #[test_case("mv\t'/filectrl-does-not-exist-xyz'" => "Failed to access \"/filectrl-does-not-exist-xyz\"" ; "a tab-separated missing path")]
     // A filectrl-written entry mangled by a clipboard manager: the quote never
     // closes, so tokenizing fails, but the operation token makes it clearly an
     // entry, not prose.
