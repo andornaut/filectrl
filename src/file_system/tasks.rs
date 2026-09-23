@@ -17,7 +17,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use log::{error, info, warn};
+use log::{info, warn};
 use rustix::{
     fs::{
         AtFlags, CWD, Dir, FileType, Mode, OFlags, fcntl_getfl, fcntl_setfl, fstat, mkdirat,
@@ -107,6 +107,10 @@ struct CopyOutcome {
     errors: Vec<String>,
     skipped: usize,
     root: Option<DirId>,
+    /// The tree debouncer's threshold, which a copy too quick to outlast the
+    /// time floor gives no other way to observe.
+    #[cfg(test)]
+    progress_threshold: u64,
 }
 
 const BUFFER_SIZE_DIVISOR: u64 = 20;
@@ -139,15 +143,7 @@ fn queue_operation(job: impl FnOnce() + Send + 'static) {
         let (tx, rx) = mpsc::channel::<Job>();
         thread::spawn(move || {
             for job in rx {
-                // A panicking job must not take the worker down with it: the
-                // receiver would be dropped, and every later operation would
-                // register a task, announce itself at 0%, and never run. The
-                // job's `ActiveTask` still finalizes as it unwinds, so the
-                // notice clears. Release builds abort on panic, so this only
-                // has anything to catch in a debug build.
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
-                    error!("A file operation panicked; the queue is still running");
-                }
+                job();
             }
         });
         tx
@@ -523,6 +519,8 @@ fn copy_with_progress(
             errors,
             skipped: context.skipped,
             root: context.root,
+            #[cfg(test)]
+            progress_threshold: context.progress.threshold(),
         },
     ))
 }
@@ -3878,23 +3876,6 @@ mod tests {
     }
 
     #[test]
-    fn a_panicking_job_does_not_stop_the_queue() {
-        // The worker is shared by every file operation. If a panic took it
-        // down, every later operation would register a task, announce itself
-        // at 0%, and never run or finish.
-        queue_operation(|| panic!("a file operation panicked on purpose"));
-        let (tx, rx) = std::sync::mpsc::channel();
-        queue_operation(move || {
-            let _ = tx.send(());
-        });
-
-        assert!(
-            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
-            "the job queued after a panicking one never ran"
-        );
-    }
-
-    #[test]
     fn rename_no_replace_moves_to_new_destination() {
         let fx = TempDir::new("tasks");
         let src = fx.join("a.txt");
@@ -4076,6 +4057,13 @@ mod tests {
         };
         assert_eq!(0, first.completed);
         assert_eq!(10, chunk.completed);
+        // The copy finishes inside the floor, so the updates above cannot tell
+        // a share of the total from none at all. The threshold can.
+        assert_eq!(
+            total * PROGRESS_DEBOUNCE_PERCENTAGE / 100,
+            outcome.progress_threshold
+        );
+        assert_ne!(0, outcome.progress_threshold);
     }
 
     #[test_case(false ; "a file")]

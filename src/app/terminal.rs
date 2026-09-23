@@ -59,12 +59,10 @@ fn restore_terminal_once() {
 /// A terminal wrapper that restores the terminal state on drop.
 ///
 /// Two cleanup paths, each covering what the other cannot: `Drop` runs on normal
-/// exit and on a debug-build panic, which unwinds; the panic hook (installed in
-/// `try_new`) covers a release-build panic, where `panic = "abort"` never calls
-/// `Drop` and would leave the shell in raw mode.
-///
-/// A debug panic fires both, and `TERMINAL_RESTORED` leaves whichever runs first
-/// the only one to emit escape sequences.
+/// exit, and the panic hook (installed in `try_new`) covers a panic, where
+/// `panic = "abort"` never calls `Drop` and would leave the shell in raw mode.
+/// `TERMINAL_RESTORED` leaves whichever runs first the only one to emit escape
+/// sequences.
 pub struct CleanupOnDropTerminal {
     terminal: CrosstermTerminal,
 }
@@ -75,9 +73,9 @@ impl CleanupOnDropTerminal {
         // not silently single-use.
         TERMINAL_RESTORED.store(false, Ordering::SeqCst);
 
-        // Release builds use `panic = "abort"`, which skips stack unwinding and
-        // therefore never calls `Drop`. This hook ensures the terminal is
-        // restored even in that case.
+        // Every build profile but the test one uses `panic = "abort"`, which
+        // skips stack unwinding and therefore never calls `Drop`. This hook
+        // restores the terminal before the abort.
         let original_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
             restore_terminal_once();

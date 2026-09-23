@@ -70,6 +70,11 @@ objc2-foundation = {version = "0.3.2", default-features = false, features = ["st
 cargo-husky = {version = "1.5.0", default-features = false, features = ["user-hooks"]}
 test-case = "3.3.1"
 
+# Abort in every build, so a panic behaves the same in development as in a
+# release. Cargo ignores `panic` for test targets, which always unwind.
+[profile.dev]
+panic = 'abort'
+
 [profile.release]
 codegen-units = 1 # Reduce number of codegen units to increase optimizations.
 lto = true # Enable Link Time Optimization

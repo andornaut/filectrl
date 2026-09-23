@@ -52,6 +52,13 @@ impl ProgressDebouncer {
         self.last_triggered = Some(at);
         true
     }
+
+    /// The count that makes an update due, for a test to check what a caller
+    /// built the debouncer against.
+    #[cfg(test)]
+    pub fn threshold(&self) -> u64 {
+        self.threshold
+    }
 }
 
 /// Enforces a minimum interval between triggers. An event arriving after the
@@ -130,6 +137,16 @@ mod tests {
             let now = Instant::now();
             d.should_trigger(now, 1); // first call
             assert!(d.should_trigger(now + LATER, 50_000));
+        }
+
+        #[test]
+        fn one_percent_of_the_total_is_due_and_less_is_not() {
+            let mut d = ProgressDebouncer::new(1, FLOOR, 1_000); // threshold = 10
+            let now = Instant::now();
+            d.should_trigger(now, 1); // first call
+            // The floor has long elapsed, so only the count holds these back.
+            assert!(!d.should_trigger(now + LATER, 9));
+            assert!(d.should_trigger(now + LATER, 1));
         }
 
         #[test]

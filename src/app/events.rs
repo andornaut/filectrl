@@ -1,7 +1,6 @@
 use std::{
     io,
     os::fd::{AsFd, BorrowedFd, IntoRawFd, OwnedFd},
-    panic::{self, AssertUnwindSafe},
     sync::{
         OnceLock,
         atomic::{AtomicBool, AtomicI32, Ordering},
@@ -269,17 +268,7 @@ pub(super) fn spawn_command_sender(tx: &Sender<Command>) {
     let builder = thread::Builder::new().name("filectrl-event-reader".into());
     let reader_tx = tx.clone();
     let spawn_result = builder.spawn(move || {
-        // Without catch_unwind a panic kills only this thread, silently,
-        // leaving the main loop blocked on rx.recv() forever.
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            event_loop(&reader_tx, poll_interval, &mut TerminalEventSource);
-        }));
-        if let Err(payload) = result {
-            let message = panic_message(payload.as_ref());
-            log::error!("Event reader thread panicked: {message}");
-            // Wake the main loop so it doesn't block forever.
-            let _ = reader_tx.send(Command::Quit);
-        }
+        event_loop(&reader_tx, poll_interval, &mut TerminalEventSource);
     });
 
     if let Err(err) = spawn_result {
@@ -345,16 +334,6 @@ fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, sou
     }
 }
 
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        s
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.as_str()
-    } else {
-        "<non-string panic payload>"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::VecDeque, sync::mpsc, time::Duration};
@@ -364,11 +343,10 @@ mod tests {
     use std::os::fd::AsFd;
 
     use nix::{libc, sys::signal::Signal};
-    use test_case::test_case;
 
     use super::{
         Command, EventSource, event_loop, handle_signal, ignore_signal, install_signal_handlers,
-        panic_message, receive_commands, watch_signal_pipe,
+        receive_commands, watch_signal_pipe,
     };
 
     const INTERVAL: Duration = Duration::from_millis(500);
@@ -593,12 +571,5 @@ mod tests {
             };
             assert_eq!(expected, *handler, "{signal}");
         }
-    }
-
-    #[test_case(&"boom" => "boom" ; "a str payload")]
-    #[test_case(&String::from("kaboom") => "kaboom" ; "a String payload")]
-    #[test_case(&42u32 => "<non-string panic payload>" ; "any other payload")]
-    fn a_panic_payload_renders_as_its_message(payload: &(dyn std::any::Any + Send)) -> String {
-        panic_message(payload).to_string()
     }
 }
