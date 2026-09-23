@@ -37,18 +37,14 @@ pub fn supports_truecolor(colorterm: Option<&str>) -> bool {
 /// closure that cannot reach instance state; `try_new` re-arms it.
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 
-/// Restores the terminal at most once per acquisition (see
-/// `TERMINAL_RESTORED`). Callable from any cleanup path.
+/// Undoes everything `try_new` set up, at most once per acquisition (see
+/// `TERMINAL_RESTORED`), in one shared sequence so the cleanup paths cannot
+/// drift. Errors are ignored: this runs in exit and panic paths where there is
+/// nothing useful to do with them.
 fn restore_terminal_once() {
-    if !TERMINAL_RESTORED.swap(true, Ordering::SeqCst) {
-        restore_terminal();
+    if TERMINAL_RESTORED.swap(true, Ordering::SeqCst) {
+        return;
     }
-}
-
-/// Undoes everything `try_new` set up, in one shared sequence so the cleanup
-/// paths cannot drift. Errors are ignored: this runs in exit and panic paths
-/// where there is nothing useful to do with them.
-fn restore_terminal() {
     let _ = execute!(
         stdout(),
         Show,
@@ -113,10 +109,6 @@ impl CleanupOnDropTerminal {
         };
         build().inspect_err(|_| restore_terminal_once())
     }
-
-    fn cleanup() {
-        restore_terminal_once();
-    }
 }
 
 impl Deref for CleanupOnDropTerminal {
@@ -135,7 +127,7 @@ impl DerefMut for CleanupOnDropTerminal {
 
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
-        Self::cleanup();
+        restore_terminal_once();
     }
 }
 

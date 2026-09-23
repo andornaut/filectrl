@@ -60,7 +60,6 @@ impl ProgressDebouncer {
 pub struct TimeDebouncer {
     last_triggered: Option<Instant>,
     threshold: Duration,
-    has_delayed_event: bool,
 }
 
 impl TimeDebouncer {
@@ -68,7 +67,6 @@ impl TimeDebouncer {
         Self {
             last_triggered: None,
             threshold: debounce_threshold,
-            has_delayed_event: false,
         }
     }
 
@@ -79,7 +77,6 @@ impl TimeDebouncer {
 
         if time_since_last_trigger.is_none_or(|d| d >= self.threshold) {
             self.last_triggered = Some(at);
-            self.has_delayed_event = false;
             true
         } else {
             false
@@ -96,14 +93,6 @@ impl TimeDebouncer {
 
     pub fn set_threshold(&mut self, threshold: Duration) {
         self.threshold = threshold;
-    }
-
-    pub fn has_delayed_event(&self) -> bool {
-        self.has_delayed_event
-    }
-
-    pub fn set_delayed_event(&mut self) {
-        self.has_delayed_event = true;
     }
 }
 
@@ -232,21 +221,6 @@ mod tests {
                 Duration::ZERO,
                 d.remaining(now + Duration::from_millis(150))
             );
-        }
-
-        #[test]
-        fn triggering_clears_delayed_event() {
-            let mut d = TimeDebouncer::new(Duration::from_millis(100));
-            let now = Instant::now();
-            // Nothing is scheduled yet: the watcher reads this to decide
-            // whether a burst still needs its trailing refresh queued.
-            assert!(!d.has_delayed_event());
-            d.should_trigger(now);
-            assert!(!d.has_delayed_event());
-            d.set_delayed_event();
-            assert!(d.has_delayed_event());
-            d.should_trigger(now + Duration::from_millis(100));
-            assert!(!d.has_delayed_event());
         }
     }
 }

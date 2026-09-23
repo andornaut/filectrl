@@ -53,7 +53,7 @@ impl View for PromptView {
             let typed_width = self.text_area.lines()[0].cell_width();
             let start = typed_width.saturating_sub(self.scroll_col);
             if start < input_area.width {
-                let text = suggestion_overlay_text(suffix, idx, total);
+                let text = suggestion_overlay_text(&suffix, idx, total);
                 let max_width = input_area.width.saturating_sub(start) as usize;
                 frame.buffer_mut().set_stringn(
                     input_area.x + start,

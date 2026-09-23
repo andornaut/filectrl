@@ -21,14 +21,14 @@ const LISTING_COST_FACTOR: u32 = 4;
 
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,
-    /// Shared with the watcher threads, which read the current window from it.
+    /// Shared with the watcher thread, which reads the current window from it.
     debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
-    handles: Vec<thread::JoinHandle<()>>,
+    handle: Option<thread::JoinHandle<()>>,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched_directory: Option<PathBuf>,
-    /// Option so `Drop` can `.take()` it before joining the watcher threads.
+    /// Option so `Drop` can `.take()` it before joining the watcher thread.
     /// Dropping the watcher closes the notify channel sender, which unblocks
-    /// the threads waiting on the receiver so they can exit.
+    /// the thread waiting on the receiver so it can exit.
     watcher: Option<RecommendedWatcher>,
 }
 
@@ -40,7 +40,7 @@ impl DirectoryWatcher {
         Ok(Self {
             debounce_threshold,
             debouncer: Arc::new(Mutex::new(debounce::TimeDebouncer::new(debounce_threshold))),
-            handles: Vec::new(),
+            handle: None,
             notify_rx: Some(notify_rx),
             watcher: Some(watcher),
             watched_directory: None,
@@ -53,22 +53,10 @@ impl DirectoryWatcher {
             return;
         };
 
-        let (delayed_tx, delayed_rx) = channel();
-        let command_tx_for_delayed = command_tx.clone();
-        let command_tx_for_notify = command_tx.clone();
-        // Shared between both threads so a dispatched delayed refresh counts
-        // as a trigger (clearing the delayed flag and resetting the window).
+        let command_tx = command_tx.clone();
         let debouncer = Arc::clone(&self.debouncer);
-        let debouncer_for_delayed = Arc::clone(&debouncer);
-        self.handles.push(thread::spawn(move || {
-            watch_for_delayed_commands(
-                &command_tx_for_delayed,
-                &delayed_rx,
-                &debouncer_for_delayed,
-            );
-        }));
-        self.handles.push(thread::spawn(move || {
-            watch_for_notify_events(&command_tx_for_notify, &delayed_tx, notify_rx, &debouncer);
+        self.handle = Some(thread::spawn(move || {
+            watch_for_notify_events(&command_tx, &notify_rx, &debouncer);
         }));
     }
 
@@ -110,11 +98,11 @@ impl DirectoryWatcher {
 impl Drop for DirectoryWatcher {
     fn drop(&mut self) {
         // Drop the watcher first: it owns the notify channel sender. Dropping it
-        // causes notify_rx.recv() to return Err, which exits watch_for_notify_events,
-        // which in turn drops delayed_tx, exiting watch_for_delayed_commands.
-        // Without this, handle.join() below would block forever.
+        // disconnects notify_rx, which exits watch_for_notify_events, including
+        // one waiting out a debounce window. Without this, handle.join() below
+        // would block forever.
         self.watcher.take();
-        for handle in self.handles.drain(..) {
+        if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
     }
@@ -122,37 +110,36 @@ impl Drop for DirectoryWatcher {
 
 /// Debounces file system events into refreshes, on a background thread. An event
 /// arriving after the debounce window refreshes at once; one arriving inside it
-/// schedules a single delayed refresh, so a burst produces one refresh at the
-/// front and one at the end rather than one per event.
+/// leaves a trailing refresh pending until the window ends, so a burst produces
+/// one refresh at the front and one at the end rather than one per event.
+///
+/// While a refresh is pending the wait for the next event times out at the end
+/// of the window, read again on every pass: `pace` may have widened it
+/// meanwhile, in which case the refresh waits out the rest rather than being
+/// dropped. An event that refreshes at once makes a pending one redundant.
 fn watch_for_notify_events(
     command_tx: &Sender<Command>,
-    delayed_tx: &Sender<Duration>,
-    notify_rx: Receiver<std::result::Result<Event, notify::Error>>,
-    debouncer: &Arc<Mutex<debounce::TimeDebouncer>>,
+    notify_rx: &Receiver<std::result::Result<Event, notify::Error>>,
+    debouncer: &Mutex<debounce::TimeDebouncer>,
 ) {
-    for result in notify_rx {
-        match result {
-            Ok(event) => match event.kind {
+    let mut pending = false;
+    loop {
+        let received = if pending {
+            let remaining = debouncer.lock().unwrap().remaining(Instant::now());
+            notify_rx.recv_timeout(remaining)
+        } else {
+            notify_rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        match received {
+            Ok(Ok(event)) => match event.kind {
                 notify::EventKind::Create(_)
                 | notify::EventKind::Modify(_)
                 | notify::EventKind::Remove(_) => {
-                    let mut debouncer = debouncer.lock().unwrap();
-                    if debouncer.should_trigger(Instant::now()) {
-                        if let Err(e) = command_tx.send(Command::RefreshDirectory) {
-                            error!("Failed to send refresh command: {e}");
-                        }
-                    } else if !debouncer.has_delayed_event() {
-                        let delay = debouncer.remaining(Instant::now());
-                        if let Err(e) = delayed_tx.send(delay) {
-                            error!("Failed to schedule delayed refresh: {e}");
-                        } else {
-                            debouncer.set_delayed_event();
-                        }
-                    }
+                    pending = !refresh(command_tx, debouncer);
                 }
                 _ => (),
             },
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("File system watcher error: {e}");
                 let error_command = Command::AlertError(format!(
                     "Failed to run the directory watcher in the background: {e}"
@@ -161,46 +148,22 @@ fn watch_for_notify_events(
                     error!("Failed to send error command: {e}");
                 }
             }
+            Err(RecvTimeoutError::Timeout) => pending = !refresh(command_tx, debouncer),
+            Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
 
-/// Dispatches delayed refreshes. Each queued entry carries the remaining debounce
-/// delay; once slept out, the dispatch goes through the shared debouncer so it
-/// counts as a trigger. `should_trigger` returns false when an event already
-/// refreshed while this thread slept, making the delayed one redundant, or when
-/// `pace` widened the window meanwhile, in which case it waits out the rest.
-fn watch_for_delayed_commands(
-    command_tx: &Sender<Command>,
-    delayed_rx: &Receiver<Duration>,
-    debouncer: &Arc<Mutex<debounce::TimeDebouncer>>,
-) {
-    while let Ok(mut delay) = delayed_rx.recv() {
-        loop {
-            // Wait out the remainder on the channel rather than sleeping, so a
-            // disconnect (shutdown) interrupts the wait instead of blocking
-            // `Drop`'s join for up to the full debounce window.
-            loop {
-                match delayed_rx.recv_timeout(delay) {
-                    Ok(next) => delay = next,
-                    Err(RecvTimeoutError::Timeout) => break,
-                    Err(RecvTimeoutError::Disconnected) => return,
-                }
-            }
-            let mut debouncer = debouncer.lock().unwrap();
-            let now = Instant::now();
-            if debouncer.should_trigger(now) {
-                if let Err(e) = command_tx.send(Command::RefreshDirectory) {
-                    debug!("Delayed refresh not sent, likely due to shutdown: {e}");
-                }
-                break;
-            }
-            if !debouncer.has_delayed_event() {
-                break;
-            }
-            delay = debouncer.remaining(now);
-        }
+/// Sends a refresh if the debounce window allows one now, returning whether it
+/// did.
+fn refresh(command_tx: &Sender<Command>, debouncer: &Mutex<debounce::TimeDebouncer>) -> bool {
+    if !debouncer.lock().unwrap().should_trigger(Instant::now()) {
+        return false;
     }
+    if let Err(e) = command_tx.send(Command::RefreshDirectory) {
+        debug!("Refresh not sent, likely due to shutdown: {e}");
+    }
+    true
 }
 
 #[cfg(test)]
@@ -209,7 +172,7 @@ mod tests {
     use crate::test_support::TempDir;
 
     /// The window a refresh triggered at `at` waits out, read from the shared
-    /// debouncer the way the watcher threads read it.
+    /// debouncer the way the watcher thread reads it.
     fn window(watcher: &DirectoryWatcher, at: Instant) -> Duration {
         let mut debouncer = watcher.debouncer.lock().unwrap();
         assert!(debouncer.should_trigger(at));
@@ -229,36 +192,41 @@ mod tests {
         assert_eq!(Duration::from_millis(500), window(&watcher, later));
     }
 
-    /// A listing that finishes while a delayed refresh waits widens the
+    fn created() -> Event {
+        Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
+    }
+
+    /// A listing that finishes while a trailing refresh waits widens the
     /// window under it. The refresh is postponed to the new end, not dropped:
     /// dropping it would leave the last change of a burst unshown.
     #[test]
     fn a_delayed_refresh_outlasts_a_window_widened_while_it_waits() {
-        let debouncer = Arc::new(Mutex::new(debounce::TimeDebouncer::new(
-            Duration::from_millis(100),
-        )));
-        {
-            let mut debouncer = debouncer.lock().unwrap();
-            assert!(debouncer.should_trigger(Instant::now()));
-            debouncer.set_delayed_event();
-        }
+        const WINDOW: Duration = Duration::from_millis(200);
+        const WIDENED: Duration = Duration::from_millis(400);
+        let debouncer = Arc::new(Mutex::new(debounce::TimeDebouncer::new(WINDOW)));
         let (command_tx, command_rx) = channel();
-        let (delayed_tx, delayed_rx) = channel();
+        let (notify_tx, notify_rx) = channel();
         let shared = Arc::clone(&debouncer);
         let handle = thread::spawn(move || {
-            watch_for_delayed_commands(&command_tx, &delayed_rx, &shared);
+            watch_for_notify_events(&command_tx, &notify_rx, &shared);
         });
+        let start = Instant::now();
 
-        delayed_tx.send(Duration::from_millis(100)).unwrap();
-        debouncer
-            .lock()
-            .unwrap()
-            .set_threshold(Duration::from_millis(300));
+        // The first event of the burst refreshes at once, and the second,
+        // inside the window, leaves the trailing refresh pending.
+        notify_tx.send(Ok(created())).unwrap();
+        let leading = command_rx.recv_timeout(Duration::from_secs(2));
+        assert!(matches!(leading, Ok(Command::RefreshDirectory)));
+        notify_tx.send(Ok(created())).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        debouncer.lock().unwrap().set_threshold(WIDENED);
 
-        let refresh = command_rx.recv_timeout(Duration::from_secs(2));
-        drop(delayed_tx);
+        let trailing = command_rx.recv_timeout(Duration::from_secs(2));
+        let waited = start.elapsed();
+        drop(notify_tx);
         handle.join().unwrap();
-        assert!(matches!(refresh, Ok(Command::RefreshDirectory)));
+        assert!(matches!(trailing, Ok(Command::RefreshDirectory)));
+        assert!(waited >= WIDENED, "refreshed after {waited:?}");
     }
 
     #[test]

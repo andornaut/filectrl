@@ -1,12 +1,17 @@
 //! Running a configured shell template on a path.
 //!
-//! The path is never written into the script. `%s` becomes a reference to a
-//! positional parameter and the path is passed after the script as an
+//! The path is never written into the script. `%s` becomes a quoted reference
+//! to a positional parameter and the path is passed after the script as an
 //! argument, so the shell only ever expands it and never parses it: no file
 //! name can run as a command, whatever quoting, here-document or backticks the
 //! template puts around `%s`. Only a template that hands the text to another
 //! parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash
 //! arithmetic such as `$(( %s ))`, which evaluates `x[$(cmd)]`.
+//!
+//! `%s` must be written unquoted, as its own word. The reference carries its
+//! own double quotes, so inside double quotes it ends up unquoted and the value
+//! is split into words, and inside single quotes it stays the literal text
+//! `"$1"`. Neither is supported, and neither runs the value.
 //!
 //! The values are passed as raw bytes, so a path that is not valid UTF-8
 //! reaches the program intact.
@@ -25,68 +30,31 @@ pub(crate) enum Parameters {
 }
 
 impl Parameters {
-    /// The text that expands to exactly these parameters within `quote`.
-    fn reference(self, quote: &Quote) -> &'static str {
-        match (self, quote) {
-            (Parameters::One, Quote::None) => "\"$1\"",
-            (Parameters::One, Quote::Double) => "$1",
-            (Parameters::One, Quote::Single) => "'\"$1\"'",
-            (Parameters::All, Quote::None) => "\"$@\"",
-            (Parameters::All, Quote::Double) => "$@",
-            (Parameters::All, Quote::Single) => "'\"$@\"'",
+    /// The reference that expands to exactly these parameters when unquoted.
+    fn reference(self) -> &'static str {
+        match self {
+            Parameters::One => "\"$1\"",
+            Parameters::All => "\"$@\"",
         }
     }
 }
 
-/// The argv that runs `template` with `sh -c`, `%s` standing for `values`. The
-/// reference is written to expand to exactly the value wherever `%s` sits:
-/// quoted when it is outside quotes, bare inside double quotes, and closing and
-/// reopening single quotes around itself inside them. Backslashes are not
-/// tracked, so a misjudged quote state (after an escaped quote, or inside
-/// `$(...)`) can only split the value into words or garble it, never run it.
+/// The argv that runs `template` with `sh -c`, each `%s` replaced by a quoted
+/// reference to `values`.
 pub(crate) fn command(
     template: &str,
     parameters: Parameters,
     values: impl IntoIterator<Item = OsString>,
 ) -> Vec<OsString> {
-    let mut script = String::with_capacity(template.len() + 8);
-    let mut quote = Quote::None;
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' && chars.next_if_eq(&'s').is_some() {
-            script.push_str(parameters.reference(&quote));
-            continue;
-        }
-        quote.advance(c);
-        script.push(c);
-    }
     let mut argv = vec![
         OsString::from("sh"),
         OsString::from("-c"),
-        OsString::from(script),
+        OsString::from(template.replace("%s", parameters.reference())),
         // `$0`, which the shell names itself by in its messages.
         OsString::from("sh"),
     ];
     argv.extend(values);
     argv
-}
-
-/// The quote state of a script as `sh` reads it, advanced over its characters.
-enum Quote {
-    None,
-    Single,
-    Double,
-}
-
-impl Quote {
-    fn advance(&mut self, c: char) {
-        *self = match (&*self, c) {
-            (Quote::None, '\'') => Quote::Single,
-            (Quote::None, '"') => Quote::Double,
-            (Quote::Single, '\'') | (Quote::Double, '"') => Quote::None,
-            _ => return,
-        };
-    }
 }
 
 #[cfg(test)]
@@ -134,37 +102,48 @@ mod tests {
     }
 
     // Wherever `%s` sits, the value is only expanded, so nothing in it runs.
-    // Some of these do not pass it intact (a here-document keeps the quotes
-    // around the reference as text), which is the template's own concern.
+    // That holds for the quoted placements too, which are unsupported.
     #[test_case("./rec %s" ; "unquoted")]
     #[test_case("./rec \"%s\"" ; "inside double quotes")]
     #[test_case("./rec '%s'" ; "inside single quotes")]
+    #[test_case("./rec \"--file=%s\"" ; "embedded in a double quoted word")]
+    #[test_case("./rec '--file=%s'" ; "embedded in a single quoted word")]
     #[test_case("./rec \"$(./rec %s)\"" ; "in a command substitution")]
     #[test_case("./rec `./rec %s`" ; "in backticks")]
     #[test_case("cat <<EOF\n%s\nEOF" ; "in a here document")]
     #[test_case("true # it's\n./rec %s" ; "after a comment holding a quote")]
-    #[test_case("./rec $'\\'' %s" ; "after an ansi c quote")]
     fn a_hostile_name_is_never_run(template: &str) {
-        let (_, ran) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
-        assert!(!ran);
+        // Written into most of these scripts, `HOSTILE` leaves a quote open
+        // and is a syntax error that runs nothing, so balanced names are tried
+        // too: one that runs outside single quotes, one that runs inside them.
+        for name in [HOSTILE, "$(touch pwned)", "'$(touch pwned)'"] {
+            for parameters in [Parameters::One, Parameters::All] {
+                let (_, ran) = run(template, parameters, &[OsStr::new(name)]);
+                assert!(!ran, "{name:?}");
+            }
+        }
     }
 
-    #[test_case("./rec %s", "" ; "unquoted")]
-    #[test_case("./rec \"%s\"", "" ; "inside double quotes")]
-    #[test_case("./rec '%s'", "" ; "inside single quotes")]
-    #[test_case("./rec \"--file=%s\"", "--file=" ; "embedded in a double quoted word")]
-    #[test_case("./rec '--file=%s'", "--file=" ; "embedded in a single quoted word")]
-    fn the_value_arrives_as_one_word(template: &str, prefix: &str) {
+    #[test_case("./rec %s", "" ; "on its own")]
+    #[test_case("./rec --file=%s", "--file=" ; "embedded in a word")]
+    fn an_unquoted_value_arrives_as_one_word(template: &str, prefix: &str) {
         let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
         assert_eq!(vec![format!("{prefix}{HOSTILE}").into_bytes()], words);
     }
 
-    // Had the backslash ended the comment, the value `./rec` would run and
-    // print `x`.
-    #[test]
-    fn a_backslash_before_the_reference_does_not_end_a_comment() {
-        let (words, _) = run("true # see \\%s x", Parameters::One, &[OsStr::new("./rec")]);
-        assert!(words.is_empty(), "the opened file ran: {words:?}");
+    // The reference's own quotes close the surrounding double quotes, leaving
+    // it unquoted and split on the space, and are literal inside single quotes.
+    #[test_case("./rec \"%s\"", &["a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "inside double quotes")]
+    #[test_case("./rec \"--file=%s\"", &["--file=a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "embedded in a double quoted word")]
+    #[test_case("./rec '%s'", &["\"$1\""] ; "inside single quotes")]
+    #[test_case("./rec '--file=%s'", &["--file=\"$1\""] ; "embedded in a single quoted word")]
+    fn a_quoted_value_is_split_or_left_literal(template: &str, expected: &[&str]) {
+        let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
+        let expected: Vec<Vec<u8>> = expected
+            .iter()
+            .map(|word| word.as_bytes().to_vec())
+            .collect();
+        assert_eq!(expected, words);
     }
 
     #[test]

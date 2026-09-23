@@ -11,21 +11,10 @@ use std::{
 
 use anyhow::{Result, anyhow};
 
-/// The values substituted into a desktop entry's `Exec=` field codes.
-pub(super) struct ExecContext<'a> {
-    /// Path of the `.desktop` file itself (`%k`).
-    pub(super) desktop_file: &'a Path,
-    /// `Icon=` value, if any (`%i`).
-    pub(super) icon: Option<&'a str>,
-    /// Localized `Name=` (`%c`).
-    pub(super) name: &'a str,
-    /// The file or directory being opened (`%f`, `%F`).
-    pub(super) path: &'a Path,
-    /// `file://` URI of `path` (`%u`, `%U`).
-    pub(super) uri: &'a str,
-}
-
-/// Expand `exec` into an argv suitable for `std::process::Command`.
+/// Expand `exec` into an argv suitable for `std::process::Command`, opening
+/// `path`. Only the file and URI codes are substituted. `%i`, `%c` and `%k`
+/// are removed like the deprecated codes, as the spec directs for a code that
+/// is not supported.
 ///
 /// `DesktopEntry::parse_exec` is deliberately not used: it splits on ASCII
 /// whitespace (which tears apart a quoted program path), substitutes a field
@@ -45,7 +34,7 @@ pub(super) struct ExecContext<'a> {
 /// which is recognized by its shape alone, whatever the program. The rule is
 /// deliberately broad and refuses some safe entries (`sh -c 'mpv "$1"' sh
 /// %f`).
-pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsString>> {
+pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     // The desktop entry string escapes are undone before the quoting rules are
     // applied, so a literal backslash inside a quoted argument is written as
     // four backslashes.
@@ -64,17 +53,10 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
     }
 
     // Only ever one path, so %F and %U behave as %f and %u.
+    let uri = file_uri(path);
     let mut argv: Vec<OsString> = Vec::with_capacity(tokens.len() + 1);
     let mut consumed_path = false;
     for Token { text, quoted } in tokens {
-        // The only code that expands to more than one argument.
-        if text == "%i" {
-            if let Some(icon) = context.icon {
-                argv.push(OsString::from("--icon"));
-                argv.push(OsString::from(icon));
-            }
-            continue;
-        }
         let is_one_code = text.len() == 2 && text.starts_with('%');
         if quoted && !is_one_code && has_substituting_code(&text) {
             return Err(Refused(format!(
@@ -82,10 +64,10 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
             ))
             .into());
         }
-        let (expanded, used_path) = expand_in_token(context, &text);
+        let (expanded, used_path) = expand_in_token(path, &uri, &text);
         consumed_path |= used_path;
-        // A token that was nothing but dropped field codes (deprecated ones
-        // included) is not an empty argument, but a literal "" is.
+        // A token that was nothing but removed field codes is not an empty
+        // argument, but a literal "" is.
         if !expanded.is_empty() || !text.contains('%') {
             argv.push(expanded);
         }
@@ -106,7 +88,7 @@ pub(super) fn expand(context: &ExecContext<'_>, exec: &str) -> Result<Vec<OsStri
             ))
             .into());
         }
-        argv.push(context.path.as_os_str().to_os_string());
+        argv.push(path.as_os_str().to_os_string());
     }
     Ok(argv)
 }
@@ -212,11 +194,11 @@ fn split(line: &str) -> Result<Vec<Token>> {
 }
 
 /// Whether `token` holds a field code that substitutes a value, as opposed to a
-/// literal percent or a code that expands to nothing.
+/// literal percent or a code that is removed.
 fn has_substituting_code(token: &str) -> bool {
     let mut chars = token.chars();
     while let Some(c) = chars.next() {
-        if c == '%' && matches!(chars.next(), Some('f' | 'F' | 'u' | 'U' | 'c' | 'k')) {
+        if c == '%' && matches!(chars.next(), Some('f' | 'F' | 'u' | 'U')) {
             return true;
         }
     }
@@ -226,7 +208,7 @@ fn has_substituting_code(token: &str) -> bool {
 /// Substitute the field codes appearing anywhere within a single argument, so
 /// that `--file=%f` works as well as a bare `%f`. Returns the expansion and
 /// whether it consumed the path.
-fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
+fn expand_in_token(path: &Path, uri: &str, token: &str) -> (OsString, bool) {
     let mut expanded = OsString::with_capacity(token.len());
     let mut consumed_path = false;
     let mut chars = token.chars();
@@ -241,16 +223,14 @@ fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
             Some('%') => OsStr::new("%"),
             Some('f' | 'F') => {
                 consumed_path = true;
-                context.path.as_os_str()
+                path.as_os_str()
             }
             Some('u' | 'U') => {
                 consumed_path = true;
-                OsStr::new(context.uri)
+                OsStr::new(uri)
             }
-            Some('c') => OsStr::new(context.name),
-            Some('k') => context.desktop_file.as_os_str(),
-            // Deprecated, unrecognized, %i in a position where it cannot expand
-            // to two arguments, and a trailing '%' are all dropped.
+            // Unsupported (%i, %c, %k), deprecated, unrecognized, and a
+            // trailing '%' are all removed.
             _ => continue,
         };
         expanded.push(value);
@@ -262,7 +242,7 @@ fn expand_in_token(context: &ExecContext<'_>, token: &str) -> (OsString, bool) {
 /// Everything outside the RFC 3986 unreserved set is percent encoded, from the
 /// raw bytes: a lossy conversion would percent encode replacement characters
 /// rather than the name they stood in for.
-pub(super) fn file_uri(path: &Path) -> String {
+fn file_uri(path: &Path) -> String {
     let mut uri = String::from("file://");
     for &byte in path.as_os_str().as_bytes() {
         match byte {
@@ -315,11 +295,11 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{ExecContext, Refused, expand, file_uri, unescape_value};
+    use super::{Refused, expand, file_uri, unescape_value};
 
     /// The expansion as plain strings, for comparing against the expected argv.
-    fn expanded(exec: &str, context: &ExecContext<'_>) -> Vec<String> {
-        expand(context, exec)
+    fn expanded(path: &str, exec: &str) -> Vec<String> {
+        expand(Path::new(path), exec)
             .unwrap()
             .iter()
             .map(|word| word.to_string_lossy().into_owned())
@@ -329,16 +309,6 @@ mod tests {
     const PATH: &str = "/home/u/report.pdf";
     const URI: &str = "file:///home/u/report.pdf";
 
-    fn context() -> ExecContext<'static> {
-        ExecContext {
-            desktop_file: Path::new("/usr/share/applications/viewer.desktop"),
-            icon: Some("viewer-icon"),
-            name: "Viewer",
-            path: Path::new(PATH),
-            uri: URI,
-        }
-    }
-
     #[test_case("app %f", &["app", PATH] ; "bare file code")]
     #[test_case("app %F", &["app", PATH] ; "multi file code takes the one path")]
     #[test_case("app %u", &["app", URI] ; "bare uri code")]
@@ -346,8 +316,11 @@ mod tests {
     #[test_case("app --file=%f", &["app", "--file=/home/u/report.pdf"] ; "code inside a token")]
     #[test_case("\"/opt/my app/bin\" %U", &["/opt/my app/bin", URI] ; "quoted program path")]
     #[test_case("app", &["app", PATH] ; "no field code appends the path")]
-    #[test_case("app %c %k", &["app", "Viewer", "/usr/share/applications/viewer.desktop", PATH] ; "name and desktop file codes")]
-    #[test_case("app %i %f", &["app", "--icon", "viewer-icon", PATH] ; "icon expands to two arguments")]
+    #[test_case("app %i %f", &["app", PATH] ; "the icon code is dropped")]
+    #[test_case("app %c %f", &["app", PATH] ; "the name code is dropped")]
+    #[test_case("app %k %f", &["app", PATH] ; "the desktop file code is dropped")]
+    #[test_case("app --name=%c %f", &["app", "--name=", PATH] ; "an unsupported code inside a token is dropped")]
+    #[test_case("app %c %k %i", &["app", PATH] ; "unsupported codes alone append the path")]
     #[test_case("app %% %f", &["app", "%", PATH] ; "escaped percent")]
     #[test_case("env FOO=1 app %f", &["env", "FOO=1", "app", PATH] ; "equals sign in the first token")]
     #[test_case("app %d %v %f", &["app", PATH] ; "deprecated codes are dropped")]
@@ -360,55 +333,32 @@ mod tests {
     #[test_case("app \"\" %f", &["app", "", PATH] ; "an explicitly empty argument is kept")]
     #[test_case("flatpak run --command=\"foo bar\" org.x %U", &["flatpak", "run", "--command=foo bar", "org.x", URI] ; "quoting inside a token")]
     fn expand_produces(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expanded(exec, &context()).as_slice());
+        assert_eq!(expected, expanded(PATH, exec).as_slice());
     }
 
     #[test_case("app \"unmatched" ; "unmatched quote")]
     #[test_case("" ; "empty")]
     #[test_case("   " ; "only whitespace")]
     fn expand_rejects(exec: &str) {
-        assert!(expand(&context(), exec).is_err());
-    }
-
-    #[test]
-    fn expand_drops_the_icon_code_when_there_is_no_icon() {
-        let mut context = context();
-        context.icon = None;
-        assert_eq!(
-            vec!["app".to_string(), PATH.to_string()],
-            expanded("app %i %f", &context)
-        );
+        assert!(expand(Path::new(PATH), exec).is_err());
     }
 
     #[test]
     fn expand_preserves_a_name_that_is_not_utf8() {
         use std::os::unix::ffi::OsStrExt;
         let name = std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt");
-        let path = Path::new(name);
-        let uri = file_uri(path);
-        let context = ExecContext {
-            path,
-            uri: &uri,
-            ..context()
-        };
 
         // A lossy conversion would hand the program U+FFFD instead of 0xe9,
         // and it would open nothing.
-        let argv = expand(&context, "app %f").unwrap();
+        let argv = expand(Path::new(name), "app %f %u").unwrap();
         assert_eq!(name, argv[1]);
         // The URI encodes the byte itself rather than a replacement character.
-        assert_eq!("file:///tmp/caf%E9.txt", uri);
+        assert_eq!("file:///tmp/caf%E9.txt", argv[2]);
     }
 
     /// A name that runs a command if a shell ever reads it unquoted.
     const HOSTILE: &str = "/v/x$(touch pwned).mp4";
-
-    fn hostile_context() -> ExecContext<'static> {
-        ExecContext {
-            path: Path::new(HOSTILE),
-            ..context()
-        }
-    }
+    const HOSTILE_URI: &str = "file:///v/x%24%28touch%20pwned%29.mp4";
 
     /// The rules `expand` refuses by, as the tail of their messages.
     const AFTER_OPTION: &str =
@@ -442,8 +392,6 @@ mod tests {
     #[test_case("sh -c %F", AFTER_OPTION ; "the file list code")]
     #[test_case("sh -c %u", AFTER_OPTION ; "the uri code")]
     #[test_case("sh -c %U", AFTER_OPTION ; "the uri list code")]
-    #[test_case("sh -c %c", AFTER_OPTION ; "the name code")]
-    #[test_case("sh -c %k", AFTER_OPTION ; "the desktop file code")]
     #[test_case("/bin/bash -lc 'mpv %u'", AFTER_OPTION ; "a path to the program")]
     #[test_case("env FOO=1 dash -c 'mpv %f'", AFTER_OPTION ; "a shell run through env")]
     #[test_case("bash -o pipefail -c 'cat %f'", AFTER_OPTION ; "an option before the cluster")]
@@ -458,6 +406,8 @@ mod tests {
     #[test_case("sh -c", APPENDED ; "no code so the path would be the script")]
     #[test_case("foo -c %d", APPENDED ; "only a deprecated code")]
     #[test_case("foo -c %i", APPENDED ; "only the icon code")]
+    #[test_case("foo -c %c", APPENDED ; "only the name code")]
+    #[test_case("foo -c %k", APPENDED ; "only the desktop file code")]
     #[test_case("foo -c %%", APPENDED ; "only a literal percent")]
     #[test_case("run --command \"mpv %f\"", QUOTED ; "double quoted script")]
     #[test_case("run --command 'mpv %f'", QUOTED ; "single quoted script")]
@@ -470,7 +420,7 @@ mod tests {
     #[test_case("app \"--file=%f\"", QUOTED ; "a quoted option value")]
     #[test_case("env --split-string \"sh -c %f\"", QUOTED ; "a long option that takes code")]
     fn expand_refuses(exec: &str, rule: &str) {
-        let error = expand(&hostile_context(), exec).expect_err("the entry must not be offered");
+        let error = expand(Path::new(HOSTILE), exec).expect_err("the entry must not be offered");
         assert!(error.is::<Refused>(), "{error}");
         assert!(error.to_string().ends_with(rule), "{error}");
     }
@@ -480,14 +430,16 @@ mod tests {
     // code. A code that expands to nothing puts nothing into a script, and a
     // literal percent is not a code.
     #[test_case("mpv %f", &["mpv", HOSTILE] ; "a bare code")]
-    #[test_case("vlc %U", &["vlc", URI] ; "a bare uri code")]
+    #[test_case("vlc %U", &["vlc", HOSTILE_URI] ; "a bare uri code")]
     #[test_case("mpv --file=%f", &["mpv", "--file=/v/x$(touch pwned).mp4"] ; "an unquoted embedded code")]
     #[test_case("app \"%f\"", &["app", HOSTILE] ; "a quoted code on its own")]
     #[test_case("app '%f'", &["app", HOSTILE] ; "a single quoted code on its own")]
     #[test_case("app \"it's\" %f", &["app", "it's", HOSTILE] ; "a code after a quoted argument")]
     #[test_case("sh %f", &["sh", HOSTILE] ; "a shell given a file rather than a script")]
     #[test_case("foo %f -c bar", &["foo", HOSTILE, "-c", "bar"] ; "a code before the cluster")]
-    #[test_case("foo %f -c %i", &["foo", HOSTILE, "-c", "--icon", "viewer-icon"] ; "the icon code after the cluster")]
+    #[test_case("foo %f -c %i", &["foo", HOSTILE, "-c"] ; "the icon code after the cluster")]
+    #[test_case("foo %f -c %c", &["foo", HOSTILE, "-c"] ; "the name code after the cluster")]
+    #[test_case("foo %f -c %k", &["foo", HOSTILE, "-c"] ; "the desktop file code after the cluster")]
     #[test_case("foo %f -c %% %d", &["foo", HOSTILE, "-c", "%"] ; "a literal percent and a deprecated code after the cluster")]
     #[test_case("foo --config %f", &["foo", "--config", HOSTILE] ; "a long option")]
     #[test_case("foo --exec %f", &["foo", "--exec", HOSTILE] ; "a long option holding e and c")]
@@ -497,14 +449,16 @@ mod tests {
     #[test_case("foo -s %f", &["foo", "-s", HOSTILE] ; "a lower case s")]
     #[test_case(r#"run --command "echo '%d'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "a deprecated code in a quoted argument")]
     #[test_case(r#"run --command "echo '%i'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "an icon code in a quoted argument")]
+    #[test_case(r#"run --command "echo '%c'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "a name code in a quoted argument")]
+    #[test_case(r#"run --command "echo '%k'" %f"#, &["run", "--command", "echo ''", HOSTILE] ; "a desktop file code in a quoted argument")]
     #[test_case(r#"run --command "printf 100%%" %f"#, &["run", "--command", "printf 100%", HOSTILE] ; "a literal percent in a quoted argument")]
     fn expand_offers(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
+        assert_eq!(expected, expanded(HOSTILE, exec).as_slice());
     }
 
     #[test]
     fn a_malformed_exec_is_not_reported_as_refused() {
-        let error = expand(&context(), "app \"unmatched").unwrap_err();
+        let error = expand(Path::new(PATH), "app \"unmatched").unwrap_err();
         assert!(!error.is::<Refused>(), "{error}");
     }
 
@@ -512,7 +466,7 @@ mod tests {
     #[test_case("app # %f", &["app", HOSTILE] ; "a comment")]
     #[test_case("app x#y", &["app", "x#y", HOSTILE] ; "a hash inside a word")]
     fn split_follows_the_shell(exec: &str, expected: &[&str]) {
-        assert_eq!(expected, expanded(exec, &hostile_context()).as_slice());
+        assert_eq!(expected, expanded(HOSTILE, exec).as_slice());
     }
 
     #[test_case("/a/b.txt", "file:///a/b.txt" ; "unreserved characters pass through")]

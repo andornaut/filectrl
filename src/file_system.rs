@@ -884,17 +884,11 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
     let destination = dest.path.join(name);
     let metadata = destination.symlink_metadata().ok()?;
-    // Pasting into the source's own directory finds the source itself, which is
-    // no collision to ask about: the operation is refused outright, so offering
-    // to replace it would promise what cannot happen and let an "overwrite all"
-    // stand on a collision that was never real. Compared canonically, since
-    // either path may reach the entry through a symlinked parent.
-    if is_same_entry(&destination, &src.path) {
-        return None;
-    }
-    // Likewise another name of the same file, or a symlink whose target holds
-    // the name: the paste is refused, not offered as a collision.
-    if tasks::is_same_file(&src.path, &destination) || tasks::is_link_to(&src.path, &destination) {
+    // The source itself, another name of it, or a symlink to it holds the
+    // name: the paste is refused, so offering to replace it would promise what
+    // cannot happen and let an "overwrite all" stand on a collision that was
+    // never real.
+    if tasks::onto_itself(&src.path, &destination).is_some() {
         return None;
     }
     Some(if metadata.is_dir() {
@@ -902,13 +896,6 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     } else {
         Occupant::Replaceable
     })
-}
-
-/// Whether both paths name the same directory entry, reached through
-/// symlinked parents or not. A symlink is its own entry, never the one it
-/// points at.
-fn is_same_entry(a: &Path, b: &Path) -> bool {
-    tasks::resolve_entry(a) == tasks::resolve_entry(b)
 }
 
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input

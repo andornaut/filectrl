@@ -276,7 +276,9 @@ Key | Opens with
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
-Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$1"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits, quoted or not. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
+Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$1"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
+
+Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$1"`. Neither is supported, and neither runs the name.
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -315,14 +317,14 @@ The list is built per platform:
 - **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` could hand the file name to an interpreter as code is not offered either (see below), and the log names it at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux, a desktop entry's `Exec` is refused when a value could reach an interpreter as code. An option cluster is a single `-` followed only by letters and digits; one holding `c`, `e` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-S`, `-verbose`) is taken to give code to run, whatever the program.
+On Linux, a desktop entry's `Exec` is refused when a value could reach an interpreter as code. An option cluster is a single `-` followed only by letters and digits; one holding `c`, `e` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-S`, `-verbose`) is taken to give code to run, whatever the program. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
 
 `Exec` shape | Example | Result
 --- | --- | ---
 Field code with no cluster before it | `mpv %f`, `mpv --file=%f`, `foo %f -c bar` | Offered
 Quoted argument that is only the code | `app "%f"` | Offered
 Code after a long option or a cluster without `c`, `e` or `S` | `foo --exec %f`, `foo -xvf %f` | Offered
-`%i`, `%%` or a deprecated code after a cluster, with the file code before it | `foo %f -c %i` | Offered
+A removed code or `%%` after a cluster, with the file code before it | `foo %f -c %i` | Offered
 Field code anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `env -S %f` | Refused
 No file code, so the appended path would follow a cluster | `sh -c`, `xterm -e htop` | Refused
 Field code inside a quoted or escaped argument | `run --command "mpv %f"`, `app "--file=%f"` | Refused

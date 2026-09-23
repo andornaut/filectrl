@@ -358,20 +358,6 @@ fn hardcoded_keys(action: Action) -> &'static [KeyCombo] {
         .map_or(&[], |(_, keys)| *keys)
 }
 
-/// Look up an action from a key press using only normal-mode hardcoded
-/// bindings. Returns `None` if the key combo is not hardcoded in normal mode.
-/// Prompt-mode hardcoded keys (e.g. Tab) are excluded so they cannot shadow
-/// configurable normal-mode bindings such as the default `goto = "Tab"`.
-pub fn hardcoded_normal_action(code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
-    let combo = KeyCombo::new(code, modifiers);
-    for (action, keys) in HARDCODED_NORMAL {
-        if keys.contains(&combo) {
-            return Some(*action);
-        }
-    }
-    None
-}
-
 /// Build the key→action HashMap, detecting duplicate key mappings. Hardcoded
 /// keys go in first, for actions this mode binds. A config binding may repeat
 /// one of its own action's keys; binding a key belonging to another action is an
@@ -740,7 +726,7 @@ mod tests {
     #[test_case(KeyCode::PageDown => Some(Action::PageDown) ; "page down")]
     #[test_case(KeyCode::Esc => Some(Action::ResetView) ; "esc")]
     fn a_hardcoded_normal_key_resolves_to_its_action(code: KeyCode) -> Option<Action> {
-        hardcoded_normal_action(code, KeyModifiers::NONE)
+        default_keybindings().normal_action(code, KeyModifiers::NONE)
     }
 
     #[test]
@@ -910,10 +896,6 @@ mod tests {
     fn normal_mode_tab_resolves_to_goto() {
         // Tab is hardcoded only in prompt mode, so it must not shadow the
         // configurable normal-mode binding (default: goto = [":", "Tab"]).
-        assert_eq!(
-            hardcoded_normal_action(KeyCode::Tab, KeyModifiers::NONE),
-            None
-        );
         let kb = default_keybindings();
         assert_eq!(
             kb.normal_action(KeyCode::Tab, KeyModifiers::NONE),

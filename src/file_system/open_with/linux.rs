@@ -17,7 +17,7 @@ use xdg_mime::SharedMimeInfo;
 
 use super::{
     AppCandidate,
-    exec::{ExecContext, Refused, expand, file_uri},
+    exec::{Refused, expand},
     mimeapps::{self, AppDirIndex, Level, MimeAppsList},
 };
 use crate::{
@@ -155,23 +155,41 @@ pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
 fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
     let chain = mime_chain(path);
     debug!("Resolved {} to MIME types: {chain:?}", path.display());
-    let is_usable = |file: &Path| {
-        DesktopEntry::from_path(file, None::<&[&str]>).is_ok_and(|entry| is_offerable(&entry))
-    };
-    let associations = mimeapps::associations_where(is_usable, &sources.levels, &chain);
+    let associations = mimeapps::associations(&sources.levels, &chain);
     let locales = get_languages_from_env();
-    associations
-        .ordered
+    let candidate = |id: &str| {
+        let file = mimeapps::resolve(&sources.levels, id)?;
+        let entry = DesktopEntry::from_path(file, None::<&[&str]>)
+            .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
+            .ok()?;
+        to_candidate(&locales, path, &entry)
+    };
+    // The first configured default that can be offered is listed first,
+    // whatever position the directory scan gave it. One that cannot (not
+    // installed, hidden, or with an `Exec` that is refused or cannot run)
+    // falls through to the next, as `xdg-mime` and `gio` do. Each id is built
+    // at most once, so a refused entry is not reported twice.
+    let mut tried: HashSet<&str> = HashSet::new();
+    let mut candidates: Vec<AppCandidate> = associations
+        .defaults
         .iter()
-        .filter_map(|id| {
-            let file = mimeapps::resolve(&sources.levels, id)?;
-            let entry = DesktopEntry::from_path(file, None::<&[&str]>)
-                .inspect_err(|error| debug!("Skipping {}: {error}", file.display()))
-                .ok()?;
-            let is_default = associations.default.as_deref() == Some(id);
-            to_candidate(&locales, path, is_default, &entry)
-        })
-        .collect()
+        .filter(|id| tried.insert(id))
+        .find_map(|id| candidate(id))
+        .into_iter()
+        .collect();
+    candidates.extend(
+        associations
+            .ordered
+            .iter()
+            .filter(|id| tried.insert(id))
+            .filter_map(|id| candidate(id)),
+    );
+    // With no configured default offered, the first row is the most preferred
+    // association, the spec's fallback.
+    if let Some(first) = candidates.first_mut() {
+        first.is_default = true;
+    }
+    candidates
 }
 
 /// The name the glob rules are matched against. Lossy, because the rules are
@@ -263,13 +281,9 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
 
 /// An entry `expand` refuses as unsafe is logged as a warning, since the
 /// application is installed and would otherwise have been offered; any other
-/// reason to skip one is logged at debug only.
-fn to_candidate(
-    locales: &[String],
-    path: &Path,
-    is_default: bool,
-    entry: &DesktopEntry,
-) -> Option<AppCandidate> {
+/// reason to skip one is logged at debug only. The candidate is not marked
+/// default; `candidates_from` decides that.
+fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option<AppCandidate> {
     let file = entry.path.as_path();
     if !is_offerable(entry) {
         debug!(
@@ -281,14 +295,7 @@ fn to_candidate(
     let name = entry
         .name(locales)
         .map_or_else(|| entry.appid.clone(), std::borrow::Cow::into_owned);
-    let context = ExecContext {
-        desktop_file: file,
-        icon: entry.icon(),
-        name: &name,
-        path,
-        uri: &file_uri(path),
-    };
-    let mut argv = expand(&context, entry.exec()?)
+    let mut argv = expand(path, entry.exec()?)
         .inspect_err(|error| {
             if error.is::<Refused>() {
                 warn!("Cannot offer {}: {error}", compact(file));
@@ -314,7 +321,7 @@ fn to_candidate(
         // similarly named entries apart. A program name need not: several
         // entries can share one wrapper such as `env` or `flatpak`.
         detail: entry.appid.clone(),
-        is_default,
+        is_default: false,
         name,
         working_dir: entry
             .path()
@@ -590,7 +597,7 @@ mod tests {
         let dir = TempDir::new("open_with_entry");
         let entry = desktop_entry(&dir, "viewer.desktop", body);
 
-        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry);
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), &entry);
 
         assert_eq!(expected, candidate.is_some(), "{body:?}");
     }
@@ -605,7 +612,7 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTerminal=true\n",
         );
 
-        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), false, &entry).unwrap();
+        let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), &entry).unwrap();
 
         // The shipped `run_in_terminal` is `xterm -e %s`.
         assert_eq!(
@@ -666,8 +673,8 @@ mod tests {
 
         let result = associations(&levels, &strings(&[TEXT_PLAIN]));
 
-        assert_eq!(Some("b.desktop".to_string()), result.default);
-        assert_eq!(strings(&["b.desktop"]), result.ordered);
+        assert_eq!(strings(&["b.desktop", "a.desktop"]), result.defaults);
+        assert!(result.ordered.is_empty(), "{:?}", result.ordered);
     }
 
     /// The fallback types close every chain whatever the database guesses, and
@@ -797,21 +804,30 @@ mod tests {
         assert!(!named("Blank").is_default);
     }
 
-    #[test]
-    fn a_hidden_default_falls_through_to_the_next_one() {
+    // Viewer is not associated, so only the fall-through to the second
+    // configured default can list and mark it; without it the fallback would
+    // mark Editor.
+    #[test_case(Some("Exec=gone %f\nHidden=true\n") ; "hidden")]
+    #[test_case(Some("Exec=gone %f\nTryExec=/nonexistent/program\n") ; "its TryExec is not installed")]
+    #[test_case(Some("Exec=sh -c %f\n") ; "its Exec is refused")]
+    #[test_case(Some("Exec=gone \"%f\n") ; "its Exec is malformed")]
+    #[test_case(Some("") ; "it has no Exec")]
+    #[test_case(None ; "it is not installed")]
+    fn a_default_that_cannot_be_offered_falls_through_to_the_next_one(gone: Option<&str>) {
         Config::init_test();
-        let dir = TempDir::new("open_with_hidden_default");
+        let dir = TempDir::new("open_with_default_fallthrough");
         let applications = dir.join("applications");
         std::fs::create_dir_all(&applications).unwrap();
         let write = |name: &str, body: &str| std::fs::write(applications.join(name), body).unwrap();
-        // A user override that deletes the entry, still named as the default.
-        write(
-            "gone.desktop",
-            "[Desktop Entry]\nType=Application\nName=Gone\nExec=gone %f\nMimeType=all/all;\nHidden=true\n",
-        );
+        if let Some(keys) = gone {
+            write(
+                "gone.desktop",
+                &format!("[Desktop Entry]\nType=Application\nName=Gone\nMimeType=all/all;\n{keys}"),
+            );
+        }
         write(
             "viewer.desktop",
-            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n",
         );
         write(
             "editor.desktop",
@@ -827,13 +843,11 @@ mod tests {
 
         let candidates = candidates_from(&sources, &file);
 
-        let defaults: Vec<&str> = candidates
+        let rows: Vec<(&str, bool)> = candidates
             .iter()
-            .filter(|candidate| candidate.is_default)
-            .map(|candidate| candidate.name.as_str())
+            .map(|candidate| (candidate.name.as_str(), candidate.is_default))
             .collect();
-        assert_eq!(vec!["Viewer"], defaults);
-        assert_eq!("Viewer", candidates[0].name);
+        assert_eq!(vec![("Viewer", true), ("Editor", false)], rows);
     }
 
     /// No configured default at all: the fallback is the most preferred

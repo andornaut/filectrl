@@ -5,18 +5,13 @@ use ratatui::{
 
 use super::OpenWithView;
 use crate::{
-    app::config::{
-        Config,
-        keybindings::{Action, hardcoded_normal_action},
-    },
+    app::config::{Config, keybindings::Action},
     command::{handler::CommandHandler, result::CommandResult},
 };
 
 impl CommandHandler for OpenWithView {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        let action = hardcoded_normal_action(code, modifiers)
-            .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
-        match action {
+        match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::Open) => return self.launch_selected(),
             Some(Action::OpenWith) => {
                 self.hide();

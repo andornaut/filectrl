@@ -126,7 +126,7 @@ impl Config {
         let config_dir = crate::test_support::TempDir::reserved("config")
             .path()
             .to_path_buf();
-        Self::parse(RuntimeEnv::default(), None, "", Some(config_dir), &[])
+        Self::parse(RuntimeEnv::default(), None, "", &config_dir, &[])
             .expect("the embedded default config should parse")
     }
 
@@ -151,37 +151,52 @@ impl Config {
         config_path: Option<PathBuf>,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
-        let Some(path) = config_path else {
-            return Self::try_from_default_path(env, include_paths);
-        };
-
-        // Absolutize so `parent()` yields the real containing directory.
-        // For a bare filename like `--config config.toml`, `parent()` would
-        // return `Some("")`, making `config_dir` empty and every path derived
-        // from it (bookmarks, relative includes) CWD-relative by accident.
-        let path = absolute_path(&path)?;
-
-        debug!("Loading config from user-provided path: {}", path.display());
-        let content =
-            read_regular_file(&path).map_err(|failure| failure.describe(CONFIG_FILE, &path))?;
-        Self::parse(
+        let is_default = config_path.is_none();
+        Self::load_from(
             env,
-            Some(&path),
-            &content,
-            path.parent().map(std::path::Path::to_path_buf),
+            &Self::target_path(config_path)?,
+            is_default,
             include_paths,
         )
     }
 
-    fn default_config_dir() -> Result<PathBuf> {
-        Ok(ProjectDirs::from("", "", "filectrl")
-            .ok_or_else(|| anyhow!("Cannot determine the config directory"))?
-            .config_dir()
-            .to_path_buf())
+    /// `path` is absolute, so its parent is the real containing directory and
+    /// never the empty path a bare filename has, which would leave bookmarks
+    /// and relative includes resolving from the working directory.
+    ///
+    /// `is_default` is whether it is the default path rather than one
+    /// `--config` named, and so whether its absence means the built-in config
+    /// rather than an error.
+    fn load_from(
+        env: RuntimeEnv<'_>,
+        path: &Path,
+        is_default: bool,
+        include_paths: &[PathBuf],
+    ) -> Result<Self> {
+        debug!("Loading the config from {}", path.display());
+        let (config_file, content) = match read_regular_file(path) {
+            Ok(content) => (Some(path), content),
+            Err(ReadFailure::Io(error)) if is_default && error.kind() == ErrorKind::NotFound => {
+                debug!("No config file found, using the built-in config");
+                (None, String::new())
+            }
+            Err(failure) => return Err(failure.describe(CONFIG_FILE, path)),
+        };
+        // Unreachable: only `/` has no parent, and it is not a regular file.
+        let config_dir = path.parent().ok_or_else(|| {
+            anyhow!(
+                "Cannot load config file {}: it has no parent directory",
+                path.display()
+            )
+        })?;
+        Self::parse(env, config_file, &content, config_dir, include_paths)
     }
 
     fn default_path() -> Result<PathBuf> {
-        Ok(Self::default_config_dir()?.join(CONFIG_RELATIVE_PATH))
+        Ok(ProjectDirs::from("", "", "filectrl")
+            .ok_or_else(|| anyhow!("Cannot determine the config directory"))?
+            .config_dir()
+            .join(CONFIG_RELATIVE_PATH))
     }
 
     /// The config file the CLI is acting on: the one `--config` names, or the
@@ -227,14 +242,14 @@ impl Config {
         env: RuntimeEnv<'_>,
         config_file: Option<&Path>,
         content: &str,
-        config_dir: Option<PathBuf>,
+        config_dir: &Path,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
         // Precedence (low → high): built-in defaults → user config file →
         // include_files from the user config → CLI --include paths.
         let defaults = merge_default_config()?;
         let mut value = merge_toml_values(defaults.clone(), parse_toml(config_file, content)?);
-        value = Self::merge_config_includes(config_file, value, config_dir.as_deref())?;
+        value = Self::merge_config_includes(config_file, value, config_dir)?;
         value = merge_include_paths(config_file, value, include_paths)?;
         // Reject typo'd / unknown keys before deserializing so a broken config
         // fails loudly instead of silently falling back to defaults.
@@ -247,7 +262,7 @@ impl Config {
     fn merge_config_includes(
         config_file: Option<&Path>,
         value: Value,
-        config_dir: Option<&Path>,
+        config_dir: &Path,
     ) -> Result<Value> {
         let includes = Self::resolve_include_files(&value, config_dir)?;
         merge_include_paths(config_file, value, &includes)
@@ -260,11 +275,8 @@ impl Config {
     }
 
     /// Resolves the config's `include_files` array. Relative entries resolve
-    /// against `config_dir`, falling back to the default config directory, and
-    /// error if neither is available rather than silently resolving against the
-    /// CWD, as `parse_value` does. Defensive: the fallback is unreachable, since
-    /// `config_dir == None` only follows a successful `default_config_dir()`.
-    fn resolve_include_files(value: &Value, config_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
+    /// against `config_dir`.
+    fn resolve_include_files(value: &Value, config_dir: &Path) -> Result<Vec<PathBuf>> {
         let Some(include_value) = value.get("include_files") else {
             return Ok(Vec::new());
         };
@@ -282,36 +294,19 @@ impl Config {
             })
             .collect::<Result<_>>()?;
 
-        if include_files.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let resolve_dir = match config_dir {
-            Some(dir) => dir.to_path_buf(),
-            None => Self::default_config_dir()?,
-        };
-
         Ok(include_files
             .into_iter()
             .map(|path| {
                 if path.is_absolute() {
                     path
                 } else {
-                    resolve_dir.join(path)
+                    config_dir.join(path)
                 }
             })
             .collect())
     }
 
-    fn parse_value(env: RuntimeEnv<'_>, value: Value, config_dir: Option<PathBuf>) -> Result<Self> {
-        // Fail rather than fall back to an empty path: an empty config_dir
-        // would make bookmarks_dir() resolve to a relative "bookmarks" path
-        // (CWD-dependent), silently misplacing bookmark files.
-        let config_dir = match config_dir {
-            Some(dir) => dir,
-            None => Self::default_config_dir()?,
-        };
-
+    fn parse_value(env: RuntimeEnv<'_>, value: Value, config_dir: &Path) -> Result<Self> {
         let raw: RawConfig = value
             .try_into()
             .map_err(|error| anyhow!("Failed to deserialize the config: {error}"))?;
@@ -327,7 +322,7 @@ impl Config {
         let keybindings = KeyBindings::new(&raw.keybindings)?;
 
         let mut config = Config {
-            config_dir,
+            config_dir: config_dir.to_path_buf(),
             file_system: raw.file_system,
             is_truecolor: env.is_truecolor,
             keybindings,
@@ -351,29 +346,6 @@ impl Config {
             .file_type
             .maybe_apply_ls_colors(env.ls_colors, warn_on_rgb);
         Ok(config)
-    }
-
-    fn try_from_default_path(env: RuntimeEnv<'_>, include_paths: &[PathBuf]) -> Result<Self> {
-        let default_path = Self::default_path()?;
-        debug!(
-            "Attempting to load the config from the default path: {}",
-            default_path.display()
-        );
-
-        match read_regular_file(&default_path) {
-            Ok(content) => Self::parse(
-                env,
-                Some(&default_path),
-                &content,
-                default_path.parent().map(std::path::Path::to_path_buf),
-                include_paths,
-            ),
-            Err(ReadFailure::Io(err)) if err.kind() == ErrorKind::NotFound => {
-                debug!("No config file found, using the built-in config");
-                Self::parse(env, None, "", None, include_paths)
-            }
-            Err(failure) => Err(failure.describe(CONFIG_FILE, &default_path)),
-        }
     }
 }
 
@@ -520,17 +492,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     // permission error will then surface from `read_regular_file` below with
     // a more informative message.
     let canonical = canonical_or_raw(path);
-
-    // Resolve this file's own include_files relative to its real directory.
-    // Deriving the directory from the canonical (absolute, when canonicalize
-    // succeeds) path means a bare filename (whose `parent()` is "") still
-    // resolves nested includes against the file's directory, not the CWD.
-    let base_dir = canonical
-        .parent()
-        .map(Path::to_path_buf)
-        .or_else(|| path.parent().map(Path::to_path_buf));
-
-    if !visited.insert(canonical) {
+    if !visited.insert(canonical.clone()) {
         debug!(
             "Skipping already-included file (cycle or duplicate): {}",
             path.display()
@@ -543,7 +505,13 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
         read_regular_file(path).map_err(|failure| failure.describe(INCLUDE_FILE, path))?;
     let include_value = parse_toml(Some(path), &content)?;
 
-    let nested = Config::resolve_include_files(&include_value, base_dir.as_deref())?;
+    // Resolve this file's own include_files relative to its real directory.
+    // The file was just read, so canonicalization will have succeeded and the
+    // path is absolute: a bare filename (whose `parent()` is "") still
+    // resolves nested includes against the file's directory, not the CWD.
+    // Only `/` has no parent, and it is not a regular file.
+    let base_dir = canonical.parent().unwrap_or(Path::new("/"));
+    let nested = Config::resolve_include_files(&include_value, base_dir)?;
 
     // Merge the file's content first, then its nested includes on top, the
     // same precedence rule the top level uses (includes override the config
@@ -677,6 +645,12 @@ mod tests {
     use super::{keybindings::Action, *};
     use crate::test_support::TempDir;
 
+    /// The config directory for a config parsed from a string: reserved and
+    /// never created, so nothing resolved from it can be read by accident.
+    fn inert_dir() -> PathBuf {
+        TempDir::reserved("config_parse").path().to_path_buf()
+    }
+
     #[test]
     fn merge_overrides_shared_keys_and_preserves_the_rest() {
         // Nested, so the recursive arm is exercised: a table in the overlay
@@ -699,8 +673,9 @@ open_directory = "alacritty --working-directory %s"
 [openers.macos]
 open_directory = "alacritty --working-directory %s"
 "#;
-        let defaults = Config::parse(RuntimeEnv::default(), None, "", None, &[]).unwrap();
-        let merged = Config::parse(RuntimeEnv::default(), None, partial, None, &[]).unwrap();
+        let defaults = Config::parse(RuntimeEnv::default(), None, "", &inert_dir(), &[]).unwrap();
+        let merged =
+            Config::parse(RuntimeEnv::default(), None, partial, &inert_dir(), &[]).unwrap();
 
         // The named key is replaced, and the ones the partial does not mention
         // keep the built-in defaults rather than being blanked by the merge.
@@ -715,7 +690,7 @@ open_directory = "alacritty --working-directory %s"
     /// Parse a config that is expected to fail, returning the error message.
     /// (`Config` is not `Debug`, so `unwrap_err` is unavailable.)
     fn parse_err(toml: &str) -> String {
-        match Config::parse(RuntimeEnv::default(), None, toml, None, &[]) {
+        match Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]) {
             Ok(_) => panic!("expected config parse to fail"),
             Err(error) => error.to_string(),
         }
@@ -727,7 +702,7 @@ open_directory = "alacritty --working-directory %s"
     #[test_case(DEFAULT_CONFIG_BASE ; "config")]
     #[test_case(DEFAULT_THEME ; "theme")]
     fn a_written_default_parses_and_keeps_its_comments(content: &str) {
-        Config::parse(RuntimeEnv::default(), None, content, None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), None, content, &inert_dir(), &[]).unwrap();
         assert!(content.contains('#'), "comments should be preserved");
     }
 
@@ -769,7 +744,7 @@ open_directory = "alacritty --working-directory %s"
     fn style_property_absent_from_default_is_accepted(toml: &str) {
         // The default `[theme.alert]` lists only `fg`; adding `bg`/`modifiers`
         // must not be mistaken for an unknown key.
-        Config::parse(RuntimeEnv::default(), None, toml, None, &[]).unwrap();
+        Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]).unwrap();
     }
 
     #[test_case("include_files = \"theme.toml\"" ; "string instead of array")]
@@ -800,7 +775,7 @@ open_directory = "alacritty --working-directory %s"
             RuntimeEnv::default(),
             None,
             "[file_system]\nbuffer_min_bytes = 100\nbuffer_max_bytes = 100\n",
-            None,
+            &inert_dir(),
             &[],
         )
         .unwrap();
@@ -823,7 +798,7 @@ open_directory = "alacritty --working-directory %s"
                 is_truecolor,
                 ls_colors: None,
             };
-            Config::parse(env, None, toml, None, &[]).unwrap()
+            Config::parse(env, None, toml, &inert_dir(), &[]).unwrap()
         };
 
         assert_eq!(Some(Color::Rgb(1, 2, 3)), parse(true).theme().base().fg);
@@ -833,7 +808,7 @@ open_directory = "alacritty --working-directory %s"
     #[test]
     fn the_openers_are_the_ones_for_the_build_target() {
         let toml = "[openers.linux]\nopen_file = \"linux %s\"\n[openers.macos]\nopen_file = \"macos %s\"\n";
-        let config = Config::parse(RuntimeEnv::default(), None, toml, None, &[]).unwrap();
+        let config = Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]).unwrap();
         let expected = if cfg!(target_os = "macos") {
             "macos %s"
         } else {
@@ -855,7 +830,7 @@ open_directory = "alacritty --working-directory %s"
              [theme256.file_type]\nls_colors_take_precedence = {take_precedence}\n\
              [theme256.file_type.directory]\nfg = \"#010203\"\n"
         );
-        let config = Config::parse(env, None, &toml, None, &[]).unwrap();
+        let config = Config::parse(env, None, &toml, &inert_dir(), &[]).unwrap();
 
         assert_eq!(expected, config.theme.file_type.directory().fg);
         assert_eq!(expected, config.theme256.file_type.directory().fg);
@@ -1000,6 +975,21 @@ open_directory = "alacritty --working-directory %s"
 
         assert!(error.starts_with("Failed to read config file"), "{error}");
         assert!(error.contains(&path.display().to_string()), "{error}");
+    }
+
+    /// Only the default path may be absent: `--config` names a file the user
+    /// expects to be read, which `a_missing_config_path_is_reported_by_name`
+    /// pins.
+    #[test]
+    fn a_missing_default_config_falls_back_to_the_built_in_one() {
+        let dir = TempDir::reserved("config_default_missing");
+
+        let config =
+            Config::load_from(RuntimeEnv::default(), &dir.join("config.toml"), true, &[]).unwrap();
+
+        // Bookmarks still live beside where the config would be.
+        assert_eq!(dir.path(), config.config_dir);
+        assert!(select_next_key(&config, 'j'));
     }
 
     #[test]

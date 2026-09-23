@@ -16,11 +16,14 @@ pub(super) fn label_widget(label: String, theme: &Theme) -> Paragraph<'static> {
 
 /// The muted Goto type-ahead overlay text: the completion `suffix`, plus a
 /// `(n of total)` match counter when more than one suggestion is available.
-pub(super) fn suggestion_overlay_text(suffix: String, index: usize, total: usize) -> String {
+/// The suffix is part of a file name, so it is shown through `crate::visible`;
+/// accepting it inserts the real name.
+pub(super) fn suggestion_overlay_text(suffix: &str, index: usize, total: usize) -> String {
+    let suffix = crate::visible(suffix);
     if total > 1 {
         format!("{suffix} ({} of {total})", index + 1)
     } else {
-        suffix
+        suffix.into_owned()
     }
 }
 
@@ -38,6 +41,14 @@ mod tests {
         index: usize,
         total: usize,
     ) -> String {
-        suggestion_overlay_text(suffix.to_string(), index, total)
+        suggestion_overlay_text(suffix, index, total)
+    }
+
+    /// Left raw, U+202E would draw the rest of the overlay, the counter
+    /// included, right to left.
+    #[test_case(1 => "a\\u{202e}txt" ; "alone")]
+    #[test_case(2 => "a\\u{202e}txt (1 of 2)" ; "before the counter")]
+    fn a_disguising_suffix_is_spelled_out(total: usize) -> String {
+        suggestion_overlay_text("a\u{202e}txt", 0, total)
     }
 }

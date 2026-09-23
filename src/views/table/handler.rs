@@ -5,10 +5,7 @@ use ratatui::{
 
 use super::{TableView, columns::SortColumn, navigation::Reselect, style::ClipboardHighlight};
 use crate::{
-    app::config::{
-        Config,
-        keybindings::{Action, hardcoded_normal_action},
-    },
+    app::config::{Config, keybindings::Action},
     command::{Command, handler::CommandHandler, result::CommandResult},
     file_system::path_info::PathInfo,
     views::ListingMode,
@@ -156,9 +153,7 @@ impl CommandHandler for TableView {
 // inline so the match stays a dispatch table that can be read in one screen.
 impl TableView {
     fn dispatch_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        // Hardcoded bindings take precedence, then config bindings.
-        let action = hardcoded_normal_action(code, modifiers)
-            .or_else(|| Config::global().keybindings.normal_action(code, modifiers));
+        let action = Config::global().keybindings.normal_action(code, modifiers);
 
         match action {
             // Clipboard

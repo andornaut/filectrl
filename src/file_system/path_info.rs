@@ -286,6 +286,11 @@ impl PathInfo {
         unix_mode::is_fifo(self.mode)
     }
 
+    /// The device and inode, which identify the entry within one filesystem.
+    pub(super) fn device_and_inode(&self) -> (u64, u64) {
+        (self.device, self.inode)
+    }
+
     pub fn is_same_inode(&self, other: &Self) -> bool {
         // Inode numbers are only unique within one filesystem; entries from
         // different mounts (e.g. two mount points in one listing) can share
@@ -564,7 +569,7 @@ fn maybe_time_to_string(
 /// Whether the filesystem holding `directory` keeps an entry's inode number
 /// for as long as the entry exists. Assumed where it cannot be read.
 #[cfg(target_os = "linux")]
-fn has_stable_inodes(directory: &Path) -> bool {
+pub(super) fn has_stable_inodes(directory: &Path) -> bool {
     rustix::fs::statfs(directory).map_or(true, |stat| {
         // The magic is 32 bits wide; `f_type`'s width and sign vary by target.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -574,7 +579,7 @@ fn has_stable_inodes(directory: &Path) -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn has_stable_inodes(_directory: &Path) -> bool {
+pub(super) fn has_stable_inodes(_directory: &Path) -> bool {
     true
 }
 

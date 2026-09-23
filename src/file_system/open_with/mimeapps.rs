@@ -111,11 +111,18 @@ pub(super) struct Level {
 
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Associations {
-    /// The configured default when one names an installed application, and
-    /// otherwise the most preferred association, which is the fallback the
-    /// spec ends with. `xdg-mime query default` and `gio mime` report that
-    /// same fallback, so the picker's marker agrees with those tools.
-    pub(super) default: Option<DesktopId>,
+    /// The configured defaults, most specific type first and then highest
+    /// precedence first, less any removed for their type. None has been
+    /// checked: the first that the picker can offer is the default.
+    ///
+    /// The spec also requires the default to be an associated application,
+    /// but every desktop honours an explicit default anyway, so one that is not
+    /// associated is listed here all the same.
+    pub(super) defaults: Vec<DesktopId>,
+    /// The associated applications, most preferred first. The first the
+    /// picker can offer is the default when no configured one can be, which is
+    /// the fallback the spec ends with and the one `xdg-mime query default`
+    /// and `gio mime` report.
     pub(super) ordered: Vec<DesktopId>,
 }
 
@@ -124,24 +131,10 @@ pub(super) struct Associations {
 /// `mime_chain` runs most specific to least specific: the guessed type, then
 /// its parents from the subclass graph, then `all/allfiles` and `all/all`.
 /// `levels` runs highest precedence first.
-#[cfg(test)]
 pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associations {
-    associations_where(|_| true, levels, mime_chain)
-}
-
-/// `associations`, where a configured default counts only when `is_usable`
-/// accepts its desktop file. A default the picker would not offer (hidden, or
-/// its `TryExec` missing) then falls through to the next one, as `xdg-mime`
-/// and `gio` do, rather than taking the marker to a row that is not shown.
-pub(super) fn associations_where(
-    is_usable: impl Fn(&Path) -> bool,
-    levels: &[Level],
-    mime_chain: &[String],
-) -> Associations {
     let mut ordered: Vec<DesktopId> = Vec::new();
     let mut seen: HashSet<DesktopId> = HashSet::new();
-    // Collected in (type, then precedence) order and validated at the end.
-    let mut default_candidates: Vec<DesktopId> = Vec::new();
+    let mut defaults: Vec<DesktopId> = Vec::new();
 
     for mime in mime_chain {
         // Both exclusions are keyed by MIME type, so they restart here.
@@ -160,7 +153,7 @@ pub(super) fn associations_where(
             for list in &level.lists {
                 for id in list.defaults.get(mime).into_iter().flatten() {
                     if !removed.contains(id) {
-                        default_candidates.push(id.clone());
+                        defaults.push(id.clone());
                     }
                 }
                 if list.desktop_specific {
@@ -188,30 +181,7 @@ pub(super) fn associations_where(
         }
     }
 
-    // The most specific type's highest precedence default wins and is offered
-    // first, whatever position the directory scan gave it. Only a default whose
-    // desktop file exists and is usable counts, so an entry left by an
-    // uninstalled application does not take the marker with it.
-    //
-    // The spec also requires the default to be an associated application, but
-    // every desktop honours an explicit default anyway, so one that is not
-    // associated is promoted rather than skipped.
-    let default = default_candidates
-        .into_iter()
-        .find(|id| resolve(levels, id).is_some_and(&is_usable));
-    if let Some(id) = &default {
-        ordered.retain(|existing| existing != id);
-        ordered.insert(0, id.clone());
-    }
-    // The spec's fallback, the most preferred association, is held to the
-    // same test, so the marker never lands on a row that is not shown.
-    let default = default.or_else(|| {
-        ordered
-            .iter()
-            .find(|id| resolve(levels, id).is_some_and(&is_usable))
-            .cloned()
-    });
-    Associations { default, ordered }
+    Associations { defaults, ordered }
 }
 
 /// Find the file that defines a desktop id. The first directory to define it
@@ -328,9 +298,6 @@ mod tests {
             ids(&["b.desktop", "a.desktop", "c.desktop"]),
             result.ordered
         );
-        // Only `c.desktop` has a desktop file, and the picker drops an id it
-        // cannot resolve, so the fallback default skips the two ranked above.
-        assert_eq!(Some("c.desktop".to_string()), result.default);
     }
 
     #[test]
@@ -450,70 +417,40 @@ mod tests {
             ),
         ];
         let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["b.desktop", "a.desktop"]), result.ordered);
-        assert_eq!(Some("b.desktop".to_string()), result.default);
+        assert_eq!(ids(&["a.desktop", "b.desktop"]), result.ordered);
+        assert_eq!(ids(&["b.desktop"]), result.defaults);
     }
 
     #[test]
-    fn an_associated_default_is_hoisted_above_the_directory_scan_order() {
-        // The scan orders ids alphabetically, so without the hoist the default
-        // would sit second and the picker would preselect the wrong row.
+    fn defaults_run_most_specific_type_first_then_by_precedence() {
         let levels = vec![
             level(
                 vec![MimeAppsList::parse(
                     false,
-                    "[Default Applications]\ntext/plain=zed.desktop",
+                    "[Default Applications]\ntext/plain=plain-high.desktop",
                 )],
                 None,
             ),
-            level(
-                vec![],
-                Some(app_dir(&[("a.desktop", &[TEXT]), ("zed.desktop", &[TEXT])])),
-            ),
-        ];
-        let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["zed.desktop", "a.desktop"]), result.ordered);
-        assert_eq!(Some("zed.desktop".to_string()), result.default);
-    }
-
-    #[test]
-    fn an_unassociated_default_is_promoted_to_the_top() {
-        // chosen.desktop is installed but declares no MimeType of its own.
-        let levels = vec![
             level(
                 vec![MimeAppsList::parse(
                     false,
-                    "[Default Applications]\ntext/plain=chosen.desktop",
+                    "[Default Applications]\n\
+                     text/plain=plain-low.desktop\n\
+                     text/markdown=markdown-low.desktop",
                 )],
                 None,
             ),
-            level(
-                vec![],
-                Some(app_dir(&[("a.desktop", &[TEXT]), ("chosen.desktop", &[])])),
-            ),
         ];
-        let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["chosen.desktop", "a.desktop"]), result.ordered);
-        assert_eq!(Some("chosen.desktop".to_string()), result.default);
-    }
-
-    #[test]
-    fn a_default_naming_an_uninstalled_application_is_ignored() {
-        // A leftover entry for an application that has since been removed must
-        // not take the default marker with it.
-        let levels = vec![
-            level(
-                vec![MimeAppsList::parse(
-                    false,
-                    "[Default Applications]\ntext/plain=uninstalled.desktop",
-                )],
-                None,
-            ),
-            level(vec![], Some(app_dir(&[("a.desktop", &[TEXT])]))),
-        ];
-        let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["a.desktop"]), result.ordered);
-        assert_eq!(Some("a.desktop".to_string()), result.default);
+        // Whether one is installed, associated or offerable is for the picker
+        // to decide, so none of these ids needs a desktop file.
+        assert_eq!(
+            ids(&[
+                "markdown-low.desktop",
+                "plain-high.desktop",
+                "plain-low.desktop"
+            ]),
+            associations(&levels, &ids(&["text/markdown", TEXT])).defaults
+        );
     }
 
     #[test]
@@ -537,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_default_is_not_promoted() {
+    fn a_removed_default_is_not_listed() {
         let levels = vec![
             level(
                 vec![MimeAppsList::parse(
@@ -549,28 +486,15 @@ mod tests {
             level(
                 vec![MimeAppsList::parse(
                     false,
-                    "[Default Applications]\ntext/plain=gone.desktop",
+                    "[Default Applications]\ntext/plain=gone.desktop;kept.desktop",
                 )],
-                // Installed, so only the removal can keep it from the default.
-                Some(app_dir(&[("a.desktop", &[TEXT]), ("gone.desktop", &[])])),
+                None,
             ),
         ];
-        let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["a.desktop"]), result.ordered);
-        assert_eq!(Some("a.desktop".to_string()), result.default);
-    }
-
-    #[test]
-    fn with_no_configured_default_the_first_association_is_the_default() {
-        // The spec, and so xdg-mime and gio, fall back to the most
-        // preferred association when nothing is configured.
-        let levels = vec![level(
-            vec![],
-            Some(app_dir(&[("a.desktop", &[TEXT]), ("b.desktop", &[TEXT])])),
-        )];
-        let result = associations(&levels, &ids(&[TEXT]));
-        assert_eq!(ids(&["a.desktop", "b.desktop"]), result.ordered);
-        assert_eq!(Some("a.desktop".to_string()), result.default);
+        assert_eq!(
+            ids(&["kept.desktop"]),
+            associations(&levels, &ids(&[TEXT])).defaults
+        );
     }
 
     #[test]
@@ -587,7 +511,6 @@ mod tests {
             ids(&["specific.desktop", "generic.desktop"]),
             result.ordered
         );
-        assert_eq!(Some("specific.desktop".to_string()), result.default);
     }
 
     #[test]

@@ -29,7 +29,7 @@ use rustix::{
 use super::{
     Occupant, PasteStep,
     conflicts::Conflicts,
-    path_info::{PathInfo, compact},
+    path_info::{PathInfo, compact, has_stable_inodes},
     step,
 };
 use crate::{
@@ -70,6 +70,34 @@ struct CopyContext<'a> {
     /// The top-level source that was copied, which is the entry a move removes
     /// afterwards and no other.
     root: Option<DirId>,
+    /// One debouncer for the whole tree, against its total: one per file would
+    /// send an update for every file, since a debouncer's first call triggers.
+    progress: debounce::ProgressDebouncer,
+}
+
+impl<'a> CopyContext<'a> {
+    fn new(
+        buffer: &'a mut [u8],
+        conflicts: Option<&'a Conflicts>,
+        preserve: bool,
+        source: Option<File>,
+        total_size: u64,
+    ) -> Self {
+        Self {
+            buffer,
+            conflicts,
+            preserve,
+            source,
+            skipped: 0,
+            created: std::collections::HashSet::new(),
+            root: None,
+            progress: debounce::ProgressDebouncer::new(
+                PROGRESS_DEBOUNCE_PERCENTAGE,
+                PROGRESS_MIN_INTERVAL,
+                total_size,
+            ),
+        }
+    }
 }
 
 /// What a tree copy left behind: the entries that could not be written, how
@@ -394,6 +422,7 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     // worker, off the UI thread, and applied via `active.set_total`.
     let (mut active, initial, token) = ActiveTask::new(tx, kind, 1);
     let is_directory = path.is_directory();
+    let expected = DirId::of_listed(&path);
     let path = path.path.clone();
     info!("Deleting {}", path.display());
     active.send_progress();
@@ -407,7 +436,7 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
             };
             active.set_total(total);
         }
-        if let Some(active) = remove_path(&path, is_directory, active, Removal::Delete) {
+        if let Some(active) = remove_path(&path, expected, is_directory, active, Removal::Delete) {
             active.done();
         }
     });
@@ -474,15 +503,7 @@ fn copy_with_progress(
     // allocating it per file would hand every small file in a large directory
     // its own multi-megabyte allocation.
     let mut buffer = vec![0; copy_buffer_bytes(total_size, buffer_min_bytes, buffer_max_bytes)];
-    let mut context = CopyContext {
-        buffer: &mut buffer,
-        conflicts,
-        preserve,
-        source,
-        skipped: 0,
-        created: std::collections::HashSet::new(),
-        root: None,
-    };
+    let mut context = CopyContext::new(&mut buffer, conflicts, preserve, source, total_size);
     let mut errors = Vec::new();
     if !copy_path(
         old_path,
@@ -705,24 +726,15 @@ fn finish_cross_device_move(
     // does not claim to have cancelled anything.
     active.set_uncancellable();
     // Only the entry that was copied: another renamed onto its name since
-    // would be lost with nothing to show for it. The check narrows that window
-    // rather than closing it, as it does for `mv`.
-    let current = statat(CWD, old_path, AtFlags::SYMLINK_NOFOLLOW)
-        .ok()
-        .map(|stat| DirId {
-            dev: stat.st_dev,
-            ino: stat.st_ino,
-        });
-    if current.is_none() || current != outcome.root {
-        active.error(format!(
-            "Cannot remove {}: it was replaced after it was copied",
-            compact(old_path)
-        ));
+    // would be lost with nothing to show for it. The copy records it whenever
+    // it read the source, which a clean outcome always did.
+    let Some(root) = outcome.root else {
+        active.error(Removal::MovedSource.refusal(old_path));
         return;
-    }
+    };
     // Like `mv`, an entry written into the source while it was being copied is
     // removed with the rest.
-    if let Some(active) = remove_path(old_path, is_directory, active, Removal::MovedSource) {
+    if let Some(active) = remove_path(old_path, root, is_directory, active, Removal::MovedSource) {
         active.done();
     }
 }
@@ -1119,7 +1131,6 @@ fn copy_file(
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
 ) -> bool {
-    let total_size = active.total_size();
     let failed = |error: &dyn std::fmt::Display| {
         format!(
             "Failed to copy {} to {}: {error}",
@@ -1170,12 +1181,6 @@ fn copy_file(
         }
     };
 
-    let mut debouncer = debounce::ProgressDebouncer::new(
-        PROGRESS_DEBOUNCE_PERCENTAGE,
-        PROGRESS_MIN_INTERVAL,
-        total_size,
-    );
-
     let not_cancelled = loop {
         if active.is_cancelled() {
             // Like interrupted `cp`: leave the partially written destination
@@ -1196,7 +1201,10 @@ fn copy_file(
             Ok(bytes) => match new_file.write_all(&context.buffer[..bytes]) {
                 Ok(()) => {
                     active.increment(bytes as u64);
-                    if debouncer.should_trigger(Instant::now(), bytes as u64) {
+                    if context
+                        .progress
+                        .should_trigger(Instant::now(), bytes as u64)
+                    {
                         active.send_progress();
                     }
                 }
@@ -1572,15 +1580,37 @@ enum Removal {
     MovedSource,
 }
 
+impl Removal {
+    /// The refusal to remove `path`, which names another entry than the one
+    /// the operation was started for.
+    fn refusal(self, path: &Path) -> String {
+        match self {
+            Self::Delete => Stale::Changed.into_error("delete", path).to_string(),
+            Self::MovedSource => format!(
+                "Cannot remove {}: it was replaced after it was copied",
+                compact(path)
+            ),
+        }
+    }
+}
+
 /// Removes a file or directory tree. Cancelling mid-delete leaves whatever has
 /// not been removed yet. Iterative (explicit stack), so directory depth cannot
 /// overflow the thread stack.
+///
+/// Refuses unless `path` still names `expected`, the entry the operation was
+/// started for: another renamed onto its name since would be removed in its
+/// place. The comparison is made on what was opened relative to the parent's
+/// fd, and every removal goes through that fd rather than the path. For a
+/// non-directory the stat and the unlink are two calls on that fd, which
+/// narrows the window rather than closing it, as it does for `mv`.
 ///
 /// Returns `Some` with the task, leaving finalization to the caller. Returns
 /// `None` when cancelled or on error, in which case the task has already been
 /// finalized via `active.cancelled()` / `active.error()`.
 fn remove_path(
     path: &Path,
+    expected: DirId,
     is_directory: bool,
     mut active: ActiveTask,
     removal: Removal,
@@ -1590,8 +1620,24 @@ fn remove_path(
         active.cancelled();
         return None;
     }
+    let Some(root_name) = c_name(path) else {
+        active.error(format!(
+            "Cannot delete {}: path has no file name",
+            compact(path)
+        ));
+        return None;
+    };
+    let root_parent = try_or_abort!(
+        active,
+        open_parent(path),
+        format!("Failed to delete {}", compact(path))
+    );
+    let root = RootAt {
+        dir: &root_parent,
+        name: &root_name,
+    };
     if !is_directory {
-        return remove_file_entry(path, active, removal);
+        return remove_file_entry(path, &root, expected, active, removal);
     }
 
     // Post-order walk, each directory drained into a Vec before anything is
@@ -1616,12 +1662,13 @@ fn remove_path(
     // A level holds its name rather than its path, and a path is built from
     // the stack only for a message: one path per level would make memory grow
     // with the square of the depth.
-    let (dir, entries) = list_or_abort!(active, None, path, path);
-    let id = try_or_abort!(
-        active,
-        DirId::of_dir(&dir),
-        format!("Failed to read directory {}", compact(path))
-    );
+    let (dir, id, entries) = match open_root(path, &root, expected, removal) {
+        Ok(opened) => opened,
+        Err(message) => {
+            active.error(message);
+            return None;
+        }
+    };
     let mut stack = vec![Level {
         dir: Some(dir),
         id,
@@ -1644,7 +1691,7 @@ fn remove_path(
         let Some((name, is_dir)) = top.entries.next() else {
             // This directory's entries are done; remove it.
             let level = stack.pop().expect("stack is non-empty");
-            match remove_level(path, &mut stack, level) {
+            match remove_level(path, &root, &mut stack, level) {
                 Ok(()) => advance(&mut active, &mut debouncer, cancellable),
                 Err((failed, error)) => {
                     active.error(format!("Failed to delete {}: {error}", compact(&failed)));
@@ -1697,6 +1744,25 @@ fn remove_path(
     Some(active)
 }
 
+/// Opens and lists the directory `root` names for `remove_path`, refusing it
+/// unless it is `expected`. The error is the message to finalize with.
+fn open_root(
+    path: &Path,
+    root: &RootAt<'_>,
+    expected: DirId,
+    removal: Removal,
+) -> Result<(Dir, DirId, Entries), String> {
+    let failed =
+        |error: std::io::Error| format!("Failed to read directory {}: {error}", compact(path));
+    let dir = open_directory(root.dir, root.name).map_err(failed)?;
+    let id = DirId::of_dir(&dir).map_err(failed)?;
+    if !is_expected(path, expected, id) {
+        return Err(removal.refusal(path));
+    }
+    let (dir, entries) = list_dir(dir).map_err(failed)?;
+    Ok((dir, id, entries))
+}
+
 /// Counts one entry removed by a delete. A move's removals count nothing: its
 /// progress measured the bytes copied, and is complete.
 fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer, counts: bool) {
@@ -1711,11 +1777,27 @@ fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer,
 /// `remove_path` for anything that is not a directory. Symlinks are removed as
 /// links (never followed): `is_directory` comes from `symlink_metadata`, so a
 /// link to a directory takes this path.
-fn remove_file_entry(path: &Path, mut active: ActiveTask, removal: Removal) -> Option<ActiveTask> {
+fn remove_file_entry(
+    path: &Path,
+    at: &RootAt<'_>,
+    expected: DirId,
+    mut active: ActiveTask,
+    removal: Removal,
+) -> Option<ActiveTask> {
+    let failed = || format!("Failed to delete {}", compact(path));
+    let stat = try_or_abort!(
+        active,
+        statat(at.dir, at.name, AtFlags::SYMLINK_NOFOLLOW),
+        failed()
+    );
+    if !is_expected(path, expected, DirId::of_stat(&stat)) {
+        active.error(removal.refusal(path));
+        return None;
+    }
     try_or_abort!(
         active,
-        fs::remove_file(path),
-        format!("Failed to delete {}", compact(path))
+        unlinkat(at.dir, at.name, AtFlags::empty()),
+        failed()
     );
     if removal == Removal::Delete {
         active.increment(1);
@@ -1740,19 +1822,22 @@ fn level_path(root: &Path, stack: &[Level]) -> PathBuf {
 }
 
 /// Removes the directory `level` names, now that its entries are gone, from
-/// the parent at the top of `stack`, reopening that parent's fd first. The
-/// error carries the directory that could not be reopened or removed.
+/// the parent at the top of `stack`, reopening that parent's fd first, or from
+/// `root_at` for the root. The error carries the directory that could not be
+/// reopened or removed.
 fn remove_level(
     root: &Path,
+    root_at: &RootAt<'_>,
     stack: &mut [Level],
     level: Level,
 ) -> Result<(), (PathBuf, std::io::Error)> {
     let Level { dir, name, .. } = level;
     let Some(parent) = stack.last() else {
         drop(dir);
-        // The root, named by the path the user chose. `rmdir` never follows a
-        // symlink in the last component.
-        return fs::remove_dir(root).map_err(|error| (root.to_path_buf(), error));
+        // Through the parent the root was opened in, which `rmdir` does not
+        // follow a symlink out of.
+        return unlinkat(root_at.dir, root_at.name, AtFlags::REMOVEDIR)
+            .map_err(|error| (root.to_path_buf(), error.into()));
     };
     let name = name.expect("only the root has no name");
     let child = dir
@@ -1800,6 +1885,40 @@ impl DirId {
     fn of_dir(dir: &Dir) -> std::io::Result<Self> {
         Self::of(dir.fd()?)
     }
+
+    fn of_stat(stat: &rustix::fs::Stat) -> Self {
+        Self {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+        }
+    }
+
+    /// The identity of the entry `listed` names, as it was read.
+    // std widens `st_dev` to u64 on every target; narrowing it back to the
+    // target's `dev_t` restores the value it was read as.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn of_listed(listed: &PathInfo) -> Self {
+        let (dev, ino) = listed.device_and_inode();
+        Self {
+            dev: dev as rustix::fs::Dev,
+            ino,
+        }
+    }
+}
+
+/// Whether `found`, the entry opened at `path`, is `expected`: the same device
+/// and inode, or only the same device on a filesystem that does not keep inode
+/// numbers stable (see `PathInfo::is_still_listed_as`).
+fn is_expected(path: &Path, expected: DirId, found: DirId) -> bool {
+    found == expected
+        || (found.dev == expected.dev
+            && !has_stable_inodes(path.parent().unwrap_or(Path::new("."))))
+}
+
+/// The directory an operation's root entry was opened in, and its name there.
+struct RootAt<'a> {
+    dir: &'a File,
+    name: &'a CStr,
 }
 
 /// Reopens the parent of `dir` through its "..", refusing it unless it is the
@@ -1842,7 +1961,11 @@ fn open_and_list(
         Some(parent) => parent.fd()?,
         None => CWD,
     };
-    let mut dir = open_directory(parent, name)?;
+    list_dir(open_directory(parent, name)?)
+}
+
+/// `list_entries` on `dir`, which it hands back with them.
+fn list_dir(mut dir: Dir) -> std::io::Result<(Dir, Entries)> {
     let entries = list_entries(&mut dir)?;
     Ok((dir, entries))
 }
@@ -1941,7 +2064,7 @@ fn resolve(path: &Path) -> PathBuf {
 /// The entry `path` names, with symlinks resolved in its parent directories
 /// but not in its own name: a symlink is compared as itself, never as the file
 /// it points at, which is a different entry.
-pub(super) fn resolve_entry(path: &Path) -> PathBuf {
+fn resolve_entry(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => {
             let parent = if parent.as_os_str().is_empty() {
@@ -1966,12 +2089,49 @@ pub(super) fn is_same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Whether `link` is a symlink that resolves to the entry `entry` names.
-pub(super) fn is_link_to(link: &Path, entry: &Path) -> bool {
+fn is_link_to(link: &Path, entry: &Path) -> bool {
     link.symlink_metadata()
         .is_ok_and(|metadata| metadata.is_symlink())
         && link
             .canonicalize()
             .is_ok_and(|target| target == resolve_entry(entry))
+}
+
+/// How pasting an entry as `destination` would paste it onto itself. Such a
+/// paste is refused, never offered as a collision: a granted overwrite clears
+/// the destination before copying, which would remove the source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OntoItself {
+    /// Both paths name one entry: the destination directory is the source's
+    /// own, however either is spelled.
+    SameEntry,
+    /// Two names of one file (hard links, or one entry spelled two ways on a
+    /// case-insensitive mount): replacing one with the other either deletes
+    /// the file or does nothing, depending on how the names relate. `cp` and
+    /// `mv` refuse both as the same file.
+    SameFile,
+    /// A symlink pasted over the entry it points at, which would replace the
+    /// only copy of its data with a link to itself. `cp` and `mv` refuse it as
+    /// the same file.
+    LinksTo,
+}
+
+/// Whether pasting `source` as `destination` would paste it onto itself. The
+/// paste queue and the task both ask this, so the prompt never offers to
+/// replace what the task then refuses. Paths are compared resolved, so neither
+/// a parent-dir segment (e.g. `/a/c/../b`) nor a symlinked directory can
+/// disguise one as the other; a symlink in the last component is compared as
+/// the link it is.
+pub(super) fn onto_itself(source: &Path, destination: &Path) -> Option<OntoItself> {
+    if resolve_entry(source) == resolve_entry(destination) {
+        Some(OntoItself::SameEntry)
+    } else if is_same_file(source, destination) {
+        Some(OntoItself::SameFile)
+    } else if is_link_to(source, destination) {
+        Some(OntoItself::LinksTo)
+    } else {
+        None
+    }
 }
 
 /// Collapses `.` and `..` components purely lexically (no filesystem access,
@@ -2011,52 +2171,31 @@ fn validate_paths(
     };
     let new_path = destination_directory.path.join(file_name);
 
-    // Compare resolved paths so that neither a parent-dir segment (e.g.
-    // `/a/c/../b`) nor a destination directory that is a symlink to the
-    // source's own directory can disguise one path as another. The
-    // destination's own name does not exist yet, so its parent is resolved and
-    // the name rejoined. The source is resolved the same way, so a symlink is
-    // compared as the link it is, not as the entry it points at.
+    // Compared resolved (see `onto_itself`), so a destination that reaches
+    // into the source through a symlinked parent is still found below.
     let abs_old = resolve_entry(&old_path);
-    let abs_new = resolve(&destination_directory.path).join(file_name);
+    let abs_new = resolve_entry(&new_path);
 
-    // The two paths name the same entry. This has to be caught here whatever
-    // the source's type: a granted overwrite clears the destination before
-    // copying, so letting an aliased path through would unlink the source and
-    // leave nothing to copy.
-    if abs_old == abs_new {
-        // Equal resolved paths mean the destination directory is the source's
-        // own, so the message names the entry once.
-        return Err(anyhow!(
-            "Cannot {operation} {} into its own directory",
-            compact(&old_path)
-        )
-        .into());
-    }
-
-    // Two names of one file (hard links, or one entry spelled two ways on a
-    // case-insensitive mount): replacing one with the other either deletes the
-    // file or does nothing, depending on how the names relate. `cp` and `mv`
-    // refuse both as the same file.
-    if is_same_file(&old_path, &new_path) {
-        return Err(anyhow!(
-            "Cannot {operation} {} to {}: they are the same file",
-            compact(&old_path),
-            compact(&new_path)
-        )
-        .into());
-    }
-
-    // A symlink pasted over the entry it points at would replace that entry,
-    // the only copy of its data, with a link to itself. `cp` and `mv` refuse
-    // the same paste as the same file.
-    if is_link_to(&old_path, &abs_new) {
-        return Err(anyhow!(
-            "Cannot {operation} {}: it links to {}, the entry it would replace",
-            compact(&old_path),
-            compact(&new_path)
-        )
-        .into());
+    if let Some(onto_itself) = onto_itself(&old_path, &new_path) {
+        let error = match onto_itself {
+            // Equal resolved paths mean the destination directory is the
+            // source's own, so the message names the entry once.
+            OntoItself::SameEntry => anyhow!(
+                "Cannot {operation} {} into its own directory",
+                compact(&old_path)
+            ),
+            OntoItself::SameFile => anyhow!(
+                "Cannot {operation} {} to {}: they are the same file",
+                compact(&old_path),
+                compact(&new_path)
+            ),
+            OntoItself::LinksTo => anyhow!(
+                "Cannot {operation} {}: it links to {}, the entry it would replace",
+                compact(&old_path),
+                compact(&new_path)
+            ),
+        };
+        return Err(error.into());
     }
 
     // Without this a copy creates the destination under the source and recurses
@@ -2546,15 +2685,7 @@ mod tests {
     /// A copy context for a test: no paste behind it, so a nested collision
     /// records an error rather than asking.
     fn context(preserve_times: bool, buffer: &mut [u8]) -> CopyContext<'_> {
-        CopyContext {
-            buffer,
-            conflicts: None,
-            preserve: preserve_times,
-            source: None,
-            skipped: 0,
-            created: std::collections::HashSet::default(),
-            root: None,
-        }
+        CopyContext::new(buffer, None, preserve_times, None, 0)
     }
 
     fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {
@@ -3022,15 +3153,7 @@ mod tests {
         conflicts: &'a Conflicts,
     ) -> CopyContext<'a> {
         conflicts.answer(standing);
-        CopyContext {
-            buffer,
-            conflicts: Some(conflicts),
-            preserve: false,
-            source: None,
-            skipped: 0,
-            created: std::collections::HashSet::default(),
-            root: None,
-        }
+        CopyContext::new(buffer, Some(conflicts), false, None, 0)
     }
 
     /// A source entry and a destination path that another process took while
@@ -3118,15 +3241,7 @@ mod tests {
         fs::write(dst.join("a.txt"), b"raced").unwrap();
         let (mut active, mut errors, conflicts) = raced_parts();
         let mut buffer = [0u8; 64];
-        let mut context = CopyContext {
-            buffer: &mut buffer,
-            conflicts: Some(&conflicts),
-            preserve: false,
-            source: None,
-            skipped: 0,
-            created: std::collections::HashSet::default(),
-            root: None,
-        };
+        let mut context = CopyContext::new(&mut buffer, Some(&conflicts), false, None, 0);
 
         // A worker never asks: the queue that could have prompted is gone by
         // the time it runs.
@@ -3207,15 +3322,7 @@ mod tests {
         std::os::unix::fs::symlink("raced", dst.join("link")).unwrap();
         let (mut active, mut errors, conflicts) = raced_parts();
         let mut buffer = [0u8; 64];
-        let mut context = CopyContext {
-            buffer: &mut buffer,
-            conflicts: Some(&conflicts),
-            preserve: false,
-            source: None,
-            skipped: 0,
-            created: std::collections::HashSet::default(),
-            root: None,
-        };
+        let mut context = CopyContext::new(&mut buffer, Some(&conflicts), false, None, 0);
 
         assert!(copy_path(
             &src.join("link"),
@@ -3369,14 +3476,15 @@ mod tests {
         last.expect("the task sent no progress")
     }
 
+    /// The identity of the entry `path` names now.
+    fn id_of(path: &Path) -> DirId {
+        DirId::of_stat(&statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW).unwrap())
+    }
+
     /// A clean outcome of copying the entry `path` names now.
     fn copied(path: &Path) -> CopyOutcome {
-        let stat = statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW).unwrap();
         CopyOutcome {
-            root: Some(DirId {
-                dev: stat.st_dev,
-                ino: stat.st_ino,
-            }),
+            root: Some(id_of(path)),
             ..CopyOutcome::default()
         }
     }
@@ -3881,7 +3989,7 @@ mod tests {
             1,
         );
 
-        assert!(remove_path(&root, true, active, Removal::Delete).is_some());
+        assert!(remove_path(&root, id_of(&root), true, active, Removal::Delete).is_some());
         assert!(!root.exists());
     }
 
@@ -3959,6 +4067,50 @@ mod tests {
         assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
+    #[test]
+    fn a_tree_of_small_files_sends_progress_per_share_of_the_total_not_per_file() {
+        const FILES: usize = 1000;
+        let fx = TempDir::new("tasks_copy_tree_progress");
+        let src = fx.join("src");
+        fs::create_dir(&src).unwrap();
+        for i in 0..FILES {
+            fs::write(src.join(i.to_string()), [7u8; 10]).unwrap();
+        }
+        let (tx, rx) = mpsc::channel();
+        let active = copy_task(tx);
+
+        let start = Instant::now();
+        let (active, outcome) = copy_with_progress(
+            &src,
+            &fx.join("dst"),
+            active,
+            None,
+            0,
+            true,
+            mode_of(&src),
+            false,
+            None,
+            1024,
+            1024,
+        )
+        .expect("not cancelled");
+        let elapsed = start.elapsed();
+        active.done();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        let updates = rx
+            .try_iter()
+            .filter(|command| matches!(command, Command::Progress(task) if !task.is_terminal()))
+            .count();
+
+        // `set_total` sends one, the first chunk another, and the floor admits
+        // one more per interval elapsed. One per file would be a thousand.
+        let bound = 2 + elapsed.as_millis() / PROGRESS_MIN_INTERVAL.as_millis();
+        assert!(
+            (updates as u128) <= bound,
+            "{updates} updates in {elapsed:?} for {FILES} files"
+        );
+    }
+
     #[test_case(false ; "a file")]
     #[test_case(true  ; "a symlink to a directory")]
     fn remove_path_unlinks_a_single_entry_without_following_it(is_symlink: bool) {
@@ -3982,7 +4134,7 @@ mod tests {
         );
 
         // `is_directory` is false for both: it comes from `symlink_metadata`.
-        remove_path(&entry, false, active, Removal::Delete)
+        remove_path(&entry, id_of(&entry), false, active, Removal::Delete)
             .expect("the entry should be removed")
             .done();
 
@@ -3991,6 +4143,55 @@ mod tests {
             b"keep".to_vec(),
             fs::read(outside.join("keep.txt")).unwrap()
         );
+    }
+
+    /// The entry a task was started for is renamed away and another put in
+    /// its place before the removal opens it, which is the window between a
+    /// task's check at the start and its worker. The removal compares what it
+    /// opened and leaves the replacement alone.
+    #[test_case(true  ; "a directory")]
+    #[test_case(false ; "a file")]
+    fn remove_path_refuses_an_entry_replaced_before_it_was_opened(is_directory: bool) {
+        let fx = TempDir::new("tasks_delete_replaced");
+        let entry = fx.join("entry");
+        let replacement = fx.join("replacement");
+        if is_directory {
+            fs::create_dir(&entry).unwrap();
+            fs::create_dir(&replacement).unwrap();
+            fs::write(replacement.join("keep.txt"), b"keep").unwrap();
+        } else {
+            fs::write(&entry, b"listed").unwrap();
+            fs::write(&replacement, b"keep").unwrap();
+        }
+        let expected = id_of(&entry);
+        // Renamed away rather than removed, so the replacement cannot reuse
+        // the inode.
+        fs::rename(&entry, fx.join("renamed")).unwrap();
+        fs::rename(&replacement, &entry).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+
+        assert!(remove_path(&entry, expected, is_directory, active, Removal::Delete).is_none());
+
+        let message = finished_task(&rx)
+            .error_message()
+            .expect("the delete fails");
+        assert!(
+            message.ends_with("it changed since it was listed"),
+            "{message}"
+        );
+        let kept = if is_directory {
+            entry.join("keep.txt")
+        } else {
+            entry.clone()
+        };
+        assert_eq!(b"keep".to_vec(), fs::read(kept).unwrap());
     }
 
     #[test]
@@ -4031,8 +4232,8 @@ mod tests {
             100,
         );
 
-        let active =
-            remove_path(&root, true, active, Removal::Delete).expect("the tree should be removed");
+        let active = remove_path(&root, id_of(&root), true, active, Removal::Delete)
+            .expect("the tree should be removed");
         let completed_of = |command| match command {
             Command::Progress(task) => Some(task.combine_progress(&Progress::default()).completed),
             _ => None,
@@ -4070,7 +4271,7 @@ mod tests {
         );
         token.cancel();
 
-        assert!(remove_path(&root, true, active, Removal::Delete).is_none());
+        assert!(remove_path(&root, id_of(&root), true, active, Removal::Delete).is_none());
         assert!(root.join("sub").join("f.txt").exists());
     }
 
@@ -4096,7 +4297,7 @@ mod tests {
             1,
         );
 
-        let finished = remove_path(&root, true, active, Removal::Delete);
+        let finished = remove_path(&root, id_of(&root), true, active, Removal::Delete);
 
         let error = finished
             .is_none()
@@ -4184,7 +4385,7 @@ mod tests {
             1,
         );
 
-        assert!(remove_path(&root, true, active, Removal::Delete).is_some());
+        assert!(remove_path(&root, id_of(&root), true, active, Removal::Delete).is_some());
 
         // The link goes with the tree; what it points at is outside it.
         assert!(!root.exists());

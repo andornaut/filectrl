@@ -987,6 +987,20 @@ mod tests {
         assert_eq!(None, view.current_suggestion());
     }
 
+    /// The overlay spells a disguising name out, but the input has to hold
+    /// the name itself for the path to resolve.
+    #[test]
+    fn accepting_a_disguising_name_inserts_the_name_itself() {
+        let dir = TempDir::new("goto_disguising");
+        std::fs::write(dir.join("a\u{202e}txt"), b"").unwrap();
+        let mut view = goto_prompt(dir.path());
+        type_str(&mut view, "a");
+
+        view.handle_key(KeyCode::Tab, KeyModifiers::NONE);
+
+        assert_eq!("a\u{202e}txt", view.text_area.lines()[0]);
+    }
+
     #[test]
     fn tab_accepts_directory_and_appends_slash() {
         let fixture = GotoFixture::new();
