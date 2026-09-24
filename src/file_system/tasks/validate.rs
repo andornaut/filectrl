@@ -58,9 +58,10 @@ pub(in crate::file_system) fn restat(listed: &PathInfo, operation: &str) -> Resu
 /// before the rename leaves a window in which a file created at `new_path` is
 /// silently replaced; folding the check into the rename closes it.
 ///
-/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np`, since
-/// `unsafe` is denied crate-wide: nix wraps the first for glibc only, so
-/// macOS and other C libraries go through rustix's `renameat_with`.
+/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np`, through
+/// rustix's `renameat_with`, since `unsafe` is denied crate-wide. nix wraps
+/// only glibc's `renameat2`, which glibc before 2.28 lacks, so a binary linked
+/// against it fails to build for older sysroots such as cross's aarch64 image.
 /// Filesystems that reject the flag fall back to a check and `fs::rename`, and
 /// keep the narrow race.
 pub(in crate::file_system) fn rename_no_replace(
@@ -83,25 +84,9 @@ pub(in crate::file_system) fn rename_no_replace(
     }
 }
 
-/// `renameat2(RENAME_NOREPLACE)` with the current directory as both dirfds:
-/// absolute paths ignore it and relative paths resolve against it, matching
-/// `fs::rename`.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn renameat_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
-    use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
-
-    Ok(renameat2(
-        AT_FDCWD,
-        old_path,
-        AT_FDCWD,
-        new_path,
-        RenameFlags::RENAME_NOREPLACE,
-    )?)
-}
-
-/// `renameat_no_replace` where nix has no wrapper: `renameatx_np` on macOS,
-/// `renameat2` on other C libraries.
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+/// `renameat2(RENAME_NOREPLACE)` on Linux and `renameatx_np` on macOS, with
+/// the current directory as both dirfds: absolute paths ignore it and relative
+/// paths resolve against it, matching `fs::rename`.
 fn renameat_no_replace(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
 
