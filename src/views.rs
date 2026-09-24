@@ -20,7 +20,8 @@ use ratatui::buffer::CellWidth;
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Alignment, Constraint, Margin, Rect},
+    crossterm::event::MouseEvent,
+    layout::{Alignment, Constraint, Layout, Margin, Position, Rect},
     style::Style,
     text::Line,
     widgets::{Block, Borders, Widget},
@@ -32,6 +33,43 @@ use ratatui::{
 /// `as` cast would wrap instead, turning 65_536 rows into none.
 pub(crate) fn as_dimension(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
+}
+
+/// Whether `event` happened inside `area`.
+fn contains(area: Rect, event: MouseEvent) -> bool {
+    area.contains(Position {
+        x: event.column,
+        y: event.row,
+    })
+}
+
+/// The scroll offset that keeps `index` inside a viewport `viewport` long
+/// starting at `scroll`, moving as little as possible. An unmeasured viewport
+/// pins the offset to the start.
+fn scroll_to_show(viewport: usize, scroll: usize, index: usize) -> usize {
+    if viewport == 0 {
+        return 0;
+    }
+    if index < scroll {
+        index
+    } else if index >= scroll + viewport {
+        index + 1 - viewport
+    } else {
+        scroll
+    }
+}
+
+/// `area` split into content and a one-column scrollbar on its right, or left
+/// whole when there is nothing to scroll. The zero-size scrollbar area clears
+/// the scrollbar's hit test region, so clicks in that column are not treated
+/// as scrollbar drags.
+fn split_scrollbar(area: Rect, scrollable: bool) -> (Rect, Rect) {
+    if !scrollable {
+        return (area, Rect::default());
+    }
+    let [content, scrollbar] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    (content, scrollbar)
 }
 
 /// Draw `lines`, starting at the one `scroll` lines down. Equivalent to an
@@ -140,7 +178,7 @@ mod tests {
     };
     use test_case::test_case;
 
-    use super::{ListingMode, render_lines, right_hint_fits};
+    use super::{ListingMode, render_lines, right_hint_fits, scroll_to_show, split_scrollbar};
     use crate::{command::Command, file_system::path_info::PathInfo};
 
     /// Shaped like real cached content: styled label/value spans, a blank
@@ -159,6 +197,27 @@ mod tests {
             )]),
             Line::raw("last"),
         ]
+    }
+
+    #[test_case(true => (Rect::new(2, 3, 9, 4), Rect::new(11, 3, 1, 4)) ; "the last column is the scrollbar")]
+    #[test_case(false => (Rect::new(2, 3, 10, 4), Rect::default()) ; "nothing to scroll leaves the area whole")]
+    fn split_scrollbar_produces(scrollable: bool) -> (Rect, Rect) {
+        split_scrollbar(Rect::new(2, 3, 10, 4), scrollable)
+    }
+
+    #[test_case(0, 3, 5 => 0 ; "an unmeasured viewport pins the offset to the start")]
+    #[test_case(5, 0, 2 => 0 ; "already visible, no movement")]
+    #[test_case(5, 0, 4 => 0 ; "the last visible index does not scroll")]
+    #[test_case(5, 0, 5 => 1 ; "one past the end scrolls by one")]
+    #[test_case(5, 0, 9 => 5 ; "a jump past the end scrolls just far enough")]
+    #[test_case(5, 4, 2 => 2 ; "before the viewport scrolls back to the index")]
+    #[test_case(5, 6, 6 => 6 ; "the first visible index does not scroll")]
+    fn scroll_to_show_keeps_the_index_in_view(
+        viewport: usize,
+        scroll: usize,
+        index: usize,
+    ) -> usize {
+        scroll_to_show(viewport, scroll, index)
     }
 
     #[test_case(0 ; "unscrolled")]

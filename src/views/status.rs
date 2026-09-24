@@ -232,6 +232,7 @@ mod tests {
         view.handle_command(&Command::SelectionChanged {
             selected: Some(path("chosen")),
             mark_count: 0,
+            range: false,
         });
         assert_eq!(
             Some("chosen".to_string()),
@@ -243,6 +244,7 @@ mod tests {
         view.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 0,
+            range: false,
         });
         assert!(view.selected.is_none());
     }

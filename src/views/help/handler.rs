@@ -1,13 +1,10 @@
-use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::Position,
-};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::HelpView;
 use crate::{
     app::config::Config,
     command::{handler::CommandHandler, result::CommandResult},
-    views::as_dimension,
+    views::{as_dimension, contains},
 };
 
 impl CommandHandler for HelpView {
@@ -48,9 +45,6 @@ impl CommandHandler for HelpView {
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
         ) || self.scrollbar_view.is_dragging()
-            || self.area.contains(Position {
-                x: event.column,
-                y: event.row,
-            })
+            || contains(self.area, event)
     }
 }

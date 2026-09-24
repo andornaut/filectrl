@@ -222,6 +222,22 @@ pub fn visible_os(text: &OsStr) -> Cow<'_, str> {
     Cow::Owned(shown)
 }
 
+/// Case-insensitive `str::contains`, shared by search and the filter so both
+/// match the same text. The common all-ASCII case compares in place instead of
+/// allocating a lowercased copy of every entry name. `needle_lowercase` must
+/// already be lowercased.
+pub fn contains_ignore_case(haystack: &str, needle_lowercase: &str) -> bool {
+    if needle_lowercase.is_ascii() && haystack.is_ascii() {
+        let needle = needle_lowercase.as_bytes();
+        return needle.is_empty()
+            || haystack
+                .as_bytes()
+                .windows(needle.len())
+                .any(|window| window.eq_ignore_ascii_case(needle));
+    }
+    haystack.to_lowercase().contains(needle_lowercase)
+}
+
 /// `visible` for text printed to the terminal outside the interface, which can
 /// carry a path from the command line, a symlink or a config file. A newline is
 /// kept, since usage text and some error messages span lines.
@@ -339,6 +355,14 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         visible_os(OsStr::from_bytes(bytes)).into_owned()
+    }
+
+    #[test_case("README", "adm" => true ; "ascii in either case")]
+    #[test_case("README", "adx" => false ; "ascii that is not there")]
+    #[test_case("\u{c9}T\u{c9}", "t\u{e9}" => true ; "text that is not ascii")]
+    #[test_case("README", "" => true ; "an empty needle")]
+    fn contains_ignore_case_matches(haystack: &str, needle_lowercase: &str) -> bool {
+        contains_ignore_case(haystack, needle_lowercase)
     }
 
     #[test_case("a\nb" => "a\nb" ; "a newline is kept")]

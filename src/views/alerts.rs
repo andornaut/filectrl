@@ -3,13 +3,13 @@ use std::collections::VecDeque;
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::{Constraint, Position, Rect},
+    layout::{Constraint, Rect},
     style::Style,
     text::{Line, Text},
     widgets::{Paragraph, Widget},
 };
 
-use super::{View, as_dimension, bordered};
+use super::{View, as_dimension, bordered, contains};
 use crate::{
     app::config::keybindings::{Action, KeyBindings},
     app::config::{Config, theme::Theme},
@@ -146,10 +146,7 @@ impl CommandHandler for AlertsView {
     }
 
     fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        self.area.contains(Position {
-            x: event.column,
-            y: event.row,
-        })
+        contains(self.area, event)
     }
 }
 

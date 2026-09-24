@@ -126,10 +126,11 @@ fn search(
             };
 
             let entry_path = entry.path();
+            // The name as its row shows it, which is also what the filter reads.
             let file_name = entry.file_name();
-            let name = file_name.to_string_lossy();
+            let name = crate::visible_os(&file_name);
 
-            if name.to_lowercase().contains(&query_lower)
+            if crate::contains_ignore_case(&name, &query_lower)
                 && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
             {
                 if result_count >= limits.max_results {
@@ -258,6 +259,21 @@ mod tests {
         let (commands, _) = run(&default_limits(), &root, "eAdM");
 
         assert_eq!(vec!["README.md".to_string()], matched_names(&commands));
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_is_found_by_the_text_its_row_shows() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        let root = TempDir::new("search_not_utf8");
+        std::fs::write(root.join(OsStr::from_bytes(b"caf\xe9.txt")), b"").unwrap();
+        std::fs::write(root.join("cafe.txt"), b"").unwrap();
+
+        // The row shows the byte spelled out as `\xe9`, so that is what the
+        // user types. A lossy conversion turns it into U+FFFD instead.
+        let (commands, _) = run(&default_limits(), &root, "CAF\\XE9");
+
+        assert_eq!(vec!["caf\\xe9.txt".to_string()], matched_names(&commands));
     }
 
     #[test]

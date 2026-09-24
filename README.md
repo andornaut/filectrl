@@ -133,7 +133,7 @@ Key | Action
 <kbd>V</kbd> | Enter range mode: the current row becomes the anchor. Press again to exit, keeping the marks
 <kbd>Esc</kbd> | Clear all marks and exit range mode
 
-In range mode, moving the cursor or clicking extends the marked range from the anchor to the cursor. Marks made before entering range mode are kept, so ranges and single marks combine. Outside range mode, clicking only moves the cursor. Marking clears the clipboard.
+In range mode, moving the cursor or clicking extends the marked range from the anchor to the cursor. Marks made before entering range mode are kept, so ranges and single marks combine. Outside range mode, clicking only moves the cursor. Marking clears the clipboard. The notices bar shows the mark count as `[Selected] N items`, or `[Range] N items` while range mode is on.
 
 Marks name entries but are stored as row positions, so what becomes of them depends on why the listing changed:
 

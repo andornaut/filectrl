@@ -1,6 +1,5 @@
-use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::Position,
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui_textarea::{CursorMove, Input};
 
@@ -11,6 +10,7 @@ use crate::{
         Command, ConflictChoice, InputMode, PromptAction, handler::CommandHandler,
         result::CommandResult,
     },
+    views::contains,
 };
 
 impl CommandHandler for PromptView {
@@ -116,10 +116,7 @@ impl CommandHandler for PromptView {
     }
 
     fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        self.render_area.contains(Position {
-            x: event.column,
-            y: event.row,
-        })
+        contains(self.render_area, event)
     }
 }
 

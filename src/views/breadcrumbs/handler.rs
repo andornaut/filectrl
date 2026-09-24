@@ -5,7 +5,7 @@ use crate::{
     app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
     file_system::path_info::breadcrumbs,
-    views::ListingMode,
+    views::{ListingMode, contains},
 };
 
 impl CommandHandler for BreadcrumbsView {
@@ -59,9 +59,6 @@ impl CommandHandler for BreadcrumbsView {
     }
 
     fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        self.area.contains(ratatui::layout::Position {
-            x: event.column,
-            y: event.row,
-        })
+        contains(self.area, event)
     }
 }

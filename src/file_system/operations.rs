@@ -225,44 +225,46 @@ fn chmod_failure(p: &Path, mode: u32, error: &dyn std::fmt::Display) -> anyhow::
 /// `Config`, so writes resolve against the same directory `read_bookmarks`
 /// reads (`FileSystem::bookmarks_dir`).
 pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<()> {
-    validate_basename("Bookmark name", name)?;
-    fs::create_dir_all(dir)?;
+    let refuse = |reason: &dyn std::fmt::Display| anyhow!("Cannot add bookmark {name:?}: {reason}");
+    let fail = |error: &dyn std::fmt::Display| anyhow!("Failed to add bookmark {name:?}: {error}");
+    validate_basename(name).map_err(|reason| refuse(&reason))?;
+    fs::create_dir_all(dir).map_err(|error| fail(&error))?;
     let link = dir.join(name);
     // Reject duplicates, including a pre-existing broken symlink.
     if link.symlink_metadata().is_ok() {
-        return Err(anyhow!("A bookmark named {name:?} already exists"));
+        return Err(refuse(&"it already exists"));
     }
     info!(
         "Creating bookmark {} -> {}",
         link.display(),
         target.path.display()
     );
-    std::os::unix::fs::symlink(&target.path, &link)?;
-    Ok(())
+    std::os::unix::fs::symlink(&target.path, &link).map_err(|error| fail(&error))
 }
 
 pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
-    validate_basename("Directory name", name)?;
+    validate_basename(name)
+        .map_err(|reason| anyhow!("Cannot create directory {name:?}: {reason}"))?;
     let path = parent.as_path().join(name);
     info!("Creating directory {}", path.display());
-    fs::create_dir(&path)?;
-    Ok(())
+    fs::create_dir(&path).map_err(|error| anyhow!("Failed to create directory {name:?}: {error}"))
 }
 
 /// Rejects a name that cannot denote a new entry inside the directory it is
-/// joined to. `Path::join` discards the base when handed an absolute path, so
-/// without this a prompt value can create or rename an entry anywhere on the
-/// filesystem rather than in the directory the user is looking at.
-fn validate_basename(kind: &str, name: &str) -> Result<()> {
+/// joined to, returning the reason. `Path::join` discards the base when handed
+/// an absolute path, so without this a prompt value can create or rename an
+/// entry anywhere on the filesystem rather than in the directory the user is
+/// looking at.
+fn validate_basename(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err(anyhow!("{kind} cannot be empty"));
+        return Err("a name cannot be empty".into());
     }
     if name == "." || name == ".." {
-        return Err(anyhow!("{kind} cannot be {name:?}"));
+        return Err(format!("a name cannot be {name:?}"));
     }
     if name.contains(std::path::MAIN_SEPARATOR) {
-        return Err(anyhow!(
-            "{kind} cannot contain {:?}",
+        return Err(format!(
+            "a name cannot contain {:?}",
             std::path::MAIN_SEPARATOR
         ));
     }
@@ -286,7 +288,7 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
             compact(old_path)
         )
     };
-    validate_basename("New name", new_basename).map_err(|error| refuse(&error))?;
+    validate_basename(new_basename).map_err(|reason| refuse(&reason))?;
     let new_path = join_parent(old_path, new_basename);
     if old_path == new_path {
         return Ok(());
@@ -407,10 +409,10 @@ mod tests {
         fs::read_dir(dir.path()).unwrap().next().is_none()
     }
 
-    #[test_case("" => "Directory name cannot be empty" ; "empty")]
-    #[test_case("." => "Directory name cannot be \".\"" ; "current directory")]
-    #[test_case(".." => "Directory name cannot be \"..\"" ; "parent directory")]
-    #[test_case("nested/name" => "Directory name cannot contain '/'" ; "relative path")]
+    #[test_case("" => "Cannot create directory \"\": a name cannot be empty" ; "empty")]
+    #[test_case("." => "Cannot create directory \".\": a name cannot be \".\"" ; "current directory")]
+    #[test_case(".." => "Cannot create directory \"..\": a name cannot be \"..\"" ; "parent directory")]
+    #[test_case("nested/name" => "Cannot create directory \"nested/name\": a name cannot contain '/'" ; "relative path")]
     fn create_directory_rejects_a_name_that_is_not_a_basename(name: &str) -> String {
         let dir = TempDir::new("ops_create");
         let parent = PathInfo::try_from(dir.path()).unwrap();
@@ -502,7 +504,10 @@ mod tests {
             .to_string();
 
         assert!(error.starts_with("Cannot rename"), "{error}");
-        assert!(error.ends_with("New name cannot contain '/'"), "{error}");
+        assert!(
+            error.ends_with("to \"../escaped.txt\": a name cannot contain '/'"),
+            "{error}"
+        );
         assert!(a.exists());
         assert!(!dir.join("escaped.txt").exists());
     }
@@ -689,7 +694,13 @@ mod tests {
 
         // `create_dir` rather than `create_dir_all`, so an existing directory
         // is an error instead of silently adopted.
-        assert!(create_directory(&parent, "taken").is_err());
+        let error = create_directory(&parent, "taken")
+            .expect_err("an existing directory must be refused")
+            .to_string();
+        assert_eq!(
+            "Failed to create directory \"taken\": File exists (os error 17)",
+            error
+        );
     }
 
     // ── add_bookmark ────────────────────────────────────────────────────────
@@ -706,8 +717,8 @@ mod tests {
         assert_eq!(base.path(), fs::read_link(bookmarks.join("favs")).unwrap());
     }
 
-    #[test_case("" => "Bookmark name cannot be empty" ; "empty")]
-    #[test_case("nested/name" => "Bookmark name cannot contain '/'" ; "a path rather than a name")]
+    #[test_case("" => "Cannot add bookmark \"\": a name cannot be empty" ; "empty")]
+    #[test_case("nested/name" => "Cannot add bookmark \"nested/name\": a name cannot contain '/'" ; "a path rather than a name")]
     fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) -> String {
         let base = TempDir::new("ops_bookmark_bad_name");
         let bookmarks = base.join("bookmarks");
@@ -746,7 +757,26 @@ mod tests {
             .expect_err("a duplicate name must be refused")
             .to_string();
 
-        assert!(error.contains("already exists"), "{error}");
+        assert_eq!("Cannot add bookmark \"favs\": it already exists", error);
+    }
+
+    #[test]
+    fn add_bookmark_names_the_bookmark_when_its_directory_cannot_be_created() {
+        let base = TempDir::new("ops_bookmark_no_dir");
+        // A regular file where the bookmarks directory should be, which
+        // `create_dir_all` refuses even for root.
+        let bookmarks = base.join("bookmarks");
+        fs::write(&bookmarks, b"").unwrap();
+        let target = PathInfo::try_from(base.path()).unwrap();
+
+        let error = add_bookmark(&bookmarks, &target, "favs")
+            .expect_err("a bookmarks directory that is a file must fail")
+            .to_string();
+
+        assert_eq!(
+            "Failed to add bookmark \"favs\": File exists (os error 17)",
+            error
+        );
     }
 
     #[test]
@@ -767,7 +797,7 @@ mod tests {
         // filectrl's own refusal, not the EEXIST `symlink` would raise a line
         // later: asserting only `is_err` cannot tell the two apart, and the
         // errno one means the duplicate check let it through.
-        assert!(error.contains("already exists"), "{error}");
+        assert_eq!("Cannot add bookmark \"favs\": it already exists", error);
     }
 
     // ── launching and listing ───────────────────────────────────────────────

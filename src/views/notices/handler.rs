@@ -1,15 +1,12 @@
 use std::time::Instant;
 
-use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    prelude::Position,
-};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{NoticesView, notice::Notice};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
-    views::ListingMode,
+    views::{ListingMode, contains},
 };
 
 impl CommandHandler for NoticesView {
@@ -94,17 +91,21 @@ impl CommandHandler for NoticesView {
                 self.filter.clear();
                 CommandResult::NotHandled
             }
-            Command::SelectionChanged { mark_count, .. } => {
+            Command::SelectionChanged {
+                mark_count, range, ..
+            } => {
                 // Every cursor move carries the (usually unchanged) mark
                 // count; skip the rebuild and the derivation below for those.
-                if *mark_count == self.mark_count {
+                if *mark_count == self.mark_count && *range == self.range {
                     return CommandResult::Handled;
                 }
+                let count_changed = *mark_count != self.mark_count;
                 self.mark_count = *mark_count;
+                self.range = *range;
                 // Marks and clipboard are mutually exclusive. Fires only on a
                 // mark-count change: a clipboard set while marks are held
                 // (copying marked files) must survive plain cursor movement.
-                if *mark_count > 0 && self.clipboard_entry.is_some() {
+                if count_changed && *mark_count > 0 && self.clipboard_entry.is_some() {
                     Command::SetClipboardEntry(None).into()
                 } else {
                     CommandResult::Handled
@@ -143,7 +144,7 @@ impl CommandHandler for NoticesView {
                     Some(
                         Notice::Clipboard(_)
                         | Notice::Filter(_)
-                        | Notice::Marked(_)
+                        | Notice::Marked { .. }
                         | Notice::Search(_)
                         | Notice::SearchCancelled(_)
                         | Notice::SearchLoading,
@@ -156,9 +157,6 @@ impl CommandHandler for NoticesView {
     }
 
     fn should_handle_mouse(&self, event: MouseEvent) -> bool {
-        self.area.contains(Position {
-            x: event.column,
-            y: event.row,
-        })
+        contains(self.area, event)
     }
 }

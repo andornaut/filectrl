@@ -1,11 +1,11 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
 };
 
 use super::{HelpView, MIN_HEIGHT};
 use crate::app::config::theme::Theme;
-use crate::views::{View, as_dimension, bordered, render_lines};
+use crate::views::{View, as_dimension, bordered, render_lines, split_scrollbar};
 
 impl View for HelpView {
     fn constraint(&self, _: Rect) -> Constraint {
@@ -26,26 +26,15 @@ impl View for HelpView {
         self.max_scroll = as_dimension(lines.len()).saturating_sub(self.inner_height);
         let scroll = self.scroll_offset.min(self.max_scroll);
 
-        if self.max_scroll > 0 {
-            let [content_area, scrollbar_area] = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .areas(bordered_area);
-
-            render_lines(&lines, content_area, frame.buffer_mut(), style, scroll);
-
-            self.scrollbar_view.render(
-                theme,
-                scrollbar_area,
-                frame.buffer_mut(),
-                scroll as usize,
-                self.max_scroll as usize,
-                self.inner_height as usize,
-            );
-        } else {
-            self.scrollbar_view
-                .render(theme, Rect::default(), frame.buffer_mut(), 0, 0, 0);
-            render_lines(&lines, bordered_area, frame.buffer_mut(), style, scroll);
-        }
+        let (content_area, scrollbar_area) = split_scrollbar(bordered_area, self.max_scroll > 0);
+        render_lines(&lines, content_area, frame.buffer_mut(), style, scroll);
+        self.scrollbar_view.render(
+            theme,
+            scrollbar_area,
+            frame.buffer_mut(),
+            scroll as usize,
+            self.max_scroll as usize,
+            self.inner_height as usize,
+        );
     }
 }

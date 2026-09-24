@@ -20,7 +20,7 @@ pub(super) enum Notice {
     Search(String),
     SearchCancelled(String),
     SearchLoading,
-    Marked(usize),
+    Marked { count: usize, range: bool },
     Clipboard(ClipboardEntry),
     Filter(String),
 }
@@ -41,7 +41,9 @@ impl Notice {
                 clipboard_widget(&theme.clipboard, width, clipboard_entry, hint)
             }
             Notice::Filter(filter) => filter_widget(&theme.notice, width, filter, hint),
-            Notice::Marked(count) => marked_widget(&theme.table, width, *count, hint),
+            Notice::Marked { count, range } => {
+                marked_widget(&theme.table, width, *count, *range, hint)
+            }
             Notice::Operations => operations_widget(&theme.notice, width, tasks, cancel_hint),
             Notice::Progress => progress_widget(&theme.notice, width, tasks),
             Notice::Search(query) => search_widget(&theme.notice, width, query, cancel_hint),

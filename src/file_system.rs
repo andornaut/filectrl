@@ -599,7 +599,7 @@ impl FileSystem {
 
     fn create_directory(&mut self, name: &str) -> CommandResult {
         match operations::create_directory(self.current_directory(), name) {
-            Err(error) => anyhow!("Failed to create directory {name:?}: {error}").into(),
+            Err(error) => error.into(),
             Ok(()) => self.refresh(),
         }
     }
@@ -830,14 +830,14 @@ impl FileSystem {
 }
 
 /// The home directory, once it is known to be readable.
-fn home_directory() -> Result<PathInfo> {
+pub(crate) fn home_directory() -> Result<PathInfo> {
     let home = directories::UserDirs::new()
         .map(|dirs| dirs.home_dir().to_path_buf())
         .ok_or_else(|| anyhow!("Cannot determine the home directory"))?;
     let directory = PathInfo::try_from(home.as_path())
-        .map_err(|error| anyhow!("Failed to read home directory {}: {error}", home.display()))?;
+        .map_err(|error| anyhow!("Failed to read home directory {}: {error}", compact(&home)))?;
     fs::read_dir(&directory.path)
-        .map_err(|error| anyhow!("Failed to read home directory {}: {error}", home.display()))?;
+        .map_err(|error| anyhow!("Failed to read home directory {}: {error}", compact(&home)))?;
     Ok(directory)
 }
 

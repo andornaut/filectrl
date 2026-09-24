@@ -1,13 +1,11 @@
-use ratatui::{
-    crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
-    layout::Position,
-};
+use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use super::ScrollbarView;
+use crate::views::contains;
 
 impl ScrollbarView {
-    pub fn is_clicked(&self, x: u16, y: u16) -> bool {
-        self.area.contains(Position { x, y })
+    pub fn is_clicked(&self, event: MouseEvent) -> bool {
+        contains(self.area, event)
     }
 
     pub fn is_dragging(&self) -> bool {
@@ -15,11 +13,10 @@ impl ScrollbarView {
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent, max_position: usize) -> Option<usize> {
-        let x = event.column;
         let y = event.row;
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) if self.is_clicked(x, y) => {
+            MouseEventKind::Down(MouseButton::Left) if self.is_clicked(event) => {
                 self.is_dragging = true;
                 return self.handle_drag(y, max_position);
             }

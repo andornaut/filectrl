@@ -1,12 +1,10 @@
-use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    layout::Position,
-};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::OpenWithView;
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{handler::CommandHandler, result::CommandResult},
+    views::contains,
 };
 
 impl CommandHandler for OpenWithView {
@@ -54,10 +52,7 @@ impl CommandHandler for OpenWithView {
                         self.selected,
                     );
                 } else if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
-                    && self.content_area.contains(Position {
-                        x: event.column,
-                        y: event.row,
-                    })
+                    && contains(self.content_area, event)
                 {
                     let row = event.row.saturating_sub(self.content_area.y) as usize;
                     let index = self.scroll_offset + row;
@@ -80,9 +75,6 @@ impl CommandHandler for OpenWithView {
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
         ) || self.scrollbar_view.is_dragging()
-            || self.area.contains(Position {
-                x: event.column,
-                y: event.row,
-            })
+            || contains(self.area, event)
     }
 }

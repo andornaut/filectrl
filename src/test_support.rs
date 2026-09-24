@@ -5,6 +5,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use crate::file_system::path_info::PathInfo;
+
 /// Writes `contents` to `path` as an executable script, from a child process.
 ///
 /// Written here, the file would be open for writing in this process for a
@@ -69,6 +71,36 @@ impl TempDir {
 
     pub(crate) fn join(&self, name: impl AsRef<Path>) -> PathBuf {
         self.path.join(name)
+    }
+
+    /// The directory itself, as a listing names it.
+    pub(crate) fn directory(&self) -> PathInfo {
+        PathInfo::try_from(self.path.as_path()).unwrap()
+    }
+
+    /// Creates `name` as a file of `size` bytes.
+    pub(crate) fn file(&self, name: &str, size: usize) -> PathInfo {
+        let path = self.join(name);
+        std::fs::write(&path, vec![b'x'; size]).unwrap();
+        PathInfo::try_from(&path).unwrap()
+    }
+
+    /// Creates `name` as a directory.
+    pub(crate) fn subdirectory(&self, name: &str) -> PathInfo {
+        let path = self.join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        PathInfo::try_from(&path).unwrap()
+    }
+
+    /// Creates a one-byte file `name` inside `dir`, creating `dir` as needed,
+    /// so a search rooted here renders it with a separator in its name and a
+    /// displayed name that differs from its basename.
+    pub(crate) fn nested(&self, dir: &str, name: &str) -> PathInfo {
+        let dir = self.join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, b"x").unwrap();
+        PathInfo::try_from(&path).unwrap()
     }
 }
 

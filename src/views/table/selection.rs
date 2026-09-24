@@ -16,6 +16,7 @@ impl TableView {
         Command::SelectionChanged {
             selected: self.selected_path().cloned(),
             mark_count: self.marks.len(),
+            range: self.marks.in_range_mode(),
         }
         .into()
     }

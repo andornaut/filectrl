@@ -1,11 +1,11 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
 };
 
 use super::{MIN_HEIGHT, OpenWithView, widget::build_rows};
 use crate::app::config::theme::Theme;
-use crate::views::{View, as_dimension, bordered, render_lines};
+use crate::views::{View, as_dimension, bordered, render_lines, scroll_to_show, split_scrollbar};
 
 impl View for OpenWithView {
     /// The same constraint as `TableView`, so the picker lands in exactly the
@@ -33,20 +33,9 @@ impl View for OpenWithView {
         // The viewport height is only known here, so a selection made before
         // the first render may still be off screen.
         self.scroll_offset =
-            super::clamp_scroll(self.inner_height, self.selected, self.scroll_offset)
-                .min(max_scroll);
+            scroll_to_show(self.inner_height, self.scroll_offset, self.selected).min(max_scroll);
 
-        let (content_area, scrollbar_area) = if max_scroll > 0 {
-            let [content_area, scrollbar_area] = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .areas(bordered_area);
-            (content_area, scrollbar_area)
-        } else {
-            // A zero-size area clears the scrollbar's hit test region, so
-            // clicks in that column are not treated as scrollbar drags.
-            (bordered_area, Rect::default())
-        };
+        let (content_area, scrollbar_area) = split_scrollbar(bordered_area, max_scroll > 0);
 
         self.content_area = content_area;
         let rows = build_rows(

@@ -8,7 +8,7 @@ use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui_textarea::{CursorMove, TextArea};
 
-use super::{View, as_dimension, unicode::pluralize_items};
+use super::{View, as_dimension, scroll_to_show, unicode::pluralize_items};
 use crate::{
     app::clipboard::ClipboardEntry,
     command::{Command, PromptAction, result::CommandResult},
@@ -202,8 +202,12 @@ impl PromptView {
         if width == 0 {
             return;
         }
-        let cursor_display_col = as_dimension(self.text_area.screen_cursor().col);
-        self.scroll_col = next_scroll_top(self.scroll_col, cursor_display_col, width);
+        let cursor_display_col = self.text_area.screen_cursor().col;
+        self.scroll_col = as_dimension(scroll_to_show(
+            width.into(),
+            self.scroll_col.into(),
+            cursor_display_col,
+        ));
     }
 
     /// Converts a display-column offset (viewport-relative + scroll) to a character index
@@ -429,17 +433,6 @@ impl PromptView {
             .get(row)
             .map_or(0, |line| line.chars().count());
         col >= len
-    }
-}
-
-/// Replicates tui-textarea's `next_scroll_top` to keep our scroll offset in sync.
-fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {
-    if cursor < prev_top {
-        cursor
-    } else if prev_top + len <= cursor {
-        cursor + 1 - len
-    } else {
-        prev_top
     }
 }
 
@@ -882,18 +875,6 @@ mod tests {
         assert_eq!("hello", view.text_area.lines()[0]);
     }
 
-    // ── next_scroll_top ──────────────────────────────────────────────────────
-
-    #[test_case(0, 5, 10 => 0; "cursor within viewport stays")]
-    #[test_case(0, 0, 10 => 0; "cursor at start stays")]
-    #[test_case(5, 3, 10 => 3; "cursor before viewport scrolls back")]
-    #[test_case(0, 10, 5 => 6; "cursor past viewport scrolls forward")]
-    #[test_case(0, 5,  5 => 1; "cursor at exact right boundary scrolls forward")]
-    #[test_case(3, 3,  5 => 3; "cursor at left edge of viewport stays")]
-    fn next_scroll_top_keeps_the_cursor_in_view(prev_top: u16, cursor: u16, len: u16) -> u16 {
-        next_scroll_top(prev_top, cursor, len)
-    }
-
     // ── display_col_to_char_idx ──────────────────────────────────────────────
 
     #[test_case("hello", 0 => 0; "ascii: col 0 maps to char 0")]
@@ -1041,7 +1022,7 @@ mod tests {
     #[test]
     fn update_scroll_col_tracks_cursor_past_viewport() {
         // 11 ASCII chars, cursor at end (col 11); viewport width = 5
-        // next_scroll_top(0, 11, 5) = 11 + 1 - 5 = 7
+        // scroll_to_show(5, 0, 11) = 11 + 1 - 5 = 7
         let mut view = prompt_with_action(PromptAction::Filter("hello world".into()));
         view.update_scroll_col(5);
         assert_eq!(view.scroll_col, 7);

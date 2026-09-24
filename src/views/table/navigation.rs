@@ -291,35 +291,12 @@ mod tests {
         test_support::TempDir,
     };
 
-    struct Fixture {
-        dir: TempDir,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let dir = TempDir::new("nav");
-            Self { dir }
-        }
-
-        fn file(&self, name: &str, size: usize) -> PathInfo {
-            let path = self.dir.join(name);
-            std::fs::write(&path, vec![b'x'; size]).unwrap();
-            PathInfo::try_from(&path).unwrap()
-        }
-
-        /// A file one level down, so a search result's displayed name (the
-        /// path relative to the search root) differs from its basename.
-        fn nested(&self, dir: &str, name: &str) -> PathInfo {
-            let dir = self.dir.join(dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            let path = dir.join(name);
-            std::fs::write(&path, b"x").unwrap();
-            PathInfo::try_from(&path).unwrap()
-        }
-
-        fn directory(&self) -> PathInfo {
-            PathInfo::try_from(self.dir.path()).unwrap()
-        }
+    /// A table listing `children` of `fx`, with the cursor on the first.
+    fn listed(fx: &TempDir, children: &[PathInfo]) -> TableView {
+        Config::init_test();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), children, Reselect::Top);
+        table
     }
 
     fn visible_names(table: &TableView) -> Vec<String> {
@@ -356,11 +333,8 @@ mod tests {
 
     #[test]
     fn set_directory_top_selects_the_first_item() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        let children = vec![fx.file("b", 1), fx.file("a", 1), fx.file("c", 1)];
-        table.set_directory(fx.directory(), &children, Reselect::Top);
+        let fx = TempDir::new("nav");
+        let table = listed(&fx, &[fx.file("b", 1), fx.file("a", 1), fx.file("c", 1)]);
 
         assert_eq!(table.table_state.selected(), Some(0));
         assert_eq!(selected_basename(&table).as_deref(), Some("a"));
@@ -368,12 +342,9 @@ mod tests {
 
     #[test]
     fn sort_keeps_the_selected_file_when_it_moves_position() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
+        let fx = TempDir::new("nav");
         // Name-ascending order: a, b, c
-        let children = vec![fx.file("a", 3), fx.file("b", 1), fx.file("c", 2)];
-        table.set_directory(fx.directory(), &children, Reselect::Top);
+        let mut table = listed(&fx, &[fx.file("a", 3), fx.file("b", 1), fx.file("c", 2)]);
 
         // Select "b" (index 1 by name).
         table.select(1);
@@ -388,14 +359,8 @@ mod tests {
 
     #[test]
     fn reselect_keep_holds_the_cursor_position_when_the_selected_file_is_deleted() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)]);
         table.select(1); // "b"
 
         // Same directory reloaded with "b" removed; cursor holds at index 1.
@@ -410,14 +375,8 @@ mod tests {
 
     #[test]
     fn reselect_keep_clamps_a_held_cursor_to_a_shorter_listing() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)]);
         table.select(2); // "c", the last item
 
         // Reloaded with the tail gone, so the position the cursor held no
@@ -431,14 +390,8 @@ mod tests {
 
     #[test]
     fn reselect_top_falls_back_to_first_when_the_selected_file_is_gone() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)]);
         table.select(2); // "c"
 
         table.set_directory(
@@ -451,13 +404,8 @@ mod tests {
     }
 
     /// Build a table with three items and mark the first two.
-    fn table_with_two_marks(fx: &Fixture) -> TableView {
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
-            Reselect::Top,
-        );
+    fn table_with_two_marks(fx: &TempDir) -> TableView {
+        let mut table = listed(fx, &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)]);
         table.select(0);
         table.toggle_mark();
         table.select(1);
@@ -492,8 +440,7 @@ mod tests {
     fn an_operation_consumes_the_marks_and_resets_the_mark_count_notice(
         operation: fn(Vec<PathInfo>, PathInfo) -> Command,
     ) {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         let result = table.handle_command(&operation(table.marked_paths(), fx.directory()));
@@ -504,10 +451,8 @@ mod tests {
 
     #[test]
     fn delete_without_marks_does_not_emit_a_mark_count_command() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
 
         let result = table.handle_command(&Command::Delete(vec![]));
 
@@ -515,7 +460,7 @@ mod tests {
     }
 
     /// Drives the reload a watcher event starts, through to its completion.
-    fn reload(table: &mut TableView, fx: &Fixture, children: Vec<PathInfo>) -> CommandResult {
+    fn reload(table: &mut TableView, fx: &TempDir, children: Vec<PathInfo>) -> CommandResult {
         let result = table.handle_command(&Command::RefreshedDirectory {
             directory: fx.directory(),
             generation: 1,
@@ -532,14 +477,8 @@ mod tests {
 
     #[test]
     fn a_reload_keeps_the_listing_and_the_cursor_until_it_completes() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file("b", 1)]);
         table.select(1);
 
         table.handle_command(&Command::RefreshedDirectory {
@@ -570,7 +509,7 @@ mod tests {
     #[test]
     fn navigating_to_the_parent_selects_the_directory_it_came_from() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let child = fx.nested("sub", "inside");
         let parent = fx.directory();
         let mut table = TableView::default();
@@ -611,7 +550,7 @@ mod tests {
     #[test]
     fn the_cursor_and_marks_set_while_a_listing_loads_survive_its_completion() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
 
         table.handle_command(&Command::NavigatedDirectory {
@@ -637,7 +576,7 @@ mod tests {
     #[test]
     fn a_cursor_moved_while_the_parent_loads_is_not_sent_back_to_the_child() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let child = fx.nested("sub", "inside");
         let mut table = TableView::default();
         table.set_directory(
@@ -670,7 +609,7 @@ mod tests {
     #[test]
     fn a_cursor_moved_back_to_the_top_while_the_parent_loads_stays_there() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let child = fx.nested("sub", "inside");
         let mut table = TableView::default();
         table.set_directory(
@@ -702,7 +641,7 @@ mod tests {
     #[test]
     fn jumping_to_an_ancestor_selects_the_child_on_the_path_it_came_from() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let inside = fx.nested("sub/deeper", "inside");
         let mut table = TableView::default();
         table.set_directory(
@@ -719,8 +658,8 @@ mod tests {
         table.set_directory(
             fx.directory(),
             &[
-                PathInfo::try_from(fx.dir.join("aaa").as_path()).unwrap(),
-                PathInfo::try_from(fx.dir.join("sub").as_path()).unwrap(),
+                PathInfo::try_from(fx.join("aaa").as_path()).unwrap(),
+                PathInfo::try_from(fx.join("sub").as_path()).unwrap(),
             ],
             Reselect::Top,
         );
@@ -730,11 +669,9 @@ mod tests {
 
     #[test]
     fn a_reload_keeps_a_cursor_move_and_a_mark_made_while_it_runs() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
+        let fx = TempDir::new("nav");
         let children = [fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)];
-        table.set_directory(fx.directory(), &children, Reselect::Top);
+        let mut table = listed(&fx, &children);
         table.select(0);
 
         table.handle_command(&Command::RefreshedDirectory {
@@ -768,10 +705,8 @@ mod tests {
 
     #[test]
     fn leaving_a_search_does_not_leave_its_results_in_the_directory_listing() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
         table.content.start_search();
         table.content.append(&[fx.nested("sub", "hit")]);
         assert_eq!(vec!["hit"], visible_names(&table));
@@ -796,8 +731,7 @@ mod tests {
 
     #[test]
     fn a_reload_carries_the_marks_across() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         // A file appearing in the directory is not a request to drop what the
@@ -827,20 +761,14 @@ mod tests {
     /// name. Restoring by path would drop to the fallback and move the cursor.
     #[test]
     fn a_reload_follows_a_renamed_entry_to_its_new_name() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)]);
         table.select(1); // "b"
 
         // Renamed on disk rather than recreated, so the entry keeps the device
         // and inode it was selected under.
-        std::fs::rename(fx.dir.join("b"), fx.dir.join("z_renamed")).unwrap();
-        let renamed = PathInfo::try_from(&fx.dir.join("z_renamed")).unwrap();
+        std::fs::rename(fx.join("b"), fx.join("z_renamed")).unwrap();
+        let renamed = PathInfo::try_from(&fx.join("z_renamed")).unwrap();
         reload(
             &mut table,
             &fx,
@@ -854,8 +782,7 @@ mod tests {
 
     #[test]
     fn a_reload_drops_a_mark_on_an_entry_that_is_gone() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         // "a" was removed while the listing reloaded. Nothing names it any
@@ -875,8 +802,7 @@ mod tests {
 
     #[test]
     fn navigating_away_does_not_carry_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         // A mark names an entry of the directory being left, so it means
@@ -899,10 +825,8 @@ mod tests {
 
     #[test]
     fn navigating_away_drops_the_filter() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
         table.handle_command(&Command::FilterChanged("a".to_string()));
 
         table.handle_command(&Command::NavigatedDirectory {
@@ -922,7 +846,7 @@ mod tests {
     #[test]
     fn late_listing_completion_does_not_clobber_the_bookmarks_listing() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
         // A load is in flight for the CWD when the bookmarks key is pressed.
         table.begin_directory(fx.directory(), Reselect::Top);
@@ -946,8 +870,7 @@ mod tests {
 
     #[test]
     fn a_refresh_while_searching_keeps_the_results_streaming_and_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
         // start_search is called directly, so the two marks carry into the
         // search listing exactly as they would after marking results.
@@ -977,8 +900,7 @@ mod tests {
 
     #[test]
     fn bookmarks_clears_the_marks_and_emits_the_mark_reset_snapshot() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         let result = table.handle_command(&Command::Bookmarks {
@@ -992,8 +914,7 @@ mod tests {
 
     #[test]
     fn refreshed_directory_while_showing_bookmarks_reloads_them_and_keeps_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
         table
             .content
@@ -1017,8 +938,7 @@ mod tests {
 
     #[test]
     fn sort_by_clears_marks_and_resets_the_mark_count_notice() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         let result = table.sort_by(SortColumn::Size);
@@ -1029,8 +949,7 @@ mod tests {
 
     #[test]
     fn a_filter_change_clears_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         // Filtering is a reorder the user asked for, and a mark is held by
@@ -1044,8 +963,7 @@ mod tests {
 
     #[test]
     fn a_filter_change_that_reorders_nothing_keeps_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
 
         // Clearing a filter that was never set reorders nothing, so it must not
@@ -1058,8 +976,7 @@ mod tests {
 
     #[test]
     fn clearing_the_filter_lists_every_entry_again() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
         table.handle_command(&Command::FilterChanged("a".to_string()));
         assert_eq!(vec!["a"], visible_names(&table));
@@ -1071,8 +988,7 @@ mod tests {
 
     #[test]
     fn a_reorder_ends_range_mode() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
         table.enter_range_mode();
         assert!(table.marks.in_range_mode());
@@ -1094,10 +1010,8 @@ mod tests {
 
     /// Items `a` to `e`, with `e` marked and a range from `a` to `b`, so the
     /// range has earlier marks under it that are not next to it.
-    fn table_in_range_mode(fx: &Fixture) -> TableView {
-        let mut table = TableView::default();
-        let items = ["a", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
-        table.set_directory(fx.directory(), &items, Reselect::Top);
+    fn table_in_range_mode(fx: &TempDir) -> TableView {
+        let mut table = listed(fx, &["a", "b", "c", "d", "e"].map(|name| fx.file(name, 1)));
         table.select(4);
         table.toggle_mark();
         table.select(0);
@@ -1107,10 +1021,25 @@ mod tests {
         table
     }
 
+    /// The snapshot is what the notices bar reads to show range mode.
+    #[test]
+    fn the_selection_snapshot_reports_range_mode() {
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &["a", "b"].map(|name| fx.file(name, 1)));
+        table.select(0);
+        let range_of = |result: CommandResult| match result.into_commands().as_slice() {
+            [Command::SelectionChanged { range, .. }] => *range,
+            other => panic!("expected a selection snapshot, got {other:?}"),
+        };
+
+        assert!(range_of(table.enter_range_mode()));
+        assert!(range_of(table.select(1)));
+        assert!(!range_of(table.enter_range_mode()));
+    }
+
     #[test]
     fn a_reload_keeps_range_mode_by_the_entries_it_names() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_in_range_mode(&fx);
 
         // A watcher reload with an entry sorting first, so every position
@@ -1130,8 +1059,7 @@ mod tests {
     /// moves, so an entry that appears inside it is not marked unseen.
     #[test]
     fn a_reload_does_not_mark_an_entry_that_appears_inside_the_range() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_in_range_mode(&fx);
 
         let items = ["a", "ab", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
@@ -1143,8 +1071,7 @@ mod tests {
 
     #[test]
     fn a_reload_that_removes_the_range_anchor_ends_range_mode() {
-        Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = table_in_range_mode(&fx);
 
         let items = ["b", "c", "d", "e"].map(|name| fx.file(name, 1));
@@ -1158,10 +1085,8 @@ mod tests {
 
     #[test]
     fn a_bookmarks_reload_keeps_the_cursor_and_the_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("x", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("x", 1)]);
         let bookmarks = vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)];
         table.handle_command(&Command::Bookmarks {
             bookmarks: bookmarks.clone(),
@@ -1188,6 +1113,7 @@ mod tests {
             Command::SelectionChanged {
                 selected: table.selected_path().cloned(),
                 mark_count: 1,
+                range: false,
             }
             .into()
         );
@@ -1195,10 +1121,8 @@ mod tests {
 
     #[test]
     fn a_search_ending_keeps_the_marks_but_still_ends_range_mode() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -1229,15 +1153,9 @@ mod tests {
 
     #[test]
     fn toggle_show_hidden_snapshot_carries_the_new_selection_and_cleared_marks() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
+        let fx = TempDir::new("nav");
         // Sorted (a leading dot is ignored when comparing names): a, .b
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file(".b", 1)],
-            Reselect::Top,
-        );
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file(".b", 1)]);
         table.select(1); // ".b"
         table.toggle_mark();
 
@@ -1252,6 +1170,7 @@ mod tests {
             Command::SelectionChanged {
                 selected: table.selected_path().cloned(),
                 mark_count: 0,
+                range: false,
             }
             .into()
         );
@@ -1259,14 +1178,8 @@ mod tests {
 
     #[test]
     fn toggle_show_hidden_is_a_noop_during_a_search() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(
-            fx.directory(),
-            &[fx.file("a", 1), fx.file(".b", 1)],
-            Reselect::Top,
-        );
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1), fx.file(".b", 1)]);
         assert_eq!(table.content.len(), 2);
 
         table.handle_command(&Command::StartSearch("a".into()));
@@ -1298,7 +1211,7 @@ mod tests {
     #[test]
     fn search_results_are_sorted_once_the_walk_is_done() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
 
         table.handle_command(&Command::StartSearch("a".into()));
@@ -1338,12 +1251,10 @@ mod tests {
 
     #[test]
     fn search_results_are_sorted_by_the_name_the_column_shows() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
+        let fx = TempDir::new("nav");
         // `start_search` takes the search root from the current directory, and
         // the root is what the column renders names relative to.
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let mut table = listed(&fx, &[]);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -1372,10 +1283,8 @@ mod tests {
 
     #[test]
     fn a_mark_made_while_a_search_streamed_follows_its_entry_through_the_sort() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -1415,10 +1324,8 @@ mod tests {
 
     #[test]
     fn a_dot_file_below_the_search_root_sorts_next_to_its_neighbours() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
         let hidden = fx.nested("projects", ".zzz.txt");
         let plain = fx.nested("projects", "bbb.txt");
 
@@ -1446,10 +1353,8 @@ mod tests {
 
     #[test]
     fn carrying_marks_does_not_spread_them_across_hard_links() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
         let first = fx.nested("a", "obj");
         // A second name for the same file. A recursive search finds both, and
         // they share a device and inode, so identity by inode cannot tell them
@@ -1492,10 +1397,8 @@ mod tests {
 
     #[test]
     fn a_cancelled_search_sorts_the_results_it_did_find() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
         let apple = fx.nested("z", "apple.txt");
         let zebra = fx.nested("a", "zebra.txt");
 
@@ -1526,7 +1429,7 @@ mod tests {
     #[test]
     fn a_superseded_search_exiting_does_not_reorder_its_replacement() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
 
         table.handle_command(&Command::StartSearch("a".into()));
@@ -1554,7 +1457,7 @@ mod tests {
     #[test]
     fn stale_listing_batches_are_ignored() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
             directory: fx.directory(),
@@ -1578,7 +1481,7 @@ mod tests {
     #[test]
     fn a_stale_completion_does_not_end_the_current_load() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
             directory: fx.directory(),
@@ -1599,7 +1502,7 @@ mod tests {
     #[test]
     fn late_search_batches_are_dropped_in_bookmarks_mode() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("nav");
         let mut table = TableView::default();
         table.handle_command(&Command::NavigatedDirectory {
             directory: fx.directory(),
@@ -1626,10 +1529,8 @@ mod tests {
 
     #[test]
     fn showing_bookmarks_clears_an_active_search() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
         table.handle_command(&Command::StartSearch("a".into()));
         assert!(table.content.is_searching());
 
@@ -1648,10 +1549,8 @@ mod tests {
 
     #[test]
     fn starting_a_search_clears_the_bookmarks_view() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.set_directory(fx.directory(), &[fx.file("a", 1)], Reselect::Top);
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
         table.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert!(table.content.is_showing_bookmarks());
 

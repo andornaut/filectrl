@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
+use crate::contains_ignore_case;
 use crate::file_system::path_info::{PathInfo, name_comparator, visible_path};
 use crate::views::ListingMode;
 
@@ -430,20 +431,6 @@ impl Visibility {
     }
 }
 
-/// Case-insensitive `str::contains`. The common all-ASCII case compares in
-/// place instead of allocating a lowercased copy of every entry name.
-/// `needle_lowercase` must already be lowercased and non-empty.
-fn contains_ignore_case(haystack: &str, needle_lowercase: &str) -> bool {
-    if needle_lowercase.is_ascii() && haystack.is_ascii() {
-        let needle = needle_lowercase.as_bytes();
-        return haystack
-            .as_bytes()
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle));
-    }
-    haystack.to_lowercase().contains(needle_lowercase)
-}
-
 /// Case-insensitive `str::ends_with`. `suffix_lowercase` must already be
 /// lowercased.
 fn ends_with_ignore_case(haystack: &str, suffix_lowercase: &str) -> bool {
@@ -462,42 +449,6 @@ mod tests {
 
     use super::*;
     use crate::{app::config::Config, test_support::TempDir};
-
-    struct Fixture {
-        dir: TempDir,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let dir = TempDir::new("content");
-            Self { dir }
-        }
-
-        fn dir_entry(&self, name: &str) -> PathInfo {
-            let path = self.dir.join(name);
-            std::fs::create_dir_all(&path).unwrap();
-            PathInfo::try_from(&path).unwrap()
-        }
-
-        fn file_entry(&self, name: &str, size: usize) -> PathInfo {
-            let path = self.dir.join(name);
-            std::fs::write(&path, vec![b'x'; size]).unwrap();
-            PathInfo::try_from(&path).unwrap()
-        }
-
-        /// A file one level down, so a search rooted at the fixture renders it
-        /// with a separator in the middle of its name.
-        fn nested_file_entry(&self, dir: &str, name: &str) -> PathInfo {
-            let path = self.dir.join(dir).join(name);
-            std::fs::create_dir_all(self.dir.join(dir)).unwrap();
-            std::fs::write(&path, b"x").unwrap();
-            PathInfo::try_from(&path).unwrap()
-        }
-
-        fn directory(&self) -> PathInfo {
-            PathInfo::try_from(self.dir.path()).unwrap()
-        }
-    }
 
     /// A listing built with the shipped settings, so a test states only the
     /// setting it is about. The app builds one from the config it loaded.
@@ -522,14 +473,14 @@ mod tests {
     #[test]
     fn sort_by_name_ascending_groups_directories_first_then_case_insensitive() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         // Intentionally unsorted input order.
         let items = vec![
-            fx.file_entry("Banana", 1),
-            fx.dir_entry("Apricot"),
-            fx.file_entry("apple", 1),
-            fx.file_entry(".secret", 1),
-            fx.dir_entry("Apple"),
+            fx.file("Banana", 1),
+            fx.subdirectory("Apricot"),
+            fx.file("apple", 1),
+            fx.file(".secret", 1),
+            fx.subdirectory("Apple"),
         ];
         let mut content = content();
         content.set_items(fx.directory(), items);
@@ -549,12 +500,12 @@ mod tests {
     #[test]
     fn sort_by_name_descending_reverses_within_the_directory_grouping() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.dir_entry("Apple"),
-            fx.dir_entry("Apricot"),
-            fx.file_entry("apple", 1),
-            fx.file_entry("Banana", 1),
+            fx.subdirectory("Apple"),
+            fx.subdirectory("Apricot"),
+            fx.file("apple", 1),
+            fx.file("Banana", 1),
         ];
         let mut content = content();
         content.set_items(fx.directory(), items);
@@ -568,11 +519,11 @@ mod tests {
     #[test]
     fn sort_by_size_orders_by_byte_length() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.file_entry("medium", 50),
-            fx.file_entry("small", 1),
-            fx.file_entry("large", 500),
+            fx.file("medium", 50),
+            fx.file("small", 1),
+            fx.file("large", 500),
         ];
         let mut content = content();
         content.set_items(fx.directory(), items);
@@ -591,12 +542,12 @@ mod tests {
     #[test_case("ÉQ", &["Équipe"] ; "uppercase outside ascii")]
     fn filter_retains_case_insensitive_substring_matches(filter: &str, expected: &[&str]) {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.file_entry("Apple", 1),
-            fx.file_entry("Apricot", 1),
-            fx.file_entry("Banana", 1),
-            fx.file_entry("Équipe", 1),
+            fx.file("Apple", 1),
+            fx.file("Apricot", 1),
+            fx.file("Banana", 1),
+            fx.file("Équipe", 1),
         ];
         let mut content = content();
         content.set_items(fx.directory(), items);
@@ -613,10 +564,10 @@ mod tests {
     #[test]
     fn sort_by_modified_orders_by_age() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let now = chrono::Local::now();
         let aged = |name: &str, hours: i64| {
-            let mut entry = fx.file_entry(name, 1);
+            let mut entry = fx.file(name, 1);
             entry.modified = Some(now - chrono::Duration::hours(hours));
             entry
         };
@@ -634,11 +585,11 @@ mod tests {
     #[test]
     fn directories_are_grouped_first_only_under_a_name_sort() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.file_entry("small", 1),
-            fx.dir_entry("dir"),
-            fx.file_entry("large", 1_000_000),
+            fx.file("small", 1),
+            fx.subdirectory("dir"),
+            fx.file("large", 1_000_000),
         ];
         let mut content = DirectoryContent::new(true, true);
         content.set_items(fx.directory(), items);
@@ -653,8 +604,8 @@ mod tests {
     #[test]
     fn toggle_show_hidden_filters_dotfiles() {
         Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
+        let fx = TempDir::new("content");
+        let items = vec![fx.file("visible", 1), fx.file(".hidden", 1)];
         let mut content = content();
         content.set_items(fx.directory(), items);
 
@@ -675,7 +626,7 @@ mod tests {
     #[test]
     fn revision_changes_when_the_listing_changes_but_not_on_reads() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
 
         let r0 = content.revision();
@@ -685,7 +636,7 @@ mod tests {
 
         // An append adds entries after the last without moving any, which the
         // view picks up from the length, so the cache it keys stays valid.
-        content.append(&[fx.file_entry("a", 1)]);
+        content.append(&[fx.file("a", 1)]);
         let r2 = content.revision();
         assert_eq!(r1, r2, "append must leave the revision alone");
 
@@ -704,12 +655,12 @@ mod tests {
     #[test]
     fn streamed_listing_matches_set_items_then_sort() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.file_entry("Banana", 1),
-            fx.dir_entry("Apricot"),
-            fx.file_entry("apple", 1),
-            fx.dir_entry("Apple"),
+            fx.file("Banana", 1),
+            fx.subdirectory("Apricot"),
+            fx.file("apple", 1),
+            fx.subdirectory("Apple"),
         ];
 
         // Reference: the one-shot path.
@@ -730,12 +681,8 @@ mod tests {
     #[test]
     fn listing_is_visible_in_read_order_before_finalize() {
         Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![
-            fx.file_entry("c", 1),
-            fx.file_entry("a", 1),
-            fx.file_entry("b", 1),
-        ];
+        let fx = TempDir::new("content");
+        let items = vec![fx.file("c", 1), fx.file("a", 1), fx.file("b", 1)];
         let mut content = content();
         content.start_listing(fx.directory(), false);
         assert!(content.is_loading());
@@ -752,17 +699,14 @@ mod tests {
     #[test]
     fn a_staged_listing_replaces_the_visible_one_only_at_finalize() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
-        content.set_items(
-            fx.directory(),
-            vec![fx.file_entry("a", 1), fx.file_entry("b", 1)],
-        );
+        content.set_items(fx.directory(), vec![fx.file("a", 1), fx.file("b", 1)]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
         let revision = content.revision();
 
         content.start_listing(fx.directory(), true);
-        content.append(&[fx.file_entry("c", 1), fx.file_entry("b", 1)]);
+        content.append(&[fx.file("c", 1), fx.file("b", 1)]);
 
         // The entries on screen are of this same directory and are still
         // correct, so nothing changes until the load completes: neither the
@@ -779,16 +723,16 @@ mod tests {
     #[test]
     fn a_staged_listing_is_filtered_when_it_is_swapped_in() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
-        content.set_items(fx.directory(), vec![fx.file_entry("Apple", 1)]);
+        content.set_items(fx.directory(), vec![fx.file("Apple", 1)]);
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
         // Staged entries never reach `append`'s per-batch filter, so the swap
         // is what has to apply it.
         content.start_listing(fx.directory(), true);
-        content.append(&[fx.file_entry("Apricot", 1), fx.file_entry("Banana", 1)]);
+        content.append(&[fx.file("Apricot", 1), fx.file("Banana", 1)]);
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
 
         assert_eq!(names(&content), vec!["Apricot"]);
@@ -805,16 +749,16 @@ mod tests {
         expected: &[&str],
     ) {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         // Built with the settings rather than reading them from a global, so
         // the same listing can be exercised both ways in one process.
         let mut content = DirectoryContent::new(true, directories_first);
         content.set_items(
             fx.directory(),
             vec![
-                fx.file_entry("afile", 1),
-                fx.dir_entry("zdir"),
-                fx.file_entry(".hidden", 1),
+                fx.file("afile", 1),
+                fx.subdirectory("zdir"),
+                fx.file(".hidden", 1),
             ],
         );
 
@@ -826,11 +770,11 @@ mod tests {
     #[test]
     fn a_listing_built_without_hidden_files_never_lists_them() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = DirectoryContent::new(false, true);
         content.set_items(
             fx.directory(),
-            vec![fx.file_entry("file", 1), fx.file_entry(".hidden", 1)],
+            vec![fx.file("file", 1), fx.file(".hidden", 1)],
         );
 
         content.sort(SortColumn::Name, SortDirection::Ascending);
@@ -841,12 +785,12 @@ mod tests {
     #[test]
     fn returning_to_the_plain_listing_drops_the_entries_of_the_mode_it_left() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
-        content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
+        content.set_items(fx.directory(), vec![fx.file("a", 1)]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
         content.start_search();
-        content.append(&[fx.nested_file_entry("sub", "hit")]);
+        content.append(&[fx.nested("sub", "hit")]);
         assert_eq!(names(&content), vec!["hit"]);
 
         // Esc leaves the search. Its results are of another root and describe
@@ -862,7 +806,7 @@ mod tests {
     #[test_case(ListingMode::Bookmarks ; "for the bookmarks")]
     fn leaving_a_search_drops_its_root(mode: ListingMode) {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
         content.set_items(fx.directory(), vec![]);
         content.start_search();
@@ -878,13 +822,13 @@ mod tests {
     #[test]
     fn starting_a_search_drops_the_filter() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
         content.set_items(fx.directory(), vec![]);
         content.set_filter("zzz".to_string());
 
         content.start_search();
-        content.append(&[fx.file_entry("hit", 1)]);
+        content.append(&[fx.file("hit", 1)]);
 
         // The search has its own query; a filter left from the directory
         // would hide what it found.
@@ -894,11 +838,11 @@ mod tests {
     #[test]
     fn showing_the_bookmarks_drops_the_filter() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
         content.set_filter("zzz".to_string());
 
-        content.set_bookmarks(vec![fx.dir_entry("mark")]);
+        content.set_bookmarks(vec![fx.subdirectory("mark")]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
         assert_eq!(names(&content), vec!["mark"]);
@@ -907,16 +851,16 @@ mod tests {
     #[test]
     fn a_staged_listing_abandoned_by_a_search_is_dropped() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
-        content.set_items(fx.directory(), vec![fx.file_entry("a", 1)]);
+        content.set_items(fx.directory(), vec![fx.file("a", 1)]);
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
         content.start_listing(fx.directory(), true);
-        content.append(&[fx.file_entry("b", 1)]);
+        content.append(&[fx.file("b", 1)]);
         content.start_search();
         assert!(!content.is_loading());
-        content.append(&[fx.file_entry("hit", 1)]);
+        content.append(&[fx.file("hit", 1)]);
 
         // A late completion of the abandoned load must not swap its directory
         // entries into the search results.
@@ -927,11 +871,11 @@ mod tests {
     #[test]
     fn appended_batches_honor_the_active_filter_before_finalize() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.file_entry("Apple", 1),
-            fx.file_entry("Banana", 1),
-            fx.file_entry("Apricot", 1),
+            fx.file("Apple", 1),
+            fx.file("Banana", 1),
+            fx.file("Apricot", 1),
         ];
         let mut content = content();
         content.set_filter("ap".to_string());
@@ -948,8 +892,8 @@ mod tests {
     #[test]
     fn appended_batches_honor_show_hidden_before_finalize() {
         Config::init_test();
-        let fx = Fixture::new();
-        let items = vec![fx.file_entry("visible", 1), fx.file_entry(".hidden", 1)];
+        let fx = TempDir::new("content");
+        let items = vec![fx.file("visible", 1), fx.file(".hidden", 1)];
         let mut content = content();
         // Default config has show_hidden_files = true; toggle it off.
         content.toggle_show_hidden();
@@ -966,7 +910,7 @@ mod tests {
     #[test]
     fn search_results_bypass_the_show_hidden_filter() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
         content.set_items(fx.directory(), vec![]);
         // Default config has show_hidden_files = true; toggle it off.
@@ -974,7 +918,7 @@ mod tests {
         content.start_search();
 
         // A search explicitly matched these names, so hidden results are kept.
-        content.append(&[fx.file_entry(".hidden", 1), fx.file_entry("visible", 1)]);
+        content.append(&[fx.file(".hidden", 1), fx.file("visible", 1)]);
         assert_eq!(names(&content), vec![".hidden", "visible"]);
 
         // Re-sorting search results must not drop hidden matches either.
@@ -985,16 +929,16 @@ mod tests {
     #[test]
     fn finalize_after_a_mid_stream_filter_change_matches_a_full_sort() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
         content.start_listing(fx.directory(), false);
-        content.append(&[fx.file_entry("Banana", 1), fx.file_entry("Apple", 1)]);
+        content.append(&[fx.file("Banana", 1), fx.file("Apple", 1)]);
 
         // A filter arrives mid-stream; `sort` re-derives from the unfiltered
         // items, after which finalize only has to order the survivors.
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
-        content.append(&[fx.file_entry("Apricot", 1), fx.file_entry("Cherry", 1)]);
+        content.append(&[fx.file("Apricot", 1), fx.file("Cherry", 1)]);
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
@@ -1006,14 +950,14 @@ mod tests {
     #[test]
     fn filter_agrees_with_a_substring_search_of_the_displayed_name() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let entries = [
-            fx.dir_entry("reports"),
-            fx.dir_entry("Équipe"),
-            fx.file_entry("report.txt", 1),
-            fx.file_entry("Équipe.txt", 1),
-            fx.file_entry("a", 1),
-            fx.nested_file_entry("reports", "inner.txt"),
+            fx.subdirectory("reports"),
+            fx.subdirectory("Équipe"),
+            fx.file("report.txt", 1),
+            fx.file("Équipe.txt", 1),
+            fx.file("a", 1),
+            fx.nested("reports", "inner.txt"),
         ];
         let filters = [
             "",
@@ -1039,7 +983,7 @@ mod tests {
         // Normal, searching from the fixture root, and bookmarks.
         let modes = [
             (false, None),
-            (false, Some(fx.dir.path().to_path_buf())),
+            (false, Some(fx.path().to_path_buf())),
             (true, None),
         ];
 
@@ -1073,16 +1017,16 @@ mod tests {
     #[test]
     fn displayed_name_per_listing_mode() {
         Config::init_test();
-        let fx = Fixture::new();
-        let dir = fx.dir_entry("reports");
-        let nested = fx.nested_file_entry("reports", "inner.txt");
+        let fx = TempDir::new("content");
+        let dir = fx.subdirectory("reports");
+        let nested = fx.nested("reports", "inner.txt");
 
         // Plain listing: the entry's own name, directories separator-suffixed.
         assert_eq!("reports/", displayed_name(&dir, false, None));
         assert_eq!("inner.txt", displayed_name(&nested, false, None));
 
         // Searching: the path relative to the search root.
-        let root = Some(fx.dir.path());
+        let root = Some(fx.path());
         assert_eq!("reports/", displayed_name(&dir, false, root));
         assert_eq!("reports/inner.txt", displayed_name(&nested, false, root));
 
@@ -1099,11 +1043,11 @@ mod tests {
     #[test]
     fn filter_matches_the_relative_path_of_search_results() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let items = vec![
-            fx.dir_entry("reports"),
-            fx.nested_file_entry("reports", "inner.txt"),
-            fx.file_entry("other.txt", 1),
+            fx.subdirectory("reports"),
+            fx.nested("reports", "inner.txt"),
+            fx.file("other.txt", 1),
         ];
         let mut content = content();
         content.set_items(fx.directory(), vec![]);
@@ -1126,10 +1070,10 @@ mod tests {
     /// the same way as a plain listing's name is.
     #[test]
     fn a_search_result_spells_out_a_disguising_name() {
-        let fx = Fixture::new();
-        let item = fx.nested_file_entry("sub", "a\u{202e}b");
+        let fx = TempDir::new("content");
+        let item = fx.nested("sub", "a\u{202e}b");
 
-        let name = displayed_name(&item, false, Some(fx.dir.path()));
+        let name = displayed_name(&item, false, Some(fx.path()));
 
         assert_eq!("sub/a\\u{202e}b", name);
     }
@@ -1139,12 +1083,9 @@ mod tests {
     #[test]
     fn filter_finds_no_separator_in_bookmark_rows() {
         Config::init_test();
-        let fx = Fixture::new();
+        let fx = TempDir::new("content");
         let mut content = content();
-        content.set_bookmarks(vec![
-            fx.dir_entry("reports"),
-            fx.file_entry("report.txt", 1),
-        ]);
+        content.set_bookmarks(vec![fx.subdirectory("reports"), fx.file("report.txt", 1)]);
 
         content.set_filter("/".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);

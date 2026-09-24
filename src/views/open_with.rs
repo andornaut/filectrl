@@ -4,7 +4,7 @@ mod widget;
 
 use ratatui::layout::Rect;
 
-use super::ScrollbarView;
+use super::{ScrollbarView, scroll_to_show};
 use crate::{
     app::config::keybindings::{Action, KeyBindings},
     command::{Command, result::CommandResult},
@@ -85,7 +85,7 @@ impl OpenWithView {
             return CommandResult::Handled;
         }
         self.selected = index.min(self.candidates.len() - 1);
-        self.scroll_offset = clamp_scroll(self.inner_height, self.selected, self.scroll_offset);
+        self.scroll_offset = scroll_to_show(self.inner_height, self.scroll_offset, self.selected);
         CommandResult::Handled
     }
 
@@ -134,26 +134,11 @@ fn clamp_selection(inner_height: usize, count: usize, scroll: usize, selected: u
     selected.max(scroll).min(last_visible).min(count - 1)
 }
 
-/// The scroll offset that keeps `selected` inside the viewport, moving as
-/// little as possible.
-fn clamp_scroll(inner_height: usize, selected: usize, scroll: usize) -> usize {
-    if inner_height == 0 {
-        return 0;
-    }
-    if selected < scroll {
-        selected
-    } else if selected >= scroll + inner_height {
-        selected + 1 - inner_height
-    } else {
-        scroll
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use test_case::test_case;
 
-    use super::{OpenWithView, clamp_scroll, clamp_selection};
+    use super::{OpenWithView, clamp_selection};
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
     use crate::{
@@ -295,21 +280,5 @@ mod tests {
             expected,
             clamp_selection(inner_height, count, scroll, selected)
         );
-    }
-
-    #[test_case(0, 5, 3, 0 ; "an unmeasured viewport pins the offset to the top")]
-    #[test_case(5, 2, 0, 0 ; "already visible, no movement")]
-    #[test_case(5, 4, 0, 0 ; "the last visible row does not scroll")]
-    #[test_case(5, 5, 0, 1 ; "one row past the bottom scrolls by one")]
-    #[test_case(5, 9, 0, 5 ; "a jump past the bottom scrolls just far enough")]
-    #[test_case(5, 2, 4, 2 ; "above the viewport scrolls up to the row")]
-    #[test_case(5, 6, 6, 6 ; "the first visible row does not scroll")]
-    fn clamp_scroll_keeps_the_selection_visible(
-        inner_height: usize,
-        selected: usize,
-        scroll: usize,
-        expected: usize,
-    ) {
-        assert_eq!(expected, clamp_scroll(inner_height, selected, scroll));
     }
 }

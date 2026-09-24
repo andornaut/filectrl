@@ -28,6 +28,9 @@ pub(super) struct NoticesView {
     cancel_hint: String,
     filter: String,
     mark_count: usize,
+    /// Whether the marks are a range being extended, which the marked notice
+    /// names so that range mode is visible.
+    range: bool,
     search_query: Option<String>,
     search_cancelled: bool,
     /// Generation of the current search (from `SearchStarted`), used to
@@ -60,6 +63,7 @@ impl NoticesView {
             cancel_hint,
             filter: String::new(),
             mark_count: 0,
+            range: false,
             search_query: None,
             search_cancelled: false,
             search_generation: 0,
@@ -76,7 +80,10 @@ impl NoticesView {
             .as_ref()
             .map(|e| Notice::Clipboard(e.clone()));
         let marked = if !self.hide_marked && clipboard.is_none() && self.mark_count > 0 {
-            Some(Notice::Marked(self.mark_count))
+            Some(Notice::Marked {
+                count: self.mark_count,
+                range: self.range,
+            })
         } else {
             None
         };
@@ -176,7 +183,7 @@ mod tests {
                 Notice::Search(_) => "search",
                 Notice::SearchCancelled(_) => "search_cancelled",
                 Notice::SearchLoading => "search_loading",
-                Notice::Marked(_) => "marked",
+                Notice::Marked { .. } => "marked",
                 Notice::Clipboard(_) => "clipboard",
                 Notice::Filter(_) => "filter",
             })
@@ -271,6 +278,7 @@ mod tests {
         v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
+            range: false,
         });
         assert_eq!(v.mark_count, 2);
         assert_eq!(tags(&v.build_notices()), vec!["marked"]);
@@ -278,9 +286,38 @@ mod tests {
         v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 0,
+            range: false,
         });
         assert_eq!(v.mark_count, 0);
         assert!(v.build_notices().is_empty());
+    }
+
+    #[test]
+    fn entering_and_leaving_range_mode_renames_the_marked_notice() {
+        let mut v = view();
+        let snapshot = |range| Command::SelectionChanged {
+            selected: None,
+            mark_count: 1,
+            range,
+        };
+        v.handle_command(&snapshot(false));
+        assert!(matches!(
+            v.notices.as_slice(),
+            [Notice::Marked { range: false, .. }]
+        ));
+
+        // The mark count is unchanged, so only the range flag can rebuild it.
+        v.handle_command(&snapshot(true));
+        assert!(matches!(
+            v.notices.as_slice(),
+            [Notice::Marked { range: true, .. }]
+        ));
+
+        v.handle_command(&snapshot(false));
+        assert!(matches!(
+            v.notices.as_slice(),
+            [Notice::Marked { range: false, .. }]
+        ));
     }
 
     #[test]
@@ -320,6 +357,7 @@ mod tests {
         v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
+            range: false,
         });
         // Copying marked files sets the clipboard while the marks are kept.
         v.clipboard_entry = Some(clipboard_entry());
@@ -329,6 +367,7 @@ mod tests {
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
+            range: false,
         });
 
         assert_eq!(result, CommandResult::Handled);
@@ -346,6 +385,7 @@ mod tests {
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 1,
+            range: false,
         });
         assert_eq!(result, Command::SetClipboardEntry(None).into());
     }
@@ -402,6 +442,7 @@ mod tests {
         v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
+            range: false,
         });
         v.clipboard_entry = Some(clipboard_entry());
 
@@ -409,6 +450,7 @@ mod tests {
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 0,
+            range: false,
         });
 
         assert_eq!(CommandResult::Handled, result);
@@ -421,6 +463,7 @@ mod tests {
         v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
+            range: false,
         });
 
         // The prompt states the count itself.

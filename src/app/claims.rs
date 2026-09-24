@@ -182,6 +182,7 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         Command::SelectionChanged {
             selected: Some(fixture.file()),
             mark_count: 0,
+            range: false,
         },
         Command::ResetView,
         Command::AlertError("e".to_string()),

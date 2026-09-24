@@ -1,7 +1,10 @@
 use super::{TableView, style::PathSet};
 use crate::{
     command::{Command, PromptAction, result::CommandResult},
-    file_system::path_info::{PathInfo, compact},
+    file_system::{
+        home_directory,
+        path_info::{PathInfo, compact},
+    },
 };
 
 /// The entries a delete prompt is waiting on, with their paths indexed for the
@@ -48,16 +51,9 @@ impl TableView {
     }
 
     pub(super) fn navigate_to_home_directory() -> CommandResult {
-        match directories::BaseDirs::new() {
-            Some(base_dirs) => match PathInfo::try_from(base_dirs.home_dir()) {
-                Ok(path) => Command::Open(path).into(),
-                Err(error) => Command::AlertError(format!(
-                    "Failed to open the home directory {}: {error:#}",
-                    compact(base_dirs.home_dir())
-                ))
-                .into(),
-            },
-            None => Command::AlertError("Cannot determine the home directory".into()).into(),
+        match home_directory() {
+            Ok(path) => Command::Open(path).into(),
+            Err(error) => error.into(),
         }
     }
 

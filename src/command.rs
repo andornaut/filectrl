@@ -230,11 +230,12 @@ pub enum Command {
     // View state notifications, emitted by TableView
     FilterChanged(String),
     SelectionChanged {
-        // Snapshot of the table's cursor and mark count, taken whenever either
-        // may have changed. StatusView reads `selected`; NoticesView reads
-        // `mark_count`.
+        // Snapshot of the table's cursor, mark count and range mode, taken
+        // whenever any may have changed. StatusView reads `selected`;
+        // NoticesView reads `mark_count` and `range`.
         selected: Option<PathInfo>,
         mark_count: usize,
+        range: bool,
     },
     ResetView, // Returns to Normal mode; clears clipboard, filter, marks, and help
 

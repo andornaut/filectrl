@@ -3,7 +3,7 @@ use std::{
     fs::{self, File},
     io::{ErrorKind, Read, Write},
     os::{
-        fd::AsFd,
+        fd::{AsFd, OwnedFd},
         unix::{ffi::OsStrExt, fs::PermissionsExt},
     },
     path::{Path, PathBuf},
@@ -237,6 +237,30 @@ impl TaskCommand {
     }
 }
 
+/// Restats the source of a copy or move and validates it against `dir`:
+/// the source as it is now, its path, the destination's, and the task kind.
+fn start_transfer(
+    operation: &str,
+    kind: fn(Transfer) -> TaskKind,
+    dir: &PathInfo,
+    overwrite: bool,
+    path: &PathInfo,
+) -> Result<(PathInfo, PathBuf, PathBuf, TaskKind), CommandResult> {
+    let path = restat(path, operation)?;
+    let (old_path, new_path) = validate_paths(&path, dir, operation, overwrite)?;
+    let kind = kind(Transfer {
+        source: display_path(&old_path),
+        destination: display_path(&new_path),
+    });
+    info!(
+        "{}{} to {}",
+        kind.prefix(),
+        old_path.display(),
+        new_path.display()
+    );
+    Ok((path, old_path, new_path, kind))
+}
+
 fn run_copy_task(
     tx: Sender<Command>,
     path: &PathInfo,
@@ -247,20 +271,11 @@ fn run_copy_task(
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
     let conflicts = conflicts.cloned();
-    let path = match restat(path, "copy") {
-        Ok(fresh) => fresh,
-        Err(error) => return TaskRunResult::failed(error.into()),
-    };
-    let (old_path, new_path) = match validate_paths(&path, dir, "copy", overwrite) {
-        Ok(paths) => paths,
-        Err(result) => return TaskRunResult::failed(result),
-    };
-
-    info!("Copying {} to {}", old_path.display(), new_path.display());
-    let kind = TaskKind::Copy(Transfer {
-        source: display_path(&old_path),
-        destination: display_path(&new_path),
-    });
+    let (path, old_path, new_path, kind) =
+        match start_transfer("copy", TaskKind::Copy, dir, overwrite, path) {
+            Ok(started) => started,
+            Err(result) => return TaskRunResult::failed(result),
+        };
 
     let is_directory = path.is_directory();
     // Fail before the task is registered, so an unreadable directory creates no
@@ -325,20 +340,11 @@ fn run_move_task(
     buffer_max_bytes: u64,
 ) -> TaskRunResult {
     let conflicts = conflicts.cloned();
-    let path = match restat(path, "move") {
-        Ok(fresh) => fresh,
-        Err(error) => return TaskRunResult::failed(error.into()),
-    };
-    let (old_path, new_path) = match validate_paths(&path, dir, "move", overwrite) {
-        Ok(paths) => paths,
-        Err(result) => return TaskRunResult::failed(result),
-    };
-
-    info!("Moving {} to {}", old_path.display(), new_path.display());
-    let kind = TaskKind::Move(Transfer {
-        source: display_path(&old_path),
-        destination: display_path(&new_path),
-    });
+    let (path, old_path, new_path, kind) =
+        match start_transfer("move", TaskKind::Move, dir, overwrite, path) {
+            Ok(started) => started,
+            Err(result) => return TaskRunResult::failed(result),
+        };
     let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     let size = path.size;
     let source_mode = path.mode();
@@ -820,13 +826,14 @@ fn copy_tree(
                 break;
             };
             paths.pop();
+            let moved = "it was moved while it was being copied";
             match (
-                reopen_parent_of(src, parent.src_id),
-                reopen_parent_of(dst, parent.dst_id),
+                reopen_parent_fd(moved, parent.src_id, src),
+                reopen_parent_fd(moved, parent.dst_id, dst),
             ) {
                 (Ok(src), Ok(dst)) => {
-                    parent.src = Some(src);
-                    parent.dst = Some(dst);
+                    parent.src = Some(src.into());
+                    parent.dst = Some(dst.into());
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     // Neither this directory nor any above it can be reached
@@ -1037,21 +1044,42 @@ fn copy_symlink(
             return;
         }
     };
-    let created = match symlinkat(&target, at.dst, at.dst_name) {
-        // Raced; settled from the standing answer, or recorded.
+    match symlinkat(&target, at.dst, at.dst_name) {
+        Ok(()) => {}
         Err(Errno::EXIST) => {
-            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
-                return;
-            }
-            unlink_at(at.dst, at.dst_name, AtFlags::empty())
-                .and_then(|()| Ok(symlinkat(&target, at.dst, at.dst_name)?))
-                .map_err(|error| format!("Failed to replace {}: {error}", compact(&paths.new)))
+            let create = || Ok(symlinkat(&target, at.dst, at.dst_name)?);
+            replace_raced(at, paths, errors, context, create);
         }
-        result => result
-            .map_err(|error| format!("Failed to create symlink {}: {error}", compact(&paths.new))),
-    };
-    if let Err(message) = created {
-        errors.push(message);
+        Err(error) => errors.push(format!(
+            "Failed to create symlink {}: {error}",
+            compact(&paths.new)
+        )),
+    }
+}
+
+/// Settles a name taken inside the tree being copied, which is a race: the
+/// top-level collision was answered before the task started. When the paste's
+/// standing answer is to overwrite, removes what holds the name and runs
+/// `create` again. `None` when nothing was created, having recorded why.
+fn replace_raced<T>(
+    at: &At<'_>,
+    paths: &Paths,
+    errors: &mut Vec<String>,
+    context: &mut CopyContext<'_>,
+    create: impl FnOnce() -> std::io::Result<T>,
+) -> Option<T> {
+    if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
+        return None;
+    }
+    match unlink_at(at.dst, at.dst_name, AtFlags::empty()).and_then(|()| create()) {
+        Ok(created) => Some(created),
+        Err(error) => {
+            errors.push(format!(
+                "Failed to replace {}: {error}",
+                compact(&paths.new)
+            ));
+            None
+        }
     }
 }
 
@@ -1093,25 +1121,13 @@ fn copy_file(
     let source = &Source::read(&old_file, &stat, context.preserve);
     let mut new_file = match create_file_at(at.dst, at.dst_name, source.mode, context.preserve) {
         Ok(file) => file,
-        // A name already taken inside the tree being copied. The top-level
-        // collision was answered before the task started, so this one is a
-        // race, settled from the paste's standing answer or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
+            let preserve = context.preserve;
+            let create = || create_file_at(at.dst, at.dst_name, source.mode, preserve);
+            let Some(file) = replace_raced(at, paths, errors, context, create) else {
                 return true;
-            }
-            match unlink_at(at.dst, at.dst_name, AtFlags::empty())
-                .and_then(|()| create_file_at(at.dst, at.dst_name, source.mode, context.preserve))
-            {
-                Ok(file) => file,
-                Err(error) => {
-                    errors.push(format!(
-                        "Failed to replace {}: {error}",
-                        compact(&paths.new)
-                    ));
-                    return true;
-                }
-            }
+            };
+            file
         }
         Err(error) => {
             errors.push(failed(&error));
@@ -1187,26 +1203,20 @@ fn copy_special(
     // Everything comes from the one `lstat` the type came from. Device nodes
     // need the source's device numbers; the rest take zero.
     let make = || make_node(at, paths, file_type, stat_mode(stat), stat.st_rdev);
-    let created = match make() {
-        // Raced; settled from the standing answer, or recorded.
+    match make() {
+        Ok(()) => {}
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
+            if replace_raced(at, paths, errors, context, make).is_none() {
                 return;
             }
-            unlink_at(at.dst, at.dst_name, AtFlags::empty())
-                .and_then(|()| make())
-                .map_err(|error| format!("Failed to replace {}: {error}", compact(&paths.new)))
         }
-        result => result.map_err(|error| {
-            format!(
+        Err(error) => {
+            errors.push(format!(
                 "Failed to create special file {}: {error}",
                 compact(&paths.new)
-            )
-        }),
-    };
-    if let Err(message) = created {
-        errors.push(message);
-        return;
+            ));
+            return;
+        }
     }
     if context.preserve {
         restore_node_mode(at, paths, errors, stat_mode(stat));
@@ -1451,18 +1461,6 @@ fn c_name(path: &Path) -> Option<CString> {
 /// symlink (see `open_directory`).
 fn open_directory_file(parent: impl AsFd, name: impl rustix::path::Arg) -> std::io::Result<File> {
     Ok(File::from(open_directory_fd(parent, name)?))
-}
-
-/// Reopens the parent of the open directory `dir` through its "..", refusing it
-/// unless it is the directory `expected` identifies.
-fn reopen_parent_of(dir: &File, expected: DirId) -> std::io::Result<File> {
-    let parent = open_directory_file(dir, "..")?;
-    if DirId::of(&parent)? != expected {
-        return Err(std::io::Error::other(
-            "it was moved while it was being copied",
-        ));
-    }
-    Ok(parent)
 }
 
 /// The names in the open directory `dir`, read to the end. `copy_tree` checks
@@ -1993,11 +1991,7 @@ struct DirId {
 
 impl DirId {
     fn of(dir: impl AsFd) -> std::io::Result<Self> {
-        let stat = fstat(dir)?;
-        Ok(Self {
-            dev: stat.st_dev,
-            ino: stat.st_ino,
-        })
+        Ok(Self::of_stat(&fstat(dir)?))
     }
 
     fn of_dir(dir: &Dir) -> std::io::Result<Self> {
@@ -2018,17 +2012,22 @@ struct RootAt<'a> {
     name: &'a CStr,
 }
 
-/// Reopens the parent of `dir` through its "..", refusing it unless it is the
-/// directory `expected` identifies: a directory moved elsewhere during the walk
-/// has a different "..", and following it would delete outside the tree.
-fn reopen_parent(dir: &Dir, expected: DirId) -> std::io::Result<Dir> {
-    let parent = open_directory(dir.fd()?, "..")?;
-    if DirId::of_dir(&parent)? != expected {
-        return Err(std::io::Error::other(
-            "it was moved while its contents were being deleted",
-        ));
+/// Reopens the parent of the open directory `dir` through its "..", refusing
+/// it with the error `moved` unless it is the directory `expected` identifies:
+/// a directory moved elsewhere during a walk has a different "..", and
+/// following it would act outside the tree.
+fn reopen_parent_fd(moved: &str, expected: DirId, dir: impl AsFd) -> std::io::Result<OwnedFd> {
+    let parent = open_directory_fd(dir, "..")?;
+    if DirId::of(&parent)? != expected {
+        return Err(std::io::Error::other(moved));
     }
     Ok(parent)
+}
+
+/// `reopen_parent_fd` for the delete walk.
+fn reopen_parent(dir: &Dir, expected: DirId) -> std::io::Result<Dir> {
+    let moved = "it was moved while its contents were being deleted";
+    Ok(Dir::new(reopen_parent_fd(moved, expected, dir.fd()?)?)?)
 }
 
 /// Opens the directory `name` in `parent` without following a symlink:
@@ -2040,10 +2039,7 @@ fn open_directory(parent: impl AsFd, name: impl rustix::path::Arg) -> std::io::R
 }
 
 /// `open_directory`, as the fd itself.
-fn open_directory_fd(
-    parent: impl AsFd,
-    name: impl rustix::path::Arg,
-) -> std::io::Result<std::os::fd::OwnedFd> {
+fn open_directory_fd(parent: impl AsFd, name: impl rustix::path::Arg) -> std::io::Result<OwnedFd> {
     Ok(openat(parent, name, DIRECTORY_FLAGS, Mode::empty())?)
 }
 
@@ -2827,6 +2823,26 @@ mod tests {
         active
     }
 
+    /// Copies `src` to `dst` as a copy, or as a move's copy stage when
+    /// `preserve`, returning the errors recorded.
+    fn copy_one(src: &Path, dst: &Path, preserve: bool) -> Vec<String> {
+        let (tx, _rx) = mpsc::channel();
+        let mut active = copy_task(tx);
+        let mut errors = Vec::new();
+        let is_directory = fs::symlink_metadata(src).unwrap().is_dir();
+        assert!(copy_path(
+            src,
+            dst,
+            &mut active,
+            &mut errors,
+            &mut context(preserve, &mut [0u8; 64]),
+            is_directory,
+            mode_of(src),
+        ));
+        active.done();
+        errors
+    }
+
     // Linux only: recreating a socket goes through mknod, which macOS refuses
     // to an unprivileged process with EPERM.
     #[cfg(target_os = "linux")]
@@ -2836,31 +2852,11 @@ mod tests {
         let src = fx.join("sock");
         let _listener = std::os::unix::net::UnixListener::bind(&src).unwrap();
         let dst = fx.join("sock_copy");
-        let mode = std::fs::symlink_metadata(&src)
-            .unwrap()
-            .permissions()
-            .mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            false,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, false);
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let dst_mode = std::fs::symlink_metadata(&dst)
-            .unwrap()
-            .permissions()
-            .mode();
-        assert!(unix_mode::is_socket(dst_mode));
+        assert!(unix_mode::is_socket(mode_of(&dst)));
         assert!(src.exists());
-        active.done();
     }
 
     #[test]
@@ -2869,31 +2865,12 @@ mod tests {
         let src = fx.join("fifo");
         nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
         let dst = fx.join("fifo_copy");
-        let mode = std::fs::symlink_metadata(&src)
-            .unwrap()
-            .permissions()
-            .mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            false,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, false);
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let dst_mode = std::fs::symlink_metadata(&dst)
-            .unwrap()
-            .permissions()
-            .mode();
+        let dst_mode = mode_of(&dst);
         assert!(unix_mode::is_fifo(dst_mode));
         assert_eq!(0o644, dst_mode & 0o7777);
-        active.done();
     }
 
     #[test]
@@ -2914,23 +2891,8 @@ mod tests {
         let is_unreadable = std::fs::File::open(src.join("bad")).is_err();
 
         let dst = fx.join("dst");
-        let mode = std::fs::symlink_metadata(&src)
-            .unwrap()
-            .permissions()
-            .mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            true,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, false);
 
         if is_unreadable {
             // Like cp -R: the unreadable entry is recorded, not fatal.
@@ -2946,7 +2908,6 @@ mod tests {
         // failed entry must not abort the siblings.
         assert!(dst.join("a.txt").exists());
         assert!(dst.join("c.txt").exists());
-        active.done();
     }
 
     #[test]
@@ -2957,27 +2918,11 @@ mod tests {
         std::fs::write(src.join("a_long.txt"), b"aaaaaaaaaaaaaaaa").unwrap();
         std::fs::write(src.join("b_short.txt"), b"b").unwrap();
         let dst = fx.join("dst");
-        let mode = std::fs::symlink_metadata(&src)
-            .unwrap()
-            .permissions()
-            .mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
         // One buffer serves the whole tree, so a short file copied after a
         // longer one must not pick up the previous file's trailing bytes.
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            true,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, false);
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        active.done();
 
         assert_eq!(
             b"aaaaaaaaaaaaaaaa".to_vec(),
@@ -3031,25 +2976,12 @@ mod tests {
         }
         let before = modified_times(&src);
         let dst = fx.join("dst");
-        let mode = fs::symlink_metadata(&src).unwrap().permissions().mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
         // A same-device move is a rename, which keeps the timestamps. The
         // cross-device fallback copies, so it has to put them back or the
         // result depends on which mount the destination is on.
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(true, &mut [0u8; 64]),
-            true,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, true);
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        active.done();
 
         assert_eq!(before, modified_times(&dst));
     }
@@ -3446,20 +3378,10 @@ mod tests {
         let (_fx, src, dst) = raced("tasks_raced_no_paste");
         fs::write(src.join("a.txt"), b"src").unwrap();
         fs::write(dst.join("a.txt"), b"raced").unwrap();
-        let (mut active, mut errors, _conflicts) = raced_parts();
 
         // No paste at all (an operation that is not one), so there is not even
         // a standing answer to consult: the entry is left alone and reported.
-        assert!(copy_path(
-            &src.join("a.txt"),
-            &dst.join("a.txt"),
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            false,
-            mode_of(&src.join("a.txt")),
-        ));
-        active.done();
+        let errors = copy_one(&src.join("a.txt"), &dst.join("a.txt"), false);
 
         assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
         assert!(errors[0].contains("already exists"), "{}", errors[0]);
@@ -3638,31 +3560,15 @@ mod tests {
         // directory fails with EEXIST regardless of privileges.
         let dst = fx.join("dst");
         std::fs::write(&dst, b"in the way").unwrap();
-        let mode = std::fs::symlink_metadata(&src)
-            .unwrap()
-            .permissions()
-            .mode();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
 
         // The subtree is skipped rather than failing the whole task, so a
         // multi-source paste still copies its other sources.
-        assert!(copy_path(
-            &src,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 64]),
-            true,
-            mode,
-        ));
+        let errors = copy_one(&src, &dst, false);
 
         assert_eq!(1, errors.len(), "expected one error: {errors:?}");
         assert!(errors[0].contains("dst"), "unexpected error: {}", errors[0]);
         // The occupying file must be left exactly as it was.
         assert_eq!(b"in the way".to_vec(), std::fs::read(&dst).unwrap());
-        active.done();
     }
 
     // ── prepare_destination: the ordering every queued operation depends on ──
@@ -4555,23 +4461,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         let dst = fx.join("copied_link.txt");
 
-        let source_mode = fs::symlink_metadata(&link).unwrap().permissions().mode();
-        assert!(unix_mode::is_symlink(source_mode));
+        assert!(unix_mode::is_symlink(mode_of(&link)));
 
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
-        assert!(copy_path(
-            &link,
-            &dst,
-            &mut active,
-            &mut errors,
-            &mut context(false, &mut [0u8; 1024]),
-            false,
-            source_mode,
-        ));
+        let errors = copy_one(&link, &dst, false);
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        active.done();
 
         // The destination must itself be a symlink pointing at the same target,
         // not a regular file containing the target's bytes.
@@ -4600,26 +4493,6 @@ mod tests {
         let leaves = mode_of(&probe) & 0o777;
         fs::remove_file(&probe).unwrap();
         leaves
-    }
-
-    /// Copies `src` to `dst` as a copy, or as a move's copy stage when
-    /// `preserve`, returning the errors recorded.
-    fn copy_one(src: &Path, dst: &Path, preserve: bool) -> Vec<String> {
-        let (tx, _rx) = mpsc::channel();
-        let mut active = copy_task(tx);
-        let mut errors = Vec::new();
-        let is_directory = fs::symlink_metadata(src).unwrap().is_dir();
-        assert!(copy_path(
-            src,
-            dst,
-            &mut active,
-            &mut errors,
-            &mut context(preserve, &mut [0u8; 64]),
-            is_directory,
-            mode_of(src),
-        ));
-        active.done();
-        errors
     }
 
     // A copy is `cp` without `-p`: the umask applies and the special bits go,
@@ -4902,7 +4775,7 @@ mod tests {
         let child = open_directory_file(&parent, "child").unwrap();
         assert_eq!(
             expected,
-            DirId::of(reopen_parent_of(&child, expected).unwrap()).unwrap()
+            DirId::of(reopen_parent_fd("moved", expected, &child).unwrap()).unwrap()
         );
 
         fs::rename(
@@ -4911,7 +4784,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reopen_parent_of(&child, expected).is_err());
+        assert!(reopen_parent_fd("moved", expected, &child).is_err());
     }
 
     /// Pastes `old` into `dest` the way the worker does, from a selection made

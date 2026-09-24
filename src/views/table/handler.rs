@@ -1,14 +1,11 @@
-use ratatui::{
-    crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    prelude::Position,
-};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{TableView, columns::SortColumn, navigation::Reselect, style::ClipboardHighlight};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, handler::CommandHandler, result::CommandResult},
     file_system::path_info::PathInfo,
-    views::ListingMode,
+    views::{ListingMode, contains},
 };
 
 impl CommandHandler for TableView {
@@ -137,11 +134,8 @@ impl CommandHandler for TableView {
             // While dragging, Drag/Up events outside the table must still be
             // routed here so the drag tracks and its state is released.
             || self.scrollbar_view.is_dragging()
-            || self.table_area.contains(Position {
-                x: event.column,
-                y: event.row,
-            })
-            || self.scrollbar_view.is_clicked(event.column, event.row)
+            || contains(self.table_area, event)
+            || self.scrollbar_view.is_clicked(event)
     }
 }
 
@@ -206,7 +200,7 @@ impl TableView {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Check for scrollbar click first
-                if self.scrollbar_view.is_clicked(event.column, event.row) {
+                if self.scrollbar_view.is_clicked(event) {
                     return self.handle_scroll(event);
                 }
 
@@ -393,6 +387,37 @@ mod tests {
                 if matches!(**command, Command::SelectionChanged { .. })),
             "expected a selection snapshot, got {result:?}"
         );
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_is_filtered_by_the_text_its_row_shows() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+        use crate::{app::config::Config, test_support::TempDir};
+
+        Config::init_test();
+        let dir = TempDir::new("table_filter_not_utf8");
+        let items: Vec<PathInfo> = [OsStr::from_bytes(b"caf\xe9.txt"), OsStr::new("cafe.txt")]
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                std::fs::write(&path, b"").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect();
+        let mut table = TableView::default();
+        table.begin_directory(
+            PathInfo::try_from(dir.path()).unwrap(),
+            super::super::navigation::Reselect::Top,
+        );
+        table.content.append(&items);
+        table.finish_directory();
+
+        // The text the row shows, spelled in mixed case, as a search matches it.
+        table.handle_command(&Command::FilterChanged("CAF\\XE9".to_string()));
+
+        assert_eq!(1, table.content.len());
+        assert_eq!("caf\\xe9.txt", table.content.get(0).unwrap().display_name);
     }
 
     #[test]

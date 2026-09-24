@@ -23,6 +23,7 @@ use crate::{
 
 const COPY_PREFIX: &str = "[Copy] ";
 const MARKED_PREFIX: &str = "[Selected] ";
+const RANGE_PREFIX: &str = "[Range] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filtered] ";
 const SEARCH_PREFIX: &str = "[Searching...] ";
@@ -109,11 +110,13 @@ pub(super) fn marked_widget<'a>(
     theme: &Table,
     width: u16,
     count: usize,
+    range: bool,
     hint: &'a str,
 ) -> Block<'a> {
     let style = theme.marked();
+    let prefix = if range { RANGE_PREFIX } else { MARKED_PREFIX };
     let left = Line::from(vec![
-        Span::styled(MARKED_PREFIX, style.add_modifier(Modifier::BOLD)),
+        Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
         Span::styled(pluralize_items(count), style),
     ]);
     create_notice_block(left, style, width, hint)
@@ -301,8 +304,26 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{operation_detail, search_loading_position};
-    use crate::command::progress::{TaskKind, Transfer};
+    use super::{marked_widget, operation_detail, search_loading_position};
+    use crate::{
+        app::config::Config,
+        command::progress::{TaskKind, Transfer},
+    };
+
+    #[test_case(false => "[Selected] 3 items" ; "marks")]
+    #[test_case(true => "[Range] 3 items" ; "a range")]
+    fn the_marked_notice_names_range_mode(range: bool) -> String {
+        Config::init_test();
+        let block = marked_widget(&Config::global().theme.table, 80, 3, range, "");
+        let area = ratatui::layout::Rect::new(0, 0, 80, 1);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        ratatui::widgets::Widget::render(block, area, &mut buffer);
+        (0..80)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
 
     // Width 80 gives a travel of 77 cells at 2 cells per 80 ms step, so the
     // indicator turns around 39 steps (3120 ms) in and completes a cycle after
