@@ -133,8 +133,8 @@ mod tests {
     #[test]
     fn an_entry_is_pasted_by_identity_rather_than_by_name() {
         let fx = crate::test_support::TempDir::new("conflicts_pasted");
-        let pasted = fx.join("Foo");
-        let alias = fx.join("foo");
+        let pasted = fx.join("one");
+        let alias = fx.join("alias");
         let other = fx.join("other");
         std::fs::write(&pasted, b"first").unwrap();
         std::fs::hard_link(&pasted, &alias).unwrap();
