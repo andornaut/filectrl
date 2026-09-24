@@ -18,6 +18,13 @@ use self::result::CommandResult;
 use crate::app::clipboard::ClipboardEntry;
 use crate::file_system::path_info::PathInfo;
 
+/// A program that takes the terminal over to show an entry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ForegroundProgram {
+    Editor,
+    Pager,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum InputMode {
     Prompt,
@@ -229,6 +236,9 @@ pub enum Command {
 
     // View state notifications, emitted by TableView
     FilterChanged(String),
+    // The filter prompt's text after each edit. Applied like `FilterChanged`,
+    // but the prompt stays open.
+    FilterEdited(String),
     SelectionChanged {
         // Snapshot of the table's cursor, mark count and range mode, taken
         // whenever any may have changed. StatusView reads `selected`;
@@ -250,6 +260,12 @@ pub enum Command {
 
     // Global
     Quit,
+    // Runs `program` on `path` in the terminal's foreground. Left unclaimed,
+    // like `Quit`: only `App` holds the terminal it has to suspend.
+    RunInForeground {
+        program: ForegroundProgram,
+        path: PathInfo,
+    },
 }
 
 impl Command {

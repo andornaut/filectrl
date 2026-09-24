@@ -9,6 +9,13 @@ use super::ScrollbarView;
 use crate::app::config::theme::{ScrollbarConfig, Theme};
 
 impl ScrollbarView {
+    /// Clears the hit-test area for a frame that draws no scrollbar, so clicks
+    /// in its column are not treated as scrollbar interactions.
+    pub fn hide(&mut self) {
+        self.area = Rect::default();
+        self.track = Rect::default();
+    }
+
     pub fn render(
         &mut self,
         theme: &Theme,
@@ -19,10 +26,7 @@ impl ScrollbarView {
         viewport_size: usize,
     ) {
         if max_position == 0 {
-            // Nothing is drawn, so clear the hit-test area: clicks in this
-            // column must not be treated as scrollbar interactions.
-            self.area = Rect::default();
-            self.track = Rect::default();
+            self.hide();
             return;
         }
         self.area = area;

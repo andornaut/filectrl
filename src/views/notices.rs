@@ -321,6 +321,15 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_being_typed_shows_its_notice() {
+        let mut v = view();
+
+        v.handle_command(&Command::FilterEdited("ap".into()));
+
+        assert_eq!(tags(&v.notices), vec!["filter"]);
+    }
+
+    #[test]
     fn starting_a_search_clears_the_filter_notice() {
         let mut v = view();
         v.filter = "ap".to_string();

@@ -8,10 +8,24 @@ use crate::app::config::{
     theme::Help,
 };
 
-pub(super) fn max_label_width(normal: &[(String, String)], prompt: &[(String, String)]) -> usize {
-    normal
+/// A titled group of `(label, keys)` rows.
+pub(super) type Section = (&'static str, Vec<(String, String)>);
+
+/// Every section of the help, in the order shown.
+pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
+    vec![
+        ("Normal Mode", build_normal_keybindings(kb)),
+        ("Prompt Mode", build_prompt_keybindings(kb)),
+        ("Paste Conflict", build_conflict_keybindings()),
+        ("Open With", build_open_with_keybindings(kb)),
+    ]
+}
+
+/// The widest label across every section, so their key columns line up.
+pub(super) fn max_label_width(sections: &[Section]) -> usize {
+    sections
         .iter()
-        .chain(prompt.iter())
+        .flat_map(|(_, rows)| rows)
         .map(|(label, _)| label.cell_width() as usize)
         .max()
         .unwrap_or(0)
@@ -98,14 +112,16 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
         }
     }
 
-    let normal = build_normal_keybindings(kb);
-    let prompt = build_prompt_keybindings(kb);
-    let max_width = max_label_width(&normal, &prompt);
+    let sections = build_sections(kb);
+    let max_width = max_label_width(&sections);
 
     let mut out = String::new();
-    append_section(&mut out, "Normal Mode", &normal, max_width, bold);
-    out.push('\n');
-    append_section(&mut out, "Prompt Mode", &prompt, max_width, bold);
+    for (index, (title, rows)) in sections.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        append_section(&mut out, title, rows, max_width, bold);
+    }
     out
 }
 
@@ -113,8 +129,50 @@ fn kb_entry(label: &str, keys: String) -> (String, String) {
     (label.to_string(), keys)
 }
 
+/// The answers to a paste collision. They are fixed keys, read by the prompt
+/// itself rather than bound.
+fn build_conflict_keybindings() -> Vec<(String, String)> {
+    vec![
+        kb_entry("Skip this entry", "s".into()),
+        kb_entry(
+            "Skip this and every later collision",
+            "S (Uppercase)".into(),
+        ),
+        kb_entry("Replace the existing entry", "o".into()),
+        kb_entry(
+            "Replace this and every later collision",
+            "O (Uppercase)".into(),
+        ),
+        kb_entry("Abandon the rest of the paste", "Esc".into()),
+    ]
+}
+
+/// The "Open with" picker's keys: the normal bindings it reads, plus the row
+/// numbers it takes itself.
+fn build_open_with_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+    let d = |a: Action| annotate_uppercase(kb.display_for(a));
+    vec![
+        kb_entry(
+            "Select next, previous application",
+            format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
+        ),
+        kb_entry(
+            "Select first, last application",
+            format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
+        ),
+        kb_entry(
+            "Page down, up",
+            format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
+        ),
+        kb_entry("Open with the selected application", d(Action::Open)),
+        kb_entry("Open with a numbered application", "1-9".into()),
+        kb_entry("Close the picker", d(Action::OpenWith)),
+        kb_entry("Close the picker and reset the view", d(Action::ResetView)),
+    ]
+}
+
 /// Build normal mode keybinding display strings from KeyBindings.
-pub(super) fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| annotate_uppercase(kb.display_for(a));
     let s = |a| d(a);
     let p = |a, b| format!("{}, {}", d(a), d(b));
@@ -152,16 +210,21 @@ pub(super) fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)
         kb_entry("Open current directory", s(Action::OpenCurrentDirectory)),
         kb_entry("Open new window", s(Action::OpenNewWindow)),
         kb_entry("Open with...", s(Action::OpenWith)),
+        kb_entry(
+            "Edit ($VISUAL/$EDITOR), page ($PAGER)",
+            p(Action::Edit, Action::Page),
+        ),
         // Marking
-        kb_entry("Mark/unmark item", s(Action::ToggleMark)),
+        kb_entry("Mark/unmark item, end range", s(Action::ToggleMark)),
         kb_entry("Range mark", s(Action::RangeMark)),
+        kb_entry("Mark all shown items", s(Action::SelectAll)),
         // File operations
         kb_entry(
             "Copy, Cut, Paste",
             t(Action::Copy, Action::Cut, Action::Paste),
         ),
         kb_entry("Rename", s(Action::Rename)),
-        kb_entry("Chmod", s(Action::Chmod)),
+        kb_entry("Chmod (octal)", s(Action::Chmod)),
         kb_entry("Create directory", s(Action::CreateDirectory)),
         kb_entry("Delete", s(Action::Delete)),
         // View
@@ -195,7 +258,7 @@ pub(super) fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)
 }
 
 /// Build prompt mode keybinding display strings from KeyBindings.
-pub(super) fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
     let d = |a: Action| annotate_uppercase(kb.display_for(a));
     let s = |a| d(a);
     let t = |a, b, c| format!("{}, {}, {}", d(a), d(b), d(c));
@@ -285,6 +348,24 @@ mod tests {
                 "{header:?}"
             );
         }
+    }
+
+    /// The keys only a paste collision or the picker reads, which neither
+    /// mode section lists.
+    #[test_case("Paste Conflict", "Skip this and every later collision", "S (Uppercase)" ; "a conflict answer")]
+    #[test_case("Paste Conflict", "Abandon the rest of the paste", "Esc" ; "abandoning a paste")]
+    #[test_case("Open With", "Open with a numbered application", "1-9" ; "the row numbers")]
+    #[test_case("Open With", "Close the picker", "o" ; "closing the picker")]
+    #[test_case("Open With", "Select first, last application", "Home/g/^, End/G (Uppercase)/$" ; "the first and last rows")]
+    #[test_case("Open With", "Page down, up", "PgDn/Ctrl+d/Ctrl+f, PgUp/Ctrl+u/Ctrl+b" ; "paging")]
+    fn the_help_lists_the_conflict_and_picker_keys(section: &str, label: &str, keys: &str) {
+        let text = help_text(false);
+        let rest = &text[text.find(section).expect("the section")..];
+        let line = rest
+            .lines()
+            .find(|line| line.starts_with(&format!("{label}:")))
+            .unwrap_or_else(|| panic!("no {label:?} line under {section}:\n{text}"));
+        assert_eq!(keys, line.rsplit(": ").next().unwrap().trim(), "{line}");
     }
 
     #[test]

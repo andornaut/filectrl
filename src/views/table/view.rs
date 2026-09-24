@@ -25,6 +25,10 @@ impl View for TableView {
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if area.height < MIN_HEIGHT || area.width < MIN_WIDTH {
+            // Nothing is drawn, so a click on the sliver left must not be
+            // tested against the last layout that was.
+            self.table_area = Rect::default();
+            self.scrollbar_view.hide();
             return;
         }
 
@@ -139,6 +143,7 @@ impl TableView {
             theme,
             column_constraints,
             rows,
+            &self.header_labels,
             self.columns.sort_column(),
             self.columns.sort_direction(),
         );

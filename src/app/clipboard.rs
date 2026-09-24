@@ -64,9 +64,12 @@ impl Clipboard {
         }
     }
 
+    /// Clears the entry this window copied or cut. Text copied from a prompt
+    /// is not an entry, so it stays for other applications to paste.
     pub fn clear(&mut self) -> Result<(), Error> {
-        self.fallback = None;
-        self.last_entry = None;
+        if self.last_entry.take().is_some() {
+            self.fallback = None;
+        }
         match &mut self.backend {
             Some(backend) => backend.clear(),
             None => Ok(()),
@@ -107,7 +110,7 @@ impl Clipboard {
         self.fallback = Some(text.to_string());
         self.last_entry = None;
         if let Some(backend) = &mut self.backend
-            && let Err(e) = backend.set_string(text)
+            && let Err(e) = backend.set_string(text, false)
         {
             warn!("Failed to set clipboard text: {e}");
         }
@@ -118,7 +121,7 @@ impl Clipboard {
         self.fallback = Some(text.clone());
         self.last_entry = Some((text.clone(), entry.clone()));
         match &mut self.backend {
-            Some(backend) => backend.set_string(&text),
+            Some(backend) => backend.set_string(&text, true),
             None => Ok(()),
         }
     }
@@ -252,9 +255,11 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
 
 struct ClipboardBackend {
     clipboard: ArboardClipboard,
-    /// The last text this process wrote to the system clipboard. `clear` uses it
-    /// so a window clears only what it wrote itself. Each filectrl window is its
-    /// own process with its own tracker, so only the most recent writer clears.
+    /// The last entry text this process wrote to the system clipboard, or the
+    /// empty text `clear` wrote. `clear` uses it so a window clears only an
+    /// entry it wrote itself, never text copied from a prompt. Each filectrl
+    /// window is its own process with its own tracker, so only the most recent
+    /// writer clears.
     last_written: Option<String>,
 }
 
@@ -272,11 +277,12 @@ impl ClipboardBackend {
             .map_err(|e| anyhow!("Failed to get clipboard contents: {e}"))
     }
 
-    fn set_string(&mut self, text: &str) -> Result<(), Error> {
+    /// Writes `text`, recording it for `clear` when `clearable`.
+    fn set_string(&mut self, text: &str, clearable: bool) -> Result<(), Error> {
         self.clipboard
             .set_text(text.to_string())
             .map_err(|e| anyhow!("Failed to set clipboard contents: {e}"))?;
-        self.last_written = Some(text.to_string());
+        record_write(&mut self.last_written, text, clearable);
         Ok(())
     }
 
@@ -284,9 +290,18 @@ impl ClipboardBackend {
         // Cloned so the closure below can borrow `self` mutably for the read.
         let last_written = self.last_written.clone();
         if should_clear(last_written.as_deref(), || self.get_string().ok()) {
-            return self.set_string("");
+            return self.set_string("", true);
         }
         Ok(())
+    }
+}
+
+/// Records a write for `clear`: an entry (or the empty text `clear` writes)
+/// replaces what it would clear, and text copied from a prompt does not, so
+/// that text is never blanked.
+fn record_write(last_written: &mut Option<String>, text: &str, clearable: bool) {
+    if clearable {
+        *last_written = Some(text.to_string());
     }
 }
 
@@ -513,5 +528,36 @@ mod tests {
             Some((other.clone(), false)),
             resolve_clipboard_text(Some(&written), &other.to_string()).unwrap()
         );
+    }
+
+    /// Text copied from a prompt is not recorded, so the system clipboard
+    /// holding it no longer matches what `clear` would blank.
+    #[test]
+    fn a_prompt_copy_on_the_system_clipboard_is_never_cleared() {
+        let mut last_written = None;
+        record_write(&mut last_written, "cp '/a'", true);
+        record_write(&mut last_written, "a name", false);
+
+        assert_eq!(Some("cp '/a'"), last_written.as_deref());
+        assert!(!should_clear(last_written.as_deref(), || Some(
+            "a name".to_string()
+        )));
+    }
+
+    #[test]
+    fn clearing_keeps_text_copied_from_a_prompt() {
+        let mut clipboard = Clipboard::disabled();
+        clipboard.set_text("a name");
+        clipboard.clear().unwrap();
+        assert_eq!(Some("a name".to_string()), clipboard.get_text());
+    }
+
+    #[test]
+    fn clearing_removes_an_entry() {
+        let mut clipboard = Clipboard::disabled();
+        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from("/").unwrap()]);
+        clipboard.set_clipboard_entry(&entry).unwrap();
+        clipboard.clear().unwrap();
+        assert_eq!(None, clipboard.get_text());
     }
 }

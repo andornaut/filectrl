@@ -11,6 +11,9 @@ pub(super) struct StatusView {
     /// Generation of the directory load whose entries the count follows.
     load_generation: u64,
     selected: Option<PathInfo>,
+    /// How many of the directory's entries the table shows, set by the root
+    /// before each render. `None` while the table shows something else.
+    shown_len: Option<usize>,
     /// Entries counted for a reload, applied once it completes. `None` while a
     /// navigation loads, which counts straight into `directory_len` because
     /// the listing it described is gone.
@@ -55,6 +58,10 @@ impl StatusView {
             self.directory_len = staged_len;
         }
         CommandResult::Handled
+    }
+
+    pub(super) fn set_shown_len(&mut self, shown_len: Option<usize>) {
+        self.shown_len = shown_len;
     }
 
     fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {

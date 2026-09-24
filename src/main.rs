@@ -13,7 +13,7 @@ use argh::FromArgs;
 use filectrl::{app::config::Config, escape_for_terminal, print_keybindings, run};
 
 #[derive(FromArgs)]
-#[argh(help_triggers("-h", "--help", "help"))]
+#[argh(help_triggers("-h", "--help"))]
 // Every bool here is an `#[argh(switch)]`, so the count is the number of
 // command-line flags rather than state that a richer type could model.
 #[allow(clippy::struct_excessive_bools)]
@@ -447,6 +447,18 @@ mod tests {
 
         assert_eq!(Some(Path::new(config)), parsed.config.as_deref());
         assert_eq!(Some(Path::new(directory)), parsed.directory.as_deref());
+    }
+
+    /// There are no subcommands, so `help` names a directory like any other
+    /// word; `-h` and `--help` still print usage.
+    #[test]
+    fn help_is_a_directory_and_only_the_flags_print_usage() {
+        let parsed = Args::from_args(&["filectrl"], &["help"]).unwrap();
+        assert_eq!(Some(Path::new("help")), parsed.directory.as_deref());
+
+        for flag in ["-h", "--help"] {
+            assert!(Args::from_args(&["filectrl"], &[flag]).is_err(), "{flag}");
+        }
     }
 
     #[test]

@@ -17,7 +17,13 @@ impl View for StatusView {
         let Some(directory) = &self.directory else {
             return;
         };
-        let widget = default_widget(directory, self.directory_len, self.selected.as_ref(), theme);
+        let widget = default_widget(
+            directory,
+            self.directory_len,
+            self.shown_len,
+            self.selected.as_ref(),
+            theme,
+        );
         widget.render(area, frame.buffer_mut());
     }
 }

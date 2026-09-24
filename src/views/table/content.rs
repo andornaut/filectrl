@@ -4,8 +4,9 @@ use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use super::columns::{SortColumn, SortDirection};
+use crate::app::config::UiConfig;
 use crate::contains_ignore_case;
-use crate::file_system::path_info::{PathInfo, name_comparator, visible_path};
+use crate::file_system::path_info::{PathInfo, name_key, visible_path};
 use crate::views::ListingMode;
 
 /// Deliberately not `Default`: the two settings below have no meaningful
@@ -36,9 +37,17 @@ pub(super) struct DirectoryContent {
     /// Whether hidden (dotfile) entries are listed. Seeded from
     /// `ui.show_hidden_files` and toggled at runtime.
     show_hidden: bool,
+    name_order: NameOrder,
+}
+
+/// How the Name column orders entries, fixed for the listing's life.
+struct NameOrder {
     /// Whether directories are grouped ahead of files under a name sort.
     /// Seeded from `ui.sort_directories_first`.
-    sort_directories_first: bool,
+    directories_first: bool,
+    /// Whether runs of digits compare as numbers. Seeded from
+    /// `ui.natural_sort`.
+    natural: bool,
 }
 
 impl DirectoryContent {
@@ -46,7 +55,7 @@ impl DirectoryContent {
     /// than being read on every sort: a listing has to behave the same way for
     /// its whole life, and a test has to be able to state the settings it is
     /// about.
-    pub(super) fn new(show_hidden: bool, sort_directories_first: bool) -> Self {
+    pub(super) fn new(ui: UiConfig) -> Self {
         Self {
             directory: None,
             filter: String::new(),
@@ -57,8 +66,11 @@ impl DirectoryContent {
             loading: false,
             staged: None,
             revision: 0,
-            show_hidden,
-            sort_directories_first,
+            show_hidden: ui.show_hidden_files,
+            name_order: NameOrder {
+                directories_first: ui.sort_directories_first,
+                natural: ui.natural_sort,
+            },
         }
     }
 
@@ -258,31 +270,38 @@ impl DirectoryContent {
         // matches the displayed name for the same reason. Read before the sort
         // borrows `items_sorted` mutably.
         let search_root = self.search_root.clone();
+        let natural = self.name_order.natural;
         let name_key =
-            |item: &PathInfo| name_comparator(&displayed_name_stem(item, search_root.as_deref()));
-        // Sorted by key rather than by comparator: the name key allocates twice
-        // to build, and a comparator builds one per side of every comparison,
-        // which a listing of any size pays n log n times over. `Reverse` rather
-        // than reversing the sorted listing, so that entries sharing a key keep
-        // the order they arrived in whichever way the column points. Every sort
-        // here is stable, as the directories-first pass below requires.
+            |item: &PathInfo| name_key(&displayed_name_stem(item, search_root.as_deref()), natural);
+        // Every column sorts by a key built once per entry rather than by a
+        // comparator: the name key allocates to build, and a comparator builds
+        // one per side of every comparison, which a listing of any size pays
+        // n log n times over (the filter re-sorts on every keystroke). The
+        // Modified and Size keys carry the name too, so a tie is broken by
+        // name in ascending order whichever way the column points, not left in
+        // the order the entries arrived. Every sort here is stable, as the
+        // directories-first pass below requires.
         let descending = sort_direction == SortDirection::Descending;
         match (sort_column, descending) {
-            (SortColumn::Name, false) => self.items_sorted.sort_by_cached_key(name_key),
             (SortColumn::Name, true) => self
                 .items_sorted
                 .sort_by_cached_key(|item| Reverse(name_key(item))),
-            (SortColumn::Modified, false) => {
-                self.items_sorted.sort_by_key(PathInfo::modified_comparator);
-            }
+            (SortColumn::Name, false) => self.items_sorted.sort_by_cached_key(name_key),
             (SortColumn::Modified, true) => self
                 .items_sorted
-                .sort_by_key(|item| Reverse(item.modified_comparator())),
-            (SortColumn::Size, false) => self.items_sorted.sort_by_key(|item| item.size),
-            (SortColumn::Size, true) => self.items_sorted.sort_by_key(|item| Reverse(item.size)),
+                .sort_by_cached_key(|item| (Reverse(item.modified_comparator()), name_key(item))),
+            (SortColumn::Modified, false) => self
+                .items_sorted
+                .sort_by_cached_key(|item| (item.modified_comparator(), name_key(item))),
+            (SortColumn::Size, true) => self
+                .items_sorted
+                .sort_by_cached_key(|item| (Reverse(item.size), name_key(item))),
+            (SortColumn::Size, false) => self
+                .items_sorted
+                .sort_by_cached_key(|item| (item.size, name_key(item))),
         }
 
-        if sort_column == SortColumn::Name && self.sort_directories_first {
+        if sort_column == SortColumn::Name && self.name_order.directories_first {
             self.items_sorted.sort_by_key(|path| !path.is_directory());
         }
     }
@@ -454,8 +473,16 @@ mod tests {
     /// setting it is about. The app builds one from the config it loaded.
     fn content() -> DirectoryContent {
         Config::init_test();
-        let ui = Config::global().ui;
-        DirectoryContent::new(ui.show_hidden_files, ui.sort_directories_first)
+        DirectoryContent::new(Config::global().ui)
+    }
+
+    /// The shipped settings with the two listing settings a test is about.
+    fn ui(show_hidden_files: bool, sort_directories_first: bool) -> UiConfig {
+        UiConfig {
+            show_hidden_files,
+            sort_directories_first,
+            ..Config::global().ui
+        }
     }
 
     fn names(content: &DirectoryContent) -> Vec<String> {
@@ -591,7 +618,7 @@ mod tests {
             fx.subdirectory("dir"),
             fx.file("large", 1_000_000),
         ];
-        let mut content = DirectoryContent::new(true, true);
+        let mut content = DirectoryContent::new(ui(true, true));
         content.set_items(fx.directory(), items);
 
         content.sort(SortColumn::Size, SortDirection::Descending);
@@ -752,7 +779,7 @@ mod tests {
         let fx = TempDir::new("content");
         // Built with the settings rather than reading them from a global, so
         // the same listing can be exercised both ways in one process.
-        let mut content = DirectoryContent::new(true, directories_first);
+        let mut content = DirectoryContent::new(ui(true, directories_first));
         content.set_items(
             fx.directory(),
             vec![
@@ -767,11 +794,79 @@ mod tests {
         assert_eq!(expected, names(&content));
     }
 
+    #[test_case(true, &["file1", "file2", "file10"] ; "natural reads the numbers")]
+    #[test_case(false, &["file1", "file10", "file2"] ; "plain compares characters")]
+    fn the_name_order_follows_the_natural_sort_setting(natural_sort: bool, expected: &[&str]) {
+        Config::init_test();
+        let fx = TempDir::new("content");
+        let mut content = DirectoryContent::new(UiConfig {
+            natural_sort,
+            ..Config::global().ui
+        });
+        content.set_items(
+            fx.directory(),
+            ["file10", "file2", "file1"]
+                .map(|name| fx.file(name, 1))
+                .to_vec(),
+        );
+
+        content.sort(SortColumn::Name, SortDirection::Ascending);
+
+        assert_eq!(expected, names(&content));
+    }
+
+    /// Arrival order `b`, `a`, `c` would survive a sort that left ties alone.
+    #[test_case(SortDirection::Ascending, &["b", "a", "c", "big"], &["a", "b", "c", "big"] ; "ascending")]
+    #[test_case(SortDirection::Descending, &["b", "a", "c", "big"], &["big", "a", "b", "c"] ; "descending")]
+    fn a_size_tie_is_broken_by_name(direction: SortDirection, arrival: &[&str], expected: &[&str]) {
+        let fx = TempDir::new("content");
+        let mut content = content();
+        let items = arrival
+            .iter()
+            .map(|&name| fx.file(name, if name == "big" { 100 } else { 1 }))
+            .collect();
+        content.set_items(fx.directory(), items);
+
+        content.sort(SortColumn::Size, direction);
+
+        assert_eq!(expected, names(&content));
+    }
+
+    /// Arrival order `b`, `a`, `c` would survive a sort that left ties alone.
+    #[test_case(SortDirection::Ascending, &["a", "b", "c", "new"] ; "ascending")]
+    #[test_case(SortDirection::Descending, &["new", "a", "b", "c"] ; "descending")]
+    fn a_modified_tie_is_broken_by_name(direction: SortDirection, expected: &[&str]) {
+        use std::time::{Duration, SystemTime};
+
+        let fx = TempDir::new("content");
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let items = ["b", "a", "c", "new"]
+            .iter()
+            .map(|&name| {
+                let path = fx.join(name);
+                let file = std::fs::File::create(&path).unwrap();
+                let modified = if name == "new" {
+                    old + Duration::from_mins(1)
+                } else {
+                    old
+                };
+                file.set_modified(modified).unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect();
+        let mut content = content();
+        content.set_items(fx.directory(), items);
+
+        content.sort(SortColumn::Modified, direction);
+
+        assert_eq!(expected, names(&content));
+    }
+
     #[test]
     fn a_listing_built_without_hidden_files_never_lists_them() {
         Config::init_test();
         let fx = TempDir::new("content");
-        let mut content = DirectoryContent::new(false, true);
+        let mut content = DirectoryContent::new(ui(false, true));
         content.set_items(
             fx.directory(),
             vec![fx.file("file", 1), fx.file(".hidden", 1)],

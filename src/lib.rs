@@ -53,12 +53,14 @@ pub fn run(
     };
 
     let config = Config::load(env, config_path, include_paths)?;
-    apply_log_level(&config);
-    info!("Terminal truecolor support: {is_truecolor}");
-    // Records after this point would be drawn over the interface, so they are
-    // kept only when stderr is redirected away from the terminal.
+    // Records from here on would be drawn over the interface, or left on the
+    // screen before it starts, so they are kept only when stderr is redirected
+    // away from the terminal.
     if std::io::stderr().is_terminal() {
         log::set_max_level(LevelFilter::Off);
+    } else {
+        apply_log_level(&config);
+        info!("Terminal truecolor support: {is_truecolor}");
     }
     Config::init(config);
 

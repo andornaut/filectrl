@@ -86,21 +86,33 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     Ok(argv)
 }
 
-/// The index of the first option cluster among `tokens` whose leading run of
-/// letters and digits holds `c`, `e`, `E` or `S` (`-c`, `-lc`, `-cx`, `-e`,
-/// `-E`, `-S`, `-cprint(1)`, `-S%f`). That is how shells, `env`, `python3`,
-/// `perl`, `node` and the like are given code to run, so it is matched for any
-/// program. The code may be attached to the option, and every later argument
-/// counts, since options may stand between the cluster and the code (`sh -c -x
-/// %f`) and a program may read an argument after the code as code too (`eval
-/// "$1"`). A `--` option has no leading run, so it never matches.
+/// Long options that give an interpreter code to run: `node --eval`,
+/// `node --print`, `php --run` and the like. `--command` is not one: Flatpak's
+/// exported entries use it to name the program to run, not code.
+const CODE_LONG_OPTIONS: [&str; 5] = ["eval", "exec", "execute", "print", "run"];
+
+/// The index of the first option among `tokens` that takes code to run.
+///
+/// A single-dash option cluster matches when its leading run of letters and
+/// digits holds `c`, `e`, `E`, `S`, `p` or `r` (`-c`, `-lc`, `-cx`, `-e`, `-E`,
+/// `-S`, `-p`, `-r`, `-cprint(1)`, `-S%f`). That is how shells, `env`,
+/// `python3`, `perl`, `node`, `php` and the like are given code to run, so it
+/// is matched for any program. A double-dash option matches when it is named
+/// in `CODE_LONG_OPTIONS`, with or without an attached `=value`. The code may
+/// be attached to the option, and every later argument counts, since options
+/// may stand between the option and the code (`sh -c -x %f`) and a program
+/// may read an argument after the code as code too (`eval "$1"`).
 fn code_option(tokens: &[Token]) -> Option<usize> {
     tokens.iter().position(|token| {
+        if let Some(long) = token.text.strip_prefix("--") {
+            let name = long.split_once('=').map_or(long, |(name, _)| name);
+            return CODE_LONG_OPTIONS.contains(&name);
+        }
         token.text.strip_prefix('-').is_some_and(|options| {
             options
                 .bytes()
                 .take_while(u8::is_ascii_alphanumeric)
-                .any(|byte| matches!(byte, b'c' | b'e' | b'E' | b'S'))
+                .any(|byte| matches!(byte, b'c' | b'e' | b'E' | b'S' | b'p' | b'r'))
         })
     })
 }
@@ -378,6 +390,14 @@ mod tests {
     #[test_case("rbash -c %f", CODE_OPTION ; "a restricted shell")]
     #[test_case("tcsh -c %f", CODE_OPTION ; "a csh")]
     #[test_case("env -S \"sh -c %f\"", CODE_OPTION ; "a command line split by env")]
+    #[test_case("node -p %f", CODE_OPTION ; "p directly before the code")]
+    #[test_case("php -r %f", CODE_OPTION ; "r directly before the code")]
+    #[test_case("node --eval %f", CODE_OPTION ; "a long option taking code")]
+    #[test_case("node --eval=%f", CODE_OPTION ; "the code attached to a long option")]
+    #[test_case("node --print %f", CODE_OPTION ; "a long print option")]
+    #[test_case("foo --exec %f", CODE_OPTION ; "a long exec option")]
+    #[test_case("foo --execute=%f", CODE_OPTION ; "a long execute option")]
+    #[test_case("php --run %f", CODE_OPTION ; "a long run option")]
     #[test_case("python3 -c %f", CODE_OPTION ; "python")]
     #[test_case("perl -e %f", CODE_OPTION ; "perl")]
     #[test_case("node -e %f", CODE_OPTION ; "node")]
@@ -412,7 +432,8 @@ mod tests {
     #[test_case("foo %f -c %k", &["foo", HOSTILE, "-c"] ; "the desktop file code after the cluster")]
     #[test_case("foo %f -c %% %d", &["foo", HOSTILE, "-c", "%"] ; "a literal percent and a deprecated code after the cluster")]
     #[test_case("foo --config %f", &["foo", "--config", HOSTILE] ; "a long option")]
-    #[test_case("foo --exec %f", &["foo", "--exec", HOSTILE] ; "a long option holding e and c")]
+    #[test_case("foo --verbose %f", &["foo", "--verbose", HOSTILE] ; "a long option holding e and c")]
+    #[test_case("foo --printer=%f", &["foo", &format!("--printer={HOSTILE}")] ; "a long option named like a code option")]
     #[test_case("foo --c=%f", &["foo", "--c=/v/x$(touch pwned).mp4"] ; "a long option named c with the code attached")]
     #[test_case("bash --norc %f", &["bash", "--norc", HOSTILE] ; "a long option ending in c")]
     #[test_case("foo -a-c %f", &["foo", "-a-c", HOSTILE] ; "a word that is not a cluster")]

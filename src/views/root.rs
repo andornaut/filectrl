@@ -42,11 +42,42 @@ impl CommandHandler for CommandOnly<'_> {
     }
 }
 
+/// Forwards everything but mouse events, for the views under the "Resize
+/// window" message: nothing of them is drawn, so a click must not be tested
+/// against the last layout that was.
+struct NoMouse<'a>(&'a mut dyn CommandHandler);
+
+impl CommandHandler for NoMouse<'_> {
+    fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+        self.0
+            .visit_command_handlers(&mut |child| visitor(&mut NoMouse(child)));
+    }
+
+    fn handle_command(&mut self, command: &Command) -> CommandResult {
+        self.0.handle_command(command)
+    }
+
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
+        self.0.handle_key(code, modifiers)
+    }
+
+    fn handle_paste(&mut self, text: &str) -> CommandResult {
+        self.0.handle_paste(text)
+    }
+
+    fn should_handle_key(&self, mode: InputMode) -> bool {
+        self.0.should_handle_key(mode)
+    }
+}
+
 pub struct RootView {
     alerts: AlertsView,
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
     is_help_visible: bool,
+    /// Set while the terminal is too small to draw anything but the "Resize
+    /// window" message.
+    is_too_small: bool,
     mode: InputMode,
     notices: NoticesView,
     open_with: OpenWithView,
@@ -65,17 +96,22 @@ impl RootView {
             breadcrumbs: BreadcrumbsView::default(),
             help: HelpView::new(config),
             is_help_visible: false,
+            is_too_small: false,
             mode: InputMode::default(),
             notices: NoticesView::new(keybindings),
             open_with: OpenWithView::new(keybindings),
             prompt: PromptView::default(),
             status: StatusView::default(),
-            table: TableView::new(config.ui),
+            table: TableView::new(config.ui, &config.keybindings),
         }
     }
 
     pub fn mode(&self) -> InputMode {
         self.mode
+    }
+
+    pub fn is_help_visible(&self) -> bool {
+        self.is_help_visible
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
@@ -175,11 +211,25 @@ impl CommandHandler for RootView {
                 }
                 CommandResult::Handled
             }
+            Some(Action::ResetView) if self.is_help_visible => {
+                self.is_help_visible = false;
+                CommandResult::Handled
+            }
             _ => CommandResult::NotHandled,
         }
     }
 
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+        if self.is_too_small {
+            self.visit_views(&mut |child| visitor(&mut NoMouse(child)));
+        } else {
+            self.visit_views(visitor);
+        }
+    }
+}
+
+impl RootView {
+    fn visit_views(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
         if !self.is_help_visible && !self.open_with.is_visible() {
             for view in self.views() {
                 visitor(view);
@@ -217,7 +267,8 @@ impl View for RootView {
     }
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
-        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        self.is_too_small = area.width < MIN_WIDTH || area.height < MIN_HEIGHT;
+        if self.is_too_small {
             render_resize_message(theme, frame.buffer_mut(), area);
             return;
         }
@@ -229,6 +280,9 @@ impl View for RootView {
             .style(theme.base())
             .render(area, frame.buffer_mut());
 
+        // RootView owns both, so the count is handed over directly rather
+        // than broadcast after every change that could alter it.
+        self.status.set_shown_len(self.table.shown_len());
         let views = self.views();
         Layout::default()
             .direction(Direction::Vertical)
@@ -266,6 +320,53 @@ mod tests {
     fn view() -> RootView {
         Config::init_test();
         RootView::new(Config::global())
+    }
+
+    /// Whether any handler the root dispatches to takes a left click at
+    /// `(column, row)`.
+    fn takes_click(root: &mut RootView, column: u16, row: u16) -> bool {
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut taken = false;
+        root.visit_command_handlers(&mut |handler| {
+            taken |= handler.should_handle_mouse(event);
+        });
+        taken
+    }
+
+    fn render(root: &mut RootView, width: u16, height: u16) {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| root.render(Config::global().theme(), frame.area(), frame))
+            .unwrap();
+    }
+
+    /// Under the "Resize window" message nothing is drawn, so a click on it
+    /// must not reach a view laid out by an earlier frame. Keys still do.
+    #[test]
+    fn a_click_reaches_no_view_while_the_terminal_is_too_small() {
+        let mut root = view();
+        render(&mut root, 80, 24);
+        assert!(takes_click(&mut root, 1, 5), "the table takes a click");
+
+        render(&mut root, 10, 4);
+        assert!(!takes_click(&mut root, 1, 5));
+        let mut takes_keys = false;
+        root.visit_command_handlers(&mut |handler| {
+            takes_keys |= handler.should_handle_key(InputMode::Normal);
+        });
+        assert!(takes_keys);
+
+        render(&mut root, 80, 24);
+        assert!(takes_click(&mut root, 1, 5));
     }
 
     #[test]
@@ -458,6 +559,19 @@ mod tests {
         root.handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
         assert!(root.is_help_visible);
         root.handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert!(!root.is_help_visible);
+    }
+
+    #[test]
+    fn the_reset_key_closes_help_without_resetting_the_view() {
+        let mut root = view();
+        root.is_help_visible = true;
+
+        assert_eq!(
+            CommandResult::Handled,
+            root.handle_key(KeyCode::Esc, KeyModifiers::NONE)
+        );
+
         assert!(!root.is_help_visible);
     }
 

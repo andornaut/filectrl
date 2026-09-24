@@ -24,9 +24,13 @@ permissions:
 # Qualified by the repository the branch lives in, since a fork names its
 # branches itself: two pull requests from different forks would otherwise share
 # a group whenever they pick the same branch name.
+# A push to main is never cancelled: its dev-release moves the `dev` tag and
+# then uploads, and a cancel between the two would leave the tag on a commit
+# whose assets were never published. A newer push to main waits instead, and
+# GitHub keeps only the latest waiting run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
   # Publishing waits on the scan as well: a release is a durable artifact, and
@@ -91,8 +95,17 @@ jobs:
         if: ${{ !matrix.cross }}
         run: rustup target add ${{ matrix.target }}
 
+      # Keyed by target, since the legs share a runner OS and would otherwise
+      # restore each other's build directory.
+      - name: Cache
+        uses: Swatinem/rust-cache@v2.9.2
+        with:
+          key: ${{ matrix.target }}
+
+      # --locked fails the build on a Cargo.lock that is out of date rather than
+      # rewriting it, so the release is built from the committed dependency set.
       - name: Build
-        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --locked --release --target ${{ matrix.target }}
 
       # The archive both releases ship. The layout is what the README's install
       # one-liner expects: `filectrl` at the archive root, and a checksum in
@@ -202,8 +215,29 @@ jobs:
       contents: write
 
     steps:
-      # No checkout: the assets come from build-platform, and the notes below
-      # are generated from the tag by GitHub rather than read out of the tree.
+      # Checked out only to read the crate version. The assets come from
+      # build-platform, and the notes below are generated from the tag by
+      # GitHub rather than read out of the tree.
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # A tag that disagrees with Cargo.toml would publish a binary whose
+      # --version names another release. Read from the manifest directly, so
+      # the step needs no Rust toolchain on the runner. The package's version
+      # is the only line that starts with `version =`: dependency versions sit
+      # inside inline tables and `rust-version` has its own prefix.
+      - name: Check that the tag matches the crate version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)"
+          [ "$TAG" = "v$version" ] || {
+            echo "Tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          }
+
       # Merged: every artifact holds differently named files, so nothing
       # collides, and the release wants them all in one directory.
       - name: Download release archives

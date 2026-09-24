@@ -118,6 +118,17 @@ impl TableView {
         self.selection_snapshot()
     }
 
+    /// Marks every row shown, which leaves out entries a filter or the hidden
+    /// setting keeps off screen. It replaces a range rather than extending it,
+    /// so range mode ends.
+    pub(super) fn mark_all(&mut self) -> CommandResult {
+        self.marks.clear();
+        for index in 0..self.content.len() {
+            self.marks.insert(index);
+        }
+        self.selection_snapshot()
+    }
+
     pub(super) fn clear_marks(&mut self) {
         self.marks.clear();
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
@@ -82,7 +82,7 @@ macro_rules! style_struct {
 /// list, getters, and `LS_COLORS` mapping from drifting apart.
 macro_rules! file_type {
     ($($field:ident => $ls_key:literal),+ $(,)?) => {
-        #[derive(Deserialize, Default)]
+        #[derive(Clone, Deserialize, Default)]
         pub struct FileType {
             /// Whether to apply colors from the $LS_COLORS environment variable
             /// (if set) on top of the colors configured below.
@@ -98,6 +98,11 @@ macro_rules! file_type {
             // specific pattern wins.
             #[serde(skip)]
             name_styles: Vec<(String, StyleConfig)>,
+            // Keys in `FALLTHROUGH_KEYS` that `LS_COLORS` reset. `ls` treats
+            // those as uncolored and classifies the entry by the next rule, so
+            // a reset there is not "render plain".
+            #[serde(skip)]
+            uncolored: HashSet<&'static str>,
         }
 
         impl FileType {
@@ -136,6 +141,11 @@ file_type! {
     symlink_broken => "or",
 }
 
+/// Keys `ls` consults only while they are colored: reset, the entry is
+/// classified by the next rule (`ow` falls back to `di`, `ex` to the patterns
+/// and `fi`, `or` to `ln`) rather than rendered plain.
+const FALLTHROUGH_KEYS: [&str; 7] = ["ex", "or", "ow", "sg", "st", "su", "tw"];
+
 impl FileType {
     /// Applies `LS_COLORS` (passed in by the caller, not read from the
     /// environment here, so config parsing stays pure) on top of the
@@ -148,6 +158,22 @@ impl FileType {
         }
     }
 
+    /// This theme with `ls_colors` applied on top, as `ls_colors_take_precedence`
+    /// would apply it.
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_ls_colors(&self, ls_colors: &str) -> Self {
+        let mut applied = self.clone();
+        applied.apply_ls_colors(ls_colors, false);
+        applied
+    }
+
+    /// Whether the `LS_COLORS` key `key` still colors its entries, which only a
+    /// reset of one of `FALLTHROUGH_KEYS` undoes.
+    pub fn is_colored(&self, key: &str) -> bool {
+        !self.uncolored.contains(key)
+    }
+
     fn apply_ls_colors(&mut self, ls_colors: &str, warn_on_rgb: bool) {
         let mut found_rgb = false;
         for entry in ls_colors.split(':') {
@@ -156,7 +182,15 @@ impl FileType {
             };
 
             let (fg, bg, attrs) = super::ls_colors::parse(value);
-            if fg.is_none() && bg.is_none() && attrs == Modifier::empty() {
+            // `ls` counts a key as uncolored only when its value is empty,
+            // `0` or `00` exactly. That renders the entry plain, except for
+            // `FALLTHROUGH_KEYS`. Other values made only of reset codes
+            // (`0;00`) count as colored and print as plain. Anything else that
+            // parses to no style is unrecognized codes, which leave the
+            // configured style alone.
+            let is_reset = matches!(value, "" | "0" | "00");
+            let is_plain = is_reset || value.split(';').all(|code| matches!(code, "0" | "00"));
+            if fg.is_none() && bg.is_none() && attrs == Modifier::empty() && !is_plain {
                 continue;
             }
 
@@ -167,6 +201,14 @@ impl FileType {
                 )
             {
                 found_rgb = true;
+            }
+
+            if let Some(&fallthrough) = FALLTHROUGH_KEYS.iter().find(|&&k| k == key) {
+                if is_reset {
+                    self.uncolored.insert(fallthrough);
+                    continue;
+                }
+                self.uncolored.remove(fallthrough);
             }
 
             let style = StyleConfig::new(fg, bg, attrs);
@@ -398,6 +440,26 @@ mod tests {
         let mut ft = FileType::default();
         ft.apply_ls_colors(ls_colors, false);
         assert_eq!(ft.pattern_styles("Makefile").unwrap().fg, Some(Color::Blue));
+    }
+
+    /// An empty value, `0` or `00` renders the entry plain, as `ls` does, for
+    /// a file-type key and a pattern alike, and so does a value of reset codes
+    /// alone; codes it does not recognize leave the theme alone.
+    #[test_case("di=00:*.txt=0:*README=00" => (Style::default(), Some(Style::default()), Some(Style::default())) ; "an explicit reset")]
+    #[test_case("di=:*.txt=:*README=" => (Style::default(), Some(Style::default()), Some(Style::default())) ; "an empty value")]
+    #[test_case("di=0;00:*.txt=00;0" => (Style::default(), Some(Style::default()), None) ; "reset codes alone")]
+    #[test_case("di=xyz:*.txt=x:*README=99" => (Style::from(red()), None, None) ; "unrecognized codes")]
+    fn an_explicit_reset_renders_plain(ls_colors: &str) -> (Style, Option<Style>, Option<Style>) {
+        let mut ft = FileType {
+            directory: red(),
+            ..FileType::default()
+        };
+        ft.apply_ls_colors(ls_colors, false);
+        (
+            ft.directory(),
+            ft.pattern_styles("notes.txt"),
+            ft.pattern_styles("README"),
+        )
     }
 
     #[test]

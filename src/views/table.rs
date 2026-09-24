@@ -21,7 +21,7 @@ use self::{
     marks::Marks, navigation::PendingLoad, row_map::LineItemMap, style::ClipboardHighlight,
 };
 use super::ScrollbarView;
-use crate::app::config::UiConfig;
+use crate::app::config::{UiConfig, keybindings::KeyBindings};
 #[cfg(test)]
 use crate::{app::config::Config, file_system::path_info::PathInfo};
 
@@ -61,16 +61,18 @@ pub(super) struct TableView {
     /// up from `cached_heights` being shorter than the listing.
     height_cache_key: Option<(u16, usize, u64)>,
     scrollbar_view: ScrollbarView,
+    /// The sortable column headers, which name their sort keys.
+    header_labels: [String; 3],
 }
 
 impl TableView {
     /// The listing settings and the double-click window come from the config
     /// here, once, rather than from a global reached for during a sort or a
     /// click.
-    pub(super) fn new(ui: UiConfig) -> Self {
+    pub(super) fn new(ui: UiConfig, keybindings: &KeyBindings) -> Self {
         Self {
             clipboard: None,
-            content: DirectoryContent::new(ui.show_hidden_files, ui.sort_directories_first),
+            content: DirectoryContent::new(ui),
             marks: Marks::default(),
             pending_delete: PendingDelete::default(),
             table_area: Rect::default(),
@@ -85,6 +87,7 @@ impl TableView {
             cached_heights: Vec::new(),
             height_cache_key: None,
             scrollbar_view: ScrollbarView::default(),
+            header_labels: widget::header_labels(keybindings),
         }
     }
 }
@@ -97,7 +100,7 @@ impl TableView {
 impl Default for TableView {
     fn default() -> Self {
         Config::init_test();
-        Self::new(Config::global().ui)
+        Self::new(Config::global().ui, &Config::global().keybindings)
     }
 }
 

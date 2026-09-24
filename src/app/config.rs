@@ -26,11 +26,11 @@ const CONFIG_RELATIVE_PATH: &str = "config.toml";
 const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
 const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
 const DEFAULT_THEME_FILENAME: &str = "theme.toml";
+/// The floor every recurring UI timer shares.
+const MIN_REFRESH_DEBOUNCE_MILLISECONDS: u64 = 100;
 
 #[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
-    pub buffer_max_bytes: u64,
-    pub buffer_min_bytes: u64,
     pub refresh_debounce_milliseconds: u64,
     pub search_max_depth: u32,
     pub search_max_results: u32,
@@ -56,6 +56,7 @@ struct PlatformOpeners {
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
+    pub natural_sort: bool,
     pub show_hidden_files: bool,
     pub sort_directories_first: bool,
 }
@@ -425,12 +426,12 @@ fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
 ///
 /// The file is created exclusively (`O_CREAT | O_EXCL`), which fails on
 /// anything already at `path`, a symlink included, in the same syscall that
-/// creates it. `force` removes a file first but refuses a symlink, even a
-/// dangling one: a config symlinked into a dotfiles repository is left alone
-/// rather than replaced or written through to its target.
+/// creates it. `force` refuses a symlink, even a dangling one: a config
+/// symlinked into a dotfiles repository is left alone rather than replaced or
+/// written through to its target. A file it replaces is renamed over only once
+/// the new content is written in full beside it, so a failed write leaves the
+/// old file in place.
 fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
-    use std::io::Write;
-
     let parent = path.parent().ok_or_else(|| {
         anyhow!(
             "Cannot write {}: it has no parent directory",
@@ -441,21 +442,8 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
         .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
     // A failed lookup leaves the path to `create_new`, which reports whatever
     // is there.
-    if force && let Ok(metadata) = path.symlink_metadata() {
-        if metadata.file_type().is_symlink() {
-            return Err(anyhow!(
-                "Cannot write {}: it is a symbolic link",
-                path.display()
-            ));
-        }
-        fs::remove_file(path)
-            .map_err(|error| anyhow!("Failed to replace {}: {error}", path.display()))?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
+    let Some(metadata) = path.symlink_metadata().ok().filter(|_| force) else {
+        return create_and_write(path, content).map_err(|error| {
             if error.kind() == ErrorKind::AlreadyExists {
                 anyhow!(
                     "Cannot write {}: it already exists; pass --force to replace it",
@@ -464,9 +452,39 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
             } else {
                 anyhow!("Failed to write {}: {error}", path.display())
             }
-        })?;
-    file.write_all(content.as_bytes())
-        .map_err(|error| anyhow!("Failed to write {}: {error}", path.display()))
+        });
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!(
+            "Cannot write {}: it is a symbolic link",
+            path.display()
+        ));
+    }
+    let mut staged = path.as_os_str().to_owned();
+    staged.push(format!(".{}.tmp", std::process::id()));
+    let staged = PathBuf::from(staged);
+    let failed = |error: std::io::Error| anyhow!("Failed to replace {}: {error}", path.display());
+    let written = create_and_write(&staged, content);
+    // Removed only once this call created it: a failed exclusive create means
+    // whatever holds the name belongs to someone else.
+    if let Err(error) = written.and_then(|()| fs::rename(&staged, path)) {
+        if error.kind() != ErrorKind::AlreadyExists {
+            let _ = fs::remove_file(&staged);
+        }
+        return Err(failed(error));
+    }
+    Ok(())
+}
+
+/// Creates `path` exclusively and writes `content` to it.
+fn create_and_write(path: &Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(content.as_bytes())
 }
 
 /// Merges the given include files on top of an existing config value.
@@ -530,16 +548,12 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
 /// Validates `file_system` invariants that TOML deserialization cannot express,
 /// so a nonsensical config fails the load rather than misbehaving at runtime.
 fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
-    if fs.buffer_min_bytes == 0 {
+    // Below this a reload buys no perceived responsiveness, and a busy
+    // directory would reload on nearly every event.
+    if fs.refresh_debounce_milliseconds < MIN_REFRESH_DEBOUNCE_MILLISECONDS {
         return Err(anyhow!(
-            "file_system.buffer_min_bytes must be greater than 0"
-        ));
-    }
-    if fs.buffer_min_bytes > fs.buffer_max_bytes {
-        return Err(anyhow!(
-            "file_system.buffer_min_bytes ({}) must not exceed buffer_max_bytes ({})",
-            fs.buffer_min_bytes,
-            fs.buffer_max_bytes
+            "file_system.refresh_debounce_milliseconds ({}) must be at least {MIN_REFRESH_DEBOUNCE_MILLISECONDS}",
+            fs.refresh_debounce_milliseconds
         ));
     }
     if fs.search_max_depth == 0 {
@@ -722,7 +736,7 @@ open_directory = "alacritty --working-directory %s"
     }
 
     #[test_case("not_a_key = 1", "not_a_key" ; "top-level key")]
-    #[test_case("[file_system]\nbuffer_max_byte = 1\n", "file_system.buffer_max_byte" ; "nested key (dotted path)")]
+    #[test_case("[file_system]\nsearch_max_dept = 1\n", "file_system.search_max_dept" ; "nested key (dotted path)")]
     #[test_case("[keybindings]\nserach = \"/\"\n", "serach" ; "keybinding name")]
     // A style property is only a style property inside a theme. Elsewhere it
     // deserializes to nothing, so accepting it would drop it silently while
@@ -761,24 +775,24 @@ open_directory = "alacritty --working-directory %s"
         );
     }
 
-    #[test_case("[file_system]\nbuffer_min_bytes = 200\nbuffer_max_bytes = 100\n" ; "min exceeds max")]
-    #[test_case("[file_system]\nbuffer_min_bytes = 0\n" ; "min is zero")]
-    fn invalid_buffer_sizes_are_rejected(toml: &str) {
-        let err = parse_err(toml);
+    #[test_case(0 ; "zero")]
+    #[test_case(99 ; "just below the floor")]
+    fn a_refresh_debounce_below_the_floor_is_rejected(milliseconds: u64) {
+        let err = parse_err(&format!(
+            "[file_system]\nrefresh_debounce_milliseconds = {milliseconds}\n"
+        ));
         assert!(
-            err.contains("buffer_min_bytes"),
-            "error should explain the invariant: {err}"
+            err.contains("refresh_debounce_milliseconds") && err.contains("at least 100"),
+            "error should explain the floor: {err}"
         );
     }
 
     #[test]
-    fn equal_buffer_sizes_are_accepted() {
-        // The bound is "must not exceed", so one buffer size for every copy is
-        // a valid configuration rather than the degenerate case of the check.
+    fn a_refresh_debounce_at_the_floor_is_accepted() {
         Config::parse(
             RuntimeEnv::default(),
             None,
-            "[file_system]\nbuffer_min_bytes = 100\nbuffer_max_bytes = 100\n",
+            "[file_system]\nrefresh_debounce_milliseconds = 100\n",
             &inert_dir(),
             &[],
         )
@@ -923,6 +937,26 @@ open_directory = "alacritty --working-directory %s"
 
         assert!(error.contains("already exists; pass --force"), "{error}");
         assert!(!target.exists());
+    }
+
+    /// The replacement is written beside the file and renamed over it, so a
+    /// write that fails leaves the old file as it was.
+    #[test]
+    fn force_keeps_the_old_file_when_the_new_one_cannot_be_written() {
+        let dir = TempDir::new("config_force_failed");
+        let path = dir.join("config.toml");
+        fs::write(&path, "old").unwrap();
+        let mut staged = path.as_os_str().to_owned();
+        staged.push(format!(".{}.tmp", std::process::id()));
+        fs::create_dir(&staged).unwrap();
+
+        let error = write_new(&path, "new", true)
+            .expect_err("the staged name is taken")
+            .to_string();
+
+        assert!(error.starts_with("Failed to replace"), "{error}");
+        assert_eq!("old", fs::read_to_string(&path).unwrap());
+        assert!(Path::new(&staged).is_dir());
     }
 
     /// `--force` replaces a file, never a link: removing the link would detach
@@ -1108,13 +1142,13 @@ open_directory = "alacritty --working-directory %s"
         let dir = TempDir::new("config_include_symlink");
         let config = dir.join("config.toml");
         fs::write(&config, b"").unwrap();
-        let target = binds_select_next(&dir, "target.toml", 'e');
+        let target = binds_select_next(&dir, "target.toml", 'a');
         let link = dir.join("link.toml");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap();
 
-        assert!(select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, 'a'));
     }
 
     #[test]
@@ -1145,11 +1179,11 @@ open_directory = "alacritty --working-directory %s"
     fn a_cli_include_overrides_the_config_it_is_merged_onto() {
         let dir = TempDir::new("config_precedence_cli");
         let config = binds_select_next(&dir, "config.toml", 'u');
-        let include = binds_select_next(&dir, "over.toml", 'e');
+        let include = binds_select_next(&dir, "over.toml", 'a');
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[include]).unwrap();
 
-        assert!(select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, 'a'));
         assert!(!select_next_key(&merged, 'u'));
     }
 
@@ -1157,18 +1191,18 @@ open_directory = "alacritty --working-directory %s"
     fn the_last_cli_include_wins() {
         let dir = TempDir::new("config_precedence_order");
         let config = binds_select_next(&dir, "config.toml", 'u');
-        let first = binds_select_next(&dir, "first.toml", 'e');
-        let second = binds_select_next(&dir, "second.toml", 'i');
+        let first = binds_select_next(&dir, "first.toml", 'a');
+        let second = binds_select_next(&dir, "second.toml", '1');
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[first, second]).unwrap();
 
-        assert!(select_next_key(&merged, 'i'));
+        assert!(select_next_key(&merged, '1'));
     }
 
     #[test]
     fn a_configs_own_include_files_override_the_config_that_lists_them() {
         let dir = TempDir::new("config_precedence_listed");
-        let listed = binds_select_next(&dir, "listed.toml", 'e');
+        let listed = binds_select_next(&dir, "listed.toml", 'a');
         let config = dir.join("config.toml");
         // `include_files` is a top-level key, so it precedes the first table.
         fs::write(
@@ -1182,14 +1216,14 @@ open_directory = "alacritty --working-directory %s"
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
-        assert!(select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, 'a'));
     }
 
     #[test]
     fn a_cli_include_overrides_the_configs_own_include_files() {
         let dir = TempDir::new("config_precedence_both");
-        let listed = binds_select_next(&dir, "listed.toml", 'e');
-        let cli = binds_select_next(&dir, "cli.toml", 'i');
+        let listed = binds_select_next(&dir, "listed.toml", 'a');
+        let cli = binds_select_next(&dir, "cli.toml", '1');
         let config = dir.join("config.toml");
         fs::write(
             &config,
@@ -1199,14 +1233,14 @@ open_directory = "alacritty --working-directory %s"
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[cli]).unwrap();
 
-        assert!(select_next_key(&merged, 'i'));
+        assert!(select_next_key(&merged, '1'));
     }
 
     #[test]
     fn an_explicit_config_replaces_the_default_rather_than_merging_with_it() {
         let dir = TempDir::new("config_explicit");
         let config = dir.join("other.toml");
-        fs::write(&config, b"[keybindings]\nselect_previous = \"e\"\n").unwrap();
+        fs::write(&config, b"[keybindings]\nselect_previous = \"a\"\n").unwrap();
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
@@ -1216,7 +1250,7 @@ open_directory = "alacritty --working-directory %s"
             Some(Action::SelectPrevious),
             merged
                 .keybindings
-                .normal_action(KeyCode::Char('e'), KeyModifiers::NONE)
+                .normal_action(KeyCode::Char('a'), KeyModifiers::NONE)
         );
     }
 
@@ -1229,7 +1263,7 @@ open_directory = "alacritty --working-directory %s"
         fs::write(
             &a,
             format!(
-                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"e\"\n",
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"a\"\n",
                 b.display()
             ),
         )
@@ -1238,7 +1272,7 @@ open_directory = "alacritty --working-directory %s"
 
         let merged = Config::load(RuntimeEnv::default(), Some(a), &[]).unwrap();
 
-        assert!(select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, 'a'));
     }
 
     /// The config is merged first, so a cycle that leads back to it must stop
@@ -1251,7 +1285,7 @@ open_directory = "alacritty --working-directory %s"
         fs::write(
             &config,
             format!(
-                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"e\"\n",
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"a\"\n",
                 include.display()
             ),
         )
@@ -1259,7 +1293,7 @@ open_directory = "alacritty --working-directory %s"
         fs::write(
             &include,
             format!(
-                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"i\"\n",
+                "include_files = [\"{}\"]\n[keybindings]\nselect_next = \"1\"\n",
                 config.display()
             ),
         )
@@ -1267,8 +1301,8 @@ open_directory = "alacritty --working-directory %s"
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
-        assert!(select_next_key(&merged, 'i'));
-        assert!(!select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, '1'));
+        assert!(!select_next_key(&merged, 'a'));
     }
 
     #[test]
@@ -1285,11 +1319,11 @@ open_directory = "alacritty --working-directory %s"
             "include_files = [\"nested.toml\"]\n",
         )
         .unwrap();
-        binds_select_next(&dir, "sub/nested.toml", 'e');
+        binds_select_next(&dir, "sub/nested.toml", 'a');
 
         let merged = Config::load(RuntimeEnv::default(), Some(config), &[]).unwrap();
 
-        assert!(select_next_key(&merged, 'e'));
+        assert!(select_next_key(&merged, 'a'));
     }
 
     /// A symlinked file's relative includes resolve from the directory holding
@@ -1304,8 +1338,8 @@ open_directory = "alacritty --working-directory %s"
         fs::create_dir(dir.join("dotfiles")).unwrap();
         let target = dir.join("dotfiles/listed.toml");
         fs::write(&target, "include_files = [\"nested.toml\"]\n").unwrap();
-        binds_select_next(&dir, "config/nested.toml", 'e');
-        binds_select_next(&dir, "dotfiles/nested.toml", 'i');
+        binds_select_next(&dir, "config/nested.toml", 'a');
+        binds_select_next(&dir, "dotfiles/nested.toml", '1');
         let link = dir.join("config/link.toml");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
@@ -1317,8 +1351,8 @@ open_directory = "alacritty --working-directory %s"
             Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap()
         };
 
-        assert!(select_next_key(&merged, 'e'));
-        assert!(!select_next_key(&merged, 'i'));
+        assert!(select_next_key(&merged, 'a'));
+        assert!(!select_next_key(&merged, '1'));
     }
 
     /// The config is valid and so is the first include, so only the file named

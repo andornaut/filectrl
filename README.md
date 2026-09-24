@@ -73,7 +73,7 @@ Flag | Also accepts
 
 Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` on Linux and so is not always under `~/.config`.
 
-SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode.
+SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself. A quit signal is passed to the program so both exit: SIGHUP as itself, the others as SIGTERM. SIGINT and SIGQUIT are the program's alone meanwhile, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
 
 ### Bookmarks
 
@@ -85,6 +85,8 @@ Key | Action
 <kbd>'</kbd> or <kbd>&#96;</kbd> | Show all bookmarks in the table
 <kbd>Enter</kbd> | Navigate to the linked folder
 <kbd>r</kbd>, <kbd>d</kbd> | Rename or delete the bookmark
+
+Adding a bookmark, pasting, and creating a directory are refused while the bookmarks are shown, since each would act on the directory hidden behind them.
 
 Names must be unique, cannot be empty, and cannot contain a path separator. A name is used as typed, surrounding whitespace included, the same as for rename and create.
 
@@ -107,7 +109,7 @@ Key | Action
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
 - An existing **directory** is never replaced, and a directory never replaces anything (like `cp -R` and `mv`), so only the skip choices are offered when either side is a directory. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
-- <kbd>S</kbd> and <kbd>O</kbd> also cover copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. Only <kbd>S</kbd> settles a collision where either side is a directory. Anything left unsettled is reported when the copy finishes.
+- <kbd>S</kbd> and <kbd>O</kbd> also cover copies and moves already running: if another program takes a name inside a directory being copied, or the name a move is about to take, the standing answer settles it without stopping the paste. Only <kbd>S</kbd> settles a collision where either side is a directory. Anything left unsettled is reported when the paste finishes.
 - A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 - Whatever is not pasted (collisions you abandon, entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately do not. If nothing was pasted at all, the clipboard is unchanged.
 
@@ -129,7 +131,7 @@ Mark entries to apply chmod, copy, cut, or delete to several at once.
 
 Key | Action
 --- | ---
-<kbd>v</kbd>/<kbd>Space</kbd> | Toggle a mark on the current row
+<kbd>v</kbd>/<kbd>Space</kbd> | Toggle a mark on the current row. In range mode, exit it instead, keeping the marks, as <kbd>v</kbd> leaves Visual mode in Vim
 <kbd>V</kbd> | Enter range mode: the current row becomes the anchor. Press again to exit, keeping the marks
 <kbd>Esc</kbd> | Clear all marks and exit range mode
 
@@ -153,9 +155,11 @@ Range mode survives a directory reload in the same way: its anchor and the marks
 
 ### Filtering
 
-The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view.
+The filter (<kbd>f</kbd>/<kbd>&#92;</kbd>) is a case-insensitive substring match against the Name column, so it matches what is on screen: the entry's own name in a normal listing, the path relative to the search root while searching, and the bookmark name in the bookmarks view. The table narrows as you type. <kbd>Enter</kbd> keeps the filter. <kbd>Esc</kbd>, or anything else that closes the prompt without submitting it (such as a double-click that opens a file), puts back the one that was applied when the prompt opened. Like any change to what is listed, the first edit clears the marks.
 
 Directories carry a trailing `/` outside the bookmarks view, so `/` filters a listing down to directories, and `docs/` matches both the `docs` directory and, in search results, everything under it.
+
+While a filter or hidden files leave entries out of a directory listing, the status bar's `# Items` reads `shown of total`, such as `3 of 120`. When the cursor is on a symlink, the status bar shows what it points to after `->`, as stored in the link.
 
 ### Searching
 
@@ -165,7 +169,7 @@ Results appear as the walk finds them and settle into the sort order once it end
 
 ### Sorting
 
-<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; clicking a column header does the same. Sorting by the same column again reverses it. Each column starts in the direction it is usually reached for:
+<kbd>n</kbd>/<kbd>m</kbd>/<kbd>s</kbd> sort by name, modified time, or size; clicking a column header does the same. A header shows its key in brackets (`[N]ame`) while that key is the column's initial. Sorting by the same column again reverses it. Each column starts in the direction it is usually reached for:
 
 Column | Default direction
 --- | ---
@@ -173,7 +177,7 @@ Name | A-Z
 Modified | Newest first
 Size | Largest first
 
-The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. `sort_directories_first` in the `[ui]` section groups directories first, for the Name column only.
+The Name column orders by the text it displays (while searching, the path relative to the search root), ignoring case and a leading dot on each path segment, so a dot file sorts next to its neighbours the way `ls -a` does. Runs of digits compare as numbers, so `file2` sorts before `file10`; set `natural_sort = false` in the `[ui]` section to compare character by character instead. `sort_directories_first` in the same section groups directories first, for the Name column only. Entries with the same modified time or size are ordered by name, A-Z, whichever way the column points.
 
 ### Default keybindings
 
@@ -195,8 +199,10 @@ Open | <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd>
 Open current directory | <kbd>t</kbd>
 Open new window | <kbd>w</kbd>
 Open with... | <kbd>o</kbd>
+Edit in `$VISUAL`/`$EDITOR`, page in `$PAGER` | <kbd>e</kbd>, <kbd>i</kbd>
 Mark/unmark item | <kbd>v</kbd>/<kbd>Space</kbd>
 Range mark | <kbd>V</kbd> (Uppercase)
+Mark every shown row, ending range mode | <kbd>Ctrl</kbd>+<kbd>a</kbd>
 Copy, Cut, Paste | <kbd>y</kbd>/<kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>x</kbd>/<kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>p</kbd>/<kbd>Ctrl</kbd>+<kbd>v</kbd>
 Rename | <kbd>r</kbd>/<kbd>F2</kbd>
 Chmod (octal) | <kbd>P</kbd> (Uppercase)
@@ -208,10 +214,10 @@ Add bookmark | <kbd>B</kbd> (Uppercase)
 Show bookmarks | <kbd>'</kbd>/<kbd>&#96;</kbd>
 Refresh | <kbd>Ctrl</kbd>+<kbd>r</kbd>/<kbd>F5</kbd>
 Sort by name, modified, size | <kbd>n</kbd>, <kbd>m</kbd>, <kbd>s</kbd>
-Toggle show hidden files | <kbd>.</kbd>
+Toggle show hidden files (search results always include them) | <kbd>.</kbd>
 Cancel file or search operations | <kbd>K</kbd> (Uppercase)
-Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>a</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
-Clear clipboard/filter/marks/search, exit bookmarks view | <kbd>Esc</kbd>
+Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>l</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
+Reset the view: clear the copied or cut entry, filter, marks and search, and leave the bookmarks view (with help shown, only closes help) | <kbd>Esc</kbd>
 Toggle help | <kbd>?</kbd>
 Quit | <kbd>q</kbd>
 
@@ -236,7 +242,7 @@ Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 In the Go to prompt, `~` alone or a leading `~/` stands for the home directory. Other input that is not an absolute path, `~backup` included, is relative to the current directory.
 
-A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. Moving the cursor off the end of the input dismisses it. A directory of more than 10,000 entries offers no suggestions.
+A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. <kbd>Enter</kbd> with the cursor at the end of the input accepts the suggestion shown before going there, so `/tmp/fo` opens `/tmp/foo/` when that is the suggestion. Moving the cursor off the end of the input dismisses it. A directory of more than 10,000 entries offers no suggestions.
 
 Text pasted through the terminal (bracketed paste) goes into a text prompt as one line, with its line breaks removed. A paste anywhere else, including a y/n prompt, is ignored, so pasted text never acts as keys.
 
@@ -274,7 +280,7 @@ sort_directories_first = false
 
 Logs are written to stderr only when it is redirected (e.g. `filectrl 2>filectrl.log`), since otherwise it is the terminal the interface is drawn on. `log_level` sets the level, and `$RUST_LOG` overrides it.
 
-Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) makes FileCTRL exit with an error rather than ignore it.
+Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as a `refresh_debounce_milliseconds` below 100) makes FileCTRL exit with an error rather than ignore it.
 
 ### Opening in other applications
 
@@ -287,6 +293,10 @@ Key | Opens with
 <kbd>t</kbd> | `openers.open_directory`, for the current directory
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window (on macOS by default, a Terminal window in the directory)
 <kbd>o</kbd> | A picker of the applications that can open the selection
+<kbd>e</kbd> | `$VISUAL`, else `$EDITOR`, else `vi`, in this terminal
+<kbd>i</kbd> | `$PAGER`, else `less`, in this terminal
+
+<kbd>e</kbd> and <kbd>i</kbd> suspend FileCTRL and run the program on the entry under the cursor, then return to the listing and refresh it. The variable is split into words the way a shell splits it (`code --wait` is a program and an option), and the path is passed as an argument of its own, never through a shell. A directory is refused. <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd> go to the program while it runs. A program that exits with an error, or cannot be started, is reported as an alert.
 
 Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$@"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, bash arithmetic such as `$(( %s ))`, or AppleScript's `do script`, which types a command line into Terminal's login shell. That is why the macOS default opens a Terminal window in the directory rather than starting `filectrl` in it.
 
@@ -317,10 +327,12 @@ run_in_terminal = "" # Linux only, ignored here
 Key | Action
 --- | ---
 <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd> | Move between applications
+<kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Move to the first or last application
+<kbd>PageDown</kbd>, <kbd>PageUp</kbd> (and their normal-mode bindings) | Move a page down or up
 <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd> | Open with the selected application
 <kbd>1</kbd> to <kbd>9</kbd> | Open with that numbered application
 <kbd>o</kbd> | Close the picker
-<kbd>Esc</kbd> | Close the picker and reset the view (clears the clipboard, filter and marks, and leaves search or bookmarks)
+<kbd>Esc</kbd> | Close the picker and reset the view: clear the copied or cut entry, filter, marks and search, and leave the bookmarks view
 
 Only the first nine rows have a number; scroll to reach the rest. Applications that share a name are collapsed to the best ranked one.
 
@@ -329,15 +341,15 @@ The list is built per platform:
 - **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, nor is one whose `Exec` is malformed, and the log names each at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-verbose`, `-cprint(1)`, `-S%f`); it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
+On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p` or `r` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--print` and `--run`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
 
 `Exec` shape | Example | Result
 --- | --- | ---
 Field code with no cluster before it | `mpv %f`, `mpv --file=%f`, `foo %f -c bar` | Offered
 Quoted argument that is only the code | `app "%f"` | Offered
-Code after a long option or a `-` option that is not a cluster | `foo --exec %f`, `foo --c=%f`, `foo -xvf %f`, `foo -C %f` | Offered
+Code after a long option or a `-` option that is not a cluster | `foo --file %f`, `foo --c=%f`, `foo -xvf %f`, `foo -C %f`, `flatpak run --command=foo org.x %U` | Offered
 A removed code or `%%` after a cluster, with the file code before it | `foo %f -c %i` | Offered
-Field code in or anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `perl -E %f`, `env -S %f`, `env -S%f`, `python3 "-cimport sys; ..." %f` | Refused
+Field code in or anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `perl -E %f`, `env -S %f`, `env -S%f`, `node -p %f`, `php -r %f`, `node --eval=%f`, `python3 "-cimport sys; ..." %f` | Refused
 No file code, so the appended path would follow a cluster | `sh -c`, `xterm -e htop` | Refused
 Field code inside a quoted or escaped argument | `run --command "mpv %f"`, `app "--file=%f"` | Refused
 
@@ -396,7 +408,7 @@ Section | Description
 
 #### LS_COLORS integration
 
-With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`.
+With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key.
 
 ```toml
 [theme.file_type]
@@ -465,7 +477,7 @@ Named keys | `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, 
 Function keys | `"F2"`, `"F5"`
 Modifier prefixes | `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
 
-`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`.
+`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`. For a character key, Shift on its own applies only to letters with a single uppercase form: a shifted digit or symbol arrives as the character it produces, so bind `"!"` rather than `"Shift+1"`, which is refused, as is Shift on a letter such as `ß`.
 
 Binding one key to two actions in the same mode prevents startup, including a collision between a key you configured and a default you did not override. Assigning the same key to one action more than once is allowed.
 
@@ -536,7 +548,7 @@ Some cases need fixtures git cannot store; create them locally:
 
 ### Releasing
 
-Push a semantic version tag from an up-to-date `main`. The [release workflow](.github/workflows/release.yml) builds the binaries and creates the GitHub Release.
+Set `version` in [Cargo.toml](./Cargo.toml), then push a matching `v`-prefixed semantic version tag from an up-to-date `main`; the release fails if the tag does not match. The [release workflow](.github/workflows/release.yml) builds the binaries and creates the GitHub Release.
 
 ```bash
 git tag -a v1.0.0 -m "Release v1.0.0"

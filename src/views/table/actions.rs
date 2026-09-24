@@ -1,6 +1,6 @@
 use super::{TableView, style::PathSet};
 use crate::{
-    command::{Command, PromptAction, result::CommandResult},
+    command::{Command, ForegroundProgram, PromptAction, result::CommandResult},
     file_system::{
         home_directory,
         path_info::{PathInfo, compact},
@@ -95,7 +95,13 @@ impl TableView {
         .into()
     }
 
-    pub(super) fn open_create_directory_prompt() -> CommandResult {
+    pub(super) fn open_create_directory_prompt(&self) -> CommandResult {
+        // As for a paste: the directory would be made behind the bookmarks,
+        // in a listing that is not on screen.
+        if self.content.is_showing_bookmarks() {
+            return Command::AlertWarn("Cannot create a directory from the bookmarks view".into())
+                .into();
+        }
         Command::OpenPrompt(PromptAction::CreateDirectory).into()
     }
 
@@ -144,6 +150,31 @@ impl TableView {
         }
     }
 
+    /// Opens the cursor's entry in the editor or pager, which show one file, so
+    /// this ignores the marks like `open_with`. A directory, or a link to one,
+    /// is refused rather than handed to a program that expects a file.
+    pub(super) fn run_in_foreground(&mut self, program: ForegroundProgram) -> CommandResult {
+        let Some(path) = self.selected_path() else {
+            return CommandResult::Handled;
+        };
+        if path.path.is_dir() {
+            let verb = match program {
+                ForegroundProgram::Editor => "edit",
+                ForegroundProgram::Pager => "page",
+            };
+            return Command::AlertWarn(format!(
+                "Cannot {verb} {}: it is a directory",
+                compact(&path.path)
+            ))
+            .into();
+        }
+        Command::RunInForeground {
+            program,
+            path: path.clone(),
+        }
+        .into()
+    }
+
     /// The picker offers applications for one path, so this deliberately
     /// ignores marks and uses the selection.
     pub(super) fn open_with(&mut self) -> CommandResult {
@@ -169,6 +200,8 @@ fn editable_name(path: &PathInfo) -> String {
 /// pinned per action rather than left to the reader.
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::super::{display_names as names, marked_table, navigation::Reselect};
     use super::*;
 
@@ -191,6 +224,49 @@ mod tests {
             panic!("expected an OpenWithPrompt");
         };
         assert_eq!("c", path.display_name);
+    }
+
+    /// An editor or pager shows one file, so both take the cursor's entry.
+    #[test_case(ForegroundProgram::Editor ; "edit")]
+    #[test_case(ForegroundProgram::Pager ; "page")]
+    fn edit_and_page_take_the_selection_and_ignore_the_marks(program: ForegroundProgram) {
+        let (_dir, mut table) = marked_table();
+
+        let result = table.run_in_foreground(program);
+
+        let Ok(Command::RunInForeground { program: run, path }) = Command::try_from(result) else {
+            panic!("expected RunInForeground");
+        };
+        assert_eq!(program, run);
+        assert_eq!("c", path.display_name);
+    }
+
+    #[test_case(ForegroundProgram::Editor, "sub" => "Cannot edit" ; "edit a directory")]
+    #[test_case(ForegroundProgram::Pager, "sub" => "Cannot page" ; "page a directory")]
+    #[test_case(ForegroundProgram::Editor, "link" => "Cannot edit" ; "edit a symlink to a directory")]
+    #[test_case(ForegroundProgram::Pager, "link" => "Cannot page" ; "page a symlink to a directory")]
+    fn edit_and_page_refuse_a_directory(program: ForegroundProgram, entry: &str) -> String {
+        use crate::{app::config::Config, test_support::TempDir};
+
+        Config::init_test();
+        let dir = TempDir::new("table_page_directory");
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::os::unix::fs::symlink("sub", dir.join("link")).unwrap();
+        let mut table = TableView::default();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table
+            .content
+            .append(&[PathInfo::try_from(dir.join(entry).as_path()).unwrap()]);
+        table.finish_directory();
+        table.select(0);
+
+        match Command::try_from(table.run_in_foreground(program)) {
+            Ok(Command::AlertWarn(message)) => {
+                assert!(message.ends_with(": it is a directory"), "{message}");
+                message.split(' ').take(2).collect::<Vec<_>>().join(" ")
+            }
+            other => panic!("expected a warning, got {other:?}"),
+        }
     }
 
     #[test]
@@ -312,20 +388,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_bookmark_cannot_be_added_from_the_bookmarks_view() {
+    /// Each names the directory behind the bookmarks, which is not the
+    /// listing on screen. Outside the view both go ahead.
+    #[test_case(TableView::open_add_bookmark_prompt, "Cannot add a bookmark from the bookmarks view" ; "add a bookmark")]
+    #[test_case(TableView::paste_from_clipboard, "Cannot paste into the bookmarks view" ; "paste")]
+    #[test_case(TableView::open_create_directory_prompt, "Cannot create a directory from the bookmarks view" ; "create a directory")]
+    fn an_action_on_the_hidden_directory_is_refused_in_the_bookmarks_view(
+        act: fn(&TableView) -> CommandResult,
+        warning: &str,
+    ) {
         let (dir, mut table) = marked_table();
+        assert!(
+            !matches!(Command::try_from(act(&table)), Ok(Command::AlertWarn(_))),
+            "allowed outside the bookmarks view"
+        );
         table
             .content
             .set_bookmarks(vec![PathInfo::try_from(dir.path()).unwrap()]);
 
-        // The view keeps the directory it was opened from, which is not the
-        // listing on screen, so a prompt would offer to bookmark a directory
-        // the user is not looking at.
-        assert!(matches!(
-            Command::try_from(table.open_add_bookmark_prompt()),
-            Ok(Command::AlertWarn(_))
-        ));
+        assert_eq!(
+            Ok(Command::AlertWarn(warning.to_string())),
+            Command::try_from(act(&table)).map_err(|_| ())
+        );
     }
 
     /// As for rename: the bookmark is named by what the prompt holds, so it

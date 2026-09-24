@@ -1,11 +1,13 @@
 use std::{
     borrow::Cow,
-    cmp,
+    cmp::{self, Ordering},
+    collections::HashMap,
     ffi::OsStr,
     fmt::{self, Display},
     io,
     os::unix::prelude::{MetadataExt, PermissionsExt},
     path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf},
+    sync::{LazyLock, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -132,6 +134,31 @@ pub(crate) fn breadcrumbs(path: &Path) -> Vec<String> {
     parts
 }
 
+/// User or group names by id, including ids with no name.
+type NameCache = HashMap<u32, Option<String>>;
+
+/// The name for `id`, looked up once per process. The status bar asks on every
+/// redraw, and a lookup can go to the network (LDAP, NIS), so a rename in the
+/// user database shows only after a restart. A lookup that failed (a timeout,
+/// say) is not an answer, so it is asked again next time.
+fn cached_name<E>(
+    cache: &Mutex<NameCache>,
+    id: u32,
+    lookup: impl FnOnce(u32) -> Result<Option<String>, E>,
+) -> Option<String> {
+    // Nothing panics while the lock is held but the lookup, and a poisoned
+    // cache still holds only complete entries.
+    let mut names = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(name) = names.get(&id) {
+        return name.clone();
+    }
+    let name = lookup(id).ok()?;
+    names.insert(id, name.clone());
+    name
+}
+
 #[derive(Clone, Eq)]
 pub struct PathInfo {
     pub path: PathBuf,
@@ -147,6 +174,10 @@ pub struct PathInfo {
     /// Whether this is a symlink whose target does not exist, resolved when the
     /// entry is read. See `is_symlink_broken`.
     symlink_broken: bool,
+    /// What a symlink names, read with the entry so the status bar never reads
+    /// the link on a redraw. `None` for anything else, or a link that could not
+    /// be read.
+    symlink_target: Option<PathBuf>,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
 }
@@ -161,6 +192,7 @@ impl PathInfo {
         let mut info = Self::try_from(Path::new("/")).expect("the root should be readable");
         info.mode = mode;
         info.symlink_broken = false;
+        info.symlink_target = None;
         info
     }
 
@@ -173,10 +205,6 @@ impl PathInfo {
 
     pub fn as_path(&self) -> &Path {
         &self.path
-    }
-
-    pub fn breadcrumbs(&self) -> Vec<String> {
-        breadcrumbs(&self.path)
     }
 
     pub fn accessed(&self, relative_to: DateTime<Local>) -> Option<String> {
@@ -216,17 +244,17 @@ impl PathInfo {
     }
 
     pub fn group(&self) -> Option<String> {
-        Group::from_gid(Gid::from_raw(self.gid))
-            .ok()
-            .flatten()
-            .map(|group| group.name)
+        static NAMES: LazyLock<Mutex<NameCache>> = LazyLock::new(Mutex::default);
+        cached_name(&NAMES, self.gid, |gid| {
+            Group::from_gid(Gid::from_raw(gid)).map(|group| group.map(|group| group.name))
+        })
     }
 
     pub fn owner(&self) -> Option<String> {
-        User::from_uid(Uid::from_raw(self.uid))
-            .ok()
-            .flatten()
-            .map(|user| user.name)
+        static NAMES: LazyLock<Mutex<NameCache>> = LazyLock::new(Mutex::default);
+        cached_name(&NAMES, self.uid, |uid| {
+            User::from_uid(Uid::from_raw(uid)).map(|user| user.map(|user| user.name))
+        })
     }
 
     pub fn parent(&self) -> Option<PathInfo> {
@@ -313,6 +341,12 @@ impl PathInfo {
         unix_mode::is_symlink(self.mode)
     }
 
+    /// What a symlink names, as stored in the link: relative targets stay
+    /// relative to the link's directory.
+    pub fn symlink_target(&self) -> Option<&Path> {
+        self.symlink_target.as_deref()
+    }
+
     /// Whether this is a symlink whose target does not exist, as of when the
     /// entry was read. Answering means following the link, so it is resolved once
     /// at construction: the renderer asks for every visible symlink on every
@@ -370,6 +404,9 @@ impl TryFrom<&Path> for PathInfo {
             // permission error on the target (or on a parent component) is not
             // misreported as broken; only a confirmed "does not exist" counts.
             symlink_broken: unix_mode::is_symlink(mode) && matches!(path.try_exists(), Ok(false)),
+            symlink_target: unix_mode::is_symlink(mode)
+                .then(|| std::fs::read_link(path).ok())
+                .flatten(),
             uid: metadata.uid(),
         })
     }
@@ -448,6 +485,20 @@ pub enum DateTimeAge {
     GreaterThanYear,
 }
 
+/// The Name column's sort key: `name_text`, compared with each
+/// run of digits read as a number when `natural`, so `file2` sorts before
+/// `file10`. Two names whose numbers are equal but spelled differently (`01`
+/// and `1`) fall back to the plain text order, and two that differ only in
+/// case or leading dots (`README`, `readme`) to the names themselves, so
+/// distinct names never tie.
+pub fn name_key(name: &str, natural: bool) -> NameKey {
+    NameKey {
+        text: name_text(name),
+        name: name.to_string(),
+        natural,
+    }
+}
+
 /// The Name column's ordering rule: case and leading dots are ignored, so a dot
 /// file sorts next to its undotted neighbours. What `ls -a` does under a UTF-8
 /// locale, whose collation drops the dot rather than hoisting every hidden entry
@@ -458,7 +509,7 @@ pub enum DateTimeAge {
 /// is on screen. Applied per segment for the same reason the locale's is, so a
 /// dot file deep in the tree sorts next to its neighbours rather than at the top
 /// of its subtree.
-pub fn name_comparator(name: &str) -> String {
+fn name_text(name: &str) -> String {
     let mut key = String::with_capacity(name.len());
     for (index, segment) in name.split(MAIN_SEPARATOR).enumerate() {
         if index > 0 {
@@ -467,6 +518,74 @@ pub fn name_comparator(name: &str) -> String {
         key.push_str(segment.trim_start_matches('.'));
     }
     key.to_lowercase()
+}
+
+#[derive(Clone, Debug)]
+pub struct NameKey {
+    text: String,
+    name: String,
+    natural: bool,
+}
+
+impl Ord for NameKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let text = if self.natural || other.natural {
+            natural_cmp(&self.text, &other.text).then_with(|| self.text.cmp(&other.text))
+        } else {
+            self.text.cmp(&other.text)
+        };
+        text.then_with(|| self.name.cmp(&other.name))
+    }
+}
+
+/// Equal exactly when `cmp` says so, which ignores the `natural` flag.
+impl PartialEq for NameKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for NameKey {}
+
+impl PartialOrd for NameKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Compares character by character, except that where both sides reach an
+/// ASCII digit, the two runs of digits are compared as numbers: by length once
+/// leading zeros are dropped, then digit by digit. `01` and `1` compare equal.
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let run = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+                    let mut digits = String::new();
+                    while let Some(c) = chars.next_if(char::is_ascii_digit) {
+                        digits.push(c);
+                    }
+                    digits.trim_start_matches('0').to_string()
+                };
+                let (x, y) = (run(&mut a), run(&mut b));
+                let order = x.len().cmp(&y.len()).then_with(|| x.cmp(&y));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                if x != y {
+                    return x.cmp(&y);
+                }
+                a.next();
+                b.next();
+            }
+        }
+    }
 }
 
 pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
@@ -635,6 +754,30 @@ mod tests {
         assert_eq!(expected, age(seconds_ago));
     }
 
+    #[test]
+    fn a_name_is_looked_up_once_per_id() {
+        let cache = Mutex::default();
+        let mut lookups = Vec::new();
+        let mut lookup = |id: u32| {
+            lookups.push(id);
+            match id {
+                1 => Ok(Some("one".to_string())),
+                2 => Ok(None),
+                _ => Err(()),
+            }
+        };
+
+        assert_eq!(Some("one".to_string()), cached_name(&cache, 1, &mut lookup));
+        assert_eq!(Some("one".to_string()), cached_name(&cache, 1, &mut lookup));
+        // An id with no name is remembered too, so it is not asked again.
+        assert_eq!(None, cached_name(&cache, 2, &mut lookup));
+        assert_eq!(None, cached_name(&cache, 2, &mut lookup));
+        // A failed lookup is not, so it is asked again.
+        assert_eq!(None, cached_name(&cache, 3, &mut lookup));
+        assert_eq!(None, cached_name(&cache, 3, &mut lookup));
+        assert_eq!(vec![1, 2, 3, 3], lookups);
+    }
+
     // breadcrumbs: root first, the root itself as an empty segment
 
     #[test_case("/" => vec![String::new()] ; "the root alone")]
@@ -748,8 +891,40 @@ mod tests {
     #[test_case("projects/.zshrc", "projects/zshrc" ; "strips a dot below the root")]
     #[test_case("a/.b/c", "a/b/c" ; "strips a dot on an interior segment")]
     #[test_case(".a/.b", "a/b" ; "strips a dot on every segment")]
-    fn name_comparator_ignores_case_and_leading_dots(name: &str, expected: &str) {
-        assert_eq!(expected, name_comparator(name));
+    fn the_name_text_ignores_case_and_leading_dots(name: &str, expected: &str) {
+        assert_eq!(expected, name_text(name));
+    }
+
+    #[test_case("file2", "file10", true => Ordering::Less ; "natural reads a run of digits as a number")]
+    #[test_case("file2", "file10", false => Ordering::Greater ; "plain compares character by character")]
+    #[test_case("v1.9", "v1.10", true => Ordering::Less ; "each run is its own number")]
+    #[test_case("a-1", "a1", true => Ordering::Less ; "a character before a digit keeps its place")]
+    #[test_case("01", "1", true => Ordering::Less ; "equal numbers fall back to the text")]
+    #[test_case("B", "a", true => Ordering::Greater ; "case is still ignored")]
+    #[test_case("File", "file", true => Ordering::Less ; "names equal but for case are ordered by the name")]
+    #[test_case(".bashrc", "bashrc", false => Ordering::Less ; "names equal but for a dot are ordered by the name")]
+    fn names_order_by_their_key(a: &str, b: &str, natural: bool) -> Ordering {
+        name_key(a, natural).cmp(&name_key(b, natural))
+    }
+
+    /// Read as stored in the link, so a relative target stays relative.
+    #[test]
+    fn a_symlink_carries_its_target_and_nothing_else_does() {
+        use std::os::unix::fs::symlink;
+
+        use crate::test_support::TempDir;
+
+        let fx = TempDir::new("path_info_target");
+        let file = fx.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let link = fx.join("link");
+        symlink("file.txt", &link).unwrap();
+
+        assert_eq!(
+            Some(Path::new("file.txt")),
+            PathInfo::try_from(&link).unwrap().symlink_target()
+        );
+        assert_eq!(None, PathInfo::try_from(&file).unwrap().symlink_target());
     }
 
     #[test]

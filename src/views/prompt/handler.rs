@@ -17,7 +17,21 @@ impl CommandHandler for PromptView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
         match command {
             Command::OpenPrompt(kind) => self.open(kind),
-            Command::ClipboardText(text) => self.insert_text(text),
+            Command::ClipboardText(text) => {
+                let result = self.insert_text(text);
+                self.filter_as_typed(result)
+            }
+            // Whatever closes a filter prompt without submitting it puts back
+            // the filter it opened with, as Esc does: a double-click that opens
+            // a file closes it from beneath, and typing has already applied
+            // what it holds.
+            Command::CancelPrompt => self.restore_filter(),
+            // Submitted, or replaced by a listing or a reset that clears the
+            // filter anyway, so a close that follows has nothing to put back.
+            Command::FilterChanged(_) | Command::NavigatedDirectory { .. } | Command::ResetView => {
+                self.live_filter.clone_from(&self.initial_text);
+                CommandResult::NotHandled
+            }
             _ => CommandResult::NotHandled,
         }
     }
@@ -78,7 +92,8 @@ impl CommandHandler for PromptView {
         }
 
         let action = Config::global().keybindings.prompt_action(code, modifiers);
-        self.handle_text_key(action, code, modifiers)
+        let result = self.handle_text_key(action, code, modifiers);
+        self.filter_as_typed(result)
     }
 
     /// A paste into a text prompt is inserted as text. One into a y/n prompt
@@ -87,7 +102,8 @@ impl CommandHandler for PromptView {
         if self.actions.is_confirmation() {
             return CommandResult::Handled;
         }
-        self.insert_text(text)
+        let result = self.insert_text(text);
+        self.filter_as_typed(result)
     }
 
     fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
@@ -121,6 +137,46 @@ impl CommandHandler for PromptView {
 }
 
 impl PromptView {
+    /// Narrows the table to the filter prompt's text as it is typed: after a
+    /// key that `result` left the prompt open for, sends the text when it
+    /// differs from what the table was last sent, beside anything the key
+    /// derived (a cut puts its text on the clipboard). Any other prompt, or a
+    /// key that submitted or cancelled, is passed through.
+    fn filter_as_typed(&mut self, result: CommandResult) -> CommandResult {
+        let is_filter = matches!(self.actions, PromptAction::Filter(_));
+        if !is_filter || result == CommandResult::NotHandled {
+            return result;
+        }
+        let mut commands = result.into_commands();
+        let closes = commands
+            .iter()
+            .any(|command| matches!(command, Command::FilterChanged(_) | Command::CancelPrompt));
+        let text = self.text_area.lines().join("");
+        if !closes && text != self.live_filter {
+            self.live_filter.clone_from(&text);
+            commands.push(Command::FilterEdited(text));
+        }
+        commands.into()
+    }
+
+    /// Closes the prompt. A filter prompt first puts back the filter it opened
+    /// with, since typing has already applied what it holds.
+    fn cancel(&mut self) -> CommandResult {
+        let mut commands = self.restore_filter().into_commands();
+        commands.push(Command::CancelPrompt);
+        commands.into()
+    }
+
+    /// The filter the filter prompt opened with, if typing has applied another.
+    fn restore_filter(&mut self) -> CommandResult {
+        let is_filter = matches!(self.actions, PromptAction::Filter(_));
+        if !is_filter || self.live_filter == self.initial_text {
+            return CommandResult::NotHandled;
+        }
+        self.live_filter.clone_from(&self.initial_text);
+        Command::FilterEdited(self.initial_text.clone()).into()
+    }
+
     /// Inserts `text` at the cursor, without its line breaks and other control
     /// characters: the input is one line, a pasted name that was copied with
     /// its newline would otherwise not match, and a tab or escape is never
@@ -168,7 +224,7 @@ impl PromptView {
             }
         }
         match action {
-            Some(Action::PromptCancel) => return Command::CancelPrompt.into(),
+            Some(Action::PromptCancel) => return self.cancel(),
             Some(Action::PromptSubmit) => return self.submit(),
             Some(Action::PromptSelectAll) => {
                 self.text_area.select_all();

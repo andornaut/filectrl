@@ -81,6 +81,10 @@ impl CommandHandler for Handlers {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::CancelTask) => Command::CancelTask.into(),
             Some(Action::Quit) => Command::Quit.into(),
+            // Closing help is all the key does there, which RootView handles:
+            // a reset would also drop the marks, filter and clipboard entry
+            // the help screen was covering.
+            Some(Action::ResetView) if self.root.is_help_visible() => CommandResult::NotHandled,
             Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
@@ -102,6 +106,24 @@ mod tests {
     fn handlers(fixture: &Fixture) -> Handlers {
         let (tx, _rx) = mpsc::channel();
         test_handlers(tx, fixture)
+    }
+
+    #[test]
+    fn the_reset_key_resets_the_view_unless_help_is_shown() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        assert_eq!(
+            CommandResult::from(Command::ResetView),
+            handlers.handle_key(KeyCode::Esc, KeyModifiers::NONE)
+        );
+
+        handlers
+            .root
+            .handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(
+            CommandResult::NotHandled,
+            handlers.handle_key(KeyCode::Esc, KeyModifiers::NONE)
+        );
     }
 
     #[test]

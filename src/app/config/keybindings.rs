@@ -23,6 +23,8 @@ pub enum Action {
     OpenCurrentDirectory,
     OpenNewWindow,
     OpenWith,
+    Edit,
+    Page,
     Refresh,
 
     // Selection
@@ -40,6 +42,7 @@ pub enum Action {
     // Marks
     ToggleMark,
     RangeMark,
+    SelectAll,
 
     // Clipboard
     Copy,
@@ -163,6 +166,7 @@ keybindings! {
         create_directory => CreateDirectory,
         cut => Cut,
         delete => Delete,
+        edit => Edit,
         filter => Filter,
         go_home => GoHome,
         goto => Goto,
@@ -170,6 +174,7 @@ keybindings! {
         open_current_directory => OpenCurrentDirectory,
         open_new_window => OpenNewWindow,
         open_with => OpenWith,
+        page => Page,
         page_down => PageDown,
         page_up => PageUp,
         paste => Paste,
@@ -178,6 +183,7 @@ keybindings! {
         refresh => Refresh,
         rename => Rename,
         search => Search,
+        select_all => SelectAll,
         show_bookmarks => GetBookmarks,
         select_first => SelectFirst,
         select_last => SelectLast,
@@ -429,6 +435,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         ("shift+", KeyModifiers::SHIFT),
         ("alt+", KeyModifiers::ALT),
     ];
+    let spelling = s;
 
     let mut modifiers = KeyModifiers::NONE;
     let mut rest = s;
@@ -503,6 +510,13 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
                 if let (Some(single), None) = (upper.next(), upper.next()) {
                     ch = single;
                 }
+            }
+            // Any other character arrives already shifted ("!" for Shift+1),
+            // with no modifier, so the binding as written could never fire.
+            if modifiers == KeyModifiers::SHIFT && !ch.is_uppercase() {
+                return Err(anyhow!(
+                    "Invalid key: '{spelling}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)"
+                ));
             }
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
@@ -648,6 +662,12 @@ mod tests {
     // A multibyte char straddling the prefix-length byte index must not panic
     // the str slicing; it has to come back as a normal parse error.
     #[test_case("aaa\u{2713}x"     => "Unknown key: 'aaa\u{2713}x'" ; "a multibyte char straddling the prefix index")]
+    // A shifted digit or symbol arrives as the character it produces, with no
+    // modifier, and "\u{df}" uppercases to two characters, so it has no
+    // shifted key at all.
+    #[test_case("Shift+1"         => "Invalid key: 'Shift+1' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a digit")]
+    #[test_case("Shift+/"         => "Invalid key: 'Shift+/' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a symbol")]
+    #[test_case("Shift+\u{df}"    => "Invalid key: 'Shift+\u{df}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a letter with no single uppercase")]
     fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // No terminal emits these, so they must fail config loading rather
         // than silently producing a binding that never fires. Which refusal
@@ -675,9 +695,6 @@ mod tests {
         assert_eq!(combo.code, KeyCode::Char('\u{c9}'));
         assert_eq!(combo.modifiers, KeyModifiers::SHIFT);
         assert_eq!(combo, parse_key_combo("\u{c9}").unwrap());
-        // "\u{df}" uppercases to two characters, so it has no shifted key.
-        let combo = parse_key_combo("Shift+\u{df}").unwrap();
-        assert_eq!(combo.code, KeyCode::Char('\u{df}'));
     }
 
     #[test]

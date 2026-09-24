@@ -161,6 +161,9 @@ impl Progress {
         if self.is_done() {
             return 100;
         }
+        if self.total == 0 {
+            return 0;
+        }
         (((self.completed as f64 / self.total as f64) * 100.0).round() as u32).min(99)
     }
 
@@ -170,6 +173,9 @@ impl Progress {
         if self.is_done() {
             return factor;
         }
+        if self.total == 0 {
+            return 0;
+        }
         ((self.completed as f64 / self.total as f64 * f64::from(factor)).round() as u16)
             .min(factor.saturating_sub(1))
     }
@@ -178,9 +184,11 @@ impl Progress {
         self.completed = self.total;
     }
 
+    /// Only tasks still running are drawn, so a zero total is one with nothing
+    /// sized to count (a tree of empty files, symlinks and directories), not
+    /// one that is finished: it reads 0% until the task ends.
     fn is_done(&self) -> bool {
-        // `Progress { total: 0, .. }` is considered done
-        self.total == 0 || self.completed == self.total
+        self.total != 0 && self.completed == self.total
     }
 
     fn increment(&mut self, additional: u64) {
@@ -447,9 +455,9 @@ mod tests {
     }
 
     #[test]
-    fn a_percentage_rounds_and_counts_a_zero_total_as_complete() {
-        assert_eq!(100, progress(0, 0).percentage()); // total == 0 is "done"
-        assert_eq!(100, progress(50, 0).percentage());
+    fn a_percentage_rounds_and_counts_a_zero_total_as_not_started() {
+        assert_eq!(0, progress(0, 0).percentage()); // nothing sized to count
+        assert_eq!(0, progress(50, 0).percentage());
         assert_eq!(0, progress(0, 100).percentage());
         assert_eq!(50, progress(50, 100).percentage());
         assert_eq!(33, progress(1, 3).percentage()); // 33.33 rounds down
@@ -460,7 +468,7 @@ mod tests {
 
     #[test]
     fn a_scaled_position_clamps_to_the_factor_and_is_full_when_done() {
-        assert_eq!(10, progress(0, 0).scaled(10)); // done -> full factor
+        assert_eq!(0, progress(0, 0).scaled(10)); // nothing sized to count
         assert_eq!(10, progress(100, 100).scaled(10)); // done -> full factor
         assert_eq!(0, progress(0, 100).scaled(10));
         assert_eq!(5, progress(50, 100).scaled(10));

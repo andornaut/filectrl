@@ -28,6 +28,11 @@ impl TableView {
     }
 
     pub(super) fn paste_from_clipboard(&self) -> CommandResult {
+        // The directory kept behind the bookmarks is not the listing on
+        // screen, so a paste would land somewhere the user is not looking.
+        if self.content.is_showing_bookmarks() {
+            return Command::AlertWarn("Cannot paste into the bookmarks view".into()).into();
+        }
         let destination = self.content.directory().expect("Directory is always set");
         Command::Paste(destination.clone()).into()
     }

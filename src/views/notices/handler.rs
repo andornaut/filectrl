@@ -78,7 +78,7 @@ impl CommandHandler for NoticesView {
                 self.clipboard_entry.clone_from(entry);
                 CommandResult::NotHandled
             }
-            Command::FilterChanged(filter) => {
+            Command::FilterChanged(filter) | Command::FilterEdited(filter) => {
                 self.filter.clone_from(filter);
                 CommandResult::NotHandled
             }

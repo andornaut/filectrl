@@ -3,12 +3,16 @@ pub mod config;
 #[cfg(debug_assertions)]
 mod debug;
 pub mod events;
+mod foreground;
 mod handler;
 pub mod terminal;
 
 use std::{
     path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, Sender},
+    },
 };
 
 use anyhow::{Result, anyhow};
@@ -17,7 +21,9 @@ use ratatui::Frame;
 use self::{
     clipboard::Clipboard,
     config::Config,
-    events::{receive_commands, spawn_command_sender, spawn_signal_watcher},
+    events::{
+        ReaderGate, quit_requested, receive_commands, spawn_command_sender, spawn_signal_watcher,
+    },
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
@@ -74,22 +80,22 @@ impl Broadcast for Handlers {
 
 fn broadcast_commands<H: Broadcast>(
     handlers: &mut H,
-    tx: &Sender<Command>,
     commands: Vec<Command>,
-) -> Vec<Command> {
-    commands
-        .into_iter()
-        .flat_map(|command| broadcast_command(handlers, tx, command))
-        .collect()
+) -> Result<Vec<Command>> {
+    let mut unhandled = Vec::new();
+    for command in commands {
+        unhandled.extend(broadcast_command(handlers, command)?);
+    }
+    Ok(unhandled)
 }
 
 /// Resolves `command` and everything it derives, returning what no handler
 /// claimed. See `MAX_BROADCAST_CHAIN_LENGTH` for the bound and why it exists.
-fn broadcast_command<H: Broadcast>(
-    handlers: &mut H,
-    tx: &Sender<Command>,
-    command: Command,
-) -> Vec<Command> {
+///
+/// Exceeding the bound is an error that ends the session, like an unhandled
+/// command: both are bugs, and carrying on would run with an action half
+/// applied.
+fn broadcast_command<H: Broadcast>(handlers: &mut H, command: Command) -> Result<Vec<Command>> {
     let mut pending = vec![command];
     let mut unhandled = Vec::new();
 
@@ -119,24 +125,21 @@ fn broadcast_command<H: Broadcast>(
     }
 
     if !pending.is_empty() {
-        // A chain longer than expected, or a handler stuck deriving in a
-        // loop; both bugs. Loud in dev/test, and in release an alert through
-        // the channel rather than silently dropping the user's action.
-        let message = format!(
+        // A chain longer than expected, or a handler stuck deriving in a loop.
+        return Err(anyhow!(
             "Broadcast cycle limit ({MAX_BROADCAST_CHAIN_LENGTH}) exceeded; dropped {} derived command(s): {:?}",
             pending.len(),
             pending
-        );
-        log::error!("{message}");
-        let _ = tx.send(Command::AlertError(message.clone()));
-        debug_assert!(false, "{message}");
+        ));
     }
 
-    unhandled
+    Ok(unhandled)
 }
 
 pub struct App {
     handlers: Handlers,
+    /// Stops the event reader while a program runs in the foreground.
+    reader_gate: Arc<ReaderGate>,
     terminal: CleanupOnDropTerminal,
     rx: Receiver<Command>,
     tx: Sender<Command>, // Held to keep the channel open for the lifetime of App
@@ -155,6 +158,7 @@ impl App {
         };
         Self {
             handlers,
+            reader_gate: Arc::default(),
             terminal,
             rx,
             tx,
@@ -167,11 +171,11 @@ impl App {
         // resulting `NavigatedDirectory` here registers its generation before
         // those batches are drained, so none are dropped.
         let initial = self.handlers.file_system.run_once(initial_directory)?;
-        let remaining = broadcast_commands(&mut self.handlers, &self.tx, initial);
+        let remaining = broadcast_commands(&mut self.handlers, initial)?;
         must_not_contain_unhandled(&remaining)?;
         self.render()?;
 
-        spawn_command_sender(&self.tx);
+        spawn_command_sender(&self.tx, self.reader_gate.clone());
         // Answers termination signals when the reader thread cannot, which is
         // the case whenever the terminal itself is what went away.
         spawn_signal_watcher(self.tx.clone());
@@ -180,18 +184,72 @@ impl App {
             let commands = receive_commands(&self.rx);
             let received = commands.len();
 
-            let remaining_commands = broadcast_commands(&mut self.handlers, &self.tx, commands);
+            let remaining_commands = broadcast_commands(&mut self.handlers, commands)?;
 
             if should_quit(&remaining_commands) {
                 return Ok(());
             }
 
+            let (foreground, remaining_commands): (Vec<_>, Vec<_>) = remaining_commands
+                .into_iter()
+                .partition(|command| matches!(command, Command::RunInForeground { .. }));
             must_not_contain_unhandled(&remaining_commands)?;
+            for command in foreground {
+                if self.run_in_foreground(command)? {
+                    return Ok(());
+                }
+            }
             if changed_nothing_visible(received, &remaining_commands) {
                 continue;
             }
             self.render()?;
         }
+    }
+
+    /// Runs an editor or pager on an entry, then queues a refresh (the program
+    /// may have changed the directory) and an alert for a program that could
+    /// not run or failed. The terminal comes back cleared, and the refresh
+    /// redraws it. Only a terminal that cannot be taken back is an error.
+    /// Returns whether a termination signal arrived, in which case the
+    /// terminal is already handed back and the caller quits.
+    fn run_in_foreground(&mut self, command: Command) -> Result<bool> {
+        let Command::RunInForeground { program, path } = command else {
+            return Ok(false);
+        };
+        let alert = match foreground::argv(|name| std::env::var_os(name), program, &path.path) {
+            Err(error) => Some(Command::AlertWarn(format!("{error:#}"))),
+            Ok(argv) => {
+                // Words of a variable that was valid UTF-8, so nothing is lost.
+                let program = argv[0].to_string_lossy().into_owned();
+                let outcome = foreground::run(
+                    &mut self.terminal,
+                    &self.reader_gate,
+                    foreground::READER_PAUSE_TIMEOUT,
+                    &quit_requested,
+                    &argv,
+                )?;
+                match outcome {
+                    foreground::Outcome::Ran(Ok(status)) if status.success() => None,
+                    foreground::Outcome::Ran(Ok(status)) => Some(Command::AlertError(format!(
+                        "Failed to run {program:?}: {status}"
+                    ))),
+                    foreground::Outcome::Ran(Err(error)) => Some(Command::AlertError(format!(
+                        "Failed to run {program:?}: {error}"
+                    ))),
+                    foreground::Outcome::ReaderBusy => Some(Command::AlertError(format!(
+                        "Cannot run {program:?}: the input reader did not stop"
+                    ))),
+                    foreground::Outcome::Quit => return Ok(true),
+                }
+            }
+        };
+        // Sent rather than handled here, so they take the one path every
+        // command does. A send fails only once the receiver is gone.
+        let _ = self.tx.send(Command::RefreshDirectory);
+        if let Some(alert) = alert {
+            let _ = self.tx.send(alert);
+        }
+        Ok(false)
     }
 
     fn render(&mut self) -> Result<()> {
@@ -582,21 +640,13 @@ mod tests {
         }
     }
 
-    /// A `Spy` and the channel the cycle-limit alert would go out on.
-    fn broadcaster(
-        log: &Rc<RefCell<Vec<&'static str>>>,
-    ) -> (Spy, mpsc::Sender<Command>, mpsc::Receiver<Command>) {
-        let (tx, rx) = mpsc::channel();
-        (Spy::new("root", log), tx, rx)
-    }
-
     #[test]
     fn a_derived_command_is_broadcast_in_turn() {
         let log = Rc::new(RefCell::new(Vec::new()));
-        let (mut root, tx, _rx) = broadcaster(&log);
+        let mut root = Spy::new("root", &log);
         root.derive_on = Some((Command::SearchTick, Command::ResetView));
 
-        let unhandled = broadcast_command(&mut root, &tx, Command::SearchTick);
+        let unhandled = broadcast_command(&mut root, Command::SearchTick).unwrap();
 
         // Two cycles: the input, then what it derived. Resolving an intent
         // into a result is the whole reason the loop exists, and a handler
@@ -609,9 +659,9 @@ mod tests {
     #[test]
     fn an_unclaimed_command_is_returned_rather_than_re_queued() {
         let log = Rc::new(RefCell::new(Vec::new()));
-        let (mut root, tx, _rx) = broadcaster(&log);
+        let mut root = Spy::new("root", &log);
 
-        let unhandled = broadcast_command(&mut root, &tx, Command::Quit);
+        let unhandled = broadcast_command(&mut root, Command::Quit).unwrap();
 
         // Visited once and handed back. `should_quit` reads this list, so a
         // command re-queued here would spin the loop instead of exiting, and
@@ -623,27 +673,21 @@ mod tests {
     #[test]
     fn a_chain_is_bounded_by_the_cycle_limit() {
         let log = Rc::new(RefCell::new(Vec::new()));
-        let (mut root, tx, rx) = broadcaster(&log);
+        let mut root = Spy::new("root", &log);
         // A handler that answers every SearchTick with another one: the
         // stuck-deriving bug the limit exists to stop.
         root.derive_on = Some((Command::SearchTick, Command::SearchTick));
 
-        let unhandled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            broadcast_command(&mut root, &tx, Command::SearchTick)
-        }));
+        let error = broadcast_command(&mut root, Command::SearchTick)
+            .expect_err("the cycle limit ends the session, like an unhandled command")
+            .to_string();
 
-        // `debug_assert!` makes it a panic in a debug build, which is where a
-        // developer will see it; the release path is the alert below.
-        assert!(unhandled.is_err(), "the cycle limit should have asserted");
         assert_eq!(
             MAX_BROADCAST_CHAIN_LENGTH as usize,
             log.borrow().len(),
             "the loop must stop at the limit rather than run on"
         );
-        let Ok(Command::AlertError(message)) = rx.try_recv() else {
-            panic!("the user must be told rather than silently losing the action")
-        };
-        assert!(message.contains("Broadcast cycle limit"), "{message}");
+        assert!(error.contains("Broadcast cycle limit"), "{error}");
     }
 
     #[test]

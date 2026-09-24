@@ -4,7 +4,6 @@ use super::{BreadcrumbsView, widget::clicked_index};
 use crate::{
     app::config::Config,
     command::{Command, handler::CommandHandler, result::CommandResult},
-    file_system::path_info::breadcrumbs,
     views::{ListingMode, contains},
 };
 
@@ -27,8 +26,7 @@ impl CommandHandler for BreadcrumbsView {
             }
             Command::StartSearch(_) | Command::ResetView => CommandResult::Handled,
             Command::Bookmarks { .. } => {
-                let dir = Config::global().bookmarks_dir();
-                self.breadcrumbs = breadcrumbs(&dir);
+                self.set_path(&Config::global().bookmarks_dir());
                 self.positions.clear();
                 CommandResult::Handled
             }

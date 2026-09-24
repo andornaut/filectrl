@@ -29,6 +29,9 @@ pub(super) struct PromptView {
     actions: PromptAction,
     text_area: TextArea<'static>,
     initial_text: String,
+    /// Filter: the filter the table was last sent, so an edit that leaves the
+    /// text as it was sends nothing.
+    live_filter: String,
     render_area: Rect,
     /// Horizontal scroll offset (in display columns), mirroring tui-textarea's internal viewport.
     scroll_col: u16,
@@ -175,6 +178,7 @@ impl PromptView {
         };
         self.actions = kind.clone();
         self.initial_text.clone_from(&text);
+        self.live_filter.clone_from(&text);
         self.reset_text(&text);
         if let PromptAction::Goto { directory } = kind {
             self.basedir.clone_from(directory);
@@ -794,7 +798,11 @@ mod tests {
 
         let result = view.handle_paste("important\r\n\u{1b}dy");
 
-        assert_eq!(CommandResult::Handled, result);
+        // Sent as typed, not submitted.
+        assert_eq!(
+            CommandResult::from(Command::FilterEdited("importantdy".to_string())),
+            result
+        );
         assert_eq!("importantdy", view.text_area.lines()[0]);
     }
 
@@ -908,6 +916,135 @@ mod tests {
         let mut view = prompt_with_action(PromptAction::Filter("foo".into()));
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(result, Command::FilterChanged("foo".to_string()).into());
+    }
+
+    #[test]
+    fn each_edit_of_the_filter_is_sent_as_typed() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+
+        assert_eq!(
+            CommandResult::from(Command::FilterEdited("foo".to_string())),
+            view.handle_key(KeyCode::Char('o'), KeyModifiers::NONE)
+        );
+        assert_eq!(
+            CommandResult::from(Command::FilterEdited("fo".to_string())),
+            view.handle_key(KeyCode::Backspace, KeyModifiers::NONE)
+        );
+        // Moving the cursor leaves the text as it was, so nothing is sent.
+        assert_eq!(
+            CommandResult::Handled,
+            view.handle_key(KeyCode::Left, KeyModifiers::NONE)
+        );
+        assert_eq!(
+            CommandResult::from(Command::FilterEdited("fxo".to_string())),
+            view.handle_paste("x")
+        );
+        // A cut both copies the selection and narrows to what is left.
+        view.handle_key(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(
+            CommandResult::from(vec![
+                Command::SetClipboardText("fxo".to_string()),
+                Command::FilterEdited(String::new()),
+            ]),
+            view.handle_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        );
+    }
+
+    /// Ctrl+V reads the clipboard, whose text arrives as a command rather than
+    /// a key.
+    #[test]
+    fn clipboard_text_pasted_into_the_filter_is_sent_as_typed() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+
+        assert_eq!(
+            CommandResult::from(Command::FilterEdited("fox".to_string())),
+            view.handle_command(&Command::ClipboardText("x".to_string()))
+        );
+    }
+
+    /// A close from beneath (a double-click that opens a file) puts the
+    /// opening filter back like Esc; one that follows a submit, a new listing
+    /// or a reset has nothing to put back.
+    #[test_case(None => vec![Command::FilterEdited("fo".to_string())] ; "a close alone")]
+    #[test_case(Some(Command::FilterChanged("foo".to_string())) => Vec::<Command>::new() ; "after a submit")]
+    #[test_case(Some(Command::ResetView) => Vec::<Command>::new() ; "after a reset")]
+    fn a_filter_prompt_closed_without_esc_puts_back_the_opening_filter(
+        before: Option<Command>,
+    ) -> Vec<Command> {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+        view.handle_key(KeyCode::Char('o'), KeyModifiers::NONE);
+        if let Some(command) = before {
+            view.handle_command(&command);
+        }
+
+        view.handle_command(&Command::CancelPrompt).into_commands()
+    }
+
+    #[test]
+    fn a_filter_prompt_closed_by_a_new_listing_puts_nothing_back() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+        view.handle_key(KeyCode::Char('o'), KeyModifiers::NONE);
+
+        view.handle_command(&Command::NavigatedDirectory {
+            directory: PathInfo::try_from("/tmp").unwrap(),
+            generation: 1,
+        });
+
+        assert_eq!(
+            CommandResult::NotHandled,
+            view.handle_command(&Command::CancelPrompt)
+        );
+    }
+
+    /// Esc puts the filter back itself, so the close it sends finds nothing
+    /// left to restore.
+    #[test]
+    fn esc_puts_the_filter_back_once() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+        view.handle_key(KeyCode::Char('o'), KeyModifiers::NONE);
+
+        view.handle_key(KeyCode::Esc, KeyModifiers::NONE);
+
+        assert_eq!(
+            CommandResult::NotHandled,
+            view.handle_command(&Command::CancelPrompt)
+        );
+    }
+
+    #[test]
+    fn a_text_prompt_other_than_the_filter_sends_nothing_as_typed() {
+        let mut view = prompt_with_action(PromptAction::Search("fo".into()));
+
+        assert_eq!(
+            CommandResult::Handled,
+            view.handle_key(KeyCode::Char('o'), KeyModifiers::NONE)
+        );
+    }
+
+    #[test]
+    fn cancelling_the_filter_puts_back_the_one_it_opened_with() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+        type_str(&mut view, "o");
+
+        assert_eq!(
+            CommandResult::HandledWithMany(vec![
+                Command::FilterEdited("fo".to_string()),
+                Command::CancelPrompt,
+            ]),
+            view.handle_key(KeyCode::Esc, KeyModifiers::NONE)
+        );
+    }
+
+    #[test]
+    fn cancelling_an_unedited_filter_only_closes_the_prompt() {
+        let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
+        type_str(&mut view, "o");
+        view.handle_key(KeyCode::Backspace, KeyModifiers::NONE);
+
+        assert_eq!(
+            CommandResult::from(Command::CancelPrompt),
+            view.handle_key(KeyCode::Esc, KeyModifiers::NONE)
+        );
     }
 
     #[test]

@@ -106,6 +106,32 @@ mod tests {
         table.selected_path().map(|p| p.display_name.clone())
     }
 
+    /// A frame too small to draw the table leaves nothing to click, however
+    /// it was laid out before.
+    #[test]
+    fn a_click_after_a_frame_too_small_for_the_table_selects_nothing() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        use crate::{app::config::Config, views::View};
+
+        let (_dir, mut table) = table_for_clicks();
+        let before = selected(&table);
+        let mut terminal = Terminal::new(TestBackend::new(80, 2)).unwrap();
+        terminal
+            .draw(|frame| table.render(Config::global().theme(), frame.area(), frame))
+            .unwrap();
+
+        assert_eq!(CommandResult::NotHandled, {
+            let event = mouse(MouseEventKind::Down(MouseButton::Left), 1, 4);
+            if table.should_handle_mouse(event) {
+                table.handle_mouse(event)
+            } else {
+                CommandResult::NotHandled
+            }
+        });
+        assert_eq!(before, selected(&table));
+    }
+
     #[test]
     fn a_click_on_a_row_moves_the_cursor_to_it() {
         let (_dir, mut table) = table_for_clicks();

@@ -16,7 +16,10 @@ use super::{
     },
 };
 use crate::{
-    app::config::theme::Theme,
+    app::config::{
+        keybindings::{Action, KeyBindings},
+        theme::Theme,
+    },
     file_system::path_info::PathInfo,
     views::{
         as_dimension,
@@ -28,41 +31,71 @@ pub(super) fn table_widget<'a>(
     theme: &'a Theme,
     column_constraints: Vec<Constraint>,
     rows: Vec<Row<'a>>,
+    header_labels: &[String; 3],
     sort_column: SortColumn,
     sort_direction: SortDirection,
 ) -> Table<'a> {
-    let header = header_row_widget(theme, sort_column, sort_direction);
+    let header = header_row_widget(theme, header_labels, sort_column, sort_direction);
     Table::new(rows, column_constraints)
         .header(header)
         .row_highlight_style(theme.table.selected())
         .style(theme.table.body())
 }
 
-fn header_row_widget(
-    theme: &Theme,
+/// The headers of the Name, Modified and Size columns. Each names its sort key
+/// in brackets (`[N]ame`) while that key's first binding is the column's own
+/// initial, and is plain otherwise, so a rebound key is not misreported.
+pub(super) fn header_labels(keybindings: &KeyBindings) -> [String; 3] {
+    [
+        ("Name", Action::SortByName),
+        ("Modified", Action::SortByModified),
+        ("Size", Action::SortBySize),
+    ]
+    .map(|(name, action)| {
+        let first_key = keybindings.display_for(action).split('/').next();
+        header_label(name, first_key.unwrap_or_default())
+    })
+}
+
+fn header_label(name: &str, first_key: &str) -> String {
+    let mut initial = name.chars();
+    let Some(head) = initial.next() else {
+        return String::new();
+    };
+    let mut key = first_key.chars();
+    match (key.next(), key.next()) {
+        (Some(c), None) if c.eq_ignore_ascii_case(&head) => {
+            format!("[{head}]{}", initial.as_str())
+        }
+        _ => name.to_string(),
+    }
+}
+
+fn header_row_widget<'a>(
+    theme: &'a Theme,
+    header_labels: &[String; 3],
     sort_column: SortColumn,
     sort_direction: SortDirection,
-) -> Row<'_> {
+) -> Row<'a> {
     let mut cells: Vec<_> = [SortColumn::Name, SortColumn::Modified, SortColumn::Size]
         .into_iter()
-        .map(|column| header_cell_widget(theme, sort_column, sort_direction, column))
+        .zip(header_labels)
+        .map(|(column, label)| {
+            header_cell_widget(theme, label, sort_column, sort_direction, column)
+        })
         .collect();
     cells.push(Cell::from("Mode").style(theme.table.header())); // Mode cannot be sorted
     Row::new(cells).style(theme.table.header())
 }
 
-fn header_cell_widget(
-    theme: &Theme,
+fn header_cell_widget<'a>(
+    theme: &'a Theme,
+    text: &str,
     sort_column: SortColumn,
     sort_direction: SortDirection,
     column: SortColumn,
-) -> Cell<'_> {
+) -> Cell<'a> {
     let is_sorted = sort_column == column;
-    let text = match column {
-        SortColumn::Name => "[N]ame",
-        SortColumn::Modified => "[M]odified",
-        SortColumn::Size => "[S]ize",
-    };
 
     // Add direction indicator if this column is sorted
     let text = if is_sorted {
@@ -177,8 +210,25 @@ mod tests {
     use chrono::Local;
     use test_case::test_case;
 
-    use super::{item_height, row_widget_and_height};
+    use super::{header_label, header_labels, item_height, row_widget_and_height};
     use crate::{app::config::Config, file_system::path_info::PathInfo};
+
+    #[test_case("n" => "[N]ame" ; "the initial")]
+    #[test_case("N" => "[N]ame" ; "the initial in upper case")]
+    #[test_case("a" => "Name" ; "another letter")]
+    #[test_case("Ctrl+n" => "Name" ; "the initial with a modifier")]
+    #[test_case("" => "Name" ; "unbound")]
+    fn a_header_brackets_its_key_only_while_the_key_is_its_initial(first_key: &str) -> String {
+        header_label("Name", first_key)
+    }
+
+    #[test]
+    fn the_default_headers_name_their_sort_keys() {
+        assert_eq!(
+            ["[N]ame", "[M]odified", "[S]ize"],
+            header_labels(&Config::builtin().keybindings)
+        );
+    }
 
     // `item_height` must always agree with the height `row_widget_and_height`
     // actually renders, since the windowing scroll math relies on it.

@@ -33,9 +33,9 @@ concurrency:
 
 jobs:
   # macOS as well as Linux, because the release builds an aarch64-apple-darwin
-  # binary and the crate carries `cfg(target_os = "macos")` branches in
-  # open_with.rs, tasks.rs and config.rs. Compiling that target at release time
-  # says the branches build; only running the suite here says they work.
+  # binary and the crate carries `cfg(target_os = "macos")` branches in several
+  # modules. Compiling that target at release time says the branches build;
+  # only running the suite here says they work.
   test-platform:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -64,13 +64,13 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.2
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
       # The lint job runs on Linux, where the `cfg(target_os = "macos")` code is
       # never compiled, so clippy has to run here to see it.
       - name: Lint macOS-only code
         if: runner.os == 'macOS'
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   # Cargo.toml declares rust-version = "1.97", and `@stable` stops testing it the
   # day 1.98 ships: the claim would go on being made with nothing checking it.
@@ -98,7 +98,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.2
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
   # A matrix leg reports as `Test (ubuntu-latest)`, a name that changes whenever
   # the matrix does, and a required check that stops reporting blocks every pull
@@ -151,7 +151,7 @@ jobs:
       # library and the binary only, and `#[cfg(test)]` code is never compiled
       # for it, leaving the largest part of this repository unlinted.
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       # Fetches the RustSec advisory database on every run, which a required
       # check normally has no business doing. Kept here because that database

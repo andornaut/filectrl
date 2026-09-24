@@ -37,7 +37,7 @@ tmux -L fcverify send-keys -t fc Enter
 ```
 
 Useful keys: `V`+`j` range-mark, `y` copy, `x` cut, `p` paste, `d` delete
-(`y` confirms), `K` cancel operation, `c` new directory, `/` search, `Ctrl+a`
+(`y` confirms), `K` cancel operation, `c` new directory, `/` search, `Ctrl+l`
 clear alerts, `Esc` clear clipboard/marks.
 
 Pane rows on a 30-row session: 1-2 breadcrumbs, 3 header, 4+ listing,
@@ -62,8 +62,8 @@ and looks identical to the event not arriving.
 Copies and deletes finish faster than you can capture on tmpfs or with a warm
 page cache.
 
-- Slow a copy with tiny buffers in the config: `buffer_max_bytes = 4096`,
-  `buffer_min_bytes = 4096`. Even so, ~1 GB still completes in under a second.
+- A copy reads in fixed 128 KiB chunks, so ~1 GB on tmpfs completes in under
+  a second. Copy to a slower mount to watch the bar move.
 - To catch a queue, send `p` and `K` back to back with no `sleep` between them.
   Operations run on one shared worker, so a batch queues and only the first
   runs; the cancel alert names which one it stopped.

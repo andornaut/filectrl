@@ -68,9 +68,12 @@ pub(super) fn header_style(table: &Table, sort_column: SortColumn, column: SortC
     }
 }
 
+/// The style `ls` would give `path`, in its order of precedence. A key
+/// `LS_COLORS` reset to uncolored is skipped, so the entry falls to the next
+/// rule, as `ls` classifies it.
 pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
     // Symlinks should be checked first (highest precedence in ls)
-    if path.is_symlink_broken() {
+    if path.is_symlink_broken() && theme.is_colored("or") {
         return theme.symlink_broken();
     }
     if path.is_symlink() {
@@ -78,23 +81,23 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
     }
 
     if path.is_directory() {
-        if path.is_sticky() && path.is_other_writable() {
+        if path.is_sticky() && path.is_other_writable() && theme.is_colored("tw") {
             return theme.directory_sticky_other_writable();
         }
-        if path.is_other_writable() {
+        if path.is_other_writable() && theme.is_colored("ow") {
             return theme.directory_other_writable();
         }
-        if path.is_sticky() {
+        if path.is_sticky() && theme.is_colored("st") {
             return theme.directory_sticky();
         }
         return theme.directory();
     }
 
     // Special permission bits (higher precedence than file types in ls)
-    if path.is_setuid() {
+    if path.is_setuid() && theme.is_colored("su") {
         return theme.setuid();
     }
-    if path.is_setgid() {
+    if path.is_setgid() && theme.is_colored("sg") {
         return theme.setgid();
     }
 
@@ -115,7 +118,7 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
         return theme.door();
     }
 
-    if path.is_executable() {
+    if path.is_executable() && theme.is_colored("ex") {
         return theme.executable();
     }
 
@@ -217,6 +220,74 @@ mod tests {
             expected(theme),
             name_style(theme, &PathInfo::with_mode(mode))
         );
+    }
+
+    /// `ls` skips a key reset to uncolored and classifies the entry by the next
+    /// rule, so each reset lands on the style below it, not on no style.
+    #[test_case("ow=00", DIRECTORY_OTHER_WRITABLE, FileType::directory ; "other-writable falls to a directory")]
+    #[test_case("tw=00", DIRECTORY_STICKY_OTHER_WRITABLE, FileType::directory_other_writable ; "sticky other-writable falls to other-writable")]
+    #[test_case("st=00", DIRECTORY_STICKY, FileType::directory ; "sticky falls to a directory")]
+    #[test_case("su=00", SETUID, FileType::executable ; "setuid falls to the execute bit")]
+    #[test_case("sg=00", SETGID, FileType::executable ; "setgid falls to the execute bit")]
+    #[test_case("ex=00", EXECUTABLE, FileType::regular_file ; "executable falls to a plain file")]
+    #[test_case("ex=", EXECUTABLE, FileType::regular_file ; "an empty value falls through too")]
+    fn a_reset_key_falls_to_the_next_rule(
+        ls_colors: &str,
+        mode: u32,
+        next: fn(&FileType) -> Style,
+    ) {
+        let theme = file_type().with_ls_colors(ls_colors);
+        let own = name_style(file_type(), &PathInfo::with_mode(mode));
+        assert_ne!(
+            own,
+            next(&theme),
+            "the fixture cannot tell the two rules apart"
+        );
+
+        assert_eq!(next(&theme), name_style(&theme, &PathInfo::with_mode(mode)));
+    }
+
+    #[test]
+    fn a_broken_symlink_whose_key_is_reset_is_styled_as_a_symlink() {
+        let theme = file_type().with_ls_colors("or=00");
+        let broken = PathInfo::with_mode(SYMLINK).broken();
+        assert_ne!(theme.symlink_broken(), theme.symlink());
+
+        assert_eq!(theme.symlink(), name_style(&theme, &broken));
+    }
+
+    /// `ls` falls through only on a value of exactly `0` or `00` (or none):
+    /// `0;00` is a color, which happens to print as none, so the entry stays
+    /// executable and is plain rather than taking the plain-file style.
+    #[test]
+    fn reset_codes_that_are_not_exactly_a_reset_render_plain() {
+        let theme = file_type().with_ls_colors("ex=0;00");
+        assert_ne!(Style::default(), theme.regular_file());
+
+        assert_eq!(
+            Style::default(),
+            name_style(&theme, &PathInfo::with_mode(EXECUTABLE))
+        );
+    }
+
+    /// Only the keys `ls` falls through on: a reset of `di` is plain.
+    #[test]
+    fn a_reset_directory_key_is_plain() {
+        let theme = file_type().with_ls_colors("di=00");
+        assert_eq!(
+            Style::default(),
+            name_style(&theme, &PathInfo::with_mode(DIRECTORY))
+        );
+    }
+
+    #[test]
+    fn a_key_set_after_its_reset_colors_again() {
+        let theme = file_type().with_ls_colors("ow=00:ow=01;32");
+        assert_eq!(
+            theme.directory_other_writable(),
+            name_style(&theme, &PathInfo::with_mode(DIRECTORY_OTHER_WRITABLE))
+        );
+        assert_ne!(theme.directory(), theme.directory_other_writable());
     }
 
     #[test]

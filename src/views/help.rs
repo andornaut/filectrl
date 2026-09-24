@@ -5,8 +5,7 @@ mod widget;
 use ratatui::{layout::Rect, text::Line};
 
 use self::widget::{
-    add_keybinding_lines, add_section_header, build_normal_keybindings, build_prompt_keybindings,
-    max_label_width,
+    Section, add_keybinding_lines, add_section_header, build_sections, max_label_width,
 };
 use super::ScrollbarView;
 use crate::{
@@ -26,8 +25,7 @@ pub(super) struct HelpView {
     /// The label and key columns, resolved once from the keybindings. The
     /// styled lines are built per frame from the theme the render is handed,
     /// so the body and the border it sits in cannot come from two themes.
-    normal_keybindings: Vec<(String, String)>,
-    prompt_keybindings: Vec<(String, String)>,
+    sections: Vec<Section>,
     /// The width the two columns are laid out to, which the line count below
     /// depends on and the theme does not.
     label_width: usize,
@@ -43,15 +41,13 @@ impl HelpView {
             "(Press {} to close)",
             kb.hint_for(&[Action::ToggleHelp, Action::ResetView])
         );
-        let normal_keybindings = build_normal_keybindings(kb);
-        let prompt_keybindings = build_prompt_keybindings(kb);
-        let label_width = max_label_width(&normal_keybindings, &prompt_keybindings);
+        let sections = build_sections(kb);
+        let label_width = max_label_width(&sections);
         Self {
             area: Rect::default(),
             hint,
             inner_height: 0,
-            normal_keybindings,
-            prompt_keybindings,
+            sections,
             label_width,
             max_scroll: 0,
             scroll_offset: 0,
@@ -63,21 +59,13 @@ impl HelpView {
     /// so every part of the view is drawn with the theme its render was given.
     fn lines(&self, theme: &Help) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
-        add_section_header(&mut lines, "Normal Mode", self.label_width, theme);
-        add_keybinding_lines(
-            &mut lines,
-            &self.normal_keybindings,
-            self.label_width,
-            theme,
-        );
-        lines.push(Line::raw(""));
-        add_section_header(&mut lines, "Prompt Mode", self.label_width, theme);
-        add_keybinding_lines(
-            &mut lines,
-            &self.prompt_keybindings,
-            self.label_width,
-            theme,
-        );
+        for (index, (title, rows)) in self.sections.iter().enumerate() {
+            if index > 0 {
+                lines.push(Line::raw(""));
+            }
+            add_section_header(&mut lines, title, self.label_width, theme);
+            add_keybinding_lines(&mut lines, rows, self.label_width, theme);
+        }
         lines
     }
 

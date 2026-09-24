@@ -93,6 +93,8 @@ pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers 
 /// - `Quit`: it must stay *unclaimed*. `App::run` detects it in the unhandled
 ///   list and returns before `must_not_contain_unhandled` runs, so a handler
 ///   that claimed it would stop the app from ever exiting.
+/// - `RunInForeground`: also unclaimed, for `App::run` to take out of the
+///   unhandled list, since only `App` holds the terminal the program needs.
 ///
 /// See `every_variant_is_accounted_for` for why this list cannot silently fall
 /// behind the enum.
@@ -179,6 +181,7 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         // Walks the one-file fixture; `ResetView` below cancels it.
         Command::StartSearch("query".to_string()),
         Command::FilterChanged("f".to_string()),
+        Command::FilterEdited("f".to_string()),
         Command::SelectionChanged {
             selected: Some(fixture.file()),
             mark_count: 0,
@@ -211,7 +214,8 @@ fn every_variant_is_accounted_for(command: &Command) {
         | Command::PasteText(_)
         | Command::Mouse(_)
         | Command::Resize { .. }
-        | Command::Quit => {}
+        | Command::Quit
+        | Command::RunInForeground { .. } => {}
         // Must be claimed.
         Command::OpenCurrentDirectory
         | Command::OpenNewWindow
@@ -249,6 +253,7 @@ fn every_variant_is_accounted_for(command: &Command) {
         | Command::SearchTick
         | Command::StartSearch(_)
         | Command::FilterChanged(_)
+        | Command::FilterEdited(_)
         | Command::SelectionChanged { .. }
         | Command::ResetView
         | Command::AlertError(_)
@@ -276,6 +281,27 @@ fn every_command_variant_is_claimed_by_a_handler() {
             "no handler claims {command:?}, which `App::run` treats as fatal"
         );
     }
+}
+
+#[test]
+fn running_in_the_foreground_is_left_to_the_app() {
+    let fixture = Fixture::new();
+    let (tx, _rx) = mpsc::channel();
+    let mut handlers = test_handlers(tx, &fixture);
+
+    let handled = recursively_handle_command(
+        &mut Vec::new(),
+        &Command::RunInForeground {
+            program: crate::command::ForegroundProgram::Editor,
+            path: fixture.file(),
+        },
+        InputMode::Normal,
+        &mut handlers,
+    );
+
+    // A handler that claimed it would keep it from `App::run`, which alone can
+    // suspend the terminal for the program.
+    assert!(!handled);
 }
 
 #[test]

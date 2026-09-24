@@ -11,6 +11,14 @@ impl TableView {
         self.selection_snapshot()
     }
 
+    /// How many of the directory's entries are shown, or `None` when the
+    /// listing is not the directory's (search results, bookmarks), so the
+    /// status bar's count does not describe it.
+    pub(in crate::views) fn shown_len(&self) -> Option<usize> {
+        (!self.content.is_searching() && !self.content.is_showing_bookmarks())
+            .then(|| self.content.len())
+    }
+
     /// The current selection and mark count as a single snapshot command.
     pub(super) fn selection_snapshot(&self) -> CommandResult {
         Command::SelectionChanged {
@@ -92,6 +100,23 @@ mod tests {
 
     fn marked(table: &TableView) -> Vec<String> {
         display_names(&table.marked_paths())
+    }
+
+    /// The status bar counts the directory's entries, so only a listing of
+    /// that directory reports how many of them it shows.
+    #[test]
+    fn the_shown_count_describes_only_a_listing_of_the_directory() {
+        use crate::command::{Command, handler::CommandHandler};
+
+        let (dir, mut table) = marked_table();
+        assert_eq!(Some(3), table.shown_len());
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+        assert_eq!(Some(1), table.shown_len());
+
+        table.content.set_bookmarks(vec![
+            crate::file_system::path_info::PathInfo::try_from(dir.path()).unwrap(),
+        ]);
+        assert_eq!(None, table.shown_len());
     }
 
     fn selected(table: &TableView) -> Option<String> {

@@ -40,11 +40,11 @@ default in both sections breaks every existing config that sets its group.
 
 ## Adding a file operation
 
-1. Add a `TaskCommand` variant in `src/file_system/tasks.rs` (async copy/move/delete), or a helper in `src/file_system/operations.rs` (synchronous)
+1. Add a `TaskCommand` variant in `src/file_system/tasks/mod.rs` (async copy/move/delete; the copy, remove, validate and walk stages are its submodules), or a helper in `src/file_system/operations.rs` (synchronous)
 2. Wire it into the `CommandHandler for FileSystem` dispatch in `src/file_system/handler.rs`
 3. Add the `Command` variant and route it from the relevant view
 4. Update progress and notice handling in `src/command/progress.rs` and `src/views/notices.rs` if needed
-5. Cover it in the unit tests of the module it lands in (`src/file_system/operations.rs` or `tasks.rs`)
+5. Cover it in the unit tests of the module it lands in (`src/file_system/operations.rs` or the `src/file_system/tasks/` submodule it touches)
 
 Follow the message grammar: `Failed to <verb> <object>: <cause>` when the OS
 refused, `Cannot <verb> <object>: <reason>` when filectrl refused first.

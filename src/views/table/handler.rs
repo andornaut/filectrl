@@ -3,7 +3,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, 
 use super::{TableView, columns::SortColumn, navigation::Reselect, style::ClipboardHighlight};
 use crate::{
     app::config::{Config, keybindings::Action},
-    command::{Command, handler::CommandHandler, result::CommandResult},
+    command::{Command, ForegroundProgram, handler::CommandHandler, result::CommandResult},
     file_system::path_info::PathInfo,
     views::{ListingMode, contains},
 };
@@ -104,7 +104,9 @@ impl CommandHandler for TableView {
                 }
             }
             // self.handle_key() and PromptView may emit FilterChanged()
-            Command::FilterChanged(filter) => self.set_filter(filter.clone()),
+            Command::FilterChanged(filter) | Command::FilterEdited(filter) => {
+                self.set_filter(filter.clone())
+            }
 
             // GetBookmarks included: FileSystem resolves it into Bookmarks.
             _ => CommandResult::NotHandled,
@@ -161,6 +163,8 @@ impl TableView {
             Some(Action::OpenCurrentDirectory) => Command::OpenCurrentDirectory.into(),
             Some(Action::OpenNewWindow) => Command::OpenNewWindow.into(),
             Some(Action::OpenWith) => self.open_with(),
+            Some(Action::Edit) => self.run_in_foreground(ForegroundProgram::Editor),
+            Some(Action::Page) => self.run_in_foreground(ForegroundProgram::Pager),
             Some(Action::GoHome) => Self::navigate_to_home_directory(),
             Some(Action::Goto) => self.open_goto_prompt(),
             // Selection
@@ -175,11 +179,12 @@ impl TableView {
             // Marks
             Some(Action::ToggleMark) => self.toggle_mark(),
             Some(Action::RangeMark) => self.enter_range_mode(),
+            Some(Action::SelectAll) => self.mark_all(),
             // File operations
             Some(Action::AddBookmark) => self.open_add_bookmark_prompt(),
             Some(Action::GetBookmarks) => Self::get_bookmarks(),
             Some(Action::Chmod) => self.open_chmod_prompt(),
-            Some(Action::CreateDirectory) => Self::open_create_directory_prompt(),
+            Some(Action::CreateDirectory) => self.open_create_directory_prompt(),
             Some(Action::Delete) => self.delete(),
             Some(Action::Rename) => self.open_rename_prompt(),
             Some(Action::Filter) => self.open_filter_prompt(),

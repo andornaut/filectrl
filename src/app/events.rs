@@ -1,8 +1,9 @@
 use std::{
     io,
     os::fd::{AsFd, BorrowedFd, IntoRawFd, OwnedFd},
+    process::ExitStatus,
     sync::{
-        OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicI32, Ordering},
         mpsc::{Receiver, Sender},
     },
@@ -63,6 +64,184 @@ use crate::command::Command;
 
 static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 
+/// Set while a program runs in the foreground of the terminal (an editor or a
+/// pager). Ctrl+C and Ctrl+\ then reach the whole foreground process group,
+/// this process included, and are the child's to answer, so the handler lets
+/// them pass, as `system(3)` ignores them in the caller.
+static FOREGROUND_CHILD: AtomicBool = AtomicBool::new(false);
+
+/// Held by every test that changes a signal's action, so none reads one
+/// another has changed for the moment.
+#[cfg(test)]
+pub(super) static SIGNAL_ACTIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(super) fn is_foreground_child() -> bool {
+    FOREGROUND_CHILD.load(Ordering::SeqCst)
+}
+
+/// Marks the start or end of a program running in the terminal's foreground.
+pub(super) fn set_foreground_child(running: bool) {
+    FOREGROUND_CHILD.store(running, Ordering::SeqCst);
+}
+
+/// Whether a termination signal has arrived.
+pub(super) fn quit_requested() -> bool {
+    SIGNAL_RECEIVED.load(Ordering::SeqCst)
+}
+
+/// The foreground program's process id while one runs, else 0. The handler
+/// passes a quit signal on to it, so the wait for it returns and the quit is
+/// handled rather than queued behind a program that never exits. Cleared
+/// before the program is reaped, so a pid the kernel has handed to another
+/// process is never signalled.
+static FOREGROUND_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Runs `command` as the program in the terminal's foreground and waits for it
+/// to exit. `quit_requested` is checked before it starts and again once its
+/// pid is known, so a quit that arrives first is not left waiting on it.
+///
+/// SIGTSTP has its default action meanwhile, so Ctrl+Z stops this process
+/// along with the program (both are in the terminal's foreground process
+/// group) and the shell's `fg` resumes both. A program that stops only itself
+/// (`kill(getpid(), SIGTSTP)`) is followed: this process stops its own group
+/// too, so the shell regains the terminal rather than waiting on a process that
+/// waits on a stopped one, and the program is continued with it. The terminal
+/// is already handed back, so a stop here leaves the shell usable. The
+/// disposition is put back afterwards.
+pub(super) fn run_foreground_child(
+    command: &mut std::process::Command,
+    quit_requested: impl Fn() -> bool,
+) -> io::Result<ExitStatus> {
+    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+
+    let default = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
+    // Safety: the default action runs no code in this process.
+    #[allow(unsafe_code)]
+    let previous = unsafe { sigaction(Signal::SIGTSTP, &default) }.map_err(io::Error::from)?;
+    let status = if quit_requested() {
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "a quit arrived before it started",
+        ))
+    } else {
+        // The handle is dropped once the pid is read: `wait_for_exit` reaps
+        // the program itself, so it can clear the pid first.
+        command.spawn().and_then(|child| {
+            let pid = i32::try_from(child.id()).unwrap_or(0);
+            FOREGROUND_PID.store(pid, Ordering::SeqCst);
+            // A quit that arrived between the spawn and the store found no
+            // pid to pass on, so it is passed on here.
+            if quit_requested() {
+                forward_signal(pid, nix::libc::SIGTERM);
+            }
+            wait_for_exit(pid)
+        })
+    };
+    // Safety: restores the action this process had a moment ago.
+    #[allow(unsafe_code)]
+    let restored = unsafe { sigaction(Signal::SIGTSTP, &previous) };
+    restored.map_err(io::Error::from)?;
+    status
+}
+
+/// Waits for the foreground program `pid` to exit, following it through any
+/// stop, then clears `FOREGROUND_PID` and reaps it, in that order.
+fn wait_for_exit(pid: i32) -> io::Result<ExitStatus> {
+    use nix::{
+        libc,
+        sys::{
+            signal::{Signal, kill},
+            wait::{WaitStatus, waitpid},
+        },
+        unistd::Pid,
+    };
+    use std::os::unix::process::ExitStatusExt;
+
+    let child = Pid::from_raw(pid);
+    // Reported without reaping, so the pid stays the program's while the
+    // handler may still signal it.
+    while peek_child(pid, libc::WEXITED | libc::WSTOPPED | libc::WNOWAIT)? == libc::CLD_STOPPED {
+        // Consumed only if the program is still stopped: after a Ctrl+Z this
+        // process stopped too, and `fg` continued both.
+        if peek_child(pid, libc::WSTOPPED | libc::WNOHANG)? == libc::CLD_STOPPED {
+            // Stops this process's group, the program included. In an orphaned
+            // group the kernel discards it and nothing stops.
+            let _ = kill(Pid::from_raw(0), Signal::SIGTSTP);
+            let _ = kill(child, Signal::SIGCONT);
+        }
+    }
+    FOREGROUND_PID.store(0, Ordering::SeqCst);
+    match waitpid(child, None).map_err(io::Error::from)? {
+        WaitStatus::Exited(_, code) => Ok(ExitStatus::from_raw(code << 8)),
+        WaitStatus::Signaled(_, signal, core) => Ok(ExitStatus::from_raw(
+            signal as i32 | if core { 0x80 } else { 0 },
+        )),
+        other => Err(io::Error::other(format!("unexpected status {other:?}"))),
+    }
+}
+
+/// `waitid(2)` on `pid` with `options`, returning the reported `si_code`, or 0
+/// when `WNOHANG` found nothing to report. Called directly rather than through
+/// nix, whose `waitid` does not exist on macOS.
+fn peek_child(pid: i32, options: i32) -> io::Result<i32> {
+    use nix::libc;
+
+    let id = libc::id_t::try_from(pid).map_err(io::Error::other)?;
+    loop {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        // Safety: `info` is a zeroed siginfo_t the call fills in, and outlives
+        // the call.
+        #[allow(unsafe_code)]
+        let result = unsafe { libc::waitid(libc::P_PID, id, info.as_mut_ptr(), options) };
+        if result == 0 {
+            // Safety: zeroed is a valid siginfo_t, and the call filled it in.
+            #[allow(unsafe_code)]
+            let info = unsafe { info.assume_init() };
+            return Ok(info.si_code);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// Sends `signal` to the foreground program `pid`, if there is one. Only
+/// `kill(2)`, so it is async-signal-safe.
+fn forward_signal(pid: i32, signal: i32) {
+    if pid > 0 {
+        // Safety: kill(2) is async-signal-safe and takes no pointers.
+        #[allow(unsafe_code)]
+        unsafe {
+            nix::libc::kill(pid, signal);
+        }
+    }
+}
+
+/// The signal a quit passes on to the foreground program: a hangup as itself,
+/// since the terminal it would read is going away, and SIGTERM for the rest.
+/// A program may treat SIGUSR1, SIGUSR2 or SIGALRM as something other than an
+/// end (vim does SIGUSR1), which would leave the quit waiting on it.
+fn forwarded(signal: i32) -> i32 {
+    if signal == nix::libc::SIGHUP {
+        signal
+    } else {
+        nix::libc::SIGTERM
+    }
+}
+
+/// The handler's part in a quit while a foreground program runs.
+fn forward_quit(signal: i32) {
+    forward_signal(FOREGROUND_PID.load(Ordering::SeqCst), forwarded(signal));
+}
+
+/// Whether the handler lets `signal` pass rather than quitting: the keyboard's
+/// interrupt and quit while a foreground child owns the terminal.
+fn is_the_childs(signal: i32, child_running: bool) -> bool {
+    child_running && (signal == nix::libc::SIGINT || signal == nix::libc::SIGQUIT)
+}
+
 /// Read end of the self-pipe, owned for the life of the process so the watcher
 /// can borrow it. Set once by `install_signal_handlers`.
 static SIGNAL_PIPE_READ: OnceLock<OwnedFd> = OnceLock::new();
@@ -92,9 +271,16 @@ impl EventSource for TerminalEventSource {
 }
 
 // SAFETY: Stores to an AtomicBool are single-instruction writes to a
-// fixed address, async-signal-safe per POSIX, as is `write(2)`.
-extern "C" fn handle_signal(_: i32) {
-    SIGNAL_RECEIVED.store(true, Ordering::Relaxed);
+// fixed address, async-signal-safe per POSIX, as are `write(2)` and `kill(2)`.
+extern "C" fn handle_signal(signal: i32) {
+    if is_the_childs(signal, FOREGROUND_CHILD.load(Ordering::SeqCst)) {
+        return;
+    }
+    // Sequentially consistent, with the pid store and flag load in
+    // `run_foreground_child`, so either this handler sees the pid or the main
+    // thread sees the flag: a quit is never missed by both.
+    SIGNAL_RECEIVED.store(true, Ordering::SeqCst);
+    forward_quit(signal);
 
     let fd = SIGNAL_PIPE_WRITE_FD.load(Ordering::Relaxed);
     if fd < 0 {
@@ -259,7 +445,72 @@ fn watch_signal_pipe(tx: &Sender<Command>, read_fd: BorrowedFd<'_>) {
     let _ = tx.send(Command::Quit);
 }
 
-pub(super) fn spawn_command_sender(tx: &Sender<Command>) {
+/// Stops the reader thread between polls, so a program run in the foreground
+/// reads the terminal alone: a reader still polling would take the child's
+/// keystrokes as its own.
+#[derive(Default)]
+pub(super) struct ReaderGate {
+    state: Mutex<GateState>,
+    changed: Condvar,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum GateState {
+    #[default]
+    Open,
+    PauseRequested,
+    Paused,
+}
+
+impl ReaderGate {
+    /// Asks the reader to stop at its next checkpoint and waits for it, up to
+    /// `timeout`. Returns whether it stopped. The reader only reaches a
+    /// checkpoint when its poll returns, so the caller wakes it first.
+    pub(super) fn pause(&self, timeout: Duration) -> bool {
+        let mut state = self.lock();
+        *state = GateState::PauseRequested;
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| *state != GateState::Paused)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *state == GateState::Paused
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_open(&self) -> bool {
+        *self.lock() == GateState::Open
+    }
+
+    /// Lets the reader poll again.
+    pub(super) fn resume(&self) {
+        *self.lock() = GateState::Open;
+        self.changed.notify_all();
+    }
+
+    /// The reader's side: returns at once unless a pause was asked for, in
+    /// which case it says so and blocks until `resume`.
+    pub(super) fn checkpoint(&self) {
+        let mut state = self.lock();
+        if *state != GateState::PauseRequested {
+            return;
+        }
+        *state = GateState::Paused;
+        self.changed.notify_all();
+        let _state = self
+            .changed
+            .wait_while(state, |state| *state == GateState::Paused)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
+        // Nothing panics while the lock is held, and every state is valid.
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+pub(super) fn spawn_command_sender(tx: &Sender<Command>, gate: Arc<ReaderGate>) {
     // Only the wait for terminal input, so it does not affect how quickly a
     // keystroke is handled. The timeout exists so the signal flag is checked at
     // all, which matters only when no watcher thread is running.
@@ -268,7 +519,7 @@ pub(super) fn spawn_command_sender(tx: &Sender<Command>) {
     let builder = thread::Builder::new().name("filectrl-event-reader".into());
     let reader_tx = tx.clone();
     let spawn_result = builder.spawn(move || {
-        event_loop(&reader_tx, poll_interval, &mut TerminalEventSource);
+        event_loop(&reader_tx, &gate, poll_interval, &mut TerminalEventSource);
     });
 
     if let Err(err) = spawn_result {
@@ -279,8 +530,16 @@ pub(super) fn spawn_command_sender(tx: &Sender<Command>) {
     }
 }
 
-fn event_loop<S: EventSource>(tx: &Sender<Command>, poll_interval: Duration, source: &mut S) {
+fn event_loop<S: EventSource>(
+    tx: &Sender<Command>,
+    gate: &ReaderGate,
+    poll_interval: Duration,
+    source: &mut S,
+) {
     loop {
+        // Where a program run in the foreground takes the terminal over.
+        gate.checkpoint();
+
         // Bounds the window between a signal arriving and this thread noticing
         // by the poll timeout. The watcher normally quits first; this answers a
         // signal when it is not running. Checked before the poll rather than
@@ -345,8 +604,9 @@ mod tests {
     use nix::{libc, sys::signal::Signal};
 
     use super::{
-        Command, EventSource, event_loop, handle_signal, ignore_signal, install_signal_handlers,
-        receive_commands, watch_signal_pipe,
+        Command, EventSource, FOREGROUND_PID, ReaderGate, SIGNAL_ACTIONS, event_loop, forward_quit,
+        forward_signal, forwarded, handle_signal, ignore_signal, install_signal_handlers,
+        is_the_childs, receive_commands, run_foreground_child, wait_for_exit, watch_signal_pipe,
     };
 
     const INTERVAL: Duration = Duration::from_millis(500);
@@ -395,7 +655,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let mut source = FakeEventSource::new((0..10).map(|_| Ok(false)).collect());
 
-        event_loop(&tx, INTERVAL, &mut source);
+        event_loop(&tx, &ReaderGate::default(), INTERVAL, &mut source);
 
         // The whole script ran, so the only Quit came from its exhaustion.
         assert!(source.polls.is_empty());
@@ -410,7 +670,7 @@ mod tests {
             std::io::ErrorKind::UnexpectedEof,
         ))]);
 
-        event_loop(&tx, INTERVAL, &mut source);
+        event_loop(&tx, &ReaderGate::default(), INTERVAL, &mut source);
 
         assert_eq!(Some(Command::Quit), rx.try_recv().ok());
     }
@@ -420,7 +680,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let mut source = FakeEventSource::new(vec![Ok(true)]);
 
-        event_loop(&tx, INTERVAL, &mut source);
+        event_loop(&tx, &ReaderGate::default(), INTERVAL, &mut source);
 
         assert_eq!(Some(Command::Quit), rx.try_recv().ok());
     }
@@ -431,7 +691,7 @@ mod tests {
         let mut source =
             FakeEventSource::new(vec![Ok(true)]).with_events(vec![Event::Resize(10, 20)]);
 
-        event_loop(&tx, INTERVAL, &mut source);
+        event_loop(&tx, &ReaderGate::default(), INTERVAL, &mut source);
 
         assert_eq!(
             Some(Command::Resize {
@@ -449,7 +709,7 @@ mod tests {
         let mut source = FakeEventSource::new(vec![Ok(true), Ok(true)])
             .with_events(vec![Event::Resize(10, 20), Event::Resize(30, 40)]);
 
-        event_loop(&tx, INTERVAL, &mut source);
+        event_loop(&tx, &ReaderGate::default(), INTERVAL, &mut source);
 
         // The app is shutting down, so the first undeliverable event ends the
         // loop rather than the reader reading on.
@@ -545,6 +805,9 @@ mod tests {
             Signal::SIGUSR2,
             Signal::SIGALRM,
         ];
+        let _serial = SIGNAL_ACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let signals: Vec<Signal> = TERMINATING.into_iter().chain([Signal::SIGTSTP]).collect();
         let saved: Vec<libc::sigaction> = signals.iter().map(|&s| current_action(s)).collect();
 
@@ -571,5 +834,179 @@ mod tests {
             };
             assert_eq!(expected, *handler, "{signal}");
         }
+    }
+
+    #[test]
+    fn a_paused_reader_stops_at_its_checkpoint_until_resumed() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let gate = Arc::new(ReaderGate::default());
+        let passes = Arc::new(AtomicUsize::new(0));
+        let reader = {
+            let (gate, passes) = (gate.clone(), passes.clone());
+            std::thread::spawn(move || {
+                while passes.load(Ordering::SeqCst) < 1_000_000 {
+                    gate.checkpoint();
+                    passes.fetch_add(1, Ordering::SeqCst);
+                    std::thread::yield_now();
+                }
+            })
+        };
+
+        assert!(gate.pause(Duration::from_secs(5)), "the reader stops");
+        let stopped_at = passes.load(Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(stopped_at, passes.load(Ordering::SeqCst));
+
+        gate.resume();
+        passes.store(1_000_000, Ordering::SeqCst);
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn a_pause_with_no_reader_gives_up() {
+        assert!(!ReaderGate::default().pause(Duration::from_millis(10)));
+    }
+
+    /// A quit signal passed to the foreground program ends it, which is what
+    /// lets the wait for it return.
+    #[test]
+    fn a_forwarded_signal_reaches_the_program() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        forward_signal(i32::try_from(child.id()).unwrap(), libc::SIGTERM);
+
+        assert_eq!(Some(libc::SIGTERM), child.wait().unwrap().signal());
+    }
+
+    #[test]
+    fn no_program_is_signalled_without_a_pid() {
+        // Would signal this process's own group if 0 reached kill(2).
+        forward_signal(0, libc::SIGTERM);
+    }
+
+    /// The disposition in place before a foreground program runs is the one
+    /// in place after it.
+    #[test]
+    fn running_a_foreground_program_puts_the_stop_action_back() {
+        let _serial = SIGNAL_ACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = current_action(Signal::SIGTSTP).sa_sigaction;
+
+        let status =
+            run_foreground_child(&mut std::process::Command::new("true"), || false).unwrap();
+
+        assert!(status.success());
+        assert_eq!(before, current_action(Signal::SIGTSTP).sa_sigaction);
+    }
+
+    /// Starts `sleep 30` as the foreground program on another thread and
+    /// returns once its pid is published, with the thread's handle.
+    fn sleeping_program() -> (
+        i32,
+        std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>,
+    ) {
+        let running = std::thread::spawn(|| {
+            run_foreground_child(std::process::Command::new("sleep").arg("30"), || false)
+        });
+        let pid = loop {
+            let pid = FOREGROUND_PID.load(std::sync::atomic::Ordering::SeqCst);
+            if pid > 0 {
+                break pid;
+            }
+            std::thread::yield_now();
+        };
+        (pid, running)
+    }
+
+    /// Ctrl+Z stops this process with the program only while SIGTSTP has its
+    /// default action, which it must have for as long as the program runs.
+    #[test]
+    fn the_stop_action_is_the_default_while_a_program_runs() {
+        let _serial = SIGNAL_ACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (pid, running) = sleeping_program();
+
+        let during = current_action(Signal::SIGTSTP).sa_sigaction;
+        forward_signal(pid, libc::SIGTERM);
+        running.join().unwrap().unwrap();
+
+        assert_eq!(libc::SIG_DFL, during);
+    }
+
+    /// The handler's forwarding reaches the running program, which ends the
+    /// wait for it.
+    #[test]
+    fn a_quit_is_passed_on_to_the_running_program() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let _serial = SIGNAL_ACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (_pid, running) = sleeping_program();
+
+        forward_quit(libc::SIGUSR1);
+        let status = running.join().unwrap().unwrap();
+
+        // SIGUSR1 went on as SIGTERM, which sleep does not survive.
+        assert_eq!(Some(libc::SIGTERM), status.signal());
+        assert_eq!(0, FOREGROUND_PID.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test_case::test_case(libc::SIGHUP => libc::SIGHUP ; "a hangup as itself")]
+    #[test_case::test_case(libc::SIGTERM => libc::SIGTERM ; "a termination as itself")]
+    #[test_case::test_case(libc::SIGUSR1 => libc::SIGTERM ; "a user signal as a termination")]
+    #[test_case::test_case(libc::SIGALRM => libc::SIGTERM ; "an alarm as a termination")]
+    fn a_quit_reaches_the_program_as(signal: i32) -> i32 {
+        forwarded(signal)
+    }
+
+    /// A quit that arrived first leaves nothing to start.
+    #[test]
+    fn a_program_is_not_started_after_a_quit() {
+        let _serial = SIGNAL_ACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let started = std::time::Instant::now();
+
+        let error = run_foreground_child(std::process::Command::new("sleep").arg("30"), || true)
+            .unwrap_err();
+
+        assert_eq!(std::io::ErrorKind::Interrupted, error.kind());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test_case::test_case("exit 3" => (Some(3), None) ; "an exit code")]
+    #[test_case::test_case("kill -TERM $$" => (None, Some(libc::SIGTERM)) ; "a signal")]
+    fn the_status_is_the_programs(script: &str) -> (Option<i32>, Option<i32>) {
+        use std::os::unix::process::ExitStatusExt;
+
+        // Reaped by `wait_for_exit`, which is what is under test.
+        #[allow(clippy::zombie_processes)]
+        let child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .spawn()
+            .unwrap();
+        let status = wait_for_exit(i32::try_from(child.id()).unwrap()).unwrap();
+
+        (status.code(), status.signal())
+    }
+
+    #[test]
+    fn keyboard_signals_are_the_childs_only_while_one_runs() {
+        assert!(is_the_childs(libc::SIGINT, true));
+        assert!(is_the_childs(libc::SIGQUIT, true));
+        assert!(!is_the_childs(libc::SIGTERM, true));
+        assert!(!is_the_childs(libc::SIGHUP, true));
+        assert!(!is_the_childs(libc::SIGINT, false));
     }
 }

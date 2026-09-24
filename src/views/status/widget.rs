@@ -5,16 +5,21 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::{app::config::theme::Theme, file_system::path_info::PathInfo};
+use crate::{
+    app::config::theme::Theme,
+    file_system::path_info::{PathInfo, visible_path},
+};
 
 pub(super) fn default_widget<'a>(
     directory: &'a PathInfo,
     directory_len: usize,
+    shown_len: Option<usize>,
     selected: Option<&PathInfo>,
     theme: &Theme,
 ) -> Paragraph<'a> {
     let mut spans = Vec::new();
-    add_directory(&mut spans, theme, directory.unix_mode(), directory_len);
+    let count = item_count(directory_len, shown_len);
+    add_directory(&mut spans, theme, directory.unix_mode(), &count);
 
     if let Some(selected) = &selected {
         add_selected(&mut spans, theme, selected);
@@ -22,9 +27,18 @@ pub(super) fn default_widget<'a>(
     Paragraph::new(Line::from(spans)).style(theme.status.detail())
 }
 
-fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, len: usize) {
+/// The directory's entry count, as `shown of total` while a filter or hidden
+/// entries leave some of them out of the table.
+fn item_count(total: usize, shown: Option<usize>) -> String {
+    match shown {
+        Some(shown) if shown < total => format!("{shown} of {total}"),
+        _ => total.to_string(),
+    }
+}
+
+fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, count: &str) {
     spans.push(Span::styled(" Directory ", theme.status.label()));
-    let fields = vec![(" Mode:", mode), (" # Items:", format!("{len} "))];
+    let fields = vec![(" Mode:", mode), (" # Items:", format!("{count} "))];
     let default_style = theme.status.detail();
     let label_style = default_style.add_modifier(Modifier::BOLD);
     spans.extend(to_entries(fields, default_style, label_style));
@@ -35,6 +49,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     spans.push(Span::styled(" Selected ", theme.status.label()));
     let mut fields = account_fields(selected.owner(), selected.group());
     fields.push((" Type:", kind_field(selected)));
+    fields.extend(target_field(selected));
     if let Some(accessed) = selected.accessed(now) {
         fields.push((" Accessed:", accessed));
     }
@@ -56,6 +71,14 @@ fn account_fields(owner: Option<String>, group: Option<String>) -> Vec<(&'static
         fields.push((" Group:", crate::visible(&group).into_owned()));
     }
     fields
+}
+
+/// Where a symlink points, escaped like any shown path, since a link's target
+/// can hold any bytes.
+fn target_field(selected: &PathInfo) -> Option<(&'static str, String)> {
+    selected
+        .symlink_target()
+        .map(|target| (" ->", visible_path(target)))
 }
 
 fn kind_field(selected: &PathInfo) -> String {
@@ -130,8 +153,15 @@ fn to_entries(
 mod tests {
     use test_case::test_case;
 
-    use super::{account_fields, kind_field};
+    use super::{account_fields, item_count, kind_field, target_field};
     use crate::file_system::path_info::PathInfo;
+
+    #[test_case(120, Some(3) => "3 of 120" ; "fewer shown than read")]
+    #[test_case(120, Some(120) => "120" ; "every entry shown")]
+    #[test_case(120, None => "120" ; "the table shows something else")]
+    fn the_item_count_says_how_many_are_shown(total: usize, shown: Option<usize>) -> String {
+        item_count(total, shown)
+    }
 
     // The mode bits each case stands for. A door is Solaris-only and cannot be
     // built here, which is also why `kind_field` leaves it out.
@@ -175,6 +205,21 @@ mod tests {
             ],
             account_fields(Some("a\u{202e}b".into()), Some("c\u{202e}d".into()))
         );
+    }
+
+    #[test]
+    fn a_symlink_shows_its_target_escaped() {
+        use std::os::unix::fs::symlink;
+
+        let fx = crate::test_support::TempDir::new("status_target");
+        let link = fx.join("link");
+        symlink("a\u{202e}b", &link).unwrap();
+
+        assert_eq!(
+            Some((" ->", "a\\u{202e}b".to_string())),
+            target_field(&PathInfo::try_from(&link).unwrap())
+        );
+        assert_eq!(None, target_field(&PathInfo::with_mode(SYMLINK)));
     }
 
     #[test]

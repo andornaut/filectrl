@@ -89,18 +89,24 @@ impl TableView {
         // them, not what `begin_directory` captured before the load started.
         // Replaying that snapshot would undo a keypress made during the load,
         // twice a second for a directory being written to.
-        let mut range = None;
+        // Range mode started while either kind of load ran is the user's too.
+        let range = self.range_by_path();
         if self.content.is_staged() {
             self.pending_load.prev_selected = self.selected_path().cloned();
             self.pending_load.prev_selected_index = self.table_state.selected();
             self.pending_load.prev_marked = self.marked_paths();
-            range = self.range_by_path();
         } else {
             // A navigation streams onto a live listing: the first batch puts
             // the cursor on the top row, and anything done to the listing
             // since is the user's, made on entries of the new directory. The
             // sort below would otherwise move the rows out from under it.
             self.pending_load.prev_marked = self.marked_paths();
+            // A range anchored during the load extends from the cursor, so the
+            // cursor stays with it even if it never moved: sent to the top of
+            // the sorted listing, the next move would mark every row between.
+            if range.is_some() {
+                self.pending_load.cursor_moved = true;
+            }
             if self.pending_load.cursor_moved {
                 self.pending_load.prev_selected = self.selected_path().cloned();
             }
@@ -119,7 +125,7 @@ impl TableView {
         for index in self.content.find_all_by_path(&marked) {
             self.marks.insert(index);
         }
-        let _ = self.restore_selection();
+        let _ = self.restore_selection(range.is_some());
         // Range mode is carried across a reload the same way, and resumes
         // only after the cursor is placed: `select` would otherwise mark every
         // entry that appeared between the anchor and the cursor, unseen. The
@@ -133,7 +139,11 @@ impl TableView {
     /// came from when navigating to an ancestor, then the previously selected
     /// file by inode, then (on a refresh) the held cursor position, else the
     /// first item.
-    fn restore_selection(&mut self) -> CommandResult {
+    ///
+    /// With a range carried across, the cursor is found by path, as the range's
+    /// anchor is: two hard links share an inode, so the cursor could land on the
+    /// other name and the next move would mark every row between the two.
+    fn restore_selection(&mut self, by_path: bool) -> CommandResult {
         let pending = std::mem::take(&mut self.pending_load);
 
         // If we navigated to an ancestor directory, select the child we came
@@ -159,7 +169,12 @@ impl TableView {
         // Otherwise restore the previously selected file by inode, or (on a
         // refresh) hold the cursor position if it was deleted.
         if let Some(selected_path) = pending.prev_selected {
-            if let Some(new_index) = self.content.find_by_inode(&selected_path) {
+            let found = if by_path {
+                self.content.find_by_path(&selected_path.path)
+            } else {
+                self.content.find_by_inode(&selected_path)
+            };
+            if let Some(new_index) = found {
                 return self.select(new_index);
             }
             if let Reselect::Keep = pending.reselect
@@ -574,6 +589,54 @@ mod tests {
         );
     }
 
+    /// Range mode started while a navigation streams in keeps extending once
+    /// the listing is sorted, from the entry it was anchored on.
+    #[test]
+    fn range_mode_started_while_a_listing_loads_survives_its_completion() {
+        Config::init_test();
+        let fx = TempDir::new("nav");
+        let mut table = TableView::default();
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: ["d", "a", "b", "c"].map(|name| fx.file(name, 1)).to_vec(),
+            generation: 1,
+        });
+        press(&mut table, 'j');
+        press(&mut table, 'V');
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+        press(&mut table, 'j');
+
+        assert!(table.marks.in_range_mode());
+        assert_eq!(vec!["a", "b"], marked_names(&table));
+    }
+
+    /// `V` on the row the first batch put the cursor on, which is not where the
+    /// sort puts that entry.
+    #[test]
+    fn range_mode_started_without_moving_during_a_load_keeps_the_cursor_on_its_anchor() {
+        Config::init_test();
+        let fx = TempDir::new("nav");
+        let mut table = TableView::default();
+
+        table.handle_command(&Command::NavigatedDirectory {
+            directory: fx.directory(),
+            generation: 1,
+        });
+        table.handle_command(&Command::ListingBatch {
+            items: ["d", "a", "b", "c"].map(|name| fx.file(name, 1)).to_vec(),
+            generation: 1,
+        });
+        press(&mut table, 'V');
+        table.handle_command(&Command::DirectoryListingComplete { generation: 1 });
+        press(&mut table, 'k');
+
+        assert_eq!(vec!["c", "d"], marked_names(&table));
+    }
+
     #[test]
     fn a_cursor_moved_while_the_parent_loads_is_not_sent_back_to_the_child() {
         Config::init_test();
@@ -976,6 +1039,16 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_being_typed_narrows_the_listing() {
+        let fx = TempDir::new("nav");
+        let mut table = table_with_two_marks(&fx);
+
+        table.handle_command(&Command::FilterEdited("a".to_string()));
+
+        assert_eq!(vec!["a"], visible_names(&table));
+    }
+
+    #[test]
     fn clearing_the_filter_lists_every_entry_again() {
         let fx = TempDir::new("nav");
         let mut table = table_with_two_marks(&fx);
@@ -985,6 +1058,22 @@ mod tests {
         table.handle_command(&Command::FilterChanged(String::new()));
 
         assert_eq!(vec!["a", "b", "c"], visible_names(&table));
+    }
+
+    /// Only the rows on screen are marked: a hidden entry and one the filter
+    /// leaves out stay unmarked, and the range that was open is replaced.
+    #[test]
+    fn select_all_marks_every_shown_row_and_ends_range_mode() {
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[".ah", "a", "ab", "b"].map(|name| fx.file(name, 1)));
+        table.toggle_show_hidden();
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+        table.enter_range_mode();
+
+        table.handle_key(KeyCode::Char('a'), KeyModifiers::CONTROL);
+
+        assert_eq!(vec!["a", "ab"], marked_names(&table));
+        assert!(!table.marks.in_range_mode());
     }
 
     #[test]
@@ -1036,6 +1125,26 @@ mod tests {
         assert!(range_of(table.enter_range_mode()));
         assert!(range_of(table.select(1)));
         assert!(!range_of(table.enter_range_mode()));
+    }
+
+    /// `a` and `d` are two names of one file, so finding the cursor by inode
+    /// would put it on `a` and extend the range from `c` back over `b`.
+    #[test]
+    fn a_reload_in_range_mode_keeps_the_cursor_on_its_own_hard_link() {
+        let fx = TempDir::new("nav");
+        let a = fx.file("a", 1);
+        std::fs::hard_link(&a.path, fx.join("d")).unwrap();
+        let d = PathInfo::try_from(fx.join("d").as_path()).unwrap();
+        let items = [a, fx.file("b", 1), fx.file("c", 1), d];
+        let mut table = listed(&fx, &items);
+        table.select(2);
+        table.enter_range_mode();
+        table.select(3);
+
+        table.set_directory(fx.directory(), &items, Reselect::Keep);
+
+        assert_eq!(Some("d".to_string()), selected_basename(&table));
+        assert_eq!(vec!["c", "d"], marked_names(&table));
     }
 
     #[test]
