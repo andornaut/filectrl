@@ -389,6 +389,8 @@ mod tests {
         );
     }
 
+    // Linux only: APFS refuses a name that is not valid UTF-8.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_name_that_is_not_utf8_is_filtered_by_the_text_its_row_shows() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
