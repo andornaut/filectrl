@@ -32,7 +32,7 @@ use super::{
 use crate::{
     command::progress::ActiveTask,
     file_system::{
-        conflicts::Conflicts,
+        conflicts::{Conflicts, pasted_here},
         debounce,
         paste::{Occupant, PasteStep, step},
         path_info::{PathInfo, compact},
@@ -288,14 +288,30 @@ fn copy_path(
         dst_name: &dst_name,
     };
     if !is_directory {
-        return copy_entry(&at, &paths, active, errors, context, &stat);
+        let (failed, skipped) = (errors.len(), context.skipped);
+        let finished = copy_entry(&at, &paths, active, errors, context, &stat);
+        // Written only when nothing was recorded or skipped: otherwise the
+        // name may hold what another process put there.
+        if finished && errors.len() == failed && context.skipped == skipped {
+            record_pasted(context, new_path);
+        }
+        return finished;
     }
+    // A directory needs no record: nothing ever replaces one.
     let Some(level) = enter_directory(&at, &paths, errors, context, &stat) else {
         return true;
     };
     // Only the directories being worked in are held open.
     drop((src_parent, dst_parent));
     copy_tree(level, &mut paths, active, errors, context)
+}
+
+/// Records the top-level entry this copy wrote at `new_path` with the paste
+/// behind it, so no later source of that paste replaces it.
+fn record_pasted(context: &CopyContext<'_>, new_path: &Path) {
+    if let Some(conflicts) = context.conflicts {
+        conflicts.record_pasted(new_path);
+    }
 }
 
 /// Copies the directory tree below `root`, then finishes each directory: its
@@ -1005,29 +1021,79 @@ impl Source {
     fn read(file: &File, stat: &Stat, preserve: bool) -> Self {
         let mut source = Self::of(stat);
         if preserve {
-            source.attributes = read_attributes(file);
+            let is_directory = FileType::of(stat) == FileType::Directory;
+            source.attributes = read_attributes(file, is_directory);
         }
         source
     }
 }
 
-/// Every extended attribute of `file` with its value. Best effort: one that
-/// cannot be read is not copied, and none are when the list cannot be read
-/// (it grew between measuring and reading it, say).
-fn read_attributes(file: &File) -> Vec<(CString, Vec<u8>)> {
-    // `spare_capacity` panics on a `Vec` with none, which an entry without
-    // attributes would ask for.
-    let Ok(size @ 1..) = rustix::fs::flistxattr(file, &mut [0u8; 0]) else {
-        return Vec::new();
-    };
-    let mut names = Vec::with_capacity(size);
-    if rustix::fs::flistxattr(file, rustix::buffer::spare_capacity(&mut names)).is_err() {
-        return Vec::new();
+/// How many times a size-then-read is retried when the value grew in between.
+const SIZE_ATTEMPTS: usize = 3;
+
+/// A variable-length value read by asking `read` for its size (an empty
+/// buffer) and then reading it. `ERANGE` means it grew in between, so it is
+/// measured again, a bounded number of times.
+fn read_sized(
+    read: impl Fn(&mut [u8]) -> rustix::io::Result<usize>,
+) -> rustix::io::Result<Vec<u8>> {
+    for _ in 0..SIZE_ATTEMPTS {
+        let mut buffer = vec![0; read(&mut [])?];
+        match read(&mut buffer) {
+            Ok(len) => {
+                buffer.truncate(len);
+                return Ok(buffer);
+            }
+            Err(rustix::io::Errno::RANGE) => {}
+            Err(error) => return Err(error),
+        }
     }
+    Err(rustix::io::Errno::RANGE)
+}
+
+/// The POSIX ACLs, which carry permissions, so they are still asked for by
+/// name when the full list cannot be read; `true` marks the one only a
+/// directory has.
+#[cfg(target_os = "linux")]
+const ACL_ATTRIBUTES: [(&CStr, bool); 2] = [
+    (c"system.posix_acl_access", false),
+    (c"system.posix_acl_default", true),
+];
+#[cfg(not(target_os = "linux"))]
+const ACL_ATTRIBUTES: [(&CStr, bool); 0] = [];
+
+/// The ACL attribute names an entry of this kind can have.
+fn acl_names(is_directory: bool) -> Vec<CString> {
+    ACL_ATTRIBUTES
+        .into_iter()
+        .filter(|&(_, directory_only)| is_directory || !directory_only)
+        .map(|(name, _)| name.to_owned())
+        .collect()
+}
+
+/// Every extended attribute of `file` with its value. Best effort: one that
+/// cannot be read is not copied. When the list itself cannot be read, the ACLs
+/// are still read by name.
+fn read_attributes(file: &File, is_directory: bool) -> Vec<(CString, Vec<u8>)> {
+    let names = match read_sized(|buffer| rustix::fs::flistxattr(file, buffer)) {
+        Ok(list) => list
+            .split(|&byte| byte == 0)
+            .filter_map(|name| CString::new(name).ok().filter(|name| !name.is_empty()))
+            .collect(),
+        Err(error) => {
+            // A filesystem without extended attributes has nothing to list.
+            if error != rustix::io::Errno::NOTSUP {
+                warn!(
+                    "Failed to list the extended attributes of a moved entry, so only its ACLs \
+                     are copied: {error}"
+                );
+            }
+            acl_names(is_directory)
+        }
+    };
     names
-        .split(|&byte| byte == 0)
+        .into_iter()
         .filter_map(|name| {
-            let name = CString::new(name).ok().filter(|name| !name.is_empty())?;
             let value = read_attribute(file, &name)?;
             Some((name, value))
         })
@@ -1037,15 +1103,7 @@ fn read_attributes(file: &File) -> Vec<(CString, Vec<u8>)> {
 /// The value of the extended attribute `name` on `file`, or `None` when it has
 /// none or it cannot be read.
 fn read_attribute(file: &File, name: &CStr) -> Option<Vec<u8>> {
-    let size = rustix::fs::fgetxattr(file, name, &mut [0u8; 0]).ok()?;
-    // An empty value is valid, and `spare_capacity` panics on a `Vec` with no
-    // capacity.
-    if size == 0 {
-        return Some(Vec::new());
-    }
-    let mut value = Vec::with_capacity(size);
-    let read = rustix::fs::fgetxattr(file, name, rustix::buffer::spare_capacity(&mut value));
-    read.ok().map(|_| value)
+    read_sized(|buffer| rustix::fs::fgetxattr(file, name, buffer)).ok()
 }
 
 /// An entry's access and modification times, as `futimens` takes them.
@@ -1128,6 +1186,15 @@ fn resolve_nested(
     let occupant = Occupant::of(source_is_directory, is_directory);
     let standing = context.conflicts.and_then(Conflicts::standing);
     match step(standing, Some(occupant)) {
+        // Whatever the standing answer, an entry an earlier source of the same
+        // paste wrote is never replaced: the two names are one entry here.
+        PasteStep::Run { overwrite: true } if pasted_here(context.conflicts, new_path) => {
+            errors.push(format!(
+                "Cannot replace {}: another source in this paste has the same name",
+                compact(new_path)
+            ));
+            false
+        }
         PasteStep::Run { overwrite } => overwrite,
         PasteStep::Skip => {
             context.skipped += 1;
@@ -1465,6 +1532,48 @@ mod tests {
         active.done();
 
         assert_eq!(b"src".to_vec(), fs::read(dst.join("a.txt")).unwrap());
+    }
+
+    // Two sources of one paste whose names are one entry, as `a.txt` and
+    // `A.txt` are on a filesystem that folds case: the hard link stands in.
+    #[test]
+    fn a_raced_name_an_earlier_source_wrote_is_never_replaced() {
+        let (_fx, src, dst) = raced("tasks_raced_pasted");
+        fs::write(src.join("a.txt"), b"first").unwrap();
+        fs::write(src.join("b.txt"), b"second").unwrap();
+        let (mut active, mut errors, conflicts) = raced_parts();
+        let mut buffer = [0u8; 64];
+        let mut context = answered_context(ConflictChoice::OverwriteAll, &mut buffer, &conflicts);
+        assert!(copy_path(
+            &src.join("a.txt"),
+            &dst.join("a.txt"),
+            &mut active,
+            &mut errors,
+            &mut context,
+            false,
+            mode_of(&src.join("a.txt")),
+        ));
+        fs::hard_link(dst.join("a.txt"), dst.join("b.txt")).unwrap();
+
+        assert!(copy_path(
+            &src.join("b.txt"),
+            &dst.join("b.txt"),
+            &mut active,
+            &mut errors,
+            &mut context,
+            false,
+            mode_of(&src.join("b.txt")),
+        ));
+        active.done();
+
+        assert_eq!(
+            vec![format!(
+                "Cannot replace {}: another source in this paste has the same name",
+                compact(&dst.join("b.txt"))
+            )],
+            errors
+        );
+        assert_eq!(b"first".to_vec(), fs::read(dst.join("a.txt")).unwrap());
     }
 
     #[test]
@@ -2791,6 +2900,49 @@ mod tests {
         // Like `cp` without `-p`.
         assert_eq!(None, task.error_message());
         assert_eq!(None, user_attribute(&new_path));
+    }
+
+    /// A value read the way `flistxattr` and `fgetxattr` return one, as the
+    /// `n`th call finds it: `grows` gives its length per call.
+    fn reading(grows: impl Fn(usize) -> usize) -> impl Fn(&mut [u8]) -> rustix::io::Result<usize> {
+        let calls = std::cell::Cell::new(0);
+        move |buffer: &mut [u8]| {
+            let len = grows(calls.replace(calls.get() + 1));
+            if buffer.is_empty() {
+                return Ok(len);
+            }
+            if buffer.len() < len {
+                return Err(rustix::io::Errno::RANGE);
+            }
+            buffer[..len].fill(b'v');
+            Ok(len)
+        }
+    }
+
+    #[test]
+    fn a_value_that_grew_while_it_was_read_is_measured_again() {
+        // Measured at 4 bytes, 6 by the time it is read, then stable.
+        let read = reading(|call| if call == 0 { 4 } else { 6 });
+
+        assert_eq!(Ok(vec![b'v'; 6]), read_sized(read));
+    }
+
+    #[test]
+    fn a_value_that_keeps_growing_is_given_up_on() {
+        let read = reading(|call| call + 1);
+
+        assert_eq!(Err(rustix::io::Errno::RANGE), read_sized(read));
+    }
+
+    /// What is still asked for by name when the list cannot be read.
+    #[cfg(target_os = "linux")]
+    #[test_case(false => vec![c"system.posix_acl_access".to_owned()] ; "a file")]
+    #[test_case(true => vec![
+        c"system.posix_acl_access".to_owned(),
+        c"system.posix_acl_default".to_owned(),
+    ] ; "a directory")]
+    fn the_acls_are_named_by_kind(is_directory: bool) -> Vec<CString> {
+        acl_names(is_directory)
     }
 
     #[test]

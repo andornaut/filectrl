@@ -1,6 +1,11 @@
 //! The conflict decisions for one paste.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    os::unix::fs::MetadataExt,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use crate::command::ConflictChoice;
 
@@ -14,9 +19,16 @@ use crate::command::ConflictChoice;
 /// the collision it finds is a race against another program, about a state the
 /// user never saw. Without a standing answer that covers it, the entry is
 /// recorded like any other that could not be written and the walk carries on.
+///
+/// It also holds what the paste has put into its destination, by device and
+/// inode, so that no worker replaces an entry an earlier source of the same
+/// paste wrote. The queue refuses a second source of a name it has already
+/// handed out, but it compares names byte for byte, and a filesystem that folds
+/// case or normalizes Unicode gives two different names one entry.
 #[derive(Clone, Default)]
 pub(super) struct Conflicts {
     apply_to_all: Arc<Mutex<Option<ConflictChoice>>>,
+    pasted: Arc<Mutex<HashSet<(u64, u64)>>>,
 }
 
 impl Conflicts {
@@ -37,6 +49,31 @@ impl Conflicts {
         }
     }
 
+    /// Records the entry `path` names as one this paste wrote.
+    pub(super) fn record_pasted(&self, path: &Path) {
+        if let Ok(metadata) = path.symlink_metadata() {
+            self.record_pasted_id(metadata.dev(), metadata.ino());
+        }
+    }
+
+    /// Records the entry with this device and inode as one this paste wrote.
+    pub(super) fn record_pasted_id(&self, dev: u64, ino: u64) {
+        self.pasted
+            .lock()
+            .expect("the pasted entries are not poisoned")
+            .insert((dev, ino));
+    }
+
+    /// Whether the entry `path` names is one this paste wrote.
+    pub(super) fn was_pasted(&self, path: &Path) -> bool {
+        path.symlink_metadata().is_ok_and(|metadata| {
+            self.pasted
+                .lock()
+                .expect("the pasted entries are not poisoned")
+                .contains(&(metadata.dev(), metadata.ino()))
+        })
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<ConflictChoice>> {
         // Nothing blocks while the lock is held, so a panic while it is held
         // would have to come from the two lines above.
@@ -44,6 +81,12 @@ impl Conflicts {
             .lock()
             .expect("the conflict state is not poisoned")
     }
+}
+
+/// Whether `path` names an entry the paste behind `conflicts` wrote, which no
+/// worker of that paste may replace. `false` outside a paste.
+pub(super) fn pasted_here(conflicts: Option<&Conflicts>, path: &Path) -> bool {
+    conflicts.is_some_and(|conflicts| conflicts.was_pasted(path))
 }
 
 /// True when `choice` means the entry it answered should be replaced.
@@ -85,5 +128,25 @@ mod tests {
         conflicts.answer(ConflictChoice::SkipAll);
 
         assert_eq!(Some(ConflictChoice::SkipAll), worker.standing());
+    }
+
+    #[test]
+    fn an_entry_is_pasted_by_identity_rather_than_by_name() {
+        let fx = crate::test_support::TempDir::new("conflicts_pasted");
+        let pasted = fx.join("Foo");
+        let alias = fx.join("foo");
+        let other = fx.join("other");
+        std::fs::write(&pasted, b"first").unwrap();
+        std::fs::hard_link(&pasted, &alias).unwrap();
+        std::fs::write(&other, b"other").unwrap();
+        let conflicts = Conflicts::default();
+        // What a worker holds: another task of the paste has to see it.
+        let worker = conflicts.clone();
+
+        conflicts.record_pasted(&pasted);
+
+        assert!(worker.was_pasted(&alias));
+        assert!(!worker.was_pasted(&other));
+        assert!(!pasted_here(None, &alias));
     }
 }

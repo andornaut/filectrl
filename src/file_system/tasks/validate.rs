@@ -14,7 +14,7 @@ use crate::{
         result::CommandResult,
     },
     file_system::{
-        conflicts::Conflicts,
+        conflicts::{Conflicts, pasted_here},
         paste::{Occupant, PasteStep, step},
         path_info::{PathInfo, compact},
     },
@@ -330,6 +330,9 @@ pub(super) fn settle_raced_rename(
         PasteStep::Run { overwrite: true } if is_same_file(old_path, new_path) => {
             Some(Err(std::io::Error::other(SameFile)))
         }
+        PasteStep::Run { overwrite: true } if pasted_here(conflicts, new_path) => {
+            Some(Err(std::io::Error::other(PastedHere)))
+        }
         PasteStep::Run { overwrite: true } => Some(fs::rename(old_path, new_path)),
         PasteStep::Run { overwrite: false } | PasteStep::Ask { .. } => None,
     }
@@ -355,6 +358,25 @@ impl SameFile {
     }
 }
 
+/// The error a move's rename returns when the name it would replace holds an
+/// entry an earlier source of the same paste wrote (`Conflicts::was_pasted`).
+#[derive(Debug)]
+pub(super) struct PastedHere;
+
+impl std::fmt::Display for PastedHere {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another source in this paste has the same name")
+    }
+}
+
+impl std::error::Error for PastedHere {}
+
+impl PastedHere {
+    pub(super) fn is(error: &std::io::Error) -> bool {
+        matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
+    }
+}
+
 /// Renames `old_path` onto `new_path`, replacing an existing destination when
 /// `overwrite`.
 ///
@@ -363,14 +385,18 @@ impl SameFile {
 /// error) leaves it untouched rather than destroyed for nothing. It refuses a
 /// directory over a non-directory, as `mv` does. A destination that is another
 /// link to the source is refused with `SameFile`, since `rename(2)` onto it
-/// does nothing and reports success.
+/// does nothing and reports success, and one the paste behind `conflicts`
+/// wrote is refused with `PastedHere`.
 pub(super) fn rename_for_move(
+    conflicts: Option<&Conflicts>,
     old_path: &Path,
     new_path: &Path,
     overwrite: bool,
 ) -> std::io::Result<()> {
     if overwrite && is_same_file(old_path, new_path) {
         Err(std::io::Error::other(SameFile))
+    } else if overwrite && pasted_here(conflicts, new_path) {
+        Err(std::io::Error::other(PastedHere))
     } else if overwrite {
         fs::rename(old_path, new_path)
     } else {
@@ -652,7 +678,7 @@ mod tests {
         // worker running a long copy makes easy. Clearing the destination up
         // front would lose it for a move that then cannot happen, leaving the
         // user with neither file.
-        assert!(rename_for_move(&src, &dst, true).is_err());
+        assert!(rename_for_move(None, &src, &dst, true).is_err());
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
     }
 
@@ -666,7 +692,7 @@ mod tests {
 
         // The kernel replaces atomically here, so there is no moment in which
         // the destination is missing.
-        rename_for_move(&src, &dst, true).unwrap();
+        rename_for_move(None, &src, &dst, true).unwrap();
         assert_eq!(b"src".to_vec(), std::fs::read(&dst).unwrap());
         assert!(!src.exists());
     }
@@ -682,7 +708,7 @@ mod tests {
 
         // `rename` refuses a directory over a non-directory, as `mv` does, and
         // nothing clears the file to make way for it.
-        assert!(rename_for_move(&src, &dst, true).is_err());
+        assert!(rename_for_move(None, &src, &dst, true).is_err());
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
         assert!(src.join("inner.txt").exists());
     }
@@ -718,7 +744,7 @@ mod tests {
 
         // Without a granted overwrite the destination is never touched, even
         // though the same function would replace it with one.
-        assert!(rename_for_move(&src, &dst, false).is_err());
+        assert!(rename_for_move(None, &src, &dst, false).is_err());
         assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
         assert!(src.exists());
     }
@@ -788,6 +814,32 @@ mod tests {
         assert!(dst.exists());
     }
 
+    /// A name raced onto the destination that holds what an earlier source of
+    /// the same paste wrote is left alone whatever the standing answer: on a
+    /// filesystem that folds case, `Foo` and `foo` are one entry.
+    #[test]
+    fn a_raced_name_the_paste_wrote_is_refused_under_overwrite_all() {
+        let fx = TempDir::new("tasks_move_raced_pasted");
+        let src = fx.join("src.txt");
+        let pasted = fx.join("Dest.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::write(&pasted, b"pasted").unwrap();
+        std::fs::hard_link(&pasted, &dst).unwrap();
+        let conflicts = Conflicts::default();
+        conflicts.answer(ConflictChoice::OverwriteAll);
+        conflicts.record_pasted(&pasted);
+
+        let settled = settle_raced_rename(Some(&conflicts), &src, &dst, false);
+
+        match settled {
+            Some(Err(error)) => assert!(PastedHere::is(&error), "{error}"),
+            other => panic!("expected the pasted-here refusal, got {other:?}"),
+        }
+        assert_eq!(b"pasted".to_vec(), std::fs::read(&pasted).unwrap());
+        assert!(src.exists());
+    }
+
     /// The same refusal for an overwrite granted before the task started, when
     /// another process linked the destination name to the source since.
     #[test]
@@ -798,7 +850,7 @@ mod tests {
         std::fs::write(&src, b"src").unwrap();
         std::fs::hard_link(&src, &dst).unwrap();
 
-        let renamed = rename_for_move(&src, &dst, true);
+        let renamed = rename_for_move(None, &src, &dst, true);
 
         let error = renamed.expect_err("the move should have been refused");
         assert!(SameFile::is(&error), "{error}");
@@ -884,7 +936,7 @@ mod tests {
         fs::write(&src, b"a").unwrap();
         let dst = other.join(format!("filectrl-xdev-{}", std::process::id()));
 
-        let renamed = rename_for_move(&src, &dst, false);
+        let renamed = rename_for_move(None, &src, &dst, false);
         let _ = fs::remove_file(&dst);
 
         assert_eq!(ErrorKind::CrossesDevices, renamed.unwrap_err().kind());

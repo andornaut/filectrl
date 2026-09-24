@@ -103,7 +103,9 @@ fn search(
             Ok(entries) => entries,
             Err(e) => {
                 warn!("Search: failed to read directory {}: {e}", dir.display());
-                unreadable += 1;
+                if !is_gone(&e) {
+                    unreadable += 1;
+                }
                 continue;
             }
         };
@@ -141,6 +143,7 @@ fn search(
                         cancel,
                         format!("Search stopped at {}", plural(limits.max_results, "result")),
                     );
+                    warn_unreadable(tx, cancel, unreadable);
                     exit(&mut batcher);
                     return;
                 }
@@ -177,21 +180,35 @@ fn search(
         }
     }
 
-    // Once, at the end, like the depth warning: one per directory would bury
-    // the listing under repeats.
-    if unreadable > 0 {
-        let directories = if unreadable == 1 {
-            "1 directory".to_string()
-        } else {
-            format!("{unreadable} directories")
-        };
-        warn_unless_superseded(
-            tx,
-            cancel,
-            format!("{directories} could not be read; some results may be missing"),
-        );
-    }
+    warn_unreadable(tx, cancel, unreadable);
     exit(&mut batcher);
+}
+
+/// A directory removed or replaced by a file after it was queued. Nothing was
+/// skipped that still exists, so it is not counted as unreadable.
+fn is_gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+/// Reports the directories the walk could not read, once when it ends, like
+/// the depth warning: one per directory would bury the listing under repeats.
+fn warn_unreadable(tx: &Sender<Command>, cancel: &CancellationToken, unreadable: u32) {
+    if unreadable == 0 {
+        return;
+    }
+    let directories = if unreadable == 1 {
+        "1 directory".to_string()
+    } else {
+        format!("{unreadable} directories")
+    };
+    warn_unless_superseded(
+        tx,
+        cancel,
+        format!("{directories} could not be read; some results may be missing"),
+    );
 }
 
 #[cfg(test)]
@@ -447,6 +464,67 @@ mod tests {
         let commands: Vec<Command> = rx.into_iter().collect();
         assert_eq!(vec!["live".to_string()], warnings(&commands));
         assert_eq!(1, commands.len(), "nothing else may be sent: {commands:?}");
+    }
+
+    /// A directory deleted or replaced after it was queued hides nothing.
+    #[test]
+    fn a_directory_gone_before_it_is_read_is_not_unreadable() {
+        let root = TempDir::new("search_gone");
+        let file = root.join("file");
+        std::fs::write(&file, b"").unwrap();
+
+        for gone in [root.join("missing"), file] {
+            let (tx, rx) = mpsc::channel();
+            search(
+                &default_limits(),
+                &tx,
+                &CancellationToken::new(),
+                &gone,
+                "x",
+                GENERATION,
+            );
+            drop(tx);
+            let commands: Vec<Command> = rx.into_iter().collect();
+            assert!(warnings(&commands).is_empty(), "{gone:?}: {commands:?}");
+        }
+    }
+
+    /// Stopping at the result limit still reports what the walk skipped before
+    /// it stopped. The hits sit two levels down, so the breadth-first walk
+    /// reaches the locked directory before them whatever the readdir order.
+    #[test]
+    fn a_search_stopped_at_the_limit_still_reports_unreadable_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new("search_unreadable_limit");
+        let hits = root.join("a").join("sub");
+        std::fs::create_dir_all(&hits).unwrap();
+        for i in 0..3 {
+            std::fs::write(hits.join(format!("hit{i}")), b"").unwrap();
+        }
+        let locked = root.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads any directory, so the fixture proves nothing there.
+        let readable = std::fs::read_dir(&locked).is_ok();
+        let limits = Limits {
+            max_results: 1,
+            ..default_limits()
+        };
+
+        let commands = (!readable).then(|| run(&limits, &root, "hit").0);
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let Some(commands) = commands else {
+            return;
+        };
+        assert_eq!(
+            vec![
+                "Search stopped at 1 result".to_string(),
+                "1 directory could not be read; some results may be missing".to_string(),
+            ],
+            warnings(&commands)
+        );
+        assert_eq!(1, exits(&commands));
     }
 
     /// Like `find`, a directory the walk cannot read is reported rather than

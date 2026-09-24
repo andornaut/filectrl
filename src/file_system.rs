@@ -59,6 +59,11 @@ enum Cancellable {
     Search(CancellationToken),
 }
 
+/// A file operation already told to stop, waiting for its terminal progress.
+fn is_cancelled_task(cancellable: &Cancellable) -> bool {
+    matches!(cancellable, Cancellable::Task(info) if info.token.is_cancelled())
+}
+
 pub struct FileSystem {
     /// Directory holding the bookmark symlinks, resolved from the config once
     /// so bookmark reads do not depend on the process-global `Config`.
@@ -318,7 +323,8 @@ impl FileSystem {
     }
 
     /// How many file operations are running or queued. A task stays counted
-    /// until its terminal progress arrives.
+    /// until its terminal progress arrives, cancelled or not: a cancelled copy
+    /// is still finishing the directories it entered.
     pub(crate) fn task_count(&self) -> usize {
         self.cancellables
             .iter()
@@ -334,13 +340,20 @@ impl FileSystem {
     /// in queue order, so the *oldest* registered one is the one running:
     /// cancelling the newest of a batch would stop work that has not started
     /// while the copy the user is watching carries on.
+    ///
+    /// A cancelled task stays registered until its terminal progress arrives,
+    /// but is never targeted again, so the next keypress reaches the work after
+    /// it.
     fn cancel_target(&self) -> Option<usize> {
-        match self.cancellables.last()? {
-            Cancellable::Search(_) => Some(self.cancellables.len() - 1),
-            Cancellable::Task(_) => self
-                .cancellables
-                .iter()
-                .position(|cancellable| matches!(cancellable, Cancellable::Task(_))),
+        let newest = self
+            .cancellables
+            .iter()
+            .rposition(|cancellable| !is_cancelled_task(cancellable))?;
+        match self.cancellables[newest] {
+            Cancellable::Search(_) => Some(newest),
+            Cancellable::Task(_) => self.cancellables.iter().position(|cancellable| {
+                matches!(cancellable, Cancellable::Task(info) if !info.token.is_cancelled())
+            }),
         }
     }
 
@@ -348,17 +361,17 @@ impl FileSystem {
         let Some(index) = self.cancel_target() else {
             return Command::AlertWarn("No active task to cancel".into()).into();
         };
-        match self.cancellables.remove(index) {
+        match &self.cancellables[index] {
             Cancellable::Task(info) => {
-                // Stays on the stack until its terminal Progress prunes it,
-                // and the user is told nothing happened. `uncancellable` covers
-                // both a task in an uninterruptible stage and one already
-                // finished whose terminal Progress is in flight; the wording
-                // fits the first and is momentarily imprecise for the second.
+                // Either way the task stays on the stack until its terminal
+                // Progress prunes it: a cancelled one is still unwinding, and
+                // quit counts it. `uncancellable` covers both a task in an
+                // uninterruptible stage and one already finished whose terminal
+                // Progress is in flight; the wording fits the first and is
+                // momentarily imprecise for the second.
                 if info.uncancellable.load(Ordering::Relaxed) {
-                    let message = format!("Cannot cancel: {}", info.kind.message());
-                    self.cancellables.insert(index, Cancellable::Task(info));
-                    return Command::AlertInfo(message).into();
+                    return Command::AlertInfo(format!("Cannot cancel: {}", info.kind.message()))
+                        .into();
                 }
                 info.token.cancel();
                 Command::AlertInfo(format!("Cancelled: {}", info.kind.message())).into()
@@ -369,12 +382,12 @@ impl FileSystem {
                 // ExitedSearch drops it) and stay silent: the notice
                 // resolves momentarily, unlike a seconds-long task stage.
                 if token.is_cancelled() {
-                    self.cancellables.insert(index, Cancellable::Search(token));
                     return CommandResult::Handled;
                 }
                 token.cancel();
-                // Non-destructive: keep streamed results and the notice;
-                // NoticesView relabels it to "Cancelled: [Searching] <query>".
+                self.cancellables.remove(index);
+                // Non-destructive: keep streamed results and the notice,
+                // which NoticesView relabels as cancelled.
                 Command::CancelSearch.into()
             }
         }
@@ -765,10 +778,6 @@ fn claimed_message(pending: &PendingPaste, src: &PathInfo) -> String {
     )
 }
 
-/// Parses a chmod-style octal mode string. Returns `None` for non-octal input
-/// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
-/// Digits only: `from_str_radix` alone would take a leading `+`, which `chmod`
-/// reads as symbolic notation.
 /// The mode a chmod of `paths` to `mode_str` sets, or the refusal naming what
 /// it was for. The chmod prompt checks this before it closes, so that a typo
 /// can be corrected rather than typed again.
@@ -782,6 +791,10 @@ pub(crate) fn chmod_mode(paths: &[PathInfo], mode_str: &str) -> Result<u32> {
     })
 }
 
+/// Parses a chmod-style octal mode string. Returns `None` for non-octal input
+/// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
+/// Digits only: `from_str_radix` alone would take a leading `+`, which `chmod`
+/// reads as symbolic notation.
 fn parse_octal_mode(mode_str: &str) -> Option<u32> {
     if !mode_str.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -1167,19 +1180,28 @@ mod tests {
     }
 
     /// Builds a cancel stack from a compact description: `t` is a file
-    /// operation, `s` a search, in registration order.
+    /// operation, `x` one already cancelled and still unwinding, `s` a search,
+    /// in registration order.
     fn cancellables(kinds: &str) -> Vec<Cancellable> {
         kinds
             .chars()
             .map(|kind| match kind {
-                't' => Cancellable::Task(CancelInfo {
-                    id: 0,
-                    token: CancellationToken::new(),
-                    kind: crate::command::progress::TaskKind::Delete {
-                        path: String::new(),
-                    },
-                    uncancellable: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                }),
+                't' | 'x' => {
+                    let token = CancellationToken::new();
+                    if kind == 'x' {
+                        token.cancel();
+                    }
+                    Cancellable::Task(CancelInfo {
+                        id: 0,
+                        token,
+                        kind: crate::command::progress::TaskKind::Delete {
+                            path: String::new(),
+                        },
+                        uncancellable: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                            false,
+                        )),
+                    })
+                }
                 _ => Cancellable::Search(CancellationToken::new()),
             })
             .collect()
@@ -1192,6 +1214,9 @@ mod tests {
     #[test_case("ts" => Some(1) ; "a search started after a task")]
     #[test_case("st" => Some(1) ; "the task, not the search beneath it")]
     #[test_case("stt" => Some(1) ; "the oldest task queued after a search")]
+    #[test_case("xt" => Some(1) ; "the task queued behind a cancelled one")]
+    #[test_case("sx" => Some(0) ; "the search, not a cancelled task above it")]
+    #[test_case("x" => None ; "only a cancelled task")]
     fn the_cancel_key_targets(kinds: &str) -> Option<usize> {
         // File operations share one worker and run in queue order, so the
         // oldest is the one actually running. Cancelling the newest would stop
@@ -1599,7 +1624,40 @@ mod tests {
     }
 
     #[test]
-    fn the_cancel_key_cancels_the_running_task_and_drops_it() {
+    fn a_cancelled_task_counts_until_its_terminal_progress() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("t");
+        let (task_tx, task_rx) = std::sync::mpsc::channel();
+        let (active, initial, _token) = crate::command::progress::ActiveTask::new(
+            task_tx,
+            crate::command::progress::TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        let Cancellable::Task(info) = &mut file_system.cancellables[0] else {
+            panic!("expected a task")
+        };
+        info.id = initial.id();
+
+        file_system.handle_command(&Command::CancelTask);
+
+        // Still unwinding, so quit must still ask; but not a target again.
+        assert_eq!(1, file_system.task_count());
+        assert_eq!(None, file_system.cancel_target());
+
+        active.cancelled();
+        let Ok(Command::Progress(ended)) = task_rx.recv() else {
+            panic!("the task should have reported")
+        };
+        file_system.check_progress_for_error(&ended);
+        assert_eq!(0, file_system.task_count());
+    }
+
+    #[test]
+    fn the_cancel_key_cancels_the_running_task_and_keeps_it_until_it_ends() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
@@ -1617,7 +1675,7 @@ mod tests {
         assert!(message.starts_with("Cancelled: "), "{message}");
         assert!(running.is_cancelled());
         assert!(!queued.is_cancelled());
-        assert_eq!(1, file_system.cancellables.len());
+        assert_eq!(2, file_system.cancellables.len());
     }
 
     #[test]

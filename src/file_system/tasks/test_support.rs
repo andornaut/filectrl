@@ -19,7 +19,7 @@ use crate::{
         Command,
         progress::{ActiveTask, CancellationToken, Task, TaskKind, Transfer},
     },
-    file_system::path_info::PathInfo,
+    file_system::{conflicts::Conflicts, path_info::PathInfo},
     test_support::TempDir,
 };
 
@@ -38,8 +38,16 @@ pub(super) fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {
 /// Runs `task` on the shared worker and waits for how it finished. `Err`
 /// carries the alerts of a task that was refused before it started.
 pub(super) fn run_to_end(task: TaskCommand) -> Result<Task, Vec<Command>> {
+    run_in_paste(task, None)
+}
+
+/// `run_to_end` for a task the paste behind `conflicts` queued.
+pub(super) fn run_in_paste(
+    task: TaskCommand,
+    conflicts: Option<&Conflicts>,
+) -> Result<Task, Vec<Command>> {
     let (tx, rx) = mpsc::channel();
-    let result = task.run(tx, None);
+    let result = task.run(tx, conflicts);
     if result.cancel_info.is_none() {
         return Err(result.command_result.into_commands());
     }

@@ -9,6 +9,7 @@ mod walk;
 use std::{
     fs,
     io::ErrorKind,
+    os::unix::fs::MetadataExt,
     path::Path,
     sync::{
         Arc, OnceLock,
@@ -25,10 +26,12 @@ pub(super) use self::validate::{is_same_file, onto_itself, rename_no_replace, re
 use self::{
     copy::{CopyOutcome, CopySettings, copy_with_progress, prepare_destination},
     remove::{Removal, dir_total_entries, remove_path, replaced_after_copy},
-    validate::{SameFile, display_path, rename_for_move, settle_raced_rename, start_transfer},
+    validate::{
+        PastedHere, SameFile, display_path, rename_for_move, settle_raced_rename, start_transfer,
+    },
 };
 use super::{
-    conflicts::Conflicts,
+    conflicts::{Conflicts, pasted_here},
     path_info::{PathInfo, compact},
 };
 use crate::command::{
@@ -210,29 +213,39 @@ fn run_move_task(
         let Some(mut active) = check_cancelled(active) else {
             return;
         };
-        let renamed = rename_for_move(&old_path, &new_path, overwrite).or_else(|error| {
-            if error.kind() == ErrorKind::AlreadyExists {
-                settle_raced_rename(conflicts.as_ref(), &old_path, &new_path, is_directory)
-                    .unwrap_or(Err(error))
-            } else {
-                Err(error)
-            }
-        });
+        // A rename keeps the inode, so the entry this task puts at `new_path`
+        // is the one `old_path` names now.
+        let source = old_path.symlink_metadata().ok();
+        let conflicts = conflicts.as_ref();
+        let renamed =
+            rename_for_move(conflicts, &old_path, &new_path, overwrite).or_else(|error| {
+                if error.kind() == ErrorKind::AlreadyExists {
+                    settle_raced_rename(conflicts, &old_path, &new_path, is_directory)
+                        .unwrap_or(Err(error))
+                } else {
+                    Err(error)
+                }
+            });
         match renamed {
             Ok(()) => {
+                // A settled rename that skipped leaves another entry there,
+                // which is not this paste's to record.
+                if let (Some(conflicts), Some(source)) = (conflicts, source)
+                    && is_entry(&new_path, &source)
+                {
+                    conflicts.record_pasted_id(source.dev(), source.ino());
+                }
                 active.increment(path.size);
                 active.done();
             }
             Err(error) => match error.kind() {
                 // If the file is on a different device/mount-point, we must copy-then-delete it instead
-                ErrorKind::CrossesDevices => move_across_devices(
-                    active,
-                    &old_path,
-                    &new_path,
-                    &path,
-                    overwrite,
-                    conflicts.as_ref(),
-                ),
+                ErrorKind::CrossesDevices => {
+                    move_across_devices(active, &old_path, &new_path, &path, overwrite, conflicts);
+                }
+                _ if PastedHere::is(&error) => {
+                    active.error(pasted_here_message("move", &old_path, &new_path));
+                }
                 _ if SameFile::is(&error) => active.error(format!(
                     "Cannot move {}: {} is the same file",
                     compact(&old_path),
@@ -305,6 +318,10 @@ fn copy_to(
     overwrite: bool,
     conflicts: Option<&Conflicts>,
 ) {
+    if overwrite && pasted_here(conflicts, new_path) {
+        active.error(pasted_here_message("copy", old_path, new_path));
+        return;
+    }
     let Some((active, source)) =
         prepare_destination(active, "copy", old_path, new_path, overwrite, path.mode())
     else {
@@ -335,6 +352,10 @@ fn move_across_devices(
     overwrite: bool,
     conflicts: Option<&Conflicts>,
 ) {
+    if overwrite && pasted_here(conflicts, new_path) {
+        active.error(pasted_here_message("move", old_path, new_path));
+        return;
+    }
     // There is no rename to replace the destination here, and the copy opens
     // it with `create_new`, so a granted overwrite has to clear it first.
     let Some((active, source)) =
@@ -403,6 +424,23 @@ fn finish_cross_device_move(
     }
 }
 
+/// The refusal of a source whose destination holds an entry an earlier source
+/// of the same paste wrote, in the words the queue uses for a name it has
+/// already handed out.
+fn pasted_here_message(verb: &str, old_path: &Path, new_path: &Path) -> String {
+    format!(
+        "Cannot {verb} {} into {}: {PastedHere}",
+        compact(old_path),
+        compact(new_path.parent().unwrap_or(new_path))
+    )
+}
+
+/// Whether `path` names the entry `metadata` was read from.
+fn is_entry(path: &Path, metadata: &fs::Metadata) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|now| now.dev() == metadata.dev() && now.ino() == metadata.ino())
+}
+
 /// Finalizes a copy, move or delete the way coreutils does: success when no
 /// per-entry error was recorded, otherwise one alert summarizing them. Skipped
 /// entries are not failures and do not appear. Every error is also logged.
@@ -455,12 +493,16 @@ mod tests {
 
     use super::{
         test_support::{
-            copy_task, destination, finished_task, id_of, paste_after, paste_over, run_to_end,
+            copy_task, destination, finished_task, id_of, paste_after, paste_over, run_in_paste,
+            run_to_end,
         },
         *,
     };
     use crate::{
-        command::progress::{Progress, Transfer},
+        command::{
+            ConflictChoice,
+            progress::{Progress, Transfer},
+        },
         test_support::TempDir,
     };
 
@@ -531,6 +573,111 @@ mod tests {
                 result.expect("a readable copy starts").error_message()
             );
         }
+    }
+
+    // ── a paste never replaces what it wrote itself ──────────────────────────
+
+    /// Two sources of one paste, `first/Foo` holding "first" and `second/foo`
+    /// holding "second", and its destination directory.
+    fn two_sources(label: &str) -> (TempDir, PathBuf, PathBuf, PathBuf) {
+        let fx = TempDir::new(label);
+        let first = fx.join("first").join("Foo");
+        let second = fx.join("second").join("foo");
+        let dest = fx.join("dest");
+        for dir in [first.parent().unwrap(), second.parent().unwrap(), &dest] {
+            fs::create_dir(dir).unwrap();
+        }
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        (fx, first, second, dest)
+    }
+
+    fn paste(
+        conflicts: &Conflicts,
+        is_move: bool,
+        source: &Path,
+        dest: &Path,
+        overwrite: bool,
+    ) -> Task {
+        let source = PathInfo::try_from(source).unwrap();
+        let dest = PathInfo::try_from(dest).unwrap();
+        let task = if is_move {
+            TaskCommand::Move(source, dest, overwrite)
+        } else {
+            TaskCommand::Copy(source, dest, overwrite)
+        };
+        run_in_paste(task, Some(conflicts)).expect("the paste should start")
+    }
+
+    // A filesystem that folds case gives `Foo` and `foo` one entry. A hard
+    // link reproduces that here: `dest/foo` names what the first source wrote.
+    #[test_case(true ; "a move under a standing overwrite")]
+    #[test_case(false ; "a copy granted an overwrite")]
+    fn a_later_source_never_replaces_what_an_earlier_one_wrote(is_move: bool) {
+        let (_fx, first, second, dest) = two_sources("tasks_pasted_here");
+        let conflicts = Conflicts::default();
+        conflicts.answer(ConflictChoice::OverwriteAll);
+
+        let task = paste(&conflicts, is_move, &first, &dest, false);
+        assert_eq!(None, task.error_message());
+        fs::hard_link(dest.join("Foo"), dest.join("foo")).unwrap();
+        let task = paste(&conflicts, is_move, &second, &dest, true);
+
+        let message = task.error_message().expect("the second source is refused");
+        assert!(
+            message.ends_with("another source in this paste has the same name"),
+            "{message}"
+        );
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
+        assert_eq!(b"second".to_vec(), fs::read(&second).unwrap());
+    }
+
+    /// The copy that stands in for a rename across devices refuses the same
+    /// way, before it clears anything.
+    #[test]
+    fn a_move_across_devices_never_replaces_what_its_paste_wrote() {
+        let (_fx, first, second, dest) = two_sources("tasks_pasted_across");
+        let conflicts = Conflicts::default();
+        let task = paste(&conflicts, true, &first, &dest, false);
+        assert_eq!(None, task.error_message());
+        fs::hard_link(dest.join("Foo"), dest.join("foo")).unwrap();
+        let (tx, rx) = mpsc::channel();
+
+        move_across_devices(
+            copy_task(tx),
+            &second,
+            &dest.join("foo"),
+            &PathInfo::try_from(second.as_path()).unwrap(),
+            true,
+            Some(&conflicts),
+        );
+
+        let message = finished_task(&rx)
+            .error_message()
+            .expect("the move is refused");
+        assert!(
+            message.ends_with("another source in this paste has the same name"),
+            "{message}"
+        );
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
+        assert_eq!(b"second".to_vec(), fs::read(&second).unwrap());
+    }
+
+    #[test_case(true ; "a move")]
+    #[test_case(false ; "a copy")]
+    fn a_granted_overwrite_still_replaces_what_the_paste_did_not_write(is_move: bool) {
+        let (_fx, first, second, dest) = two_sources("tasks_not_pasted_here");
+        let conflicts = Conflicts::default();
+        conflicts.answer(ConflictChoice::OverwriteAll);
+        let task = paste(&conflicts, is_move, &first, &dest, false);
+        assert_eq!(None, task.error_message());
+        fs::write(dest.join("foo"), b"already there").unwrap();
+
+        let task = paste(&conflicts, is_move, &second, &dest, true);
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(b"second".to_vec(), fs::read(dest.join("foo")).unwrap());
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
     }
 
     #[test]
