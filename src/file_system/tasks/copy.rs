@@ -1168,7 +1168,7 @@ fn clear_destination(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt as _, sync::mpsc, thread, time::Duration};
+    use std::{sync::mpsc, thread, time::Duration};
 
     use test_case::test_case;
 
@@ -1975,8 +1975,6 @@ mod tests {
 
     #[test]
     fn copy_path_recreates_a_symlink_without_following_it() {
-        use std::os::unix::fs::PermissionsExt;
-
         let fx = TempDir::new("tasks");
         let target = fx.join("target.txt");
         std::fs::write(&target, b"hello").unwrap();
