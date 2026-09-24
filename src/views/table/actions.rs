@@ -152,21 +152,27 @@ impl TableView {
 
     /// Opens the cursor's entry in the editor or pager, which show one file, so
     /// this ignores the marks like `open_with`. A directory, or a link to one,
-    /// is refused rather than handed to a program that expects a file.
+    /// is refused rather than handed to a program that expects a file, and so
+    /// is a broken link, whose program would fail with a message the redraw
+    /// on return erases.
     pub(super) fn run_in_foreground(&mut self, program: ForegroundProgram) -> CommandResult {
         let Some(path) = self.selected_path() else {
             return CommandResult::Handled;
         };
-        if path.path.is_dir() {
+        let reason = if path.path.is_dir() {
+            Some("it is a directory")
+        } else if path.path.is_symlink() && !path.path.exists() {
+            Some("its target does not exist")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
             let verb = match program {
                 ForegroundProgram::Editor => "edit",
                 ForegroundProgram::Pager => "page",
             };
-            return Command::AlertWarn(format!(
-                "Cannot {verb} {}: it is a directory",
-                compact(&path.path)
-            ))
-            .into();
+            return Command::AlertWarn(format!("Cannot {verb} {}: {reason}", compact(&path.path)))
+                .into();
         }
         Command::RunInForeground {
             program,
@@ -267,6 +273,62 @@ mod tests {
             }
             other => panic!("expected a warning, got {other:?}"),
         }
+    }
+
+    #[test_case(ForegroundProgram::Editor ; "edit")]
+    #[test_case(ForegroundProgram::Pager ; "page")]
+    fn edit_and_page_refuse_a_broken_symlink(program: ForegroundProgram) {
+        use crate::{app::config::Config, test_support::TempDir};
+
+        Config::init_test();
+        let dir = TempDir::new("table_page_broken_link");
+        std::os::unix::fs::symlink("missing", dir.join("broken")).unwrap();
+        let mut table = TableView::default();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table
+            .content
+            .append(&[PathInfo::try_from(dir.join("broken").as_path()).unwrap()]);
+        table.finish_directory();
+        table.select(0);
+
+        match Command::try_from(table.run_in_foreground(program)) {
+            Ok(Command::AlertWarn(message)) => {
+                assert!(message.starts_with("Cannot "), "{message}");
+                assert!(
+                    message.ends_with(": its target does not exist"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a warning, got {other:?}"),
+        }
+    }
+
+    /// An empty listing has no cursor, so nothing can be marked, and delete
+    /// and copy find no entry to act on.
+    #[test]
+    fn an_empty_listing_offers_nothing_to_mark_delete_or_copy() {
+        use crate::{app::config::Config, test_support::TempDir};
+
+        Config::init_test();
+        let dir = TempDir::new("table_empty_listing");
+        let mut table = TableView::default();
+        table.begin_directory(PathInfo::try_from(dir.path()).unwrap(), Reselect::Top);
+        table.finish_directory();
+        table.select_first();
+
+        table.toggle_mark();
+        assert_eq!(0, table.marks.len());
+        table.enter_range_mode();
+        table.select_last();
+        assert_eq!(0, table.marks.len());
+        assert!(!table.marks.in_range_mode());
+
+        assert!(matches!(table.delete(), CommandResult::Handled));
+        assert!(table.pending_delete.paths.is_empty());
+        assert!(matches!(
+            Command::try_from(table.copy_to_clipboard()),
+            Ok(Command::AlertWarn(_))
+        ));
     }
 
     #[test]

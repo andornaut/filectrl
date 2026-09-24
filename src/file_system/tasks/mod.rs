@@ -25,7 +25,7 @@ pub(super) use self::validate::{is_same_file, onto_itself, rename_no_replace, re
 use self::{
     copy::{CopyOutcome, CopySettings, copy_with_progress, prepare_destination},
     remove::{Removal, dir_total_entries, remove_path, replaced_after_copy},
-    validate::{display_path, rename_for_move, settle_raced_rename, start_transfer},
+    validate::{SameFile, display_path, rename_for_move, settle_raced_rename, start_transfer},
 };
 use super::{
     conflicts::Conflicts,
@@ -262,6 +262,11 @@ fn run_move_task(
                     };
                     finish_cross_device_move(active, outcome, &old_path, is_directory);
                 }
+                _ if SameFile::is(&error) => active.error(format!(
+                    "Cannot move {}: {} is the same file",
+                    compact(&old_path),
+                    compact(&new_path)
+                )),
                 _ => active.error(format!(
                     "Failed to move {} to {}: {error}",
                     compact(&old_path),

@@ -2,9 +2,9 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::ErrorKind,
-    os::unix::process::CommandExt,
+    os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
-    process::{Child, Stdio},
+    process::{Child, ExitStatus, Stdio},
     sync::mpsc::Sender,
     thread,
     time::Duration,
@@ -14,7 +14,7 @@ use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::{
-    path_info::{PathInfo, compact},
+    path_info::{PathInfo, compact, visible_name},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
     tasks::{is_same_file, rename_no_replace, restat},
@@ -95,26 +95,63 @@ pub(super) fn stream_cd(
     });
 }
 
-pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Command>) -> Result<()> {
+/// Runs the opener `template` names on `path`. `key` is the config key the
+/// template came from, which names it when it is empty.
+pub(super) fn open_in(
+    key: &str,
+    path: &PathInfo,
+    template: &str,
+    command_tx: Sender<Command>,
+) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
-    if template.is_empty() {
-        return Ok(());
+    if template.trim().is_empty() {
+        return Err(anyhow!(
+            "Cannot open {}: {key} is empty",
+            visible_name(path.path.file_name().unwrap_or(path.path.as_os_str()))
+        ));
     }
     let argv = shell::command(template, [path.path.as_os_str().to_os_string()]);
-    let label = format!("Command {template:?}");
+    let failure = failure_prefix(&template_program(template), &path.path);
     let child = detached_command(&argv[0], &argv[1..])
         .spawn()
-        .map_err(|error| anyhow!("Failed to run {label}: {error}"))?;
-    watch_for_immediate_failure(child, label, command_tx);
+        .map_err(|error| anyhow!("{failure}: {error}"))?;
+    watch_for_immediate_failure(child, failure, command_tx);
     Ok(())
 }
 
+/// The program a template runs, as the user wrote it: its first word.
+fn template_program(template: &str) -> String {
+    shell_words::split(template)
+        .ok()
+        .and_then(|words| words.into_iter().next())
+        .unwrap_or_else(|| template.trim().to_string())
+}
+
+/// The start of every message about a launched program that failed:
+/// `Failed to run <program> on <path>`. `program` is the name the user knows
+/// it by: a template's first word, an application's name, or the editor or
+/// pager.
+pub(crate) fn failure_prefix(program: &str, path: &Path) -> String {
+    format!("Failed to run {program:?} on {}", compact(path))
+}
+
+/// Why a program that ran did not succeed: its exit code, or the signal that
+/// ended it.
+pub(crate) fn exit_cause(status: ExitStatus) -> String {
+    match (status.code(), status.signal()) {
+        (Some(code), _) => format!("exit code {code}"),
+        (None, Some(signal)) => format!("killed by signal {signal}"),
+        (None, None) => status.to_string(),
+    }
+}
+
 /// Launch `argv` directly, without a shell, so that nothing in a file name can
-/// be reinterpreted. An empty `argv` is a no-op, mirroring `open_in`'s empty
-/// template guard.
+/// be reinterpreted. `label` names the application and `path` what it opens,
+/// in a failure. An empty `argv` is a no-op.
 pub(super) fn spawn_argv(
     working_dir: Option<&Path>,
     label: &str,
+    path: &Path,
     argv: &[OsString],
     command_tx: Sender<Command>,
 ) -> Result<()> {
@@ -136,27 +173,27 @@ pub(super) fn spawn_argv(
         }
         command.current_dir(working_dir);
     }
+    let failure = failure_prefix(label, path);
     let child = command
         .spawn()
-        .map_err(|error| anyhow!("Failed to run {label:?}: {error}"))?;
-    watch_for_immediate_failure(child, format!("{label:?}"), command_tx);
+        .map_err(|error| anyhow!("{failure}: {error}"))?;
+    watch_for_immediate_failure(child, failure, command_tx);
     Ok(())
 }
 
 /// Catch commands that fail immediately (e.g. binary not found) without
 /// blocking the TUI. Long-lived processes (e.g. a terminal window) will still
-/// be running after 250ms and are silently ignored.
-fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Sender<Command>) {
+/// be running after 250ms and are silently ignored. `failure` starts the
+/// alert, which ends with the cause.
+fn watch_for_immediate_failure(mut child: Child, failure: String, command_tx: Sender<Command>) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
-                    let code = status
-                        .code()
-                        .map_or("unknown".to_string(), |c| c.to_string());
                     let _ = command_tx.send(Command::AlertError(format!(
-                        "{label} failed (exit code {code})"
+                        "{failure}: {}",
+                        exit_cause(status)
                     )));
                 }
             }
@@ -810,22 +847,30 @@ mod tests {
 
         // `spawn` would fail with the same ENOENT as a missing program, which
         // would send the user looking for the wrong thing.
-        let error = spawn_argv(Some(&missing), "App", &[OsString::from("true")], tx)
-            .expect_err("a missing working directory must be refused")
-            .to_string();
+        let error = spawn_argv(
+            Some(&missing),
+            "App",
+            Path::new("/f"),
+            &[OsString::from("true")],
+            tx,
+        )
+        .expect_err("a missing working directory must be refused")
+        .to_string();
 
         assert!(error.starts_with("Cannot run \"App\""), "{error}");
         assert!(error.ends_with("is not a directory"), "{error}");
     }
 
-    #[test_case("false" => Some("\"false\" failed (exit code 1)".to_string()) ; "a failure is reported")]
-    #[test_case("true" => None ; "a success is not")]
+    #[test_case(&["false"] => Some("Failed to run \"App\" on \"/f\": exit code 1".to_string()) ; "a failure is reported")]
+    #[test_case(&["sh", "-c", "kill -KILL $$"] => Some("Failed to run \"App\" on \"/f\": killed by signal 9".to_string()) ; "a death by signal is named")]
+    #[test_case(&["true"] => None ; "a success is not")]
     fn a_program_that_exits_at_once_is_reported_only_when_it_failed(
-        program: &str,
+        argv: &[&str],
     ) -> Option<String> {
         let (tx, rx) = std::sync::mpsc::channel();
+        let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
 
-        spawn_argv(None, program, &[OsString::from(program)], tx).unwrap();
+        spawn_argv(None, "App", Path::new("/f"), &argv, tx).unwrap();
 
         // The watcher thread holds the only sender, so this returns once it
         // has either reported or dropped it.
@@ -835,6 +880,35 @@ mod tests {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
             Err(error) => panic!("the watcher never finished: {error}"),
         }
+    }
+
+    #[test]
+    fn an_opener_template_is_reported_by_its_program() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = PathInfo::try_from(Path::new("/")).unwrap();
+
+        open_in("open_file", &path, "false %s", tx).unwrap();
+
+        let Ok(Command::AlertError(message)) = rx.recv_timeout(Duration::from_secs(5)) else {
+            panic!("expected an alert");
+        };
+        assert_eq!("Failed to run \"false\" on \"/\": exit code 1", message);
+    }
+
+    #[test_case("" ; "empty")]
+    #[test_case("  " ; "blank")]
+    fn an_empty_opener_is_refused_by_its_key(template: &str) {
+        let dir = TempDir::new("ops_empty_opener");
+        let file = dir.join("notes.txt");
+        fs::write(&file, "").unwrap();
+        let path = PathInfo::try_from(&file).unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        let error = open_in("open_file", &path, template, tx)
+            .expect_err("an empty template must be refused")
+            .to_string();
+
+        assert_eq!("Cannot open notes.txt: open_file is empty", error);
     }
 
     /// Linux only: the group is read from `/proc`.

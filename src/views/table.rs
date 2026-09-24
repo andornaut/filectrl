@@ -110,7 +110,7 @@ impl Default for TableView {
 /// which of the two an action reads.
 #[cfg(test)]
 fn marked_table() -> (crate::test_support::TempDir, TableView) {
-    use crate::{app::config::Config, test_support::TempDir};
+    use crate::test_support::TempDir;
 
     Config::init_test();
     let dir = TempDir::new("table_actions");

@@ -87,15 +87,24 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
 }
 
 /// Long options that give an interpreter code to run: `node --eval`,
-/// `node --print`, `php --run` and the like. `--command` is not one: Flatpak's
-/// exported entries use it to name the program to run, not code.
-const CODE_LONG_OPTIONS: [&str; 5] = ["eval", "exec", "execute", "print", "run"];
+/// `node --print`, `php --run`, `env --split-string`, `guake
+/// --execute-command` and the like. `--command` is not one: Flatpak's exported
+/// entries use it to name the program to run, not code.
+const CODE_LONG_OPTIONS: [&str; 7] = [
+    "eval",
+    "exec",
+    "execute",
+    "execute-command",
+    "print",
+    "run",
+    "split-string",
+];
 
 /// The index of the first option among `tokens` that takes code to run.
 ///
 /// A single-dash option cluster matches when its leading run of letters and
-/// digits holds `c`, `e`, `E`, `S`, `p` or `r` (`-c`, `-lc`, `-cx`, `-e`, `-E`,
-/// `-S`, `-p`, `-r`, `-cprint(1)`, `-S%f`). That is how shells, `env`,
+/// digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`,
+/// `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-cprint(1)`, `-S%f`). That is how shells, `env`,
 /// `python3`, `perl`, `node`, `php` and the like are given code to run, so it
 /// is matched for any program. A double-dash option matches when it is named
 /// in `CODE_LONG_OPTIONS`, with or without an attached `=value`. The code may
@@ -112,7 +121,7 @@ fn code_option(tokens: &[Token]) -> Option<usize> {
             options
                 .bytes()
                 .take_while(u8::is_ascii_alphanumeric)
-                .any(|byte| matches!(byte, b'c' | b'e' | b'E' | b'S' | b'p' | b'r'))
+                .any(|byte| matches!(byte, b'c' | b'e' | b'E' | b'S' | b'p' | b'r' | b'R' | b'B'))
         })
     })
 }
@@ -398,6 +407,12 @@ mod tests {
     #[test_case("foo --exec %f", CODE_OPTION ; "a long exec option")]
     #[test_case("foo --execute=%f", CODE_OPTION ; "a long execute option")]
     #[test_case("php --run %f", CODE_OPTION ; "a long run option")]
+    #[test_case("env --split-string \"sh -c\" %f", CODE_OPTION ; "a split string option")]
+    #[test_case(r"env --split-string=sh\ -c %f", CODE_OPTION ; "the code attached to a split string option")]
+    #[test_case("php -R %f", CODE_OPTION ; "upper case r directly before the code")]
+    #[test_case("php -B %f", CODE_OPTION ; "upper case b directly before the code")]
+    #[test_case("guake --execute-command %f", CODE_OPTION ; "an execute command option")]
+    #[test_case("guake --execute-command=%f", CODE_OPTION ; "the code attached to an execute command option")]
     #[test_case("python3 -c %f", CODE_OPTION ; "python")]
     #[test_case("perl -e %f", CODE_OPTION ; "perl")]
     #[test_case("node -e %f", CODE_OPTION ; "node")]
@@ -410,7 +425,7 @@ mod tests {
     #[test_case(r"run --command echo\\ %f", QUOTED ; "after an escaped space")]
     #[test_case(r#"app "x"%f"#, QUOTED ; "after a quoted word")]
     #[test_case("app \"--file=%f\"", QUOTED ; "a quoted option value")]
-    #[test_case("env --split-string \"sh -c %f\"", QUOTED ; "a long option that takes code")]
+    #[test_case("env --split-string \"sh -c %f\"", CODE_OPTION ; "a code option before a quoted script")]
     fn expand_refuses(exec: &str, rule: &str) {
         let error = expand(Path::new(HOSTILE), exec).expect_err("the entry must not be offered");
         assert!(error.to_string().ends_with(rule), "{error}");

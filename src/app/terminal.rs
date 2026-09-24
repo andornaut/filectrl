@@ -137,6 +137,14 @@ impl CleanupOnDropTerminal {
         restore_terminal_once();
     }
 
+    /// Puts the shell's settings back on a suspended terminal that is not
+    /// being taken back, ignoring a failure: the process is quitting.
+    pub fn release(&mut self) {
+        if let Some(settings) = &self.shell_settings {
+            let _ = on_terminal(|fd| restore_settings(fd, settings));
+        }
+    }
+
     /// Takes the terminal back after `suspend` and clears it, so the next draw
     /// repaints every cell rather than only those it believes changed. A
     /// failure is rolled back like one in `try_new`.

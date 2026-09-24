@@ -135,10 +135,12 @@ pub enum Command {
     OpenNewWindow,
     // Intent: the "open with" picker resolved a chosen application into a
     // concrete argv; FileSystem spawns it detached. `label` names the
-    // application in the failure alert. An empty `argv` is a no-op.
+    // application and `path` what it opens, in the failure alert. An empty
+    // `argv` is a no-op.
     OpenWith {
         argv: Vec<OsString>,
         label: String,
+        path: PathBuf,
         working_dir: Option<PathBuf>,
     },
 

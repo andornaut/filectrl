@@ -28,7 +28,7 @@ use self::{
 };
 use crate::{
     command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
-    file_system::FileSystem,
+    file_system::{FileSystem, exit_cause, failure_prefix, path_info::compact},
     views::{View, root::RootView},
 };
 
@@ -221,6 +221,7 @@ impl App {
             Ok(argv) => {
                 // Words of a variable that was valid UTF-8, so nothing is lost.
                 let program = argv[0].to_string_lossy().into_owned();
+                let failure = failure_prefix(&program, &path.path);
                 let outcome = foreground::run(
                     &mut self.terminal,
                     &self.reader_gate,
@@ -231,13 +232,15 @@ impl App {
                 match outcome {
                     foreground::Outcome::Ran(Ok(status)) if status.success() => None,
                     foreground::Outcome::Ran(Ok(status)) => Some(Command::AlertError(format!(
-                        "Failed to run {program:?}: {status}"
+                        "{failure}: {}",
+                        exit_cause(status)
                     ))),
-                    foreground::Outcome::Ran(Err(error)) => Some(Command::AlertError(format!(
-                        "Failed to run {program:?}: {error}"
-                    ))),
+                    foreground::Outcome::Ran(Err(error)) => {
+                        Some(Command::AlertError(format!("{failure}: {error}")))
+                    }
                     foreground::Outcome::ReaderBusy => Some(Command::AlertError(format!(
-                        "Cannot run {program:?}: the input reader did not stop"
+                        "Cannot run {program:?} on {}: the input reader did not stop",
+                        compact(&path.path)
                     ))),
                     foreground::Outcome::Quit => return Ok(true),
                 }

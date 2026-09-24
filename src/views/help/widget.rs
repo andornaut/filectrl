@@ -16,6 +16,7 @@ pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
     vec![
         ("Normal Mode", build_normal_keybindings(kb)),
         ("Prompt Mode", build_prompt_keybindings(kb)),
+        ("Bookmarks View", build_bookmarks_keybindings(kb)),
         ("Paste Conflict", build_conflict_keybindings()),
         ("Open With", build_open_with_keybindings(kb)),
     ]
@@ -127,6 +128,20 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
 
 fn kb_entry(label: &str, keys: String) -> (String, String) {
     (label.to_string(), keys)
+}
+
+/// The normal bindings as they act on a bookmark, which is a symlink: open
+/// follows it, and rename and delete act on the link, not the folder.
+fn build_bookmarks_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
+    let d = |a: Action| annotate_uppercase(kb.display_for(a));
+    vec![
+        kb_entry("Go to the linked folder", d(Action::Open)),
+        kb_entry(
+            "Rename, delete the bookmark",
+            format!("{}, {}", d(Action::Rename), d(Action::Delete)),
+        ),
+        kb_entry("Leave the bookmarks", d(Action::ResetView)),
+    ]
 }
 
 /// The answers to a paste collision. They are fixed keys, read by the prompt
@@ -274,12 +289,17 @@ fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             t(Action::PromptCopy, Action::PromptCut, Action::PromptPaste),
         ),
         kb_entry("Move cursor", "←/→".into()),
-        kb_entry("Move cursor by word", "Ctrl+←/→".into()),
+        kb_entry("Move cursor by word", "Ctrl+←/→, Alt+b/f".into()),
         kb_entry("Move cursor to start, end", "Home, Ctrl+e/End".into()),
         kb_entry("Select text", "Shift+←/→".into()),
         kb_entry("Select to line start, end", "Shift+Home, Shift+End".into()),
         kb_entry("Select by word", "Ctrl+Shift+←/→".into()),
         kb_entry("Delete before, after cursor", "Backspace, Delete".into()),
+        kb_entry(
+            "Delete word before, after cursor",
+            "Ctrl+w/Alt+Backspace, Alt+d/Alt+Delete".into(),
+        ),
+        kb_entry("Delete to start, end", "Ctrl+j, Ctrl+k".into()),
         kb_entry("Accept path suggestion", s(Action::PromptAcceptSuggestion)),
         kb_entry(
             "Cycle path suggestions",
@@ -351,7 +371,9 @@ mod tests {
     }
 
     /// The keys only a paste collision or the picker reads, which neither
-    /// mode section lists.
+    /// mode section lists, and the bookmarks view's use of the normal ones.
+    #[test_case("Bookmarks View", "Go to the linked folder", "\u{2192}/l/Enter" ; "following a bookmark")]
+    #[test_case("Bookmarks View", "Rename, delete the bookmark", "r/F2, d/Delete" ; "renaming and deleting a bookmark")]
     #[test_case("Paste Conflict", "Skip this and every later collision", "S (Uppercase)" ; "a conflict answer")]
     #[test_case("Paste Conflict", "Abandon the rest of the paste", "Esc" ; "abandoning a paste")]
     #[test_case("Open With", "Open with a numbered application", "1-9" ; "the row numbers")]

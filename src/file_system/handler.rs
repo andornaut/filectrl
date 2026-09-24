@@ -54,8 +54,9 @@ impl CommandHandler for FileSystem {
             Command::OpenWith {
                 argv,
                 label,
+                path,
                 working_dir,
-            } => self.open_with(working_dir.as_deref(), label, argv),
+            } => self.open_with(working_dir.as_deref(), label, path, argv),
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::RefreshDirectory => self.refresh(),
             Command::DirectoryListingComplete { generation } => {

@@ -269,6 +269,7 @@ impl View for RootView {
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         self.is_too_small = area.width < MIN_WIDTH || area.height < MIN_HEIGHT;
         if self.is_too_small {
+            self.table.hide();
             render_resize_message(theme, frame.buffer_mut(), area);
             return;
         }
@@ -308,7 +309,6 @@ fn render_resize_message(theme: &Theme, buf: &mut Buffer, area: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
 
     use super::*;
@@ -367,6 +367,20 @@ mod tests {
 
         render(&mut root, 80, 24);
         assert!(takes_click(&mut root, 1, 5));
+    }
+
+    /// The resize message stands in for every view, so a release arriving
+    /// under it never reaches the scrollbar. Were the drag to survive, the
+    /// table would claim every later click, wherever it landed.
+    #[test]
+    fn a_terminal_too_small_to_draw_the_table_ends_a_scrollbar_drag() {
+        let mut root = view();
+        render(&mut root, 80, 24);
+        root.table.scrollbar_mut().begin_drag();
+
+        render(&mut root, 10, 4);
+
+        assert!(!root.table.scrollbar_mut().is_dragging());
     }
 
     #[test]

@@ -102,43 +102,88 @@ pub(super) fn destination(
 /// before `change` runs: a copy, or the cross-device arm of
 /// `run_move_task`, which removes what it copied. Returns the destination
 /// and the finished task.
+///
+/// The paste runs on its own thread under a deadline, so a copy that never
+/// ends fails the test rather than hanging it; the task is cancelled before
+/// the panic, so the runaway stops.
 pub(super) fn paste_after(
     old: &Path,
     dest: &Path,
     is_move: bool,
     change: impl FnOnce(),
 ) -> (PathBuf, Task) {
+    paste_after_unless(old, dest, is_move, change, || false)
+}
+
+/// `paste_after`, cancelled and failed as soon as `runaway` holds. A copy
+/// descending into its own output grows a tree deeper with every level, and
+/// one left to the deadline is too deep for `TempDir` to remove, so a test
+/// that can recognize that shape early stops it at a depth that can be.
+pub(super) fn paste_after_unless(
+    old: &Path,
+    dest: &Path,
+    is_move: bool,
+    change: impl FnOnce(),
+    runaway: impl Fn() -> bool,
+) -> (PathBuf, Task) {
+    const DEADLINE: Duration = Duration::from_secs(10);
+    const POLL: Duration = Duration::from_millis(5);
+
     let verb = if is_move { "move" } else { "copy" };
     let path = PathInfo::try_from(old).unwrap();
     let dest = PathInfo::try_from(dest).unwrap();
     let (old_path, new_path) = validate_paths(&path, &dest, verb, false).ok().unwrap();
     change();
     let (tx, rx) = mpsc::channel();
-    let (active, source) = prepare_destination(
-        copy_task(tx),
-        verb,
-        &old_path,
-        &new_path,
-        false,
-        path.mode(),
-    )
-    .unwrap();
-    if let Some((active, outcome)) = copy_with_progress(
-        &old_path,
-        &new_path,
-        active,
-        source,
-        &path,
-        CopySettings {
-            preserve: is_move,
-            conflicts: None,
-        },
-    ) {
-        if is_move {
-            finish_cross_device_move(active, outcome, &old_path, path.is_directory());
-        } else {
-            finalize(active, outcome.errors);
+    let (active, _, token) = ActiveTask::new(
+        tx,
+        TaskKind::Copy(Transfer {
+            source: String::new(),
+            destination: String::new(),
+        }),
+        1,
+    );
+    let (active, source) =
+        prepare_destination(active, verb, &old_path, &new_path, false, path.mode()).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let destination = new_path.clone();
+    let worker = std::thread::spawn(move || {
+        if let Some((active, outcome)) = copy_with_progress(
+            &old_path,
+            &destination,
+            active,
+            source,
+            &path,
+            CopySettings {
+                preserve: is_move,
+                conflicts: None,
+            },
+        ) {
+            if is_move {
+                finish_cross_device_move(active, outcome, &old_path, path.is_directory());
+            } else {
+                finalize(active, outcome.errors);
+            }
+        }
+        let _ = done_tx.send(());
+    });
+    let started = std::time::Instant::now();
+    loop {
+        match done_rx.recv_timeout(POLL) {
+            Ok(()) => break,
+            Err(_) if runaway() => {
+                token.cancel();
+                worker.join().unwrap();
+                panic!("the paste ran away");
+            }
+            Err(_) if started.elapsed() > DEADLINE => {
+                token.cancel();
+                worker.join().unwrap();
+                panic!("the paste did not finish within {DEADLINE:?}");
+            }
+            Err(_) => {}
         }
     }
+    worker.join().unwrap();
     (new_path, finished_task(&rx))
 }

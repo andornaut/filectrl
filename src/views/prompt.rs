@@ -443,16 +443,13 @@ impl PromptView {
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
-    use std::path::Path;
-
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
 
     use super::*;
     use crate::{
         app::config::{Config, keybindings::Action},
-        command::{Command, ConflictChoice, PromptAction, handler::CommandHandler},
-        file_system::path_info::PathInfo,
+        command::{Command, ConflictChoice, handler::CommandHandler},
         test_support::TempDir,
     };
 
@@ -881,6 +878,45 @@ mod tests {
         let result = view.handle_text_key(Some(action), KeyCode::Char('c'), KeyModifiers::ALT);
         assert_eq!(CommandResult::Handled, result);
         assert_eq!("hello", view.text_area.lines()[0]);
+    }
+
+    // The input is one line: `input()` would insert a line break or a tab for
+    // these, and only the first line is drawn while `submit` joins them all.
+    #[test_case(KeyCode::Tab, KeyModifiers::NONE ; "tab")]
+    #[test_case(KeyCode::BackTab, KeyModifiers::SHIFT ; "backtab")]
+    #[test_case(KeyCode::Enter, KeyModifiers::SHIFT ; "shift enter")]
+    #[test_case(KeyCode::Enter, KeyModifiers::ALT ; "alt enter")]
+    #[test_case(KeyCode::Enter, KeyModifiers::CONTROL ; "ctrl enter")]
+    #[test_case(KeyCode::Char('m'), KeyModifiers::CONTROL ; "ctrl m")]
+    #[test_case(KeyCode::Char('\n'), KeyModifiers::NONE ; "a literal line feed")]
+    #[test_case(KeyCode::Char('\r'), KeyModifiers::NONE ; "a literal carriage return")]
+    fn a_key_that_would_insert_whitespace_leaves_the_input_alone(
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) {
+        for kind in [
+            PromptAction::Filter("ab".into()),
+            PromptAction::CreateDirectory,
+            PromptAction::Rename {
+                path: test_path(),
+                name: "ab".into(),
+            },
+        ] {
+            let mut view = prompt_with_action(kind);
+            view.reset_text("ab");
+            view.text_area.move_cursor(CursorMove::Back);
+            let result = view.handle_key(code, modifiers);
+            assert_eq!(
+                CommandResult::Handled,
+                result,
+                "{code:?} with {modifiers:?}"
+            );
+            assert_eq!(
+                vec!["ab"],
+                view.text_area.lines(),
+                "{code:?} with {modifiers:?}"
+            );
+        }
     }
 
     // ── display_col_to_char_idx ──────────────────────────────────────────────

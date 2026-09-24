@@ -47,7 +47,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use serde::Deserialize;
     use test_case::test_case;
 
     use super::*;

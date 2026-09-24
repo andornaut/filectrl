@@ -5,8 +5,11 @@ use crate::{
 };
 
 impl TableView {
+    /// Puts the cursor on `item`. An empty listing has no row to put it on, so
+    /// it gets no cursor, and nothing that acts on the cursor finds an entry.
     pub(super) fn select(&mut self, item: usize) -> CommandResult {
-        self.table_state.select(Some(item));
+        self.table_state
+            .select((self.content.len() != 0).then_some(item));
         self.update_range_marks();
         self.selection_snapshot()
     }

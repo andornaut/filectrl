@@ -2,6 +2,8 @@ mod handler;
 mod view;
 mod widget;
 
+use std::path::PathBuf;
+
 use ratatui::layout::Rect;
 
 use super::{ScrollbarView, scroll_to_show};
@@ -24,6 +26,8 @@ const MAX_SHORTCUT: usize = 9;
 pub(super) struct OpenWithView {
     area: Rect,
     candidates: Vec<AppCandidate>,
+    /// What the candidates open, named in a launch failure.
+    path: PathBuf,
     /// The rows' area, for hit testing a click on a row.
     content_area: Rect,
     /// Bordered header hint, cached at construction.
@@ -49,6 +53,7 @@ impl OpenWithView {
             ),
             inner_height: 0,
             is_visible: false,
+            path: PathBuf::new(),
             scroll_offset: 0,
             scrollbar_view: ScrollbarView::default(),
             selected: 0,
@@ -63,6 +68,7 @@ impl OpenWithView {
     /// Enumerate the applications for `path` and show the picker.
     pub(super) fn show(&mut self, path: &PathInfo) {
         self.candidates = candidates_for(path.as_path());
+        self.path.clone_from(&path.path);
         self.inner_height = 0;
         self.is_visible = true;
         self.scroll_offset = 0;
@@ -116,6 +122,7 @@ impl OpenWithView {
         let command = Command::OpenWith {
             argv: candidate.argv.clone(),
             label: candidate.name.clone(),
+            path: self.path.clone(),
             working_dir: candidate.working_dir.clone(),
         };
         self.hide();

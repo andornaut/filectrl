@@ -90,6 +90,23 @@ pub(super) fn quit_requested() -> bool {
     SIGNAL_RECEIVED.load(Ordering::SeqCst)
 }
 
+/// The first termination signal to arrive, 0 before any has.
+static QUIT_SIGNAL: AtomicI32 = AtomicI32::new(0);
+
+/// Keeps `signal` in `slot` unless one is there already, so the exit status
+/// names the signal that caused the quit rather than one arriving during it.
+fn record_first(slot: &AtomicI32, signal: i32) {
+    let _ = slot.compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+/// The termination signal that ended the run, if one did.
+pub fn quit_signal() -> Option<i32> {
+    match QUIT_SIGNAL.load(Ordering::SeqCst) {
+        0 => None,
+        signal => Some(signal),
+    }
+}
+
 /// The foreground program's process id while one runs, else 0. The handler
 /// passes a quit signal on to it, so the wait for it returns and the quit is
 /// handled rather than queued behind a program that never exits. Cleared
@@ -273,12 +290,27 @@ impl EventSource for TerminalEventSource {
 // SAFETY: Stores to an AtomicBool are single-instruction writes to a
 // fixed address, async-signal-safe per POSIX, as are `write(2)` and `kill(2)`.
 extern "C" fn handle_signal(signal: i32) {
+    // A failed `write` or `kill` below sets errno, which belongs to whatever
+    // the interrupted thread was doing: one between a failed call and reading
+    // its error would read this handler's instead.
+    keeping_errno(|| answer_signal(signal));
+}
+
+/// Runs `act` and puts errno back as it found it.
+fn keeping_errno(act: impl FnOnce()) {
+    let errno = Errno::last_raw();
+    act();
+    Errno::set_raw(errno);
+}
+
+fn answer_signal(signal: i32) {
     if is_the_childs(signal, FOREGROUND_CHILD.load(Ordering::SeqCst)) {
         return;
     }
     // Sequentially consistent, with the pid store and flag load in
     // `run_foreground_child`, so either this handler sees the pid or the main
     // thread sees the flag: a quit is never missed by both.
+    record_first(&QUIT_SIGNAL, signal);
     SIGNAL_RECEIVED.store(true, Ordering::SeqCst);
     forward_quit(signal);
 
@@ -463,12 +495,18 @@ enum GateState {
 }
 
 impl ReaderGate {
-    /// Asks the reader to stop at its next checkpoint and waits for it, up to
-    /// `timeout`. Returns whether it stopped. The reader only reaches a
-    /// checkpoint when its poll returns, so the caller wakes it first.
-    pub(super) fn pause(&self, timeout: Duration) -> bool {
-        let mut state = self.lock();
-        *state = GateState::PauseRequested;
+    /// Asks the reader to stop at its next checkpoint. The reader only reaches
+    /// a checkpoint when its poll returns, so the caller wakes it after this
+    /// and then calls `wait_paused`: woken before the request, the reader
+    /// could pass its checkpoint and go back to a full poll.
+    pub(super) fn request_pause(&self) {
+        *self.lock() = GateState::PauseRequested;
+    }
+
+    /// Waits up to `timeout` for the reader to stop after `request_pause`.
+    /// Returns whether it stopped.
+    pub(super) fn wait_paused(&self, timeout: Duration) -> bool {
+        let state = self.lock();
         let (state, _) = self
             .changed
             .wait_timeout_while(state, timeout, |state| *state != GateState::Paused)
@@ -599,14 +637,15 @@ mod tests {
 
     use ratatui::crossterm::event::Event;
 
-    use std::os::fd::AsFd;
+    use std::os::{fd::AsFd, unix::process::ExitStatusExt};
 
     use nix::{libc, sys::signal::Signal};
 
     use super::{
         Command, EventSource, FOREGROUND_PID, ReaderGate, SIGNAL_ACTIONS, event_loop, forward_quit,
         forward_signal, forwarded, handle_signal, ignore_signal, install_signal_handlers,
-        is_the_childs, receive_commands, run_foreground_child, wait_for_exit, watch_signal_pipe,
+        is_the_childs, keeping_errno, receive_commands, record_first, run_foreground_child,
+        wait_for_exit, watch_signal_pipe,
     };
 
     const INTERVAL: Duration = Duration::from_millis(500);
@@ -856,7 +895,8 @@ mod tests {
             })
         };
 
-        assert!(gate.pause(Duration::from_secs(5)), "the reader stops");
+        gate.request_pause();
+        assert!(gate.wait_paused(Duration::from_secs(5)), "the reader stops");
         let stopped_at = passes.load(Ordering::SeqCst);
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(stopped_at, passes.load(Ordering::SeqCst));
@@ -867,16 +907,40 @@ mod tests {
     }
 
     #[test]
+    fn the_first_quit_signal_is_the_one_kept() {
+        let slot = std::sync::atomic::AtomicI32::new(0);
+
+        record_first(&slot, libc::SIGTERM);
+        record_first(&slot, libc::SIGHUP);
+
+        assert_eq!(
+            libc::SIGTERM,
+            slot.load(std::sync::atomic::Ordering::SeqCst)
+        );
+    }
+
+    /// The handler's failed `write` or `kill` must not change the errno of
+    /// the thread it interrupted.
+    #[test]
+    fn the_handler_leaves_errno_as_it_found_it() {
+        nix::errno::Errno::set_raw(libc::EINTR);
+
+        keeping_errno(|| nix::errno::Errno::set_raw(libc::ESRCH));
+
+        assert_eq!(libc::EINTR, nix::errno::Errno::last_raw());
+    }
+
+    #[test]
     fn a_pause_with_no_reader_gives_up() {
-        assert!(!ReaderGate::default().pause(Duration::from_millis(10)));
+        let gate = ReaderGate::default();
+        gate.request_pause();
+        assert!(!gate.wait_paused(Duration::from_millis(10)));
     }
 
     /// A quit signal passed to the foreground program ends it, which is what
     /// lets the wait for it return.
     #[test]
     fn a_forwarded_signal_reaches_the_program() {
-        use std::os::unix::process::ExitStatusExt;
-
         let mut child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
@@ -947,8 +1011,6 @@ mod tests {
     /// wait for it.
     #[test]
     fn a_quit_is_passed_on_to_the_running_program() {
-        use std::os::unix::process::ExitStatusExt;
-
         let _serial = SIGNAL_ACTIONS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -988,8 +1050,6 @@ mod tests {
     #[test_case::test_case("exit 3" => (Some(3), None) ; "an exit code")]
     #[test_case::test_case("kill -TERM $$" => (None, Some(libc::SIGTERM)) ; "a signal")]
     fn the_status_is_the_programs(script: &str) -> (Option<i32>, Option<i32>) {
-        use std::os::unix::process::ExitStatusExt;
-
         // Reaped by `wait_for_exit`, which is what is under test.
         #[allow(clippy::zombie_processes)]
         let child = std::process::Command::new("sh")

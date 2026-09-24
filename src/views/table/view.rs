@@ -25,10 +25,7 @@ impl View for TableView {
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if area.height < MIN_HEIGHT || area.width < MIN_WIDTH {
-            // Nothing is drawn, so a click on the sliver left must not be
-            // tested against the last layout that was.
-            self.table_area = Rect::default();
-            self.scrollbar_view.hide();
+            self.hide();
             return;
         }
 
@@ -43,6 +40,18 @@ impl View for TableView {
 }
 
 impl TableView {
+    /// For a frame that draws no table: nothing is drawn, so a click on the
+    /// area must not be tested against the last layout that was.
+    pub(in crate::views) fn hide(&mut self) {
+        self.table_area = Rect::default();
+        self.scrollbar_view.hide();
+    }
+
+    #[cfg(test)]
+    pub(in crate::views) fn scrollbar_mut(&mut self) -> &mut super::ScrollbarView {
+        &mut self.scrollbar_view
+    }
+
     fn render_1x1_block(theme: &Theme, area: Rect, buf: &mut Buffer) {
         // Extend the table header above the scrollbar as a 1x1 block
         Fill::new(" ")

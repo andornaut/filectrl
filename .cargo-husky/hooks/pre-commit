@@ -1,24 +1,23 @@
 #!/bin/sh
 #
-# cargo-husky user hook: format, then verify before committing.
+# cargo-husky user hook: verify before committing.
 #
 
 set -e
 
-# Format, then re-stage only files that were already staged for this commit
-# (avoids accidentally staging unrelated working-tree changes).
-#
-# -u restricts the re-staging to tracked paths, which every staged path is by
-# definition. Without it, a staged path that an ignore rule also matches (the
-# fixtures are ignored so that new ones are not added by accident) is refused
-# and `set -e` aborts the commit.
-staged=$(git diff --cached --name-only --diff-filter=ACMR)
-echo '+cargo fmt'
-cargo fmt
-if [ -n "$staged" ]; then
-    echo "$staged" | tr '\n' '\0' | xargs -0 git add -u --
-fi
+# Check formatting rather than apply it: re-staging a formatted file would
+# stage its unstaged hunks too. Run `cargo fmt` and stage the result.
+echo '+cargo fmt --check'
+cargo fmt --check
 echo '+cargo test'
-cargo test
+cargo test --locked
 echo '+cargo clippy'
-cargo clippy --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings
+
+# The macOS-only modules are compiled only for a macOS target.
+if rustup target list --installed 2>/dev/null | grep -qx aarch64-apple-darwin; then
+    echo '+cargo clippy --target aarch64-apple-darwin'
+    cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
+else
+    echo 'Skipping the macOS lint: run `rustup target add aarch64-apple-darwin` to enable it'
+fi

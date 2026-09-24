@@ -10,7 +10,10 @@ use std::{
 use anyhow::Result;
 use argh::FromArgs;
 
-use filectrl::{app::config::Config, escape_for_terminal, print_keybindings, run};
+use filectrl::{
+    app::{config::Config, events::quit_signal},
+    escape_for_terminal, print_keybindings, run,
+};
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help"))]
@@ -191,7 +194,7 @@ fn parse_args() -> Args {
 fn main() -> ExitCode {
     let args = parse_args();
     match dispatch(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => success_status(quit_signal()),
         Err(error) => {
             match error.downcast_ref::<UsageError>() {
                 Some(usage) => {
@@ -206,6 +209,15 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The status of a run that ended without an error: 0, or 128 plus the signal
+/// number when a termination signal ended it, as a shell reports a process the
+/// signal killed.
+fn success_status(signal: Option<i32>) -> ExitCode {
+    signal
+        .and_then(|signal| u8::try_from(128 + signal).ok())
+        .map_or(ExitCode::SUCCESS, ExitCode::from)
 }
 
 fn dispatch(args: &Args) -> Result<()> {
@@ -305,6 +317,13 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+
+    #[test_case(None => ExitCode::SUCCESS ; "a quit from the keyboard")]
+    #[test_case(Some(1) => ExitCode::from(129) ; "sighup")]
+    #[test_case(Some(15) => ExitCode::from(143) ; "sigterm")]
+    fn a_quit_by_signal_exits_as_the_signal_would(signal: Option<i32>) -> ExitCode {
+        success_status(signal)
+    }
 
     /// Every field defaulted, so a test names only what it is exercising.
     fn args() -> Args {

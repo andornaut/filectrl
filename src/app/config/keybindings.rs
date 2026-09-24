@@ -134,7 +134,7 @@ macro_rules! keybindings {
                     normal.push((
                         Action::$n_action,
                         parse_key_spec(&self.$n_field).with_context(|| {
-                            format!("Invalid keybinding for {:?}", Action::$n_action)
+                            format!("Invalid keybinding for {}", stringify!($n_field))
                         })?,
                     ));
                 )+
@@ -142,12 +142,28 @@ macro_rules! keybindings {
                     prompt.push((
                         Action::$p_action,
                         parse_key_spec(&self.$p_field).with_context(|| {
-                            format!("Invalid keybinding for {:?}", Action::$p_action)
+                            format!("Invalid keybinding for {}", stringify!($p_field))
                         })?,
                     ));
                 )+
 
                 Ok((normal, prompt))
+            }
+        }
+
+        impl Action {
+            /// How an error names the action: its `[keybindings]` key, or
+            /// for an action with only hardcoded keys, what the key does.
+            fn config_key(self) -> &'static str {
+                match self {
+                    $(Action::$n_action => stringify!($n_field),)+
+                    $(Action::$p_action => stringify!($p_field),)+
+                    Action::ResetView => "the hardcoded reset view",
+                    Action::PromptCancel => "the hardcoded prompt cancel",
+                    Action::PromptAcceptSuggestion => "the hardcoded accept suggestion",
+                    Action::PromptNextSuggestion => "the hardcoded next suggestion",
+                    Action::PromptPreviousSuggestion => "the hardcoded previous suggestion",
+                }
             }
         }
     };
@@ -386,10 +402,10 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
                 && existing != *action
             {
                 return Err(anyhow!(
-                    "Key '{}' is bound to both {:?} and {:?}",
+                    "Key '{}' is bound to both {} and {}",
                     format_key_combo(combo),
-                    existing,
-                    action,
+                    existing.config_key(),
+                    action.config_key(),
                 ));
             }
         }
@@ -476,15 +492,17 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         "End" => KeyCode::End,
         "PgUp" | "PageUp" => KeyCode::PageUp,
         "PgDn" | "PageDown" => KeyCode::PageDown,
-        s if s.starts_with('F') && s.len() > 1 => {
-            let num: u8 = s[1..]
-                .parse()
-                .map_err(|_| anyhow!("Invalid F-key: '{s}'"))?;
+        // Only "F" and digits is a function key, so a word such as an
+        // unknown modifier ("Foo+x") is reported as an unknown key.
+        s if s.len() > 1 && s.starts_with('F') && s[1..].bytes().all(|b| b.is_ascii_digit()) => {
             // No terminal emits F0 or beyond F24; reject them so a typo fails
             // config loading instead of producing a binding that never fires.
-            if !(1..=24).contains(&num) {
-                return Err(anyhow!("Invalid F-key: '{s}' (must be F1-F24)"));
-            }
+            // A number too large for a u8 is out of range too.
+            let num = s[1..]
+                .parse::<u8>()
+                .ok()
+                .filter(|num| (1..=24).contains(num))
+                .ok_or_else(|| anyhow!("Invalid F-key: '{s}' (must be F1-F24)"))?;
             KeyCode::F(num)
         }
         // Counted in chars, not bytes, so a non-ASCII key such as "é" is one
@@ -516,6 +534,27 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             if modifiers == KeyModifiers::SHIFT && !ch.is_uppercase() {
                 return Err(anyhow!(
                     "Invalid key: '{spelling}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)"
+                ));
+            }
+            // With Ctrl or Alt, the kitty protocol reports the unshifted
+            // letter plus Shift ("Ctrl+Shift+g" arrives as g with Ctrl+Shift),
+            // and the legacy encoding cannot carry the Shift at all (Ctrl+G
+            // is the byte Ctrl+g sends), so an uppercase letter here matches
+            // no key press on either.
+            if ch.is_uppercase() && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                let lower: String = ch.to_lowercase().collect();
+                let named = modifiers.difference(KeyModifiers::SHIFT);
+                let prefix: String = [
+                    (KeyModifiers::CONTROL, "Ctrl+"),
+                    (KeyModifiers::ALT, "Alt+"),
+                ]
+                .iter()
+                .filter(|(modifier, _)| named.contains(*modifier))
+                .map(|(_, name)| *name)
+                .collect();
+                return Err(anyhow!(
+                    "Invalid key: '{spelling}' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as '{prefix}Shift+{lower}')"
                 ));
             }
             // Uppercase letter without explicit Shift modifier → add SHIFT
@@ -620,6 +659,8 @@ mod tests {
     #[test_case("Ctrl++", KeyCode::Char('+'), KeyModifiers::CONTROL ; "a modifier on the separator")]
     #[test_case("Ctrl+Shift+a", KeyCode::Char('a'), CTRL_SHIFT  ; "two modifiers")]
     #[test_case("Ctrl+Shift++", KeyCode::Char('+'), CTRL_SHIFT  ; "two modifiers on the separator")]
+    #[test_case("Alt+Shift+a", KeyCode::Char('a'), KeyModifiers::ALT.union(KeyModifiers::SHIFT) ; "alt and shift on a lowercase letter")]
+    #[test_case("Alt+x", KeyCode::Char('x'), KeyModifiers::ALT ; "alt")]
     #[test_case("Enter", KeyCode::Enter, KeyModifiers::NONE     ; "a named key")]
     #[test_case("Esc", KeyCode::Esc, KeyModifiers::NONE         ; "esc")]
     #[test_case("Backspace", KeyCode::Backspace, KeyModifiers::NONE ; "backspace")]
@@ -653,9 +694,11 @@ mod tests {
     #[test_case("Ctrl+\u{2800}"    => "Invalid key: '\\u{2800}' (a control or invisible character cannot be bound)" ; "a modifier on a character that draws nothing")]
     #[test_case("InvalidKey"      => "Unknown key: 'InvalidKey'" ; "a name that is not a key")]
     #[test_case("Ctrl+InvalidKey" => "Unknown key: 'InvalidKey'" ; "a modifier on a name that is not a key")]
-    // A spelling starting with "F" reaches the F-key arm, so the number is
-    // what it is reported as failing to parse.
-    #[test_case("Foo+c"           => "Invalid F-key: 'Foo+c'"    ; "a modifier that does not exist")]
+    #[test_case("F1000"           => "Invalid F-key: 'F1000' (must be F1-F24)" ; "a function key too large for a u8")]
+    // Only "F" and digits is a function key, so a word starting with "F" is
+    // an unknown key rather than a function key that failed to parse.
+    #[test_case("Foo+c"           => "Unknown key: 'Foo+c'"      ; "a modifier that does not exist")]
+    #[test_case("Fn"              => "Unknown key: 'Fn'"         ; "a name starting with F")]
     // The key name is never empty: the modifier prefix is stripped only when
     // something follows it, so the whole spelling is what the error names.
     #[test_case("Ctrl+"           => "Unknown key: 'Ctrl+'"      ; "a modifier with no key")]
@@ -668,6 +711,13 @@ mod tests {
     #[test_case("Shift+1"         => "Invalid key: 'Shift+1' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a digit")]
     #[test_case("Shift+/"         => "Invalid key: 'Shift+/' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a symbol")]
     #[test_case("Shift+\u{df}"    => "Invalid key: 'Shift+\u{df}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a letter with no single uppercase")]
+    // With Ctrl or Alt an uppercase letter matches no key press: kitty
+    // reports the lowercase letter with Shift, and the legacy encoding drops
+    // the Shift.
+    #[test_case("Ctrl+G"          => "Invalid key: 'Ctrl+G' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Shift+g')" ; "ctrl on an uppercase letter")]
+    #[test_case("Alt+A"           => "Invalid key: 'Alt+A' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Alt+Shift+a')" ; "alt on an uppercase letter")]
+    #[test_case("Ctrl+Shift+A"    => "Invalid key: 'Ctrl+Shift+A' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Shift+a')" ; "ctrl and shift on an uppercase letter")]
+    #[test_case("Ctrl+Alt+\u{c9}" => "Invalid key: 'Ctrl+Alt+\u{c9}' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Alt+Shift+\u{e9}')" ; "two modifiers on a non-ascii uppercase letter")]
     fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // No terminal emits these, so they must fail config loading rather
         // than silently producing a binding that never fires. Which refusal
@@ -773,6 +823,44 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains('j'), "Error should mention the key: {err}");
+    }
+
+    #[test]
+    fn a_conflict_names_both_config_keys() {
+        let err = keybindings_with_override(
+            r#"
+            [keybindings]
+            back = "q"
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!("Key 'q' is bound to both back and quit", err);
+    }
+
+    #[test]
+    fn a_conflict_with_a_hardcoded_only_key_says_what_the_key_does() {
+        let err = keybindings_with_override(
+            r#"
+            [keybindings]
+            quit = "Esc"
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            "Key 'Esc' is bound to both the hardcoded reset view and quit",
+            err
+        );
+    }
+
+    #[test_case("show_bookmarks" ; "a normal mode key")]
+    #[test_case("prompt_submit"  ; "a prompt mode key")]
+    fn an_unparsable_binding_names_its_config_key(key: &str) {
+        let err = keybindings_with_override(&format!("[keybindings]\n{key} = \"NotAKey\"\n"))
+            .unwrap_err();
+        assert_eq!(format!("Invalid keybinding for {key}"), err.to_string());
+        assert_eq!("Unknown key: 'NotAKey'", err.root_cause().to_string());
     }
 
     #[test]

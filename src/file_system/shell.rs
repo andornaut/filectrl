@@ -35,11 +35,7 @@ pub(crate) fn command(template: &str, values: impl IntoIterator<Item = OsString>
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        ffi::{OsStr, OsString},
-        os::unix::ffi::OsStrExt,
-        process::Command,
-    };
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, process::Command};
 
     use test_case::test_case;
 

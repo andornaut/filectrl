@@ -9,8 +9,6 @@
 //! those call sites says so. This drives the real handler tree so that removing
 //! a sole claimant fails here rather than exiting the app mid-session.
 
-use std::{path::PathBuf, sync::mpsc};
-
 use super::*;
 use crate::{
     app::{clipboard::ClipboardEntry, config::Openers},
@@ -118,6 +116,7 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         Command::OpenWith {
             argv: Vec::new(),
             label: "app".to_string(),
+            path: fixture.file().path,
             working_dir: None,
         },
         Command::GoToPreviousDirectory,

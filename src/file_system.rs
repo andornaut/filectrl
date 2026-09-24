@@ -3,6 +3,7 @@ mod debounce;
 mod handler;
 pub mod open_with;
 mod operations;
+pub(crate) use operations::{exit_cause, failure_prefix};
 mod paste;
 pub mod path_info;
 mod search;
@@ -392,7 +393,13 @@ impl FileSystem {
                 if path.is_directory() {
                     self.cd(path, true)
                 } else {
-                    open_in(&path, &self.open_file_template, self.command_tx.clone()).into()
+                    open_in(
+                        "open_file",
+                        &path,
+                        &self.open_file_template,
+                        self.command_tx.clone(),
+                    )
+                    .into()
                 }
             }
             Err(err) => err.into(),
@@ -401,6 +408,7 @@ impl FileSystem {
 
     fn open_current_directory(&self) -> CommandResult {
         open_in(
+            "open_directory",
             self.current_directory(),
             &self.open_directory_template,
             self.command_tx.clone(),
@@ -410,6 +418,7 @@ impl FileSystem {
 
     fn open_new_window(&self) -> CommandResult {
         open_in(
+            "open_filectrl_window",
             self.current_directory(),
             &self.open_filectrl_window_template,
             self.command_tx.clone(),
@@ -423,14 +432,19 @@ impl FileSystem {
         &self,
         working_dir: Option<&Path>,
         label: &str,
+        path: &Path,
         argv: &[OsString],
     ) -> CommandResult {
-        spawn_argv(working_dir, label, argv, self.command_tx.clone()).into()
+        spawn_argv(working_dir, label, path, argv, self.command_tx.clone()).into()
     }
 
     fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {
         let Some(mode) = parse_octal_mode(mode_str) else {
-            return anyhow!("Invalid octal mode: {mode_str:?}").into();
+            let object = match paths {
+                [path] => compact(&path.path).to_string(),
+                _ => format!("{} items", paths.len()),
+            };
+            return anyhow!("Cannot chmod {object}: {mode_str:?} is not an octal mode").into();
         };
         // Return the failures alongside the refresh instead of sending them
         // separately, so they are ordered against it rather than racing the
@@ -733,7 +747,7 @@ fn parse_octal_mode(mode_str: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, path::Path};
+    use std::os::unix::fs::PermissionsExt;
 
     use test_case::test_case;
 
@@ -1591,7 +1605,13 @@ mod tests {
         let [Command::AlertError(message)] = commands.as_slice() else {
             panic!("expected one alert, got {commands:?}");
         };
-        assert_eq!("Invalid octal mode: \"rwx\"", message);
+        assert_eq!(
+            format!(
+                "Cannot chmod {}: \"rwx\" is not an octal mode",
+                compact(&file)
+            ),
+            *message
+        );
         assert_eq!(
             0o600,
             fs::metadata(&file).unwrap().permissions().mode() & 0o7777

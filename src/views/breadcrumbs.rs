@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use crate::{
         app::config::Config,
-        command::{Command, handler::CommandHandler, result::CommandResult},
+        command::{Command, handler::CommandHandler},
     };
 
     fn view(path: impl AsRef<Path>, mode: ListingMode) -> BreadcrumbsView {
@@ -172,8 +172,6 @@ mod tests {
     /// without a terminal. The widget is what maps columns to breadcrumbs, so
     /// building the positions by hand would test something else.
     fn lay_out(view: &mut BreadcrumbsView, width: u16) {
-        use ratatui::style::Style;
-
         let display = view.display_breadcrumbs();
         let tag_style = (view.mode != ListingMode::Normal).then(Style::default);
         let (_, positions) = super::widget::spans(

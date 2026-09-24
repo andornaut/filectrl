@@ -265,6 +265,9 @@ impl PromptView {
             _ => {}
         }
 
+        if inserts_whitespace(code, modifiers) {
+            return CommandResult::Handled;
+        }
         self.text_area
             .input(Input::from(KeyEvent::new(code, modifiers)));
 
@@ -273,5 +276,20 @@ impl PromptView {
         }
 
         CommandResult::Handled
+    }
+}
+
+/// Whether `input()` would insert a line break or a tab for this key. The
+/// input is one line (only the first is drawn, while `submit` joins them all),
+/// and a tab is never meant as part of a name, so these keys are dropped
+/// rather than edited in: Enter with any modifier, Ctrl+m, a literal CR or LF,
+/// and Tab. BackTab inserts nothing but is dropped with Tab.
+fn inserts_whitespace(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    match code {
+        KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('\n' | '\r') => true,
+        KeyCode::Char('m') => {
+            modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT)
+        }
+        _ => false,
     }
 }

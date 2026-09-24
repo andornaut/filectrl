@@ -73,7 +73,7 @@ Flag | Also accepts
 
 Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` on Linux and so is not always under `~/.config`.
 
-SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself. A quit signal is passed to the program so both exit: SIGHUP as itself, the others as SIGTERM. SIGINT and SIGQUIT are the program's alone meanwhile, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
+SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit with status 128 plus the signal number (143 for SIGTERM), as a shell reports a process the signal killed. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself. A quit signal is passed to the program so both exit: SIGHUP as itself, the others as SIGTERM. SIGINT and SIGQUIT are the program's alone meanwhile, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
 
 ### Bookmarks
 
@@ -231,18 +231,22 @@ Reset to initial value | <kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>z</kb
 Select all | <kbd>Ctrl</kbd>+<kbd>a</kbd>
 Copy, Cut, Paste text | <kbd>Ctrl</kbd>+<kbd>c</kbd>, <kbd>Ctrl</kbd>+<kbd>x</kbd>, <kbd>Ctrl</kbd>+<kbd>v</kbd>
 Move cursor | <kbd>←</kbd>/<kbd>→</kbd>
-Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
+Move cursor by word | <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Alt</kbd>+<kbd>b</kbd>/<kbd>f</kbd>
 Move cursor to start, end | <kbd>Home</kbd>, <kbd>Ctrl</kbd>+<kbd>e</kbd>/<kbd>End</kbd>
 Select text | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Select to line start, end | <kbd>Shift</kbd>+<kbd>Home</kbd>, <kbd>Shift</kbd>+<kbd>End</kbd>
 Select by word | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
 Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
+Delete word before, after cursor | <kbd>Ctrl</kbd>+<kbd>w</kbd>/<kbd>Alt</kbd>+<kbd>Backspace</kbd>, <kbd>Alt</kbd>+<kbd>d</kbd>/<kbd>Alt</kbd>+<kbd>Delete</kbd>
+Delete to start, end | <kbd>Ctrl</kbd>+<kbd>j</kbd>, <kbd>Ctrl</kbd>+<kbd>k</kbd>
 Accept path suggestion (cursor at end of input) | <kbd>Tab</kbd>
 Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
 In the Go to prompt, `~` alone or a leading `~/` stands for the home directory. Other input that is not an absolute path, `~backup` included, is relative to the current directory.
 
 A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. <kbd>Enter</kbd> with the cursor at the end of the input accepts the suggestion shown before going there, so `/tmp/fo` opens `/tmp/foo/` when that is the suggestion. Moving the cursor off the end of the input dismisses it. A directory of more than 10,000 entries offers no suggestions.
+
+A key with no prompt binding is passed to the text input ([ratatui-textarea](https://github.com/ratatui/ratatui-textarea)), whose defaults are emacs-style: besides the keys above, <kbd>Ctrl</kbd>+<kbd>b</kbd>/<kbd>f</kbd> move by character, <kbd>Ctrl</kbd>+<kbd>h</kbd>/<kbd>d</kbd> delete before and after the cursor, and <kbd>Ctrl</kbd>+<kbd>y</kbd> pastes the text last cut in the prompt. The input is one line: <kbd>Tab</kbd> (outside the Go to prompt), <kbd>Enter</kbd> with a modifier, and <kbd>Ctrl</kbd>+<kbd>m</kbd> are ignored rather than inserted.
 
 Text pasted through the terminal (bracketed paste) goes into a text prompt as one line, with its line breaks removed. A paste anywhere else, including a y/n prompt, is ignored, so pasted text never acts as keys.
 
@@ -327,7 +331,7 @@ run_in_terminal = "" # Linux only, ignored here
 Key | Action
 --- | ---
 <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd> | Move between applications
-<kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Move to the first or last application
+<kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>End</kbd>/<kbd>G</kbd>/<kbd>$</kbd> (and their normal-mode bindings) | Move to the first or last application
 <kbd>PageDown</kbd>, <kbd>PageUp</kbd> (and their normal-mode bindings) | Move a page down or up
 <kbd>→</kbd>/<kbd>l</kbd>/<kbd>Enter</kbd> | Open with the selected application
 <kbd>1</kbd> to <kbd>9</kbd> | Open with that numbered application
@@ -341,7 +345,7 @@ The list is built per platform:
 - **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, nor is one whose `Exec` is malformed, and the log names each at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p` or `r` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--print` and `--run`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
+On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--execute-command`, `--print`, `--run` and `--split-string`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
 
 `Exec` shape | Example | Result
 --- | --- | ---
@@ -474,10 +478,11 @@ Form | Examples
 Single characters | `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
 Uppercase (implies Shift) | `"G"`, `"V"`, `"N"`
 Named keys | `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
-Function keys | `"F2"`, `"F5"`
-Modifier prefixes | `"Ctrl+c"`, `"Shift+Left"`, `"Ctrl+Shift+a"`
+Aliases | `"Return"` (`"Enter"`), `"Escape"` (`"Esc"`), `"Del"` (`"Delete"`), `"PageUp"` (`"PgUp"`), `"PageDown"` (`"PgDn"`)
+Function keys | `"F1"` to `"F24"`
+Modifier prefixes (`Ctrl+`, `Shift+`, `Alt+`, any case) | `"Ctrl+c"`, `"Shift+Left"`, `"Alt+x"`, `"Ctrl+Shift+a"`
 
-`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`. For a character key, Shift on its own applies only to letters with a single uppercase form: a shifted digit or symbol arrives as the character it produces, so bind `"!"` rather than `"Shift+1"`, which is refused, as is Shift on a letter such as `ß`.
+`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`. For a character key, Shift on its own applies only to letters with a single uppercase form: a shifted digit or symbol arrives as the character it produces, so bind `"!"` rather than `"Shift+1"`, which is refused, as is Shift on a letter such as `ß`. With <kbd>Ctrl</kbd> or <kbd>Alt</kbd>, write the letter lowercase and add `Shift+` (`"Ctrl+Shift+g"`, not `"Ctrl+G"`): an uppercase letter with either modifier matches no key press, so it is refused.
 
 Binding one key to two actions in the same mode prevents startup, including a collision between a key you configured and a default you did not override. Assigning the same key to one action more than once is allowed.
 
@@ -537,6 +542,8 @@ Some cases need fixtures git cannot store; create them locally:
 ### Git hooks
 
 - [cargo-husky](https://github.com/rhysd/cargo-husky)
+
+The pre-commit hook runs `cargo fmt --check`, `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`, then the same clippy for `aarch64-apple-darwin` when that target is installed (`rustup target add aarch64-apple-darwin`). It does not format for you: run `cargo fmt` and stage the result when the check fails.
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 

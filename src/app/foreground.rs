@@ -79,11 +79,20 @@ pub(super) trait Handover {
     fn suspend(&mut self);
 
     fn resume(&mut self) -> io::Result<()>;
+
+    /// Leaves a suspended terminal with the settings the shell had, over any a
+    /// program killed part way left (echo off, raw mode). Best effort: the
+    /// process is quitting, and a terminal that hung up takes no settings.
+    fn release(&mut self);
 }
 
 impl Handover for CleanupOnDropTerminal {
     fn suspend(&mut self) {
         CleanupOnDropTerminal::suspend(self);
+    }
+
+    fn release(&mut self) {
+        CleanupOnDropTerminal::release(self);
     }
 
     fn resume(&mut self) -> io::Result<()> {
@@ -100,9 +109,10 @@ pub(super) enum Outcome {
     /// would have shared the keyboard with it.
     ReaderBusy,
     /// A termination signal arrived before the program started or while it
-    /// ran. The terminal is left handed back, in the shell's modes, for the
-    /// quit that follows: taking it back would only mean leaving it again, and
-    /// a terminal that hung up cannot be taken back at all.
+    /// ran. The terminal is left handed back for the quit that follows, with
+    /// the shell's settings put back over any the program left: taking it back
+    /// would only mean leaving it again, and a terminal that hung up cannot be
+    /// taken back at all.
     Quit,
 }
 
@@ -127,9 +137,12 @@ pub(super) fn run(
         return Ok(Outcome::Quit);
     }
     // crossterm answers SIGWINCH by ending its poll with a resize event, so the
-    // reader reaches its checkpoint now rather than at its next timeout.
+    // reader reaches its checkpoint now rather than at its next timeout. The
+    // request comes first, so the checkpoint the wake-up reaches is the one
+    // that stops.
+    gate.request_pause();
     let _ = raise(Signal::SIGWINCH);
-    if !gate.pause(pause_timeout) {
+    if !gate.wait_paused(pause_timeout) {
         gate.resume();
         return Ok(Outcome::ReaderBusy);
     }
@@ -144,6 +157,7 @@ pub(super) fn run(
     }
     let status = run_foreground_child(&mut command, quit_requested);
     if quit_requested() {
+        terminal.release();
         return Ok(Outcome::Quit);
     }
     let resumed = terminal.resume();
@@ -222,6 +236,11 @@ mod tests {
             self.child_flag_at
                 .push(("resume", crate::app::events::is_foreground_child()));
             Ok(())
+        }
+
+        fn release(&mut self) {
+            self.child_flag_at
+                .push(("release", crate::app::events::is_foreground_child()));
         }
     }
 
@@ -321,11 +340,11 @@ mod tests {
         assert!(terminal.child_flag_at.is_empty());
     }
 
-    /// A quit while the program ran leaves the terminal handed back: the
-    /// process is about to exit, and a terminal that hung up cannot be taken
-    /// back.
+    /// A quit while the program ran leaves the terminal handed back, with the
+    /// shell's settings over whatever the program left: the process is about
+    /// to exit, and a terminal that hung up cannot be taken back.
     #[test]
-    fn a_quit_during_the_program_leaves_the_terminal_handed_back() {
+    fn a_quit_during_the_program_leaves_the_terminal_to_the_shell() {
         use std::sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -365,6 +384,9 @@ mod tests {
         crate::app::events::set_foreground_child(false);
 
         assert!(matches!(outcome, super::Outcome::Quit), "{outcome:?}");
-        assert_eq!(vec![("suspend", true)], terminal.child_flag_at);
+        assert_eq!(
+            vec![("suspend", true), ("release", true)],
+            terminal.child_flag_at
+        );
     }
 }

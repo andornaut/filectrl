@@ -900,6 +900,9 @@ mod tests {
     #[test_case("v1.9", "v1.10", true => Ordering::Less ; "each run is its own number")]
     #[test_case("a-1", "a1", true => Ordering::Less ; "a character before a digit keeps its place")]
     #[test_case("01", "1", true => Ordering::Less ; "equal numbers fall back to the text")]
+    // The text decides before the raw name: by the raw name alone `a01` would
+    // follow `A1`, since `a` follows `A` in byte order.
+    #[test_case("a01", "A1", true => Ordering::Less ; "the text decides before the name does")]
     #[test_case("B", "a", true => Ordering::Greater ; "case is still ignored")]
     #[test_case("File", "file", true => Ordering::Less ; "names equal but for case are ordered by the name")]
     #[test_case(".bashrc", "bashrc", false => Ordering::Less ; "names equal but for a dot are ordered by the name")]

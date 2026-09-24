@@ -325,8 +325,33 @@ pub(super) fn settle_raced_rename(
     match step(conflicts.and_then(Conflicts::standing), Some(occupant)) {
         // Skipped, like a name the copy settles: the source stays where it is.
         PasteStep::Skip => Some(Ok(())),
+        // `rename(2)` onto another link to the same file does nothing and
+        // reports success, which would count as a move while the source stays.
+        PasteStep::Run { overwrite: true } if is_same_file(old_path, new_path) => {
+            Some(Err(std::io::Error::other(SameFile)))
+        }
         PasteStep::Run { overwrite: true } => Some(fs::rename(old_path, new_path)),
         PasteStep::Run { overwrite: false } | PasteStep::Ask { .. } => None,
+    }
+}
+
+/// The error `settle_raced_rename` returns when the name it would replace is
+/// another link to the source, so the caller can refuse the move in its own
+/// words rather than report it as a failed rename.
+#[derive(Debug)]
+pub(super) struct SameFile;
+
+impl std::fmt::Display for SameFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("it is the same file")
+    }
+}
+
+impl std::error::Error for SameFile {}
+
+impl SameFile {
+    pub(super) fn is(error: &std::io::Error) -> bool {
+        matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
     }
 }
 
@@ -734,6 +759,29 @@ mod tests {
             src.exists(),
             std::fs::read(&dst).is_ok_and(|bytes| bytes == b"src"),
         )
+    }
+
+    /// A name raced onto the destination that is a hard link to the source is
+    /// not something an overwrite can replace: `rename(2)` would do nothing and
+    /// report success, so the move would count as done with the source kept.
+    #[test]
+    fn a_raced_hard_link_to_the_source_is_refused_under_overwrite_all() {
+        let fx = TempDir::new("tasks_move_raced_link");
+        let src = fx.join("src.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::hard_link(&src, &dst).unwrap();
+        let conflicts = Conflicts::default();
+        conflicts.answer(ConflictChoice::OverwriteAll);
+
+        let settled = settle_raced_rename(Some(&conflicts), &src, &dst, false);
+
+        match settled {
+            Some(Err(error)) => assert!(SameFile::is(&error), "{error}"),
+            other => panic!("expected the same-file refusal, got {other:?}"),
+        }
+        assert!(src.exists());
+        assert!(dst.exists());
     }
 
     #[test]

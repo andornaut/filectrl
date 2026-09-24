@@ -160,11 +160,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::{clipboard::ClipboardEntry, config::Config},
+        app::config::Config,
         command::{
             Command,
             handler::CommandHandler,
-            progress::{ActiveTask, Task, TaskKind, Transfer},
+            progress::{ActiveTask, TaskKind, Transfer},
         },
         file_system::path_info::PathInfo,
     };

@@ -78,7 +78,7 @@ fn account_fields(owner: Option<String>, group: Option<String>) -> Vec<(&'static
 fn target_field(selected: &PathInfo) -> Option<(&'static str, String)> {
     selected
         .symlink_target()
-        .map(|target| (" ->", visible_path(target)))
+        .map(|target| (" -> ", visible_path(target)))
 }
 
 fn kind_field(selected: &PathInfo) -> String {
@@ -124,8 +124,14 @@ fn kind_field(selected: &PathInfo) -> String {
     if selected.is_other_writable() {
         kind.push("Other Writable");
     }
+    // On a directory the execute bit grants search (entering it, reaching
+    // what it holds), not running it.
     if selected.is_executable() {
-        kind.push("Executable");
+        kind.push(if selected.is_directory() {
+            "Searchable"
+        } else {
+            "Executable"
+        });
     }
 
     // Note: is_door() is not included as it's a Solaris-specific IPC mechanism
@@ -180,7 +186,7 @@ mod tests {
     /// space: the status bar is one line and this field competes with the rest
     /// of it for width.
     #[test_case(REGULAR => "File" ; "a plain file")]
-    #[test_case(DIRECTORY => "Directory,Executable" ; "a directory carries its execute bit")]
+    #[test_case(DIRECTORY => "Directory,Searchable" ; "a directory's execute bit reads as search")]
     #[test_case(EXECUTABLE => "File,Executable" ; "an executable file")]
     #[test_case(0o100_645 => "File,Executable" ; "any execute bit makes it executable")]
     #[test_case(0o100_664 => "File" ; "group write is not other write")]
@@ -191,7 +197,7 @@ mod tests {
     // The flags accumulate where the base types do not: unlike `name_style`,
     // this field reports every property rather than the highest-ranked one.
     #[test_case(SETUID_SETGID => "File,SetGID,SetUID,Executable" ; "both special bits and the execute bit they imply")]
-    #[test_case(DIRECTORY_STICKY_OTHER_WRITABLE => "Directory,Sticky,Other Writable,Executable" ; "a sticky, other-writable directory")]
+    #[test_case(DIRECTORY_STICKY_OTHER_WRITABLE => "Directory,Sticky,Other Writable,Searchable" ; "a sticky, other-writable directory")]
     fn kind_field_reports(mode: u32) -> String {
         kind_field(&PathInfo::with_mode(mode))
     }
@@ -216,7 +222,7 @@ mod tests {
         symlink("a\u{202e}b", &link).unwrap();
 
         assert_eq!(
-            Some((" ->", "a\\u{202e}b".to_string())),
+            Some((" -> ", "a\\u{202e}b".to_string())),
             target_field(&PathInfo::try_from(&link).unwrap())
         );
         assert_eq!(None, target_field(&PathInfo::with_mode(SYMLINK)));

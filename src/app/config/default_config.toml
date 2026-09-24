@@ -64,7 +64,8 @@ natural_sort = true
 # Values can be a single key string or an array of key strings.
 # Key strings: single chars ("q"), uppercase implies Shift ("G"), named keys
 # ("Enter", "Esc", "Backspace", "Delete", "Space", "Tab", "PgUp", "PgDn", "F2"),
-# and modifier prefixes ("Ctrl+c", "Ctrl+Shift+a").
+# the aliases "Return", "Escape", "Del", "PageUp" and "PageDown", and modifier
+# prefixes ("Ctrl+c", "Alt+x", "Ctrl+Shift+a").
 [keybindings]
 # Normal mode
 add_bookmark = "B"

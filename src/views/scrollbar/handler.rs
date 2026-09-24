@@ -12,6 +12,13 @@ impl ScrollbarView {
         self.is_dragging
     }
 
+    /// A drag begun without the click that starts one, for a test whose view
+    /// has no scrollbar drawn to click.
+    #[cfg(test)]
+    pub fn begin_drag(&mut self) {
+        self.is_dragging = true;
+    }
+
     pub fn handle_mouse(&mut self, event: MouseEvent, max_position: usize) -> Option<usize> {
         let y = event.row;
 
@@ -73,6 +80,27 @@ mod tests {
             track: area,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn hiding_ends_a_drag_whose_release_it_may_never_see() {
+        let mut s = scrollbar_at(0, 5);
+        s.handle_mouse(
+            ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column: 0,
+                row: 2,
+                modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+            },
+            10,
+        );
+        assert!(s.is_dragging());
+
+        s.hide();
+
+        assert!(!s.is_dragging());
     }
 
     #[test]

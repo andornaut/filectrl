@@ -93,6 +93,11 @@ macro_rules! file_type {
             // Pattern-based styles
             #[serde(skip)]
             extension_styles: HashMap<String, StyleConfig>,
+            // `extension_styles` keyed by the ASCII-lowercased extension, for
+            // a name that matches no entry exactly: `ls` matches extensions
+            // without regard to case.
+            #[serde(skip)]
+            folded_extension_styles: HashMap<String, StyleConfig>,
             // Insertion-ordered (LS_COLORS order). Lookup picks the longest
             // matching pattern so results are deterministic and the most
             // specific pattern wins.
@@ -216,6 +221,8 @@ impl FileType {
                 // Recognized file-type key, handled by set_ls_color.
             } else if let Some(ext) = key.strip_prefix("*.") {
                 self.extension_styles.insert(ext.to_string(), style);
+                self.folded_extension_styles
+                    .insert(ext.to_ascii_lowercase(), style);
             } else if let Some(name) = key.strip_prefix('*') {
                 self.name_styles.push((name.to_string(), style));
             }
@@ -232,12 +239,17 @@ impl FileType {
         // Extension patterns: try every dot-separated suffix, longest first,
         // so a multi-dot pattern like "tar.gz" wins over "gz". A leading dot
         // does not count, so dotfiles like ".bashrc" are not treated as
-        // having extension "bashrc".
+        // having extension "bashrc". An exact-case entry wins over one that
+        // differs only in case, as in `ls`.
         for (i, _) in name.match_indices('.') {
             if i == 0 {
                 continue;
             }
-            if let Some(&style) = self.extension_styles.get(&name[i + 1..]) {
+            let extension = &name[i + 1..];
+            if let Some(&style) = self.extension_styles.get(extension).or_else(|| {
+                self.folded_extension_styles
+                    .get(&extension.to_ascii_lowercase())
+            }) {
                 return Some(style.into());
             }
         }
@@ -387,7 +399,6 @@ impl Theme {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
     use test_case::test_case;
 
     use super::*;
@@ -407,6 +418,22 @@ mod tests {
         let mut ft = FileType::default();
         ft.extension_styles.insert(ext.to_string(), red());
         assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
+    }
+
+    #[test_case("a.JPG" ; "an upper-case extension")]
+    #[test_case("a.Jpg" ; "a mixed-case extension")]
+    fn an_extension_matches_without_regard_to_case(name: &str) {
+        let mut ft = FileType::default();
+        ft.apply_ls_colors("*.jpg=31", false);
+        assert_eq!(ft.pattern_styles(name).unwrap().fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn an_exact_case_extension_wins_over_a_case_variant() {
+        let mut ft = FileType::default();
+        ft.apply_ls_colors("*.JPG=34:*.jpg=31", false);
+        assert_eq!(ft.pattern_styles("a.JPG").unwrap().fg, Some(Color::Blue));
+        assert_eq!(ft.pattern_styles("a.jpg").unwrap().fg, Some(Color::Red));
     }
 
     #[test]

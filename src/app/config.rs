@@ -480,11 +480,14 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
 fn create_and_write(path: &Path, content: &str) -> std::io::Result<()> {
     use std::io::Write;
 
-    fs::OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)?
-        .write_all(content.as_bytes())
+        .open(path)?;
+    file.write_all(content.as_bytes())?;
+    // On disk before a rename can put it in place of the old file, so a crash
+    // cannot leave an empty config under the real name.
+    file.sync_all()
 }
 
 /// Merges the given include files on top of an existing config value.

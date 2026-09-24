@@ -1173,7 +1173,9 @@ mod tests {
     use test_case::test_case;
 
     use super::{
-        super::test_support::{copy_task, destination, finished_task, mode_of, paste_after},
+        super::test_support::{
+            copy_task, destination, finished_task, mode_of, paste_after, paste_after_unless,
+        },
         *,
     };
     use crate::{
@@ -2046,6 +2048,52 @@ mod tests {
         assert_eq!(expected, mode_of(&fx.join("dst")) & 0o7777);
     }
 
+    /// Run by `a_copy_takes_the_umask_on_the_owner_bits_too` under a umask
+    /// that clears owner bits; on its own it proves nothing. The fixture is
+    /// made before the umask is set, so the directory can still be written.
+    #[test]
+    #[ignore = "run under a umask of 0o277 by the test below"]
+    fn a_copy_under_a_umask_clearing_owner_bits() {
+        let fx = TempDir::new("tasks_file_mode_umask");
+        let src = fx.join("src");
+        fs::write(&src, b"x").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o777)).unwrap();
+        nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o277));
+
+        let errors = copy_one(&src, &fx.join("dst"), false);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            0o777 & umask_leaves(fx.path()),
+            mode_of(&fx.join("dst")) & 0o7777
+        );
+    }
+
+    /// A copy's owner bits are the source's as the umask leaves them, like
+    /// `cp`: a umask that clears the owner's write bit clears it on the copy.
+    /// The umask is process-wide, so the copy runs in a process of its own.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_copy_takes_the_umask_on_the_owner_bits_too() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "file_system::tasks::copy::tests::a_copy_under_a_umask_clearing_owner_bits",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("1 passed"), "{stdout}");
+    }
+
     // A directory is created owner-writable so its children can be, then
     // given its mode: a copy's owner bits come back to what the source had.
     #[test_case(0o555, false ; "a copy of a read only directory")]
@@ -2346,10 +2394,19 @@ mod tests {
         let dest = fx.join("dest");
         fs::create_dir(&dest).unwrap();
 
-        let (_, task) = paste_after(&src, &dest, false, || {
-            fs::remove_dir(&dest).unwrap();
-            std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
-        });
+        // A copy that did descend would nest `s/sub` without end; three
+        // levels of it is proof enough, and shallow enough to remove.
+        let runaway = src.join("sub/s/sub/s/sub/s/sub");
+        let (_, task) = paste_after_unless(
+            &src,
+            &dest,
+            false,
+            || {
+                fs::remove_dir(&dest).unwrap();
+                std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
+            },
+            || runaway.exists(),
+        );
 
         let message = task.error_message().expect("the copy reports the refusal");
         assert!(
@@ -2402,10 +2459,7 @@ mod tests {
     }
 
     fn set_times(path: &Path, atime: i64, mtime: i64) {
-        use nix::sys::{
-            stat::{UtimensatFlags, utimensat},
-            time::TimeSpec,
-        };
+        use nix::sys::stat::{UtimensatFlags, utimensat};
         utimensat(
             nix::fcntl::AT_FDCWD,
             path,
