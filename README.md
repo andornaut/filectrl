@@ -69,13 +69,13 @@ Flag | Also accepts
 `--write-default-themes` | `--config`, `--force`
 `--version` | nothing
 
-Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` and so is not always under `~/.config`.
+Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` on Linux and so is not always under `~/.config`.
 
 SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode.
 
 ### Bookmarks
 
-Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside the config file (e.g. `~/.config/filectrl/bookmarks/`).
+Bookmarks are symlinks to folders, stored in a `bookmarks/` directory beside the config file (e.g. `~/.config/filectrl/bookmarks/` on Linux).
 
 Key | Action
 --- | ---
@@ -90,7 +90,7 @@ Names must be unique, cannot be empty, and cannot contain a path separator.
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, and an entry from elsewhere with a `.` or `..` component in a path is refused.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the timestamps, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled. An original that was replaced by another entry after the copy is kept, and the move reports it. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the timestamps, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
@@ -115,9 +115,11 @@ Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than h
 
 ### Entries that change after they are listed
 
-Rename, chmod, delete, and the sources of a copy or cut act only on the entry that was listed. Each reads its path again first and refuses with "it changed since it was listed" when the path now names a different entry (another device or inode): the entry was replaced, or a directory above it was swapped for a symlink. When the directory being viewed is itself replaced (`rm -rf build && mkdir build`), the next refresh lists the new directory as if you had navigated to it, with a notice saying so: the marks are cleared and the cursor returns to the top, since by path they would land on entries you never saw.
+Rename, chmod, delete, copy and cut act on whatever the path names when they run, like `mv`, `chmod` and `rm`, so an entry replaced since it was listed is the one acted on. Inside a tree being copied or deleted, a directory swapped for a symlink during the walk is not followed.
 
-On Linux, FUSE (sshfs, GNOME's gvfs), SMB/CIFS, FAT and exFAT mounts can give an entry nobody touched a new inode number, so there only the device is compared: a swap within the same mount is not detected.
+A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed.
+
+When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>R</kbd> tries again.
 
 ### Multi-select
 
@@ -245,9 +247,9 @@ Text pasted through the terminal (bracketed paste) goes into a text prompt as on
 The built-in [default configuration](./src/app/config/default_config.toml) is always the base. A config file merges on top of it, read from the first of:
 
 1. The path given by `--config`
-1. `~/.config/filectrl/config.toml`, if it exists
+1. `config.toml` in the config directory, if it exists: `~/.config/filectrl/` on Linux, `~/Library/Application Support/filectrl/` on macOS. The examples below use the Linux path
 
-`--config` replaces the user config rather than adding to it, so a key the given file leaves out falls back to the built-in default, not to `~/.config/filectrl/config.toml`.
+`--config` replaces the user config rather than adding to it, so a key the given file leaves out falls back to the built-in default, not to the config directory's `config.toml`.
 
 `filectrl --write-default-config` writes the defaults to whichever of those two paths applies. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
 
@@ -261,6 +263,8 @@ log_level = "warn"
 show_hidden_files = false
 sort_directories_first = false
 ```
+
+Logs are written to stderr only when it is redirected (e.g. `filectrl 2>filectrl.log`), since otherwise it is the terminal the interface is drawn on. `log_level` sets the level, and `$RUST_LOG` overrides it.
 
 Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as `buffer_min_bytes` exceeding `buffer_max_bytes`) makes FileCTRL exit with an error rather than ignore it.
 
@@ -276,9 +280,9 @@ Key | Opens with
 <kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
-Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$1"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
+Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$@"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
 
-Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$1"`. Neither is supported, and neither runs the name.
+Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$@"`. Neither is supported, and neither runs the name.
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -399,7 +403,7 @@ ls_colors_take_precedence = true
 include_files = ["theme.toml"]
 ```
 
-- Relative paths resolve from the directory containing the config file; absolute paths are used as-is
+- Relative paths resolve from the directory containing the file that lists them, as named: a symlinked config or include file resolves from the directory holding the link, not the one it points to. Absolute paths are used as-is
 - Files merge in order, later ones taking precedence over the base config and over earlier files
 - The value must be an array of strings, and every listed file must exist, be a regular file (or a symlink to one), and parse, or FileCTRL exits with an error. The same holds for the config file and for `--include`
 

@@ -125,11 +125,7 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
         return None;
     }
     Some(AppCandidate {
-        argv: shell::command(
-            template,
-            shell::Parameters::One,
-            [path.as_os_str().to_os_string()],
-        ),
+        argv: shell::command(template, [path.as_os_str().to_os_string()]),
         // The setting it comes from, so it is obvious which config key to
         // change.
         detail: format!("openers.{key}"),

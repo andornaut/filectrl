@@ -484,6 +484,14 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         // character rather than a multi-byte name.
         s if s.chars().count() == 1 => {
             let mut ch = s.chars().next().expect("the guard counted one char");
+            // A key that draws nothing, or runs as a command when shown, could
+            // not be told apart in the help screen from another binding or none.
+            if crate::is_disguising(ch) {
+                return Err(anyhow!(
+                    "Invalid key: '{}' (a control or invisible character cannot be bound)",
+                    crate::visible(s)
+                ));
+            }
             // Terminals emit a plain shifted letter as the uppercase character,
             // so normalize "Shift+q" to the same combo as "Q". With further
             // modifiers (e.g. "Ctrl+Shift+a") the kitty protocol reports the
@@ -627,6 +635,8 @@ mod tests {
     #[test_case("F0"              => "Invalid F-key: 'F0' (must be F1-F24)"  ; "a function key below the range")]
     #[test_case("F25"             => "Invalid F-key: 'F25' (must be F1-F24)" ; "a function key above the range")]
     #[test_case("F99"             => "Invalid F-key: 'F99' (must be F1-F24)" ; "a function key far above the range")]
+    #[test_case("\u{9b}"          => "Invalid key: '\\u{9b}' (a control or invisible character cannot be bound)" ; "a control character")]
+    #[test_case("Ctrl+\u{2800}"    => "Invalid key: '\\u{2800}' (a control or invisible character cannot be bound)" ; "a modifier on a character that draws nothing")]
     #[test_case("InvalidKey"      => "Unknown key: 'InvalidKey'" ; "a name that is not a key")]
     #[test_case("Ctrl+InvalidKey" => "Unknown key: 'InvalidKey'" ; "a modifier on a name that is not a key")]
     // A spelling starting with "F" reaches the F-key arm, so the number is

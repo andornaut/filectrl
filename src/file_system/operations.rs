@@ -17,7 +17,7 @@ use super::{
     path_info::{PathInfo, compact},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
-    tasks::{Stale, is_same_file, rename_no_replace, restat_listed},
+    tasks::{is_same_file, rename_no_replace, restat},
 };
 use crate::command::{Command, progress::CancellationToken};
 
@@ -100,11 +100,7 @@ pub(super) fn open_in(path: &PathInfo, template: &str, command_tx: Sender<Comman
     if template.is_empty() {
         return Ok(());
     }
-    let argv = shell::command(
-        template,
-        shell::Parameters::One,
-        [path.path.as_os_str().to_os_string()],
-    );
+    let argv = shell::command(template, [path.path.as_os_str().to_os_string()]);
     let label = format!("Command {template:?}");
     let child = detached_command(&argv[0], &argv[1..])
         .spawn()
@@ -174,14 +170,13 @@ fn watch_for_immediate_failure(mut child: Child, label: String, command_tx: Send
 }
 
 /// Refuses a symlink rather than changing its target: `chmod(2)` follows the
-/// link, and Linux has no `lchmod`. The listed type is the one checked, since
-/// an entry that is no longer the one listed is refused anyway.
+/// link, and Linux has no `lchmod`. The type checked is the one the path has
+/// now, which is what the mode is set on.
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     let p = path.as_path();
-    if path.is_symlink() {
+    if restat(path, "chmod")?.is_symlink() {
         return Err(symlink_refusal(p));
     }
-    restat_listed(path).map_err(|stale| stale.into_error("chmod", p))?;
     info!("Changing mode of {} to {mode:o}", p.display());
     set_mode_without_following(p, mode)
 }
@@ -297,18 +292,11 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     if old_path == new_path {
         return Ok(());
     }
-    // Only NotFound means vanished; other errors (e.g. permission denied)
-    // must not claim the file is gone.
-    let vanished = || refuse(&"it no longer exists");
-    match restat_listed(path) {
-        Ok(_) => {}
-        Err(stale) if stale.is_not_found() => return Err(vanished()),
-        Err(Stale::Changed) => return Err(refuse(&"it changed since it was listed")),
-        Err(Stale::Unreadable(error)) => return Err(fail(&error)),
-    }
     info!("Renaming {} to {}", old_path.display(), new_path.display());
     match rename_no_replace(old_path, &new_path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => Err(vanished()),
+        // Only NotFound means vanished; other errors (e.g. permission denied)
+        // must not claim the file is gone.
+        Err(error) if error.kind() == ErrorKind::NotFound => Err(refuse(&"it no longer exists")),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             if !is_same_file(old_path, &new_path) {
                 return Err(refuse(&format_args!(
@@ -317,16 +305,28 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
                 )));
             }
             // Same underlying file. A case-only change is a real rename on a
-            // case-insensitive filesystem, where the destination resolves to the
-            // source, so it is let through. Renaming onto another hard link of
-            // the same inode is a POSIX no-op, so it is reported instead.
-            if !is_case_only_change(old_path, &new_path) {
+            // case-insensitive filesystem, where the new name resolves to the
+            // source and the directory still lists the old spelling, so it is
+            // let through. Renaming onto another hard link of the same inode
+            // is a POSIX no-op, so it is reported instead, including a link
+            // whose name differs only in case on a case-sensitive filesystem,
+            // which the directory lists exactly as typed.
+            if !is_case_only_change(old_path, &new_path) || is_listed(&new_path) {
                 return Err(refuse(&"both names are the same file"));
             }
             fs::rename(old_path, new_path).map_err(|error| fail(&error))
         }
         result => result.map_err(|error| fail(&error)),
     }
+}
+
+/// Whether the directory `path` is in lists an entry of exactly its name.
+fn is_listed(path: &Path) -> bool {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return false;
+    };
+    fs::read_dir(parent)
+        .is_ok_and(|mut entries| entries.any(|entry| entry.is_ok_and(|e| e.file_name() == name)))
 }
 
 /// True when the two paths' file names differ only by letter case.
@@ -463,26 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn rename_refuses_an_entry_replaced_since_it_was_listed() {
-        let dir = TempDir::new("ops_rename_replaced");
-        let a = dir.join("a.txt");
-        fs::write(&a, b"seen").unwrap();
-        let listed = PathInfo::try_from(a.as_path()).unwrap();
-        let other = dir.join("other.txt");
-        fs::write(&other, b"unseen").unwrap();
-        fs::rename(&other, &a).unwrap();
-
-        let error = rename(&listed, "b.txt")
-            .expect_err("another entry at the listed path must be refused")
-            .to_string();
-
-        assert!(error.starts_with("Cannot rename"), "{error}");
-        assert!(error.ends_with("it changed since it was listed"), "{error}");
-        assert_eq!(b"unseen".to_vec(), fs::read(&a).unwrap());
-        assert!(dir.join("b.txt").symlink_metadata().is_err());
-    }
-
-    #[test]
     fn rename_of_an_unreachable_entry_is_a_failure_not_a_vanishing() {
         let dir = TempDir::new("ops_rename_unreachable");
         let sub = dir.join("sub");
@@ -545,24 +525,42 @@ mod tests {
         assert!(b.exists());
     }
 
-    // Linux only: the case-variant hard link this builds is what stands in for
-    // a case-insensitive filesystem, and it cannot be created on one, where
-    // "A.TXT" already resolves to "a.txt".
+    /// Two hard links whose names differ only in case, which only a
+    /// case-sensitive filesystem can hold. Renaming one onto the other would
+    /// change nothing, like any other pair of hard links.
     #[cfg(target_os = "linux")]
     #[test]
-    fn rename_allows_case_only_change_to_same_file() {
-        let dir = TempDir::new("ops_casechange");
-        let a = dir.join("a.txt");
-        // On a case-insensitive filesystem the destination of a case-only
-        // rename resolves to the source itself; a case-variant hard link is
-        // the closest equivalent constructible on a case-sensitive one.
-        let upper = dir.join("A.TXT");
-        fs::write(&a, b"a").unwrap();
-        fs::hard_link(&a, &upper).unwrap();
+    fn rename_refuses_a_hard_link_whose_name_differs_only_in_case() {
+        let dir = TempDir::new("ops_case_hard_link");
+        let upper = dir.join("Foo");
+        fs::write(&upper, b"x").unwrap();
+        fs::hard_link(&upper, dir.join("foo")).unwrap();
 
-        let info = PathInfo::try_from(a.as_path()).unwrap();
-        assert!(rename(&info, "A.TXT").is_ok());
+        let error = rename(&PathInfo::try_from(upper.as_path()).unwrap(), "foo")
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.ends_with("both names are the same file"), "{error}");
         assert!(upper.exists());
+        assert!(dir.join("foo").exists());
+    }
+
+    /// macOS only: the default APFS volume is case-insensitive, where the new
+    /// spelling resolves to the entry itself and the rename changes the name.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rename_changes_only_the_case_of_a_name_on_a_case_insensitive_filesystem() {
+        let dir = TempDir::new("ops_case_change");
+        let lower = dir.join("a.txt");
+        fs::write(&lower, b"a").unwrap();
+
+        rename(&PathInfo::try_from(lower.as_path()).unwrap(), "A.TXT").unwrap();
+
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(vec![OsString::from("A.TXT")], names);
     }
 
     // ── chmod ───────────────────────────────────────────────────────────────
@@ -667,32 +665,9 @@ mod tests {
 
         let error = chmod(&info, 0o600).unwrap_err().to_string();
 
-        // Nothing was found to compare, so it is the errno that is reported.
+        // The errno is reported, not a refusal filectrl decided.
         assert!(error.starts_with("Failed to chmod"), "{error}");
-        assert!(!error.contains("changed since it was listed"), "{error}");
-    }
-
-    /// The row seen was `sub/key`; `sub` is then swapped for a link to another
-    /// directory holding a file of the same name, which the user never saw.
-    #[test]
-    fn chmod_refuses_an_entry_whose_parent_was_swapped_since_it_was_listed() {
-        let dir = TempDir::new("ops_chmod_parent_swapped");
-        let sub = dir.join("sub");
-        let other = dir.join("other");
-        fs::create_dir(&sub).unwrap();
-        fs::create_dir(&other).unwrap();
-        fs::write(sub.join("key"), b"seen").unwrap();
-        fs::write(other.join("key"), b"unseen").unwrap();
-        fs::set_permissions(other.join("key"), fs::Permissions::from_mode(0o600)).unwrap();
-        let listed = PathInfo::try_from(sub.join("key").as_path()).unwrap();
-        fs::rename(&sub, dir.join("sub.orig")).unwrap();
-        std::os::unix::fs::symlink(&other, &sub).unwrap();
-
-        let error = chmod(&listed, 0o644).unwrap_err().to_string();
-
-        assert!(error.starts_with("Cannot chmod"), "{error}");
-        assert!(error.ends_with("it changed since it was listed"), "{error}");
-        assert_eq!(0o600, mode_of(&other.join("key")));
+        assert!(error.contains("No such file"), "{error}");
     }
 
     // ── create_directory ────────────────────────────────────────────────────

@@ -52,7 +52,7 @@ pub enum PromptAction {
     Delete(usize),
     Filter(String),
     Goto {
-        directory: String,
+        directory: PathBuf,
     },
     Rename {
         path: PathInfo,

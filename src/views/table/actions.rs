@@ -61,13 +61,11 @@ impl TableView {
         }
     }
 
-    // The input starts from the path itself, which submitting has to resolve.
-    #[allow(clippy::disallowed_methods)]
     pub(super) fn open_goto_prompt(&self) -> CommandResult {
         let directory = self
             .content
             .directory()
-            .map(|d| d.path.to_string_lossy().into_owned())
+            .map(|d| d.path.clone())
             .unwrap_or_default();
         Command::OpenPrompt(PromptAction::Goto { directory }).into()
     }

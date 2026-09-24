@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cmp, env,
+    cmp,
     ffi::OsStr,
     fmt::{self, Display},
     io,
@@ -286,24 +286,11 @@ impl PathInfo {
         unix_mode::is_fifo(self.mode)
     }
 
-    /// The device and inode, which identify the entry within one filesystem.
-    pub(super) fn device_and_inode(&self) -> (u64, u64) {
-        (self.device, self.inode)
-    }
-
     pub fn is_same_inode(&self, other: &Self) -> bool {
         // Inode numbers are only unique within one filesystem; entries from
         // different mounts (e.g. two mount points in one listing) can share
         // an inode number, so the device must match too.
         self.device == other.device && self.inode == other.inode
-    }
-
-    /// Whether `fresh`, this entry's path read again, still names the entry
-    /// that was listed (see `is_same_entry`).
-    pub fn is_still_listed_as(&self, fresh: &Self) -> bool {
-        is_same_entry(self.device_and_inode(), fresh.device_and_inode(), || {
-            lists_stable_inodes(&fresh.path)
-        })
     }
 
     pub fn is_setgid(&self) -> bool {
@@ -339,21 +326,6 @@ impl PathInfo {
 impl fmt::Debug for PathInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.path)
-    }
-}
-
-impl Default for PathInfo {
-    fn default() -> Self {
-        let path = env::current_dir()
-            .or_else(|_| {
-                directories::UserDirs::new()
-                    .map(|dirs| dirs.home_dir().to_path_buf())
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home directory"))
-            })
-            .unwrap_or_else(|_| PathBuf::from("/"));
-        path.as_path()
-            .try_into()
-            .expect("default directory should be a valid PathInfo")
     }
 }
 
@@ -560,53 +532,6 @@ fn maybe_time_to_string(
     time.map(|time| humanize_datetime(*time, relative_to))
 }
 
-/// Whether `found`, an entry read again by path, is `listed`, both as (device,
-/// inode): the same pair, or only the same device where `has_stable_inodes` is
-/// false. FUSE without `use_ino` (sshfs, gvfs), SMB/CIFS, FAT and exFAT can
-/// give an entry nobody touched a new inode number, so on those a swap within
-/// the same mount is not detected.
-pub(super) fn is_same_entry<D: Copy + PartialEq>(
-    listed: (D, u64),
-    found: (D, u64),
-    has_stable_inodes: impl FnOnce() -> bool,
-) -> bool {
-    listed == found || (listed.0 == found.0 && !has_stable_inodes())
-}
-
-/// Whether the filesystem `path` is listed in keeps inode numbers stable: its
-/// parent's, or its own for a path with no parent.
-pub(super) fn lists_stable_inodes(path: &Path) -> bool {
-    has_stable_inodes(path.parent().unwrap_or(path))
-}
-
-/// Whether the filesystem holding `directory` keeps an entry's inode number
-/// for as long as the entry exists. Assumed where it cannot be read.
-#[cfg(target_os = "linux")]
-fn has_stable_inodes(directory: &Path) -> bool {
-    rustix::fs::statfs(directory).map_or(true, |stat| {
-        // The magic is 32 bits wide; `f_type`'s width and sign vary by target.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let magic = stat.f_type as u32;
-        !is_unstable_inode_filesystem(magic)
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn has_stable_inodes(_directory: &Path) -> bool {
-    true
-}
-
-/// FUSE, CIFS, SMB2, the old SMB filesystem, FAT and exFAT, by `statfs` magic.
-/// FAT and exFAT derive an entry's inode number from where it is stored, which
-/// a rename changes.
-#[cfg(any(target_os = "linux", test))]
-fn is_unstable_inode_filesystem(magic: u32) -> bool {
-    matches!(
-        magic,
-        0x6573_5546 | 0xFF53_4D42 | 0xFE53_4D42 | 0x517B | 0x4D44 | 0x2011_BAB0
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,35 +736,6 @@ mod tests {
         // Same inode number on a different filesystem is a different file.
         b.device = b.device.wrapping_add(1);
         assert!(!a.is_same_inode(&b));
-    }
-
-    #[test_case(0x6573_5546 => true ; "fuse")]
-    #[test_case(0xFF53_4D42 => true ; "cifs")]
-    #[test_case(0xFE53_4D42 => true ; "smb2")]
-    #[test_case(0x517B => true ; "smb")]
-    #[test_case(0x4D44 => true ; "fat")]
-    #[test_case(0x2011_BAB0 => true ; "exfat")]
-    #[test_case(0xEF53 => false ; "ext4")]
-    #[test_case(0x9123_683E => false ; "btrfs")]
-    #[test_case(0x0102_1994 => false ; "tmpfs")]
-    fn inode_numbers_are_unstable_on(magic: u32) -> bool {
-        is_unstable_inode_filesystem(magic)
-    }
-
-    #[test_case(true, false, true => false ; "a new inode where inodes are stable")]
-    #[test_case(false, false, true => true ; "a new inode where they are not")]
-    #[test_case(false, true, true => false ; "another device where they are not")]
-    #[test_case(true, false, false => true ; "the same entry")]
-    fn an_entry_read_again_is_still_the_listed_one(
-        stable: bool,
-        other_device: bool,
-        other_inode: bool,
-    ) -> bool {
-        // The one rule both a listed row (`is_still_listed_as`) and an entry a
-        // task reopens by name (`remove_path`) are held to.
-        let listed = (7_u64, 42);
-        let found = (7 + u64::from(other_device), 42 + u64::from(other_inode));
-        is_same_entry(listed, found, || stable)
     }
 
     #[test_case(".bashrc",  "bashrc"  ; "strips single leading dot")]

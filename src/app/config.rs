@@ -464,8 +464,8 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
 }
 
 /// Merges the given include files on top of an existing config value.
-/// Each include file's own `include_files` are resolved (relative to that
-/// file's directory) and merged recursively. A visited set keyed by
+/// Each include file's own `include_files` are resolved (relative to the
+/// directory of that file's path as named) and merged recursively. A visited set keyed by
 /// canonicalized path breaks cycles and skips duplicate includes. It starts
 /// with `config_file`, which is already merged.
 fn merge_include_paths(
@@ -503,13 +503,13 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
         read_regular_file(path).map_err(|failure| failure.describe(INCLUDE_FILE, path))?;
     let include_value = parse_toml(Some(path), &content)?;
 
-    // Resolve this file's own include_files relative to its real directory.
-    // The file was just read, so canonicalization will have succeeded and the
-    // path is absolute: a bare filename (whose `parent()` is "") still
-    // resolves nested includes against the file's directory, not the CWD.
-    // Only `/` has no parent, and it is not a regular file.
-    let base_dir = canonical.parent().unwrap_or(Path::new("/"));
-    let nested = Config::resolve_include_files(&include_value, base_dir)?;
+    // Resolve this file's own include_files from the directory of the path as
+    // named, not of a symlink's target, the same rule the config file follows.
+    // Absolutized first, since a bare filename's `parent()` is "". Only `/`
+    // has no parent, and it is not a regular file.
+    let path = absolute_path(path)?;
+    let base_dir = canonical_or_raw(path.parent().unwrap_or(Path::new("/")));
+    let nested = Config::resolve_include_files(&include_value, &base_dir)?;
 
     // Merge the file's content first, then its nested includes on top, the
     // same precedence rule the top level uses (includes override the config
@@ -1267,25 +1267,33 @@ open_directory = "alacritty --working-directory %s"
         assert!(select_next_key(&merged, 'e'));
     }
 
-    /// A symlinked include's own includes resolve from the directory of the
-    /// file it names, not from the directory holding the link.
-    #[test]
-    fn a_symlinked_includes_relative_include_resolves_from_its_target() {
-        let dir = TempDir::new("config_symlinked_include_nested");
+    /// A symlinked file's relative includes resolve from the directory holding
+    /// the link, not from the directory of the file it names, whether the link
+    /// is the config file or an include. Both directories hold a `nested.toml`,
+    /// binding different keys.
+    #[test_case(true ; "a symlinked config file")]
+    #[test_case(false ; "a symlinked include file")]
+    fn a_symlinked_files_relative_include_resolves_from_the_links_directory(is_config: bool) {
+        let dir = TempDir::new("config_symlinked_nested");
         fs::create_dir(dir.join("config")).unwrap();
         fs::create_dir(dir.join("dotfiles")).unwrap();
-        let config = dir.join("config/config.toml");
-        fs::write(&config, b"").unwrap();
         let target = dir.join("dotfiles/listed.toml");
         fs::write(&target, "include_files = [\"nested.toml\"]\n").unwrap();
-        // Only `dotfiles/` holds a `nested.toml`.
-        binds_select_next(&dir, "dotfiles/nested.toml", 'e');
+        binds_select_next(&dir, "config/nested.toml", 'e');
+        binds_select_next(&dir, "dotfiles/nested.toml", 'i');
         let link = dir.join("config/link.toml");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        let merged = Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap();
+        let merged = if is_config {
+            Config::load(RuntimeEnv::default(), Some(link), &[]).unwrap()
+        } else {
+            let config = dir.join("config/config.toml");
+            fs::write(&config, b"").unwrap();
+            Config::load(RuntimeEnv::default(), Some(config), &[link]).unwrap()
+        };
 
         assert!(select_next_key(&merged, 'e'));
+        assert!(!select_next_key(&merged, 'i'));
     }
 
     /// The config is valid and so is the first include, so only the file named
@@ -1357,11 +1365,7 @@ open_directory = "alacritty --working-directory %s"
                 &openers.open_filectrl_window,
             ] {
                 let _ = fs::remove_file(&out);
-                let argv = shell::command(
-                    template,
-                    shell::Parameters::One,
-                    [target.as_os_str().to_os_string()],
-                );
+                let argv = shell::command(template, [target.as_os_str().to_os_string()]);
                 // `PATH` holds only the stubs, so the shell is named in full.
                 let status = std::process::Command::new("/bin/sh")
                     .args(&argv[1..])

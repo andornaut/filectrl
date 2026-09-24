@@ -66,12 +66,7 @@ impl DirectoryWatcher {
         let threshold = self
             .debounce_threshold
             .max(listing.saturating_mul(LISTING_COST_FACTOR));
-        // On the UI thread, which a watcher thread that panicked holding the
-        // lock must not take down.
-        self.debouncer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .set_threshold(threshold);
+        self.debouncer.lock().unwrap().set_threshold(threshold);
     }
 
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {

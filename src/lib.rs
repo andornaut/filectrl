@@ -54,6 +54,11 @@ pub fn run(
     let config = Config::load(env, config_path, include_paths)?;
     apply_log_level(&config);
     info!("Terminal truecolor support: {is_truecolor}");
+    // Records after this point would be drawn over the interface, so they are
+    // kept only when stderr is redirected away from the terminal.
+    if std::io::stderr().is_terminal() {
+        log::set_max_level(LevelFilter::Off);
+    }
     Config::init(config);
 
     // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP

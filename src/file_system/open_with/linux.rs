@@ -17,7 +17,7 @@ use xdg_mime::SharedMimeInfo;
 
 use super::{
     AppCandidate,
-    exec::{Refused, expand},
+    exec::{Refused, expand, unescape_value},
     mimeapps::{self, AppDirIndex, Level, MimeAppsList},
 };
 use crate::{
@@ -276,7 +276,9 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
     if entry.type_() != Some("Application") || entry.hidden() {
         return false;
     }
-    entry.try_exec().is_none_or(is_installed)
+    entry
+        .try_exec()
+        .is_none_or(|program| is_installed(&unescape_value(program)))
 }
 
 /// An entry `expand` refuses as unsafe is logged as a warning, since the
@@ -339,11 +341,7 @@ fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     if template.is_empty() {
         return None;
     }
-    Some(shell::command(
-        template,
-        shell::Parameters::All,
-        argv.iter().cloned(),
-    ))
+    Some(shell::command(template, argv.iter().cloned()))
 }
 
 /// Whether a `TryExec` value names an executable that exists. Only an absolute
@@ -584,6 +582,21 @@ mod tests {
         let entry = desktop_entry(&dir, "viewer.desktop", body);
 
         assert_eq!(expected, is_offerable(&entry), "{body:?}");
+    }
+
+    #[test]
+    fn a_try_exec_path_with_an_escaped_space_is_found() {
+        // The parser returns the value with its escapes intact.
+        let dir = TempDir::new("open_with_try_exec_escaped");
+        let program = dir.join("my app");
+        crate::test_support::write_executable(&program, "#!/bin/sh\n");
+        let escaped = program.to_str().unwrap().replace(' ', "\\s");
+        let body = format!(
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nTryExec={escaped}\n"
+        );
+        let entry = desktop_entry(&dir, "viewer.desktop", &body);
+
+        assert!(is_offerable(&entry), "{:?}", entry.try_exec());
     }
 
     #[test_case("[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\n", true

@@ -2,7 +2,7 @@ mod handler;
 mod view;
 mod widget;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
@@ -33,7 +33,7 @@ pub(super) struct PromptView {
     /// Horizontal scroll offset (in display columns), mirroring tui-textarea's internal viewport.
     scroll_col: u16,
     /// Goto: the directory that relative input is resolved against.
-    basedir: String,
+    basedir: PathBuf,
     /// Goto: prefix-matching entries `(name, is_dir)`, sorted ascending.
     suggestions: Vec<(String, bool)>,
     /// Goto: index of the currently shown suggestion.
@@ -234,7 +234,7 @@ impl PromptView {
             };
         }
         // `join` replaces the base with an absolute input.
-        Path::new(&self.basedir).join(input)
+        self.basedir.join(input)
     }
 
     /// Splits the current input into `(dir_prefix, partial)` at the last `/`.
@@ -267,21 +267,21 @@ impl PromptView {
         if self.cached_dir.as_deref() != Some(dir.as_path()) {
             self.cached_entries.clear();
             if let Ok(entries) = std::fs::read_dir(&dir) {
-                let mut all: Vec<(String, bool)> = entries
-                    .flatten()
-                    .take(MAX_SUGGESTION_ENTRIES + 1)
-                    .map(|entry| {
-                        // Completed into the input, so it has to be the name
-                        // itself rather than its escaped form.
-                        #[allow(clippy::disallowed_methods)]
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
-                        (name, is_dir)
-                    })
-                    .collect();
+                let entries: Vec<_> = entries.flatten().take(MAX_SUGGESTION_ENTRIES + 1).collect();
                 // A partial listing would suggest some names and silently
                 // omit others, so a directory past the limit gets none.
-                if all.len() <= MAX_SUGGESTION_ENTRIES {
+                if entries.len() <= MAX_SUGGESTION_ENTRIES {
+                    // Completed into the input, so it has to be the name
+                    // itself. A name that is not UTF-8 cannot be, so it is
+                    // not suggested.
+                    let mut all: Vec<(String, bool)> = entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let name = entry.file_name().into_string().ok()?;
+                            let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+                            Some((name, is_dir))
+                        })
+                        .collect();
                     all.sort_by(|a, b| a.0.cmp(&b.0));
                     self.cached_entries = all;
                 }
@@ -386,6 +386,8 @@ fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
+    use std::path::Path;
+
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use test_case::test_case;
 
@@ -904,7 +906,7 @@ mod tests {
 
     fn goto_prompt(directory: &Path) -> PromptView {
         prompt_with_action(PromptAction::Goto {
-            directory: directory.to_string_lossy().into_owned(),
+            directory: directory.to_path_buf(),
         })
     }
 
@@ -961,7 +963,7 @@ mod tests {
 
         std::fs::write(fixture.dir.join("Cherry"), b"").unwrap();
         view.handle_command(&Command::OpenPrompt(PromptAction::Goto {
-            directory: fixture.dir.path().to_string_lossy().into_owned(),
+            directory: fixture.dir.path().to_path_buf(),
         }));
         type_str(&mut view, "Ch");
 
@@ -998,6 +1000,41 @@ mod tests {
         view.handle_key(KeyCode::Tab, KeyModifiers::NONE);
 
         assert_eq!("a\u{202e}txt", view.text_area.lines()[0]);
+    }
+
+    // Linux only, here and below: a name that is not UTF-8 needs a filesystem
+    // that stores arbitrary bytes, which APFS does not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_name_that_is_not_utf8_is_not_suggested() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = TempDir::new("goto_not_utf8");
+        std::fs::write(dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9")), b"").unwrap();
+        std::fs::write(dir.join("cafe"), b"").unwrap();
+        let mut view = goto_prompt(dir.path());
+        type_str(&mut view, "caf");
+
+        let names: Vec<&str> = view.suggestions.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(vec!["cafe"], names);
+    }
+
+    /// The lossy spelling of the base directory names a sibling that exists,
+    /// so resolving against it would open the wrong `sub`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn goto_from_a_directory_that_is_not_utf8_resolves_against_it() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = TempDir::new("goto_base_not_utf8");
+        let base = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        std::fs::create_dir_all(root.join("caf\u{fffd}").join("sub")).unwrap();
+        let mut view = goto_prompt(&base);
+        view.handle_command(&Command::ClipboardText("sub".into()));
+
+        let Ok(Command::Open(info)) = Command::try_from(view.submit()) else {
+            panic!("expected an Open");
+        };
+        assert_eq!(base.join("sub"), info.path);
     }
 
     #[test]

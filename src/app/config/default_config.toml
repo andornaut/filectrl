@@ -1,5 +1,5 @@
 # One of: off, error, warn, info, debug, or trace
-# Logs are written to stderr
+# Logs are written to stderr, only when it is redirected (e.g. `2>filectrl.log`)
 # Applies from the end of config loading onward, so it cannot show the messages
 # emitted while this file and its includes are being resolved; use $RUST_LOG for
 # those, which overrides this setting
@@ -25,7 +25,7 @@ search_max_results = 10000
 
 # Programs to use to open files or directories, run with `sh -c`:
 # %s stands for the relevant path, which the shell receives as an argument
-# ("$1") rather than as part of the command, so a file name never runs as code.
+# ("$@") rather than as part of the command, so a file name never runs as code.
 # Only a template that hands it to another parser (eval, a nested sh -c, ssh,
 # bash arithmetic such as $(( %s ))) can still run it. Write %s unquoted, as its
 # own word: inside quotes it is split into words or left as literal text.

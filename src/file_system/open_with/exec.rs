@@ -251,7 +251,7 @@ fn file_uri(path: &Path) -> String {
 
 /// Undo the escape sequences that the desktop entry spec defines for values of
 /// type string. Any other backslash sequence is left alone.
-fn unescape_value(value: &str) -> String {
+pub(super) fn unescape_value(value: &str) -> String {
     if !value.contains('\\') {
         return value.to_string();
     }

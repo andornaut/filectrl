@@ -201,7 +201,8 @@ fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
         // anything else is unrelated text.
         let mut tokens = text.split_whitespace();
         if matches!(tokens.next(), Some("cp" | "mv")) && tokens.next().is_some() {
-            return Err(anyhow!("Malformed clipboard entry: {text:?}"));
+            // The text came from another program, so it is not echoed.
+            return Err(anyhow!("Cannot paste the clipboard entry: it is malformed"));
         }
         return Ok(None);
     };
@@ -390,7 +391,7 @@ mod tests {
     // A filectrl-written entry mangled by a clipboard manager: the quote never
     // closes, so tokenizing fails, but the operation token makes it clearly an
     // entry, not prose.
-    #[test_case("cp '/path wi" => "Malformed clipboard entry: \"cp '/path wi\"" ; "a truncated quoted entry")]
+    #[test_case("cp '/path wi" => "Cannot paste the clipboard entry: it is malformed" ; "a truncated quoted entry")]
     // Paths that exist, so the refusal is not the lookup failing. Each leads
     // somewhere other than the directories it names.
     #[test_case("cp /usr/../tmp" => "Cannot paste \"/usr/../tmp\": a clipboard path must not contain \".\" or \"..\"" ; "a parent component")]

@@ -1,7 +1,7 @@
 //! Running a configured shell template on a path.
 //!
 //! The path is never written into the script. `%s` becomes a quoted reference
-//! to a positional parameter and the path is passed after the script as an
+//! to the positional parameters and the path is passed after the script as an
 //! argument, so the shell only ever expands it and never parses it: no file
 //! name can run as a command, whatever quoting, here-document or backticks the
 //! template puts around `%s`. Only a template that hands the text to another
@@ -11,45 +11,21 @@
 //! `%s` must be written unquoted, as its own word. The reference carries its
 //! own double quotes, so inside double quotes it ends up unquoted and the value
 //! is split into words, and inside single quotes it stays the literal text
-//! `"$1"`. Neither is supported, and neither runs the value.
+//! `"$@"`. Neither is supported, and neither runs the value.
 //!
 //! The values are passed as raw bytes, so a path that is not valid UTF-8
 //! reaches the program intact.
 
 use std::ffi::OsString;
 
-/// Which positional parameters `%s` stands for.
-#[derive(Clone, Copy)]
-pub(crate) enum Parameters {
-    /// One value: `$1`.
-    One,
-    /// Every value, each its own word: `$@`. Only the Linux terminal wrapper
-    /// passes a command; macOS launches through `open`.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    All,
-}
-
-impl Parameters {
-    /// The reference that expands to exactly these parameters when unquoted.
-    fn reference(self) -> &'static str {
-        match self {
-            Parameters::One => "\"$1\"",
-            Parameters::All => "\"$@\"",
-        }
-    }
-}
-
-/// The argv that runs `template` with `sh -c`, each `%s` replaced by a quoted
-/// reference to `values`.
-pub(crate) fn command(
-    template: &str,
-    parameters: Parameters,
-    values: impl IntoIterator<Item = OsString>,
-) -> Vec<OsString> {
+/// The argv that runs `template` with `sh -c`, each `%s` replaced by `"$@"`,
+/// which expands to every value, each its own word: a single path or the words
+/// of a command. With one value it expands exactly like `"$1"`.
+pub(crate) fn command(template: &str, values: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     let mut argv = vec![
         OsString::from("sh"),
         OsString::from("-c"),
-        OsString::from(template.replace("%s", parameters.reference())),
+        OsString::from(template.replace("%s", "\"$@\"")),
         // `$0`, which the shell names itself by in its messages.
         OsString::from("sh"),
     ];
@@ -76,17 +52,13 @@ mod tests {
     /// Runs `template` on `values` in a scratch directory holding `rec`, a
     /// program that prints its arguments NUL-terminated. Returns the words it
     /// printed and whether anything ran `touch`.
-    fn run(template: &str, parameters: Parameters, values: &[&OsStr]) -> (Vec<Vec<u8>>, bool) {
+    fn run(template: &str, values: &[&OsStr]) -> (Vec<Vec<u8>>, bool) {
         let dir = crate::test_support::TempDir::new("shell_command");
         crate::test_support::write_executable(
             &dir.join("rec"),
             "#!/bin/sh\nprintf '%s\\0' \"$@\"\n",
         );
-        let argv = command(
-            template,
-            parameters,
-            values.iter().map(|value| value.to_os_string()),
-        );
+        let argv = command(template, values.iter().map(|value| value.to_os_string()));
         let output = Command::new(&argv[0])
             .args(&argv[1..])
             .current_dir(dir.path())
@@ -117,17 +89,15 @@ mod tests {
         // and is a syntax error that runs nothing, so balanced names are tried
         // too: one that runs outside single quotes, one that runs inside them.
         for name in [HOSTILE, "$(touch pwned)", "'$(touch pwned)'"] {
-            for parameters in [Parameters::One, Parameters::All] {
-                let (_, ran) = run(template, parameters, &[OsStr::new(name)]);
-                assert!(!ran, "{name:?}");
-            }
+            let (_, ran) = run(template, &[OsStr::new(name)]);
+            assert!(!ran, "{name:?}");
         }
     }
 
     #[test_case("./rec %s", "" ; "on its own")]
     #[test_case("./rec --file=%s", "--file=" ; "embedded in a word")]
     fn an_unquoted_value_arrives_as_one_word(template: &str, prefix: &str) {
-        let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
+        let (words, _) = run(template, &[OsStr::new(HOSTILE)]);
         assert_eq!(vec![format!("{prefix}{HOSTILE}").into_bytes()], words);
     }
 
@@ -135,10 +105,10 @@ mod tests {
     // it unquoted and split on the space, and are literal inside single quotes.
     #[test_case("./rec \"%s\"", &["a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "inside double quotes")]
     #[test_case("./rec \"--file=%s\"", &["--file=a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "embedded in a double quoted word")]
-    #[test_case("./rec '%s'", &["\"$1\""] ; "inside single quotes")]
-    #[test_case("./rec '--file=%s'", &["--file=\"$1\""] ; "embedded in a single quoted word")]
+    #[test_case("./rec '%s'", &["\"$@\""] ; "inside single quotes")]
+    #[test_case("./rec '--file=%s'", &["--file=\"$@\""] ; "embedded in a single quoted word")]
     fn a_quoted_value_is_split_or_left_literal(template: &str, expected: &[&str]) {
-        let (words, _) = run(template, Parameters::One, &[OsStr::new(HOSTILE)]);
+        let (words, _) = run(template, &[OsStr::new(HOSTILE)]);
         let expected: Vec<Vec<u8>> = expected
             .iter()
             .map(|word| word.as_bytes().to_vec())
@@ -149,7 +119,7 @@ mod tests {
     #[test]
     fn every_value_arrives_as_its_own_word() {
         let values = [OsStr::new("vim"), OsStr::new(HOSTILE)];
-        let (words, ran) = run("./rec %s", Parameters::All, &values);
+        let (words, ran) = run("./rec %s", &values);
         assert_eq!(vec![b"vim".to_vec(), HOSTILE.as_bytes().to_vec()], words);
         assert!(!ran);
     }
@@ -157,14 +127,14 @@ mod tests {
     #[test]
     fn a_value_that_is_not_utf8_arrives_intact() {
         let name = OsStr::from_bytes(b"caf\xe9.txt");
-        let (words, _) = run("./rec %s", Parameters::One, &[name]);
+        let (words, _) = run("./rec %s", &[name]);
         assert_eq!(vec![name.as_bytes().to_vec()], words);
     }
 
     #[test]
     fn the_script_is_passed_before_the_values() {
-        let argv = command("xdg-open %s", Parameters::One, [OsString::from("/a b")]);
-        let expected: Vec<OsString> = ["sh", "-c", "xdg-open \"$1\"", "sh", "/a b"]
+        let argv = command("xdg-open %s", [OsString::from("/a b")]);
+        let expected: Vec<OsString> = ["sh", "-c", "xdg-open \"$@\"", "sh", "/a b"]
             .iter()
             .map(OsString::from)
             .collect();
@@ -173,7 +143,7 @@ mod tests {
 
     #[test]
     fn every_placeholder_is_replaced() {
-        let argv = command("diff %s %s.orig", Parameters::One, []);
-        assert_eq!("diff \"$1\" \"$1\".orig", argv[2]);
+        let argv = command("diff %s %s.orig", []);
+        assert_eq!("diff \"$@\" \"$@\".orig", argv[2]);
     }
 }
