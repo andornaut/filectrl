@@ -7,11 +7,9 @@ use std::{
 
 use nix::{NixPath, dir::Entry, unistd::unlinkat};
 
-use super::sys::{
-    AtFlags, CWD, Dir, Errno, FileType, Mode, OFlag, Stat, UnlinkatFlags, fstat, fstatat, openat,
-};
+use super::sys::{AtFlags, CWD, Dir, Errno, FileType, Mode, OFlag, UnlinkatFlags, fstatat, openat};
 
-use crate::command::progress::ActiveTask;
+use crate::{command::progress::ActiveTask, file_system::entry_id::EntryId};
 
 /// The directories a walk is inside, from its root down to the one it is
 /// working in. Only that deepest directory holds its handles open, so depth is
@@ -58,11 +56,11 @@ pub(super) trait Handles: Sized {
 }
 
 impl Handles for File {
-    type Id = DirId;
+    type Id = EntryId;
 
-    fn reopen_parent(&self, parent: DirId, moved: &str) -> std::io::Result<Self> {
+    fn reopen_parent(&self, parent: EntryId, moved: &str) -> std::io::Result<Self> {
         let reopened = open_directory(self, c"..")?;
-        if DirId::of(&reopened)? != parent {
+        if EntryId::of(&reopened)? != parent {
             return Err(std::io::Error::other(moved));
         }
         Ok(reopened)
@@ -138,7 +136,7 @@ pub(super) fn scan_tree(
     let listed = |dir: std::io::Result<File>| {
         let dir = dir.ok()?;
         let entries = list_entries(&dir).ok()?;
-        let id = DirId::of(&dir).ok()?;
+        let id = EntryId::of(&dir).ok()?;
         Some(Level::open(dir, id, entries.into_iter()))
     };
     let Some(root) = listed(open_unread(CWD, root)) else {
@@ -268,27 +266,6 @@ fn is_named(entry: &nix::Result<Entry>) -> bool {
 /// is a directory to descend into.
 pub(super) type Entries = Vec<(CString, bool)>;
 
-/// The device and inode of an entry, to tell whether one reopened by name is
-/// the one that was listed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) struct DirId {
-    pub(super) dev: nix::libc::dev_t,
-    pub(super) ino: nix::libc::ino_t,
-}
-
-impl DirId {
-    pub(super) fn of(dir: impl AsFd) -> std::io::Result<Self> {
-        Ok(Self::of_stat(&fstat(dir)?))
-    }
-
-    pub(super) fn of_stat(stat: &Stat) -> Self {
-        Self {
-            dev: stat.st_dev,
-            ino: stat.st_ino,
-        }
-    }
-}
-
 /// Collects `(name, is_directory)` for each entry of `dir`, read to the end
 /// before the caller deletes anything. The type comes from the directory entry,
 /// or from an `lstat` where the filesystem does not report one, so a link to a
@@ -371,12 +348,12 @@ mod tests {
         let fx = TempDir::new("tasks_reopen_parent");
         let parent = fx.join("parent");
         fs::create_dir_all(parent.join("child")).unwrap();
-        let expected = DirId::of(open_directory(CWD, &parent).unwrap()).unwrap();
+        let expected = EntryId::of(open_directory(CWD, &parent).unwrap()).unwrap();
         let child = open_directory(CWD, &parent.join("child")).unwrap();
 
         let reopened = child.reopen_parent(expected, "moved").unwrap();
 
-        assert_eq!(expected, DirId::of(&reopened).unwrap());
+        assert_eq!(expected, EntryId::of(&reopened).unwrap());
     }
 
     /// A child moved elsewhere during the walk has a different "..", which the
@@ -388,7 +365,7 @@ mod tests {
         let elsewhere = fx.join("elsewhere");
         fs::create_dir_all(parent.join("child")).unwrap();
         fs::create_dir_all(&elsewhere).unwrap();
-        let expected = DirId::of(open_directory(CWD, &parent).unwrap()).unwrap();
+        let expected = EntryId::of(open_directory(CWD, &parent).unwrap()).unwrap();
         let child = open_directory(CWD, &parent.join("child")).unwrap();
         fs::rename(parent.join("child"), elsewhere.join("child")).unwrap();
 
@@ -406,7 +383,7 @@ mod tests {
         fs::create_dir(fx.join("elsewhere")).unwrap();
         let level = |path: &Path, name: &str| {
             let dir = open_directory(CWD, path).unwrap();
-            let id = DirId::of(&dir).unwrap();
+            let id = EntryId::of(&dir).unwrap();
             Level::open(dir, id, name.to_string())
         };
         let mut walk = Walk::new(level(&fx.join("parent"), "parent"));

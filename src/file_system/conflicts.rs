@@ -2,11 +2,13 @@
 
 use std::{
     collections::HashSet,
-    os::unix::fs::MetadataExt,
     path::Path,
     sync::{Arc, Mutex},
 };
 
+use nix::sys::stat::{FileStat, lstat};
+
+use super::entry_id::EntryId;
 use crate::command::ConflictChoice;
 
 /// The standing `*All` answer for one paste, shared between the thread running
@@ -25,10 +27,11 @@ use crate::command::ConflictChoice;
 /// paste wrote. The queue refuses a second source of a name it has already
 /// handed out, but it compares names byte for byte, and a filesystem that folds
 /// case or normalizes Unicode gives two different names one entry.
+/// `was_pasted_stat` is the one place that decides what such an entry is.
 #[derive(Clone, Default)]
 pub(super) struct Conflicts {
     apply_to_all: Arc<Mutex<Option<ConflictChoice>>>,
-    pasted: Arc<Mutex<HashSet<(u64, u64)>>>,
+    pasted: Arc<Mutex<HashSet<EntryId>>>,
 }
 
 impl Conflicts {
@@ -49,29 +52,31 @@ impl Conflicts {
         }
     }
 
-    /// Records the entry `path` names as one this paste wrote.
-    pub(super) fn record_pasted(&self, path: &Path) {
-        if let Ok(metadata) = path.symlink_metadata() {
-            self.record_pasted_id(metadata.dev(), metadata.ino());
-        }
-    }
-
-    /// Records the entry with this device and inode as one this paste wrote.
-    pub(super) fn record_pasted_id(&self, dev: u64, ino: u64) {
+    /// Records the entry `id` as one this paste wrote.
+    pub(super) fn record_pasted(&self, id: EntryId) {
         self.pasted
             .lock()
             .expect("the pasted entries are not poisoned")
-            .insert((dev, ino));
+            .insert(id);
     }
 
-    /// Whether the entry `path` names is one this paste wrote.
+    /// Whether the entry `path` names is one replacing would take from this
+    /// paste (`was_pasted_stat`).
     pub(super) fn was_pasted(&self, path: &Path) -> bool {
-        path.symlink_metadata().is_ok_and(|metadata| {
-            self.pasted
+        lstat(path).is_ok_and(|stat| self.was_pasted_stat(&stat))
+    }
+
+    /// Whether the entry `stat` describes is one this paste wrote, under its
+    /// only name. An entry with another link survives a replacement under
+    /// that one, so replacing a name of it loses nothing, and a hard link
+    /// elsewhere to what a move brought in is not mistaken for it.
+    pub(super) fn was_pasted_stat(&self, stat: &FileStat) -> bool {
+        stat.st_nlink == 1
+            && self
+                .pasted
                 .lock()
                 .expect("the pasted entries are not poisoned")
-                .contains(&(metadata.dev(), metadata.ino()))
-        })
+                .contains(&EntryId::of_stat(stat))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<ConflictChoice>> {
@@ -87,6 +92,17 @@ impl Conflicts {
 /// worker of that paste may replace. `false` outside a paste.
 pub(super) fn pasted_here(conflicts: Option<&Conflicts>, path: &Path) -> bool {
     conflicts.is_some_and(|conflicts| conflicts.was_pasted(path))
+}
+
+/// The refusal of a source whose destination name holds what an earlier source
+/// of the same paste wrote, wherever the paste finds it.
+pub(super) fn same_name_refusal(is_move: bool, source: &Path, dest_dir: &Path) -> String {
+    let verb = if is_move { "move" } else { "copy" };
+    format!(
+        "Cannot {verb} {} into {}: another source in this paste has the same name",
+        super::path_info::compact(source),
+        super::path_info::compact(dest_dir)
+    )
 }
 
 /// True when `choice` means the entry it answered should be replaced.
@@ -130,6 +146,9 @@ mod tests {
         assert_eq!(Some(ConflictChoice::SkipAll), worker.standing());
     }
 
+    /// Aliasing, where a filesystem that folds case gives two names one entry,
+    /// is reproduced by giving the entry a second name and removing its first,
+    /// which leaves it one link, as an aliased entry has.
     #[test]
     fn an_entry_is_pasted_by_identity_rather_than_by_name() {
         let fx = crate::test_support::TempDir::new("conflicts_pasted");
@@ -137,16 +156,34 @@ mod tests {
         let alias = fx.join("alias");
         let other = fx.join("other");
         std::fs::write(&pasted, b"first").unwrap();
-        std::fs::hard_link(&pasted, &alias).unwrap();
         std::fs::write(&other, b"other").unwrap();
         let conflicts = Conflicts::default();
         // What a worker holds: another task of the paste has to see it.
         let worker = conflicts.clone();
 
-        conflicts.record_pasted(&pasted);
+        conflicts.record_pasted(EntryId::of_path(&pasted).unwrap());
+        std::fs::hard_link(&pasted, &alias).unwrap();
+        std::fs::remove_file(&pasted).unwrap();
 
         assert!(worker.was_pasted(&alias));
         assert!(!worker.was_pasted(&other));
         assert!(!pasted_here(None, &alias));
+    }
+
+    /// Replacing one name of an entry with another link loses nothing: what
+    /// the paste wrote survives under the other.
+    #[test]
+    fn a_pasted_entry_with_another_link_is_not_guarded() {
+        let fx = crate::test_support::TempDir::new("conflicts_linked");
+        let pasted = fx.join("one");
+        let link = fx.join("link");
+        std::fs::write(&pasted, b"first").unwrap();
+        let conflicts = Conflicts::default();
+        conflicts.record_pasted(EntryId::of_path(&pasted).unwrap());
+
+        std::fs::hard_link(&pasted, &link).unwrap();
+
+        assert!(!conflicts.was_pasted(&link));
+        assert!(!conflicts.was_pasted(&pasted));
     }
 }

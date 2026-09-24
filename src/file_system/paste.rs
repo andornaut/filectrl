@@ -89,13 +89,16 @@ impl PendingPaste {
     }
 
     /// Whether an earlier source of this paste already took `src`'s
-    /// destination name. Checked before the disk, which may not show the name
-    /// yet (the earlier work is only queued) or may show what the earlier
-    /// source replaced it with.
+    /// destination name: the same name, checked before the disk, which may not
+    /// show it yet (the earlier work is only queued) or may show what the
+    /// earlier source replaced it with; or a name the disk shows holding what
+    /// an earlier source wrote, as two names are one entry on a filesystem
+    /// that folds case or normalization. Refused rather than asked about,
+    /// since a worker refuses to replace that entry whatever the answer.
     pub(super) fn is_claimed(&self, src: &PathInfo) -> bool {
-        src.path
-            .file_name()
-            .is_some_and(|name| self.claimed.contains(name))
+        src.path.file_name().is_some_and(|name| {
+            self.claimed.contains(name) || self.conflicts.was_pasted(&self.dest.path.join(name))
+        })
     }
 
     /// Records that `src`'s destination name is taken, once its work is

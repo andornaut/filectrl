@@ -103,7 +103,7 @@ fn search(
             Ok(entries) => entries,
             Err(e) => {
                 warn!("Search: failed to read directory {}: {e}", dir.display());
-                if !is_gone(&e) {
+                if counts_as_unreadable(depth, &e) {
                     unreadable += 1;
                 }
                 continue;
@@ -184,13 +184,16 @@ fn search(
     exit(&mut batcher);
 }
 
-/// A directory removed or replaced by a file after it was queued. Nothing was
-/// skipped that still exists, so it is not counted as unreadable.
-fn is_gone(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-    )
+/// Whether a directory the walk failed to read at `depth` counts towards the
+/// unreadable warning. One below the root that was removed, or replaced by a
+/// file, after it was queued hid nothing that still exists there. The root is
+/// always counted: a search of a directory that is gone found nothing at all.
+fn counts_as_unreadable(depth: u32, error: &std::io::Error) -> bool {
+    depth == 0
+        || !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        )
 }
 
 /// Reports the directories the walk could not read, once when it ends, like
@@ -213,7 +216,7 @@ fn warn_unreadable(tx: &Sender<Command>, cancel: &CancellationToken, unreadable:
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::{io::ErrorKind, sync::mpsc};
 
     use super::*;
     use crate::test_support::TempDir;
@@ -466,9 +469,20 @@ mod tests {
         assert_eq!(1, commands.len(), "nothing else may be sent: {commands:?}");
     }
 
-    /// A directory deleted or replaced after it was queued hides nothing.
+    /// A directory below the root deleted or replaced after it was queued hides
+    /// nothing; any other failure to read one does.
+    #[test_case::test_case(1, ErrorKind::NotFound => false ; "a subdirectory removed")]
+    #[test_case::test_case(1, ErrorKind::NotADirectory => false ; "a subdirectory replaced by a file")]
+    #[test_case::test_case(1, ErrorKind::PermissionDenied => true ; "a subdirectory that is locked")]
+    #[test_case::test_case(0, ErrorKind::NotFound => true ; "the root removed")]
+    fn a_failed_read_counts_as_unreadable(depth: u32, kind: ErrorKind) -> bool {
+        counts_as_unreadable(depth, &std::io::Error::from(kind))
+    }
+
+    /// A search of a directory that is gone, or is not one, found nothing and
+    /// says so.
     #[test]
-    fn a_directory_gone_before_it_is_read_is_not_unreadable() {
+    fn a_root_that_cannot_be_read_is_reported() {
         let root = TempDir::new("search_gone");
         let file = root.join("file");
         std::fs::write(&file, b"").unwrap();
@@ -485,7 +499,11 @@ mod tests {
             );
             drop(tx);
             let commands: Vec<Command> = rx.into_iter().collect();
-            assert!(warnings(&commands).is_empty(), "{gone:?}: {commands:?}");
+            assert_eq!(
+                vec!["1 directory could not be read; some results may be missing".to_string()],
+                warnings(&commands),
+                "{gone:?}"
+            );
         }
     }
 

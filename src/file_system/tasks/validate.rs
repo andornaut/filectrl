@@ -15,6 +15,7 @@ use crate::{
     },
     file_system::{
         conflicts::{Conflicts, pasted_here},
+        entry_id::EntryId,
         paste::{Occupant, PasteStep, step},
         path_info::{PathInfo, compact},
     },
@@ -145,11 +146,7 @@ fn resolve_entry(path: &Path) -> PathBuf {
 /// Whether both paths name one file: the same device and inode, without
 /// following a symlink in either.
 pub(in crate::file_system) fn is_same_file(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (a.symlink_metadata(), b.symlink_metadata()) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
+    EntryId::of_path(a).is_some_and(|a| EntryId::of_path(b) == Some(a))
 }
 
 /// Whether `link` is a symlink that resolves to the entry `entry` names.
@@ -825,10 +822,12 @@ mod tests {
         let dst = fx.join("dest.txt");
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&pasted, b"pasted").unwrap();
-        std::fs::hard_link(&pasted, &dst).unwrap();
         let conflicts = Conflicts::default();
         conflicts.answer(ConflictChoice::OverwriteAll);
-        conflicts.record_pasted(&pasted);
+        conflicts.record_pasted(EntryId::of_path(&pasted).unwrap());
+        // `dest.txt` becomes the only name of what the paste wrote.
+        std::fs::hard_link(&pasted, &dst).unwrap();
+        std::fs::remove_file(&pasted).unwrap();
 
         let settled = settle_raced_rename(Some(&conflicts), &src, &dst, false);
 
@@ -836,7 +835,7 @@ mod tests {
             Some(Err(error)) => assert!(PastedHere::is(&error), "{error}"),
             other => panic!("expected the pasted-here refusal, got {other:?}"),
         }
-        assert_eq!(b"pasted".to_vec(), std::fs::read(&pasted).unwrap());
+        assert_eq!(b"pasted".to_vec(), std::fs::read(&dst).unwrap());
         assert!(src.exists());
     }
 

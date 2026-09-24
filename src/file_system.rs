@@ -1,5 +1,6 @@
 mod conflicts;
 mod debounce;
+mod entry_id;
 mod handler;
 pub mod open_with;
 mod operations;
@@ -28,7 +29,7 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
-    conflicts::Conflicts,
+    conflicts::{Conflicts, same_name_refusal},
     operations::{open_in, spawn_argv},
     paste::{PasteStep, PendingPaste},
     path_info::{PathInfo, compact},
@@ -352,7 +353,7 @@ impl FileSystem {
         match self.cancellables[newest] {
             Cancellable::Search(_) => Some(newest),
             Cancellable::Task(_) => self.cancellables.iter().position(|cancellable| {
-                matches!(cancellable, Cancellable::Task(info) if !info.token.is_cancelled())
+                matches!(cancellable, Cancellable::Task(_)) && !is_cancelled_task(cancellable)
             }),
         }
     }
@@ -770,12 +771,7 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
 /// The refusal for a source whose destination name an earlier source of the
 /// same paste already took.
 fn claimed_message(pending: &PendingPaste, src: &PathInfo) -> String {
-    let operation = if pending.is_move { "move" } else { "copy" };
-    format!(
-        "Cannot {operation} {} into {}: another source in this paste has the same name",
-        compact(&src.path),
-        compact(&pending.dest.path)
-    )
+    same_name_refusal(pending.is_move, &src.path, &pending.dest.path)
 }
 
 /// The mode a chmod of `paths` to `mode_str` sets, or the refusal naming what
@@ -1325,6 +1321,53 @@ mod tests {
             Some(&Command::SetClipboardEntry(Some(entry))),
             commands.last()
         );
+    }
+
+    /// A name the disk shows holding what an earlier source of the paste wrote
+    /// is refused like a repeated name, not asked about: on a filesystem that
+    /// folds case, `A.txt` and `a.txt` are one entry. A second link, then the
+    /// first name removed, reproduces that on any filesystem.
+    #[test]
+    fn a_name_holding_what_the_paste_wrote_is_refused_without_asking() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_pasted_alias");
+        let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("c.txt"), b"twin").unwrap();
+        let twin = PathInfo::try_from(elsewhere.join("c.txt").as_path()).unwrap();
+        // Holds the queue at `b.txt` while `a.txt` is pasted.
+        fx.occupy("b.txt");
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone(), fx.other.clone(), twin.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+        assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        await_terminal_task(&rx);
+        let dest = &fx.dest.path;
+        fs::hard_link(dest.join("a.txt"), dest.join("c.txt")).unwrap();
+        fs::remove_file(dest.join("a.txt")).unwrap();
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::Skip))
+            .into_commands();
+
+        let refusal = format!(
+            "Cannot copy {} into {}: another source in this paste has the same name",
+            compact(&twin.path),
+            compact(dest)
+        );
+        assert_eq!(
+            vec![
+                Command::AlertError(refusal),
+                Command::SetClipboardEntry(Some(ClipboardEntry::Copy(vec![twin]))),
+            ],
+            commands
+        );
+        assert_eq!(b"src".to_vec(), fs::read(dest.join("c.txt")).unwrap());
     }
 
     #[test]

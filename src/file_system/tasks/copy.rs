@@ -25,15 +25,15 @@ use super::{
         mode_bits, openat, readlinkat, stat_mode, symlinkat,
     },
     walk::{
-        DirId, Handles, Level, Walk, c_name, list_names, open_directory, open_parent, scan_tree,
-        unlink_at,
+        Handles, Level, Walk, c_name, list_names, open_directory, open_parent, scan_tree, unlink_at,
     },
 };
 use crate::{
     command::progress::ActiveTask,
     file_system::{
-        conflicts::{Conflicts, pasted_here},
+        conflicts::{Conflicts, same_name_refusal},
         debounce,
+        entry_id::EntryId,
         paste::{Occupant, PasteStep, step},
         path_info::{PathInfo, compact},
     },
@@ -64,10 +64,13 @@ struct CopyContext<'a> {
     /// The directories this copy created, which it never descends into as a
     /// source: a destination swapped for a link into the source tree, or a
     /// bind mount of it, would otherwise copy the copy into itself without end.
-    created: std::collections::HashSet<DirId>,
+    created: std::collections::HashSet<EntryId>,
     /// The top-level source that was copied, which is the entry a move removes
     /// afterwards and no other.
-    root: Option<DirId>,
+    root: Option<EntryId>,
+    /// Set while the top-level entry is copied, so the entry created for it is
+    /// recorded with the paste (`record_created`).
+    creating_top: bool,
     /// One debouncer for the whole tree, against its total: one per file would
     /// send an update for every file, since a debouncer's first call triggers.
     progress: debounce::ProgressDebouncer,
@@ -89,11 +92,31 @@ impl<'a> CopyContext<'a> {
             skipped: 0,
             created: std::collections::HashSet::new(),
             root: None,
+            creating_top: false,
             progress: debounce::ProgressDebouncer::new(
                 PROGRESS_DEBOUNCE_PERCENTAGE,
                 PROGRESS_MIN_INTERVAL,
                 total_size,
             ),
+        }
+    }
+
+    /// The copy's verb: `preserve` is set exactly for the copy a move across
+    /// devices makes.
+    fn verb_is_move(&self) -> bool {
+        self.preserve
+    }
+
+    /// Records the entry just created for the top-level source with the
+    /// paste, so no later source of it replaces this one. From the created
+    /// entry itself, when it is created: a copy that fails or is cancelled
+    /// afterwards still wrote it, and its name may hold another entry by then.
+    fn record_created(&mut self, id: impl FnOnce() -> std::io::Result<EntryId>) {
+        if !std::mem::take(&mut self.creating_top) {
+            return;
+        }
+        if let (Some(conflicts), Ok(id)) = (self.conflicts, id()) {
+            conflicts.record_pasted(id);
         }
     }
 }
@@ -104,7 +127,7 @@ impl<'a> CopyContext<'a> {
 pub(super) struct CopyOutcome {
     pub(super) errors: Vec<String>,
     pub(super) skipped: usize,
-    pub(super) root: Option<DirId>,
+    pub(super) root: Option<EntryId>,
     /// The tree debouncer's threshold, which a copy too quick to outlast the
     /// time floor gives no other way to observe.
     #[cfg(test)]
@@ -269,7 +292,7 @@ fn copy_path(
             return true;
         }
     };
-    context.root = Some(DirId::of_stat(&stat));
+    context.root = Some(EntryId::of_stat(&stat));
     if type_bits(stat_mode(&stat)) != type_bits(listed_mode) {
         errors.push(format!(
             "Cannot copy {}: its type changed since it was selected",
@@ -288,13 +311,9 @@ fn copy_path(
         dst_name: &dst_name,
     };
     if !is_directory {
-        let (failed, skipped) = (errors.len(), context.skipped);
+        context.creating_top = true;
         let finished = copy_entry(&at, &paths, active, errors, context, &stat);
-        // Written only when nothing was recorded or skipped: otherwise the
-        // name may hold what another process put there.
-        if finished && errors.len() == failed && context.skipped == skipped {
-            record_pasted(context, new_path);
-        }
+        context.creating_top = false;
         return finished;
     }
     // A directory needs no record: nothing ever replaces one.
@@ -304,14 +323,6 @@ fn copy_path(
     // Only the directories being worked in are held open.
     drop((src_parent, dst_parent));
     copy_tree(level, &mut paths, active, errors, context)
-}
-
-/// Records the top-level entry this copy wrote at `new_path` with the paste
-/// behind it, so no later source of that paste replaces it.
-fn record_pasted(context: &CopyContext<'_>, new_path: &Path) {
-    if let Some(conflicts) = context.conflicts {
-        conflicts.record_pasted(new_path);
-    }
 }
 
 /// Copies the directory tree below `root`, then finishes each directory: its
@@ -398,7 +409,7 @@ fn enter_directory(
     context: &mut CopyContext<'_>,
     stat: &Stat,
 ) -> Option<CopyLevel> {
-    let id = DirId::of_stat(stat);
+    let id = EntryId::of_stat(stat);
     if context.created.contains(&id) {
         errors.push(format!(
             "Cannot copy {}: it is inside the copy being made",
@@ -418,14 +429,14 @@ fn enter_directory(
         // only a standing "skip all" settles this one, and skipping drops the
         // subtree.
         Err(Errno::EEXIST) => {
-            resolve_nested(context, errors, true, at.dst, at.dst_name, &paths.new);
+            resolve_nested(context, errors, true, at, paths);
             return None;
         }
         result => result.map_err(Into::into),
     };
     let opened = created.and_then(|()| {
         let dst = open_directory(at.dst, at.dst_name)?;
-        Ok((DirId::of(&dst)?, dst))
+        Ok((EntryId::of(&dst)?, dst))
     });
     let (dst_id, dst) = match opened {
         Ok(opened) => opened,
@@ -458,7 +469,7 @@ fn enter_directory(
             return None;
         }
     };
-    if DirId::of_stat(&opened) != id {
+    if EntryId::of_stat(&opened) != id {
         let message = format!(
             "Cannot copy {}: it was replaced while being copied",
             compact(&paths.old)
@@ -567,17 +578,30 @@ fn copy_symlink(
             return;
         }
     };
-    match symlinkat(target.as_os_str(), at.dst, at.dst_name) {
-        Ok(()) => {}
+    let created = match symlinkat(target.as_os_str(), at.dst, at.dst_name) {
+        Ok(()) => true,
         Err(Errno::EEXIST) => {
             let create = || Ok(symlinkat(target.as_os_str(), at.dst, at.dst_name)?);
-            replace_raced(at, paths, errors, context, create);
+            replace_raced(at, paths, errors, context, create).is_some()
         }
-        Err(error) => errors.push(format!(
-            "Failed to create symlink {}: {error}",
-            compact(&paths.new)
-        )),
+        Err(error) => {
+            errors.push(format!(
+                "Failed to create symlink {}: {error}",
+                compact(&paths.new)
+            ));
+            false
+        }
+    };
+    if created {
+        context.record_created(|| created_id(at));
     }
+}
+
+/// The entry just created at `at`'s destination name, which cannot be opened
+/// to ask (a symlink, or a FIFO that would block).
+fn created_id(at: &At<'_>) -> std::io::Result<EntryId> {
+    let stat = fstatat(at.dst, at.dst_name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+    Ok(EntryId::of_stat(&stat))
 }
 
 /// Settles a name taken inside the tree being copied, which is a race: the
@@ -591,7 +615,7 @@ fn replace_raced<T>(
     context: &mut CopyContext<'_>,
     create: impl FnOnce() -> std::io::Result<T>,
 ) -> Option<T> {
-    if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
+    if !resolve_nested(context, errors, false, at, paths) {
         return None;
     }
     match unlink_at(at.dst, at.dst_name, UnlinkatFlags::NoRemoveDir).and_then(|()| create()) {
@@ -657,6 +681,7 @@ fn copy_file(
             return true;
         }
     };
+    context.record_created(|| EntryId::of(&new_file));
 
     let not_cancelled = loop {
         if active.is_cancelled() {
@@ -741,6 +766,7 @@ fn copy_special(
             return;
         }
     }
+    context.record_created(|| created_id(at));
     if context.preserve {
         // The source's group first, as a moved file or directory gets it, so the
         // group bits restored below are granted to the group they were granted
@@ -1022,7 +1048,7 @@ impl Source {
         let mut source = Self::of(stat);
         if preserve {
             let is_directory = FileType::of(stat) == FileType::Directory;
-            source.attributes = read_attributes(file, is_directory);
+            source.attributes = read_attributes(is_directory, file);
         }
         source
     }
@@ -1033,12 +1059,17 @@ const SIZE_ATTEMPTS: usize = 3;
 
 /// A variable-length value read by asking `read` for its size (an empty
 /// buffer) and then reading it. `ERANGE` means it grew in between, so it is
-/// measured again, a bounded number of times.
+/// measured again, a bounded number of times. A value measured empty is
+/// empty: an empty buffer would only measure it again.
 fn read_sized(
     read: impl Fn(&mut [u8]) -> rustix::io::Result<usize>,
 ) -> rustix::io::Result<Vec<u8>> {
     for _ in 0..SIZE_ATTEMPTS {
-        let mut buffer = vec![0; read(&mut [])?];
+        let size = read(&mut [])?;
+        if size == 0 {
+            return Ok(Vec::new());
+        }
+        let mut buffer = vec![0; size];
         match read(&mut buffer) {
             Ok(len) => {
                 buffer.truncate(len);
@@ -1073,22 +1104,24 @@ fn acl_names(is_directory: bool) -> Vec<CString> {
 
 /// Every extended attribute of `file` with its value. Best effort: one that
 /// cannot be read is not copied. When the list itself cannot be read, the ACLs
-/// are still read by name.
-fn read_attributes(file: &File, is_directory: bool) -> Vec<(CString, Vec<u8>)> {
+/// are still read by name where the platform has them.
+fn read_attributes(is_directory: bool, file: &File) -> Vec<(CString, Vec<u8>)> {
     let names = match read_sized(|buffer| rustix::fs::flistxattr(file, buffer)) {
         Ok(list) => list
             .split(|&byte| byte == 0)
             .filter_map(|name| CString::new(name).ok().filter(|name| !name.is_empty()))
             .collect(),
+        // A filesystem without extended attributes has none, ACLs included.
+        Err(rustix::io::Errno::NOTSUP) => return Vec::new(),
         Err(error) => {
-            // A filesystem without extended attributes has nothing to list.
-            if error != rustix::io::Errno::NOTSUP {
-                warn!(
-                    "Failed to list the extended attributes of a moved entry, so only its ACLs \
-                     are copied: {error}"
-                );
-            }
-            acl_names(is_directory)
+            let names = acl_names(is_directory);
+            let copied = if names.is_empty() {
+                "none are copied"
+            } else {
+                "only its ACLs are copied"
+            };
+            warn!("Failed to list the extended attributes of a moved entry, so {copied}: {error}");
+            names
         }
     };
     names
@@ -1139,9 +1172,9 @@ struct Pair<T> {
 }
 
 impl Handles for Pair<File> {
-    type Id = Pair<DirId>;
+    type Id = Pair<EntryId>;
 
-    fn reopen_parent(&self, parent: Pair<DirId>, moved: &str) -> std::io::Result<Self> {
+    fn reopen_parent(&self, parent: Pair<EntryId>, moved: &str) -> std::io::Result<Self> {
         Ok(Self {
             src: self.src.reopen_parent(parent.src, moved)?,
             dst: self.dst.reopen_parent(parent.dst, moved)?,
@@ -1162,8 +1195,8 @@ struct Copying {
 /// A directory `copy_tree` has entered.
 type CopyLevel = Level<Pair<File>, Copying>;
 
-/// What to do about `new_path`, a name another process took at a destination
-/// inside the tree being copied: the destination was free when the task
+/// What to do about `at`'s destination name (`paths.new`), which another
+/// process took at a destination inside the tree being copied: the destination was free when the task
 /// started. Returns whether to replace it, having counted or recorded it
 /// otherwise.
 ///
@@ -1175,23 +1208,31 @@ fn resolve_nested(
     context: &mut CopyContext<'_>,
     errors: &mut Vec<String>,
     source_is_directory: bool,
-    dir: impl AsFd,
-    name: &CStr,
-    new_path: &Path,
+    at: &At<'_>,
+    paths: &Paths,
 ) -> bool {
+    let new_path = &paths.new;
+    let stat = fstatat(at.dst, at.dst_name, AtFlags::AT_SYMLINK_NOFOLLOW).ok();
     // Classified exactly as at the top level, so only the skip choices apply
     // to a directory on either side.
-    let is_directory = fstatat(dir, name, AtFlags::AT_SYMLINK_NOFOLLOW)
-        .is_ok_and(|stat| FileType::of(&stat) == FileType::Directory);
+    let is_directory = stat
+        .as_ref()
+        .is_some_and(|stat| FileType::of(stat) == FileType::Directory);
     let occupant = Occupant::of(source_is_directory, is_directory);
     let standing = context.conflicts.and_then(Conflicts::standing);
+    // Whatever the standing answer, an entry an earlier source of the same
+    // paste wrote is never replaced: the two names are one entry here. Read
+    // from the same `fstatat`, relative to the directory being written in.
+    let pasted = context
+        .conflicts
+        .zip(stat.as_ref())
+        .is_some_and(|(conflicts, stat)| conflicts.was_pasted_stat(stat));
     match step(standing, Some(occupant)) {
-        // Whatever the standing answer, an entry an earlier source of the same
-        // paste wrote is never replaced: the two names are one entry here.
-        PasteStep::Run { overwrite: true } if pasted_here(context.conflicts, new_path) => {
-            errors.push(format!(
-                "Cannot replace {}: another source in this paste has the same name",
-                compact(new_path)
+        PasteStep::Run { overwrite: true } if pasted => {
+            errors.push(same_name_refusal(
+                context.verb_is_move(),
+                &paths.old,
+                new_path.parent().unwrap_or(new_path),
             ));
             false
         }
@@ -1534,17 +1575,37 @@ mod tests {
         assert_eq!(b"src".to_vec(), fs::read(dst.join("a.txt")).unwrap());
     }
 
-    // Two sources of one paste whose names are one entry, as `a.txt` and
-    // `A.txt` are on a filesystem that folds case: the hard link stands in.
-    #[test]
-    fn a_raced_name_an_earlier_source_wrote_is_never_replaced() {
-        let (_fx, src, dst) = raced("tasks_raced_pasted");
-        fs::write(src.join("a.txt"), b"first").unwrap();
-        fs::write(src.join("b.txt"), b"second").unwrap();
-        let (mut active, mut errors, conflicts) = raced_parts();
+    /// Makes `b.txt` in `dst` name what was copied to `a.txt`, as two names are
+    /// one entry on a filesystem that folds case or normalization: a second
+    /// link, then the first name removed, so it keeps one link.
+    fn alias_a_as_b(dst: &Path) {
+        fs::hard_link(dst.join("a.txt"), dst.join("b.txt")).unwrap();
+        fs::remove_file(dst.join("a.txt")).unwrap();
+    }
+
+    /// Copies `a.txt`, then `b.txt`, from `src` into `dst` as two sources of one
+    /// paste under a standing overwrite, with `b.txt` made an alias of what the
+    /// first wrote in between. `cancel_first` cancels the first copy once it
+    /// has created its file. Returns the errors.
+    fn copy_onto_an_alias(src: &Path, dst: &Path, cancel_first: bool) -> Vec<String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::mem::forget(rx);
+        let conflicts = Conflicts::default();
         let mut buffer = [0u8; 64];
         let mut context = answered_context(ConflictChoice::OverwriteAll, &mut buffer, &conflicts);
-        assert!(copy_path(
+        let mut errors = Vec::new();
+        let (mut active, _, token) = ActiveTask::new(
+            tx.clone(),
+            TaskKind::Copy(Transfer {
+                source: String::new(),
+                destination: String::new(),
+            }),
+            1,
+        );
+        if cancel_first {
+            token.cancel();
+        }
+        let finished = copy_path(
             &src.join("a.txt"),
             &dst.join("a.txt"),
             &mut active,
@@ -1552,10 +1613,13 @@ mod tests {
             &mut context,
             false,
             mode_of(&src.join("a.txt")),
-        ));
-        fs::hard_link(dst.join("a.txt"), dst.join("b.txt")).unwrap();
+        );
+        assert_eq!(!cancel_first, finished);
+        active.done();
+        alias_a_as_b(dst);
 
-        assert!(copy_path(
+        let mut active = copy_task(tx);
+        copy_path(
             &src.join("b.txt"),
             &dst.join("b.txt"),
             &mut active,
@@ -1563,17 +1627,36 @@ mod tests {
             &mut context,
             false,
             mode_of(&src.join("b.txt")),
-        ));
+        );
         active.done();
+        errors
+    }
+
+    // The name was free when the second source was queued, so the refusal
+    // comes from the raced-name path.
+    #[test_case(false ; "a finished copy")]
+    #[test_case(true ; "a copy cancelled after it created its file")]
+    fn a_raced_name_an_earlier_source_wrote_is_never_replaced(cancel_first: bool) {
+        let (_fx, src, dst) = raced("tasks_raced_pasted");
+        fs::write(src.join("a.txt"), b"first").unwrap();
+        fs::write(src.join("b.txt"), b"second").unwrap();
+
+        let errors = copy_onto_an_alias(&src, &dst, cancel_first);
 
         assert_eq!(
             vec![format!(
-                "Cannot replace {}: another source in this paste has the same name",
-                compact(&dst.join("b.txt"))
+                "Cannot copy {} into {}: another source in this paste has the same name",
+                compact(&src.join("b.txt")),
+                compact(&dst)
             )],
             errors
         );
-        assert_eq!(b"first".to_vec(), fs::read(dst.join("a.txt")).unwrap());
+        let kept = if cancel_first {
+            b"".to_vec()
+        } else {
+            b"first".to_vec()
+        };
+        assert_eq!(kept, fs::read(dst.join("b.txt")).unwrap());
     }
 
     #[test]
@@ -2699,7 +2782,7 @@ mod tests {
         let open = |side: &str| {
             let parent = open_directory(CWD, &fx.join(side)).unwrap();
             let child = open_directory(&parent, "child").unwrap();
-            (DirId::of(&parent).unwrap(), child)
+            (EntryId::of(&parent).unwrap(), child)
         };
         let ((src_id, src), (dst_id, dst)) = (open("src"), open("dst"));
         let child = Pair { src, dst };
@@ -2708,8 +2791,8 @@ mod tests {
             dst: dst_id,
         };
         let reopened = child.reopen_parent(parent, "moved").unwrap();
-        assert_eq!(src_id, DirId::of(&reopened.src).unwrap());
-        assert_eq!(dst_id, DirId::of(&reopened.dst).unwrap());
+        assert_eq!(src_id, EntryId::of(&reopened.src).unwrap());
+        assert_eq!(dst_id, EntryId::of(&reopened.dst).unwrap());
 
         let side = if destination_moved { "dst" } else { "src" };
         fs::rename(
@@ -2925,6 +3008,20 @@ mod tests {
         let read = reading(|call| if call == 0 { 4 } else { 6 });
 
         assert_eq!(Ok(vec![b'v'; 6]), read_sized(read));
+    }
+
+    /// Measured empty, it is read as empty without asking again: an attribute
+    /// added in between would otherwise be read into an empty buffer and lost.
+    #[test]
+    fn a_value_measured_empty_is_not_read_again() {
+        let calls = std::cell::Cell::new(0);
+        let read = |_: &mut [u8]| {
+            calls.set(calls.get() + 1);
+            Ok(if calls.get() == 1 { 0 } else { 5 })
+        };
+
+        assert_eq!(Ok(Vec::new()), read_sized(read));
+        assert_eq!(1, calls.get());
     }
 
     #[test]

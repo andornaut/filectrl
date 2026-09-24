@@ -12,14 +12,13 @@ use super::{
     TaskCommand, copy_to, move_across_devices,
     sys::{AtFlags, CWD, fstatat},
     validate::validate_paths,
-    walk::DirId,
 };
 use crate::{
     command::{
         Command,
         progress::{ActiveTask, CancellationToken, Task, TaskKind, Transfer},
     },
-    file_system::{conflicts::Conflicts, path_info::PathInfo},
+    file_system::{conflicts::Conflicts, entry_id::EntryId, path_info::PathInfo},
     test_support::TempDir,
 };
 
@@ -76,8 +75,8 @@ pub(super) fn finished_task(rx: &mpsc::Receiver<Command>) -> Task {
 }
 
 /// The identity of the entry `path` names now.
-pub(super) fn id_of(path: &Path) -> DirId {
-    DirId::of_stat(&fstatat(CWD, path, AtFlags::AT_SYMLINK_NOFOLLOW).unwrap())
+pub(super) fn id_of(path: &Path) -> EntryId {
+    EntryId::of_stat(&fstatat(CWD, path, AtFlags::AT_SYMLINK_NOFOLLOW).unwrap())
 }
 
 /// A source file holding "src", a destination file holding "dest", and an

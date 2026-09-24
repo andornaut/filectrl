@@ -11,13 +11,13 @@ use super::{
     PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL, cancel_logging,
     sys::{AtFlags, UnlinkatFlags, fstatat},
     walk::{
-        DirId, Entries, Level, Walk, c_name, list_entries, open_directory, open_parent, scan_tree,
+        Entries, Level, Walk, c_name, list_entries, open_directory, open_parent, scan_tree,
         unlink_at,
     },
 };
 use crate::{
     command::progress::ActiveTask,
-    file_system::{debounce, path_info::compact},
+    file_system::{debounce, entry_id::EntryId, path_info::compact},
 };
 
 /// Best-effort recursive entry count for the delete progress total, including
@@ -40,7 +40,7 @@ pub(super) enum Removal {
     /// The source of a cross-device move, which is past the point where a
     /// cancel could stop it, and whose progress is already complete. Carries
     /// the entry the copy read, which is the only one removed.
-    MovedSource(DirId),
+    MovedSource(EntryId),
 }
 
 /// The refusal to remove the source of a move at `path`, which names another
@@ -216,7 +216,7 @@ fn remove_entry(
             .map_err(|error| ("Failed to delete", error));
     }
     let opened = open_directory(parent, name)
-        .and_then(|dir| Ok((list_entries(&dir)?, DirId::of(&dir)?, dir)));
+        .and_then(|dir| Ok((list_entries(&dir)?, EntryId::of(&dir)?, dir)));
     match opened {
         Ok((entries, id, dir)) => Ok(Some((dir, id, entries))),
         Err(error) => unlink_at(parent, name, UnlinkatFlags::RemoveDir)
@@ -232,7 +232,7 @@ fn remove_entry(
 fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<Opened>, String> {
     let failed =
         |error: std::io::Error| format!("Failed to read directory {}: {error}", compact(path));
-    let opened = open_directory(root.dir, root.name).and_then(|dir| Ok((DirId::of(&dir)?, dir)));
+    let opened = open_directory(root.dir, root.name).and_then(|dir| Ok((EntryId::of(&dir)?, dir)));
     let (id, dir) = match opened {
         Ok(opened) => opened,
         // Not a moved source, which is removed only once it is compared, and
@@ -272,7 +272,7 @@ fn remove_file_entry(path: &Path, at: &RootAt<'_>, removal: Removal) -> Result<(
     if let Removal::MovedSource(copied) = removal {
         let stat = fstatat(at.dir, at.name, AtFlags::AT_SYMLINK_NOFOLLOW)
             .map_err(|error| failed(error.into()))?;
-        if DirId::of_stat(&stat) != copied {
+        if EntryId::of_stat(&stat) != copied {
             return Err(replaced_after_copy(path));
         }
     }
@@ -376,7 +376,7 @@ fn remove_level(
 
 /// A directory `remove_path` opened to descend into: its handle, its identity
 /// and its entries.
-type Opened = (File, DirId, Entries);
+type Opened = (File, EntryId, Entries);
 
 /// The directory an operation's root entry was opened in, and its name there.
 struct RootAt<'a> {
@@ -762,7 +762,7 @@ mod tests {
         let src = fx.join("f");
         fs::write(&src, b"x").unwrap();
         let (tx, _rx) = mpsc::channel();
-        let copied = DirId::of(File::open(&src).unwrap()).unwrap();
+        let copied = EntryId::of(File::open(&src).unwrap()).unwrap();
         fs::remove_file(&src).unwrap();
 
         // A missing source cannot be compared with what was copied, so unlike
