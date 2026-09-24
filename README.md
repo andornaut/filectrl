@@ -60,6 +60,8 @@ Option | Description
 `-V`, `--version` | Print the version, then exit
 `-h`, `--help` | Print usage, then exit
 
+`DIRECTORY` defaults to the current working directory. If given, it must exist, be a directory, and be listable, or FileCTRL exits with an error, like `ls`.
+
 The four flags below act and exit. They are mutually exclusive, and each accepts only the arguments that change what it does:
 
 Flag | Also accepts
@@ -84,13 +86,13 @@ Key | Action
 <kbd>Enter</kbd> | Navigate to the linked folder
 <kbd>r</kbd>, <kbd>d</kbd> | Rename or delete the bookmark
 
-Names must be unique, cannot be empty, and cannot contain a path separator.
+Names must be unique, cannot be empty, and cannot contain a path separator. A name is used as typed, surrounding whitespace included, the same as for rename and create.
 
 ### Copy / paste
 
-Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, and an entry from elsewhere with a `.` or `..` component in a path is refused.
+Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, except that where the terminal is too narrow a path loses its start to `…`, so the file name and the question stay visible. An entry from elsewhere with a `.` or `..` component in a path is refused.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the timestamps, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the access and modification times of files and directories (not of symlinks or special files), the POSIX ACLs on Linux where the destination supports them, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
 
@@ -104,8 +106,8 @@ Key | Action
 <kbd>O</kbd> | Replace this and every later collision in the same paste
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
-- An existing **directory** is never replaced, so only the skip choices are offered for one. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
-- <kbd>S</kbd> and <kbd>O</kbd> also cover copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. Only <kbd>S</kbd> settles a directory. Anything left unsettled is reported when the copy finishes.
+- An existing **directory** is never replaced, and a directory never replaces anything (like `cp -R` and `mv`), so only the skip choices are offered when either side is a directory. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
+- <kbd>S</kbd> and <kbd>O</kbd> also cover copies already running: if another program takes a name inside a directory being copied, the standing answer settles it without stopping the copy. Only <kbd>S</kbd> settles a collision where either side is a directory. Anything left unsettled is reported when the copy finishes.
 - A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
 - Whatever is not pasted (collisions you abandon, entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately do not. If nothing was pasted at all, the clipboard is unchanged.
 
@@ -117,7 +119,7 @@ Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than h
 
 Rename, chmod, delete, copy and cut act on whatever the path names when they run, like `mv`, `chmod` and `rm`, so an entry replaced since it was listed is the one acted on. Inside a tree being copied or deleted, a directory swapped for a symlink during the walk is not followed.
 
-A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed.
+A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed, and an entry already gone counts as removed, so deleting marked entries that include both a directory and something inside it succeeds.
 
 When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>R</kbd> tries again.
 
@@ -141,9 +143,13 @@ Sorting, filtering, toggling hidden files | Cleared
 Starting a search | Cleared
 Reload (<kbd>Ctrl</kbd>+<kbd>r</kbd> or a watcher refresh) | Kept, re-found by path. An entry that is gone loses its mark
 A search finishing or being cancelled | Kept
+Showing bookmarks | Cleared
+The bookmarks view reloading (a watcher refresh, or a bookmark operation finishing) | Kept, re-found by path, as is the cursor
 Navigating to another directory | Cleared
 Copying or cutting | Kept, so what is on the clipboard stays marked
 chmod, delete, or pasting | Consumed by the operation
+
+Range mode survives a directory reload in the same way: its anchor and the marks made before it are re-found by path, and the range extends from the anchor again once the cursor moves. It ends if the anchor entry is gone, and with every other change above.
 
 ### Filtering
 
@@ -155,7 +161,7 @@ Directories carry a trailing `/` outside the bookmarks view, so `/` filters a li
 
 Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so.
 
-Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. Navigating to another directory stops the walk; a reload does not.
 
 ### Sorting
 
@@ -228,6 +234,8 @@ Delete before, after cursor | <kbd>Backspace</kbd>, <kbd>Delete</kbd>
 Accept path suggestion (cursor at end of input) | <kbd>Tab</kbd>
 Cycle path suggestions (cursor at end of input) | <kbd>↓</kbd>/<kbd>↑</kbd>
 
+In the Go to prompt, `~` alone or a leading `~/` stands for the home directory. Other input that is not an absolute path, `~backup` included, is relative to the current directory.
+
 A suggestion is shown with its position as `(N of M)`, and cycling wraps in both directions. Moving the cursor off the end of the input dismisses it. A directory of more than 10,000 entries offers no suggestions.
 
 Text pasted through the terminal (bracketed paste) goes into a text prompt as one line, with its line breaks removed. A paste anywhere else, including a y/n prompt, is ignored, so pasted text never acts as keys.
@@ -247,7 +255,7 @@ Text pasted through the terminal (bracketed paste) goes into a text prompt as on
 The built-in [default configuration](./src/app/config/default_config.toml) is always the base. A config file merges on top of it, read from the first of:
 
 1. The path given by `--config`
-1. `config.toml` in the config directory, if it exists: `~/.config/filectrl/` on Linux, `~/Library/Application Support/filectrl/` on macOS. The examples below use the Linux path
+1. `config.toml` in the config directory, if it exists: `~/.config/filectrl/` on Linux, `~/Library/Application Support/filectrl/` on macOS. The examples below use the Linux path. A symlink there whose target is missing is an error, not an absent config
 
 `--config` replaces the user config rather than adding to it, so a key the given file leaves out falls back to the built-in default, not to the config directory's `config.toml`.
 
@@ -277,10 +285,10 @@ Key | Opens with
 --- | ---
 <kbd>l</kbd> | `openers.open_file`
 <kbd>t</kbd> | `openers.open_directory`, for the current directory
-<kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window
+<kbd>w</kbd> | `openers.open_filectrl_window`, a new `filectrl` window (on macOS by default, a Terminal window in the directory)
 <kbd>o</kbd> | A picker of the applications that can open the selection
 
-Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$@"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash arithmetic such as `$(( %s ))`.
+Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$@"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, bash arithmetic such as `$(( %s ))`, or AppleScript's `do script`, which types a command line into Terminal's login shell. That is why the macOS default opens a Terminal window in the directory rather than starting `filectrl` in it.
 
 Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$@"`. Neither is supported, and neither runs the name.
 
@@ -298,7 +306,7 @@ run_in_terminal = "alacritty --command %s"
 [openers.macos]
 open_directory = "open %s"
 open_file = "open %s"
-open_filectrl_window = "osascript -e 'on run argv' -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl \" & quoted form of item 1 of argv' -e 'end run' %s"
+open_filectrl_window = "open -a Terminal %s"
 run_in_terminal = "" # Linux only, ignored here
 ```
 
@@ -318,7 +326,7 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, and the log names it at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
+- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, nor is one whose `Exec` is malformed, and the log names each at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
 On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E` or `S` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-verbose`, `-cprint(1)`, `-S%f`); it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.

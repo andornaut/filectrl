@@ -300,20 +300,6 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_search_query_keeps_the_filter_notice() {
-        let mut v = view();
-        v.filter = "ap".to_string();
-        v.rebuild_notices();
-
-        // The table rejects an empty query and keeps its filter applied, so
-        // clearing the notice here would hide a filter that is still active.
-        v.handle_command(&Command::StartSearch(String::new()));
-
-        assert_eq!(v.filter, "ap");
-        assert!(tags(&v.notices).contains(&"filter"));
-    }
-
-    #[test]
     fn opening_bookmarks_clears_the_filter_notice() {
         let mut v = view();
         v.filter = "ap".to_string();

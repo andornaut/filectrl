@@ -1,12 +1,24 @@
 use ratatui::widgets::Paragraph;
 
-use crate::app::config::theme::Theme;
+use super::LabelLine;
+use crate::{app::config::theme::Theme, views::unicode::fit_left};
 
 /// Full-width label paragraph for a single-keypress confirmation prompt, which
 /// has no input area. Shared by the delete and paste-conflict prompts: both ask
-/// the user to approve something destructive, so they read the same.
-pub(super) fn confirmation_label_widget(label: String, theme: &Theme) -> Paragraph<'static> {
-    Paragraph::new(label).style(theme.prompt.delete())
+/// the user to approve something destructive, so they read the same. Each line
+/// is fitted to `width`, one row per line: a path that does not fit loses its
+/// start to an ellipsis, so the file name and the text around it (the question
+/// and its choices) stay visible.
+pub(super) fn confirmation_label_widget(
+    lines: &[LabelLine],
+    width: u16,
+    theme: &Theme,
+) -> Paragraph<'static> {
+    let text: Vec<String> = lines
+        .iter()
+        .map(|line| fit_left(&line.before, &line.path, &line.after, usize::from(width)))
+        .collect();
+    Paragraph::new(text.join("\n")).style(theme.prompt.delete())
 }
 
 /// Label paragraph shown to the left of the input for all other prompts.

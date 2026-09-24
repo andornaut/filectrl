@@ -81,25 +81,41 @@ struct PendingPaste {
     /// paste, whose work may not have run yet, so the filesystem does not show
     /// them. Without this, two marked sources sharing a basename (which search
     /// results make easy) would both see a free name, and the second would fail
-    /// at the copy instead of being asked about.
-    claimed: HashMap<OsString, Occupant>,
+    /// at the copy instead of being asked about. Each maps to whether its
+    /// source is a directory, which is what its work will leave at the name.
+    claimed: HashMap<OsString, bool>,
 }
 
 /// What already holds a source's name in the destination directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Occupant {
-    /// A directory, which is never replaced: removing it would take its
-    /// contents with it, and it is never merged into either.
-    Directory,
-    /// A file, symlink, or other non-directory, which the user may replace.
+    /// A directory, or anything where a directory source goes, neither of
+    /// which is ever replaced. Removing a directory would take its contents
+    /// with it, and it is never merged into; a directory never replaces a
+    /// non-directory either, as `cp -R` and `mv` refuse to.
+    Irreplaceable,
+    /// A file, symlink, or other non-directory where a non-directory goes,
+    /// which the user may replace.
     Replaceable,
+}
+
+impl Occupant {
+    /// The occupant a source meets, from whether each of the two is a
+    /// directory.
+    fn of(source_is_directory: bool, is_directory: bool) -> Self {
+        if source_is_directory || is_directory {
+            Self::Irreplaceable
+        } else {
+            Self::Replaceable
+        }
+    }
 }
 
 /// What a paste should do with the source at the front of its queue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PasteStep {
-    /// Stop and ask. `can_overwrite` is false for a directory, whose
-    /// replacement is never offered.
+    /// Stop and ask. `can_overwrite` is false for an irreplaceable occupant,
+    /// whose replacement is never offered.
     Ask { can_overwrite: bool },
     /// Drop the source without running anything.
     Skip,
@@ -114,8 +130,8 @@ impl PendingPaste {
     /// earlier source wrote rather than racing it.
     fn occupant(&self, src: &PathInfo) -> Option<Occupant> {
         existing_destination(&self.dest, src).or_else(|| {
-            let name = src.path.file_name()?;
-            self.claimed.get(name).copied()
+            let is_directory = *self.claimed.get(src.path.file_name()?)?;
+            Some(Occupant::of(src.is_directory(), is_directory))
         })
     }
 
@@ -125,12 +141,7 @@ impl PendingPaste {
     /// replaceable than one already on disk.
     fn claim(&mut self, src: &PathInfo) {
         if let Some(name) = src.path.file_name() {
-            let occupant = if src.is_directory() {
-                Occupant::Directory
-            } else {
-                Occupant::Replaceable
-            };
-            self.claimed.insert(name.to_os_string(), occupant);
+            self.claimed.insert(name.to_os_string(), src.is_directory());
         }
     }
 
@@ -183,8 +194,8 @@ fn step(standing: Option<ConflictChoice>, occupant: Option<Occupant>) -> PasteSt
     let can_overwrite = occupant == Occupant::Replaceable;
     match standing {
         Some(ConflictChoice::SkipAll) => PasteStep::Skip,
-        // "Overwrite all" cannot answer for a directory, so that collision is
-        // still asked about.
+        // "Overwrite all" cannot answer for what is never replaced, so that
+        // collision is still asked about.
         Some(ConflictChoice::OverwriteAll) if can_overwrite => PasteStep::Run { overwrite: true },
         _ => PasteStep::Ask { can_overwrite },
     }
@@ -343,6 +354,11 @@ impl FileSystem {
             && current.path != directory.path
         {
             self.previous_directory = Some(current.clone());
+        }
+        // A navigation replaces the search results, so the walk's remaining
+        // work is wasted. A reload leaves the listing, and any search, alone.
+        if navigate {
+            self.cancel_search();
         }
         self.directory = Some(directory.clone());
         let path_buf = directory.path.clone();
@@ -758,23 +774,6 @@ impl FileSystem {
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
-        // Backstop for a StartSearch("") that bypasses the prompt, which
-        // resolves an empty submit to CancelPrompt and is the only producer, so
-        // this should be unreachable. An empty needle matches every entry, so
-        // spawn no walk and emit the started/exited pair to drop NoticesView and
-        // TableView back out of search state. A guard, not a clean no-result
-        // search: BreadcrumbsView leaves search state only on
-        // ResetView/navigation and is not unwound here.
-        if query.is_empty() {
-            self.cancel_search();
-            let generation = self.bump_generation();
-            return vec![
-                Command::SearchStarted { generation },
-                Command::ExitedSearch { generation },
-            ]
-            .into();
-        }
-
         // One search at a time: cancel any previous search. Its stale
         // results and exit are ignored by generation, not by timing.
         self.cancel_search();
@@ -877,7 +876,8 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
 
 /// What already holds `src`'s name in `dest`, or `None` when the name is free.
 /// Links are not followed, so a symlink to a directory reports `Replaceable`
-/// and is replaced as a link rather than treated as the directory it points at.
+/// to a non-directory source and is replaced as a link rather than treated as
+/// the directory it points at.
 fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
     let destination = dest.path.join(name);
@@ -889,11 +889,7 @@ fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     if tasks::onto_itself(&src.path, &destination).is_some() {
         return None;
     }
-    Some(if metadata.is_dir() {
-        Occupant::Directory
-    } else {
-        Occupant::Replaceable
-    })
+    Some(Occupant::of(src.is_directory(), metadata.is_dir()))
 }
 
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
@@ -1134,13 +1130,13 @@ mod tests {
 
     #[test_case(None, None => PasteStep::Run { overwrite: false } ; "a free name just runs")]
     #[test_case(None, Some(Occupant::Replaceable) => PasteStep::Ask { can_overwrite: true } ; "a file asks, offering overwrite")]
-    #[test_case(None, Some(Occupant::Directory) => PasteStep::Ask { can_overwrite: false } ; "a directory asks, withholding overwrite")]
+    #[test_case(None, Some(Occupant::Irreplaceable) => PasteStep::Ask { can_overwrite: false } ; "a directory asks, withholding overwrite")]
     #[test_case(Some(ConflictChoice::SkipAll), None => PasteStep::Run { overwrite: false } ; "skip all does not skip a free name")]
     #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Replaceable) => PasteStep::Skip ; "skip all skips a file")]
-    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Directory) => PasteStep::Skip ; "skip all skips a directory")]
+    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Irreplaceable) => PasteStep::Skip ; "skip all skips a directory")]
     #[test_case(Some(ConflictChoice::OverwriteAll), None => PasteStep::Run { overwrite: false } ; "overwrite all does not force a free name")]
     #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Replaceable) => PasteStep::Run { overwrite: true } ; "overwrite all replaces a file")]
-    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Directory) => PasteStep::Ask { can_overwrite: false } ; "overwrite all still asks about a directory")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Irreplaceable) => PasteStep::Ask { can_overwrite: false } ; "overwrite all still asks about a directory")]
     fn the_paste_step_matrix(
         standing: Option<ConflictChoice>,
         occupant: Option<Occupant>,
@@ -1189,7 +1185,7 @@ mod tests {
         // The claim carries the source's kind, making this the same collision
         // as a directory on disk: replacing it would remove the one the earlier
         // source is busy creating.
-        assert_eq!(Some(Occupant::Directory), pending.occupant(&twin));
+        assert_eq!(Some(Occupant::Irreplaceable), pending.occupant(&twin));
         assert_eq!(
             PasteStep::Ask {
                 can_overwrite: false
@@ -1266,9 +1262,32 @@ mod tests {
 
         fx.occupy_with_directory("b.txt");
         assert_eq!(
-            Some(Occupant::Directory),
+            Some(Occupant::Irreplaceable),
             existing_destination(&fx.dest, &fx.other)
         );
+
+        // The file at `a.txt` is replaceable by a file, never by a directory.
+        let dir_source = fx.src.path.parent().unwrap().join("dirs").join("a.txt");
+        fs::create_dir_all(&dir_source).unwrap();
+        let dir_source = PathInfo::try_from(dir_source.as_path()).unwrap();
+        assert_eq!(
+            Some(Occupant::Irreplaceable),
+            existing_destination(&fx.dest, &dir_source)
+        );
+    }
+
+    #[test]
+    fn a_file_claimed_earlier_in_the_paste_is_never_replaced_by_a_directory() {
+        let fx = CopyFixture::new("fs_claimed_file");
+        let mut pending = pending(None);
+        pending.dest = fx.dest.clone();
+        let dir_source = fx.src.path.parent().unwrap().join("dirs").join("a.txt");
+        fs::create_dir_all(&dir_source).unwrap();
+        let dir_source = PathInfo::try_from(dir_source.as_path()).unwrap();
+
+        pending.claim(&fx.src);
+
+        assert_eq!(Some(Occupant::Irreplaceable), pending.occupant(&dir_source));
     }
 
     #[test]
@@ -1372,34 +1391,49 @@ mod tests {
     }
 
     #[test]
-    fn overwrite_moves_a_directory_over_an_existing_file() {
+    fn a_directory_moved_onto_a_file_is_offered_only_a_skip() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_move_dir_over_file");
         let src_dir = fx.src.path.parent().unwrap().join("adir");
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(src_dir.join("inner.txt"), b"src").unwrap();
         let src = PathInfo::try_from(src_dir.as_path()).unwrap();
-        // A plain file is `Occupant::Replaceable`, so the prompt offers to
-        // replace it whatever the source's type is.
         fs::write(fx.dest.path.join("adir"), b"dest").unwrap();
-        file_system.handle_command(&Command::Move {
-            srcs: vec![src],
-            dest: fx.dest.clone(),
-        });
 
-        file_system.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
+        let commands = file_system
+            .handle_command(&Command::Move {
+                srcs: vec![src],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
 
-        // `rename` refuses to replace a file with a directory (ENOTDIR), so
-        // granting overwrite would promise a replacement the move could not
-        // deliver unless the destination is cleared first.
-        await_terminal_task(&rx);
-        assert_eq!(
-            b"src".to_vec(),
-            fs::read(fx.dest.path.join("adir").join("inner.txt")).unwrap()
+        // A directory never replaces a file, like `cp -R` and `mv`.
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [Command::OpenPrompt(PromptAction::Conflict {
+                    can_overwrite: false,
+                    ..
+                })]
+            ),
+            "{commands:?}"
         );
-        assert!(!src_dir.exists(), "the source should have been moved");
+
+        // An overwrite the prompt did not offer is refused before it starts.
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite))
+            .into_commands();
+        assert!(
+            matches!(commands.first(), Some(Command::AlertError(message)) if message.ends_with("never replaces what holds its name")),
+            "{commands:?}"
+        );
+        assert_eq!(
+            b"dest".to_vec(),
+            fs::read(fx.dest.path.join("adir")).unwrap()
+        );
+        assert!(src_dir.join("inner.txt").exists());
     }
 
     #[test]
@@ -1793,32 +1827,6 @@ mod tests {
     }
 
     #[test]
-    fn search_with_an_empty_query_returns_the_started_exited_pair() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        file_system.directory = Some(PathInfo::try_from(std::env::temp_dir().as_path()).unwrap());
-
-        let result = file_system.search("");
-
-        // No walk is spawned; the pair unwinds the consumers' search state,
-        // and started must precede exited or the exit is ignored as stale.
-        let commands = result.into_commands();
-        let [
-            Command::SearchStarted {
-                generation: started,
-            },
-            Command::ExitedSearch { generation: exited },
-        ] = commands.as_slice()
-        else {
-            panic!("expected a SearchStarted/ExitedSearch pair, got {commands:?}");
-        };
-        assert_eq!(started, exited);
-        // Nothing goes out of band on the channel.
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
     fn a_finished_task_leaves_the_cancel_stack_and_the_rest_of_it_alone() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -2164,6 +2172,61 @@ mod tests {
         // it would make "-" toggle back to where the user already is.
         file_system.cd(second, true);
         assert_eq!(Some(first.path), previous_path(&file_system));
+    }
+
+    /// The search's token is registered by hand rather than by a real walk,
+    /// which cancels its own token when it finishes and could do so before
+    /// the navigation lands.
+    #[test]
+    fn navigating_away_stops_a_running_search() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_navigate_search");
+        fs::create_dir(root.join("sub")).unwrap();
+        file_system.directory = Some(PathInfo::try_from(root.join("sub").as_path()).unwrap());
+        file_system.cancellables = cancellables("ts");
+        let Cancellable::Search(search) = &file_system.cancellables[1] else {
+            panic!("expected a search");
+        };
+        let search = search.clone();
+
+        file_system.handle_command(&Command::GoToParentDirectory);
+
+        // Left registered, it would stay the cancel key's target after its
+        // results were replaced.
+        assert!(search.is_cancelled());
+        assert!(matches!(
+            file_system.cancellables.as_slice(),
+            [Cancellable::Task(_)]
+        ));
+        file_system.cancel_current_load();
+    }
+
+    #[test]
+    fn a_reload_leaves_a_running_search_alone() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_reload_search");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.cancellables = cancellables("s");
+        let Cancellable::Search(search) = &file_system.cancellables[0] else {
+            panic!("expected a search");
+        };
+        let search = search.clone();
+
+        let commands = file_system
+            .handle_command(&Command::RefreshDirectory)
+            .into_commands();
+
+        assert!(matches!(
+            commands.as_slice(),
+            [Command::RefreshedDirectory { .. }]
+        ));
+        assert!(!search.is_cancelled());
+        assert_eq!(1, file_system.cancellables.len());
+        file_system.cancel_current_load();
     }
 
     fn previous_path(file_system: &FileSystem) -> Option<PathBuf> {

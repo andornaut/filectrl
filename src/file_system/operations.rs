@@ -225,7 +225,6 @@ fn chmod_failure(p: &Path, mode: u32, error: &dyn std::fmt::Display) -> anyhow::
 /// `Config`, so writes resolve against the same directory `read_bookmarks`
 /// reads (`FileSystem::bookmarks_dir`).
 pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<()> {
-    let name = name.trim();
     validate_basename("Bookmark name", name)?;
     fs::create_dir_all(dir)?;
     let link = dir.join(name);
@@ -707,19 +706,7 @@ mod tests {
         assert_eq!(base.path(), fs::read_link(bookmarks.join("favs")).unwrap());
     }
 
-    #[test]
-    fn add_bookmark_trims_the_name_it_is_given() {
-        let base = TempDir::new("ops_bookmark_trim");
-        let bookmarks = base.join("bookmarks");
-        let target = PathInfo::try_from(base.path()).unwrap();
-
-        add_bookmark(&bookmarks, &target, "  favs  ").unwrap();
-
-        assert!(bookmarks.join("favs").symlink_metadata().is_ok());
-    }
-
     #[test_case("" => "Bookmark name cannot be empty" ; "empty")]
-    #[test_case("   " => "Bookmark name cannot be empty" ; "only whitespace, which trims to empty")]
     #[test_case("nested/name" => "Bookmark name cannot contain '/'" ; "a path rather than a name")]
     fn add_bookmark_refuses_a_name_that_is_not_a_basename(name: &str) -> String {
         let base = TempDir::new("ops_bookmark_bad_name");

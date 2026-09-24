@@ -48,6 +48,19 @@ impl Marks {
         }
     }
 
+    /// The range anchor and the marks made before the range began, while in
+    /// range mode.
+    fn range(&self) -> Option<(usize, &BTreeSet<usize>)> {
+        Some((self.range_anchor?, &self.range_base))
+    }
+
+    /// Resume range mode at `anchor` over the earlier marks `base`, leaving the
+    /// current marks as they are until the cursor next moves.
+    fn restore_range(&mut self, anchor: usize, base: impl IntoIterator<Item = usize>) {
+        self.range_anchor = Some(anchor);
+        self.range_base = base.into_iter().collect();
+    }
+
     pub(super) fn in_range_mode(&self) -> bool {
         self.range_anchor.is_some()
     }
@@ -77,6 +90,13 @@ impl Marks {
     pub(super) fn contains(&self, item: usize) -> bool {
         self.set.contains(&item)
     }
+}
+
+/// Range mode captured by the entries it names, see
+/// [`TableView::range_by_path`].
+pub(super) struct RangeByPath {
+    anchor: PathInfo,
+    base: Vec<PathInfo>,
 }
 
 impl TableView {
@@ -126,6 +146,30 @@ impl TableView {
             .iter()
             .filter_map(|&i| self.content.get(i).cloned())
             .collect()
+    }
+
+    /// Range mode as the entries it names rather than their positions, to
+    /// carry it across a rebuilt listing with [`Self::restore_range_by_path`].
+    pub(super) fn range_by_path(&self) -> Option<RangeByPath> {
+        let (anchor, base) = self.marks.range()?;
+        Some(RangeByPath {
+            anchor: self.content.get(anchor)?.clone(),
+            base: base
+                .iter()
+                .filter_map(|&i| self.content.get(i).cloned())
+                .collect(),
+        })
+    }
+
+    /// Resume range mode captured by [`Self::range_by_path`], found again by
+    /// path as the marks are. Range mode stays ended if its anchor is gone,
+    /// since there is nothing left to measure the range from.
+    pub(super) fn restore_range_by_path(&mut self, range: Option<RangeByPath>) {
+        let Some(range) = range else { return };
+        if let Some(anchor) = self.content.find_by_path(range.anchor.as_path()) {
+            let base = self.content.find_all_by_path(&range.base);
+            self.marks.restore_range(anchor, base);
+        }
     }
 
     pub(super) fn update_range_marks(&mut self) {

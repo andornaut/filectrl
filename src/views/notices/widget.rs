@@ -17,7 +17,7 @@ use crate::{
     command::progress::{Progress, Task, TaskKind},
     views::{
         right_hint_fits,
-        unicode::{pluralize_items, truncate_left},
+        unicode::{fit_left, pluralize_items},
     },
 };
 
@@ -93,11 +93,8 @@ pub(super) fn clipboard_widget<'a>(
     let detail = if paths.len() > 1 {
         pluralize_items(paths.len())
     } else {
-        let available_width = width.saturating_sub(prefix.cell_width());
-        truncate_left(
-            &crate::file_system::path_info::visible_path(&paths[0].path),
-            available_width as usize,
-        )
+        let path = crate::file_system::path_info::visible_path(&paths[0].path);
+        detail_after(prefix, &path, width)
     };
 
     let left = Line::from(vec![
@@ -163,29 +160,18 @@ pub(super) fn progress_widget<'a>(
         .style(theme.progress())
 }
 
-// truncate_left() panics unless the budget exceeds the ellipsis width (1).
-const MIN_TRUNCATE_WIDTH: usize = 2;
-
-/// The detail text after the verb prefix, left-truncated into whatever width the
-/// prefix (always shown in full) leaves. Left-truncation keeps the tail of the
-/// path visible (`…naut/Downloads/`), which is the part that identifies it. With
-/// no room for any detail, only an ellipsis shows (`Copying …`).
-fn truncate_detail(prefix: &str, detail: &str, width: u16) -> String {
-    let budget = (width as usize).saturating_sub(prefix.cell_width() as usize);
-    if budget < MIN_TRUNCATE_WIDTH {
-        "…".to_string()
-    } else if detail.cell_width() as usize <= budget {
-        detail.to_string()
-    } else {
-        truncate_left(detail, budget)
-    }
+/// The detail text after `prefix`, fitted by `fit_left` into whatever width the
+/// prefix (always shown in full) leaves, and returned without the prefix, which
+/// the notice styles as a span of its own.
+fn detail_after(prefix: &str, detail: &str, width: u16) -> String {
+    fit_left(prefix, detail, "", usize::from(width)).split_off(prefix.len())
 }
 
 /// The detail string for one in-progress operation, keeping the most useful part
 /// visible as the width shrinks: `"<source> to <destination dir>"` normally, or
 /// `"to <full destination path>"` once the source basename would be truncated at
 /// all, so the file name still shows in full. Then left-truncated to fit (see
-/// [`truncate_detail`]).
+/// [`detail_after`]).
 fn operation_detail(kind: &TaskKind, width: u16) -> String {
     let prefix = kind.prefix();
     let detail = match (kind.source(), kind.source_basename(), kind.destination()) {
@@ -206,7 +192,7 @@ fn operation_detail(kind: &TaskKind, width: u16) -> String {
         }
         _ => kind.detail(),
     };
-    truncate_detail(prefix, &detail, width)
+    detail_after(prefix, &detail, width)
 }
 
 pub(super) fn operations_widget<'a>(
@@ -228,7 +214,10 @@ pub(super) fn operations_widget<'a>(
         ])
     } else {
         let message = format!("Multiple ({}) operations in progress", tasks.len());
-        Line::from(Span::styled(truncate_left(&message, width as usize), style))
+        Line::from(Span::styled(
+            fit_left("", &message, "", usize::from(width)),
+            style,
+        ))
     };
     create_notice_block(left, style, width, cancel_hint)
 }
@@ -241,7 +230,7 @@ fn search_message_widget<'a>(
     hint: &'a str,
 ) -> Block<'a> {
     let style = theme.search();
-    let query = truncate_detail(prefix, query, width);
+    let query = detail_after(prefix, query, width);
     let left = Line::from(vec![
         prefix.into(),
         Span::styled(query, style.add_modifier(Modifier::BOLD)),
@@ -312,7 +301,7 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{operation_detail, search_loading_position, truncate_detail};
+    use super::{operation_detail, search_loading_position};
     use crate::command::progress::{TaskKind, Transfer};
 
     // Width 80 gives a travel of 77 cells at 2 cells per 80 ms step, so the
@@ -345,24 +334,6 @@ mod tests {
         assert_eq!(
             Some(1),
             search_loading_position(20, Duration::from_millis(80))
-        );
-    }
-
-    // Left-truncation keeps the tail (destination) visible as the width
-    // shrinks, e.g. `…oper/Downloads/` then `…per/Downloads/`.
-    #[test_case(60, "/tmp/a to /home/developer/Downloads/"; "unchanged when it fits")]
-    #[test_case(40, "…a to /home/developer/Downloads/"; "source truncated from the left first")]
-    #[test_case(30, "…/developer/Downloads/"; "more of the source dropped")]
-    #[test_case(24, "…oper/Downloads/"; "destination tail kept at width 24")]
-    #[test_case(23, "…per/Downloads/"; "destination tail kept at width 23")]
-    #[test_case(8, "…"; "only an ellipsis when budget below minimum")]
-    // The narrowest budget that still has room for a character beside the
-    // ellipsis, which is what MIN_TRUNCATE_WIDTH marks the bottom of.
-    #[test_case(10, "…/"; "one character of the tail at the minimum budget")]
-    fn truncate_detail_copy(width: u16, expected: &str) {
-        assert_eq!(
-            expected,
-            truncate_detail("Copying ", "/tmp/a to /home/developer/Downloads/", width)
         );
     }
 

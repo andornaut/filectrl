@@ -176,8 +176,8 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         Command::ExitedSearch { generation: 3 },
         Command::SearchStarted { generation: 3 },
         Command::SearchTick,
-        // The empty-query backstop, so no search or tick thread is spawned.
-        Command::StartSearch(String::new()),
+        // Walks the one-file fixture; `ResetView` below cancels it.
+        Command::StartSearch("query".to_string()),
         Command::FilterChanged("f".to_string()),
         Command::SelectionChanged {
             selected: Some(fixture.file()),

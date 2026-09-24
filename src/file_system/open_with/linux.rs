@@ -17,7 +17,7 @@ use xdg_mime::SharedMimeInfo;
 
 use super::{
     AppCandidate,
-    exec::{Refused, expand, unescape_value},
+    exec::{expand, unescape_value},
     mimeapps::{self, AppDirIndex, Level, MimeAppsList},
 };
 use crate::{
@@ -281,9 +281,9 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
         .is_none_or(|program| is_installed(&unescape_value(program)))
 }
 
-/// An entry `expand` refuses as unsafe is logged as a warning, since the
-/// application is installed and would otherwise have been offered; any other
-/// reason to skip one is logged at debug only. The candidate is not marked
+/// An entry whose `Exec` `expand` refuses as unsafe or cannot parse is logged
+/// as a warning, since the application is installed and would otherwise have
+/// been offered; any other reason to skip one is logged at debug only. The candidate is not marked
 /// default; `candidates_from` decides that.
 fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option<AppCandidate> {
     let file = entry.path.as_path();
@@ -298,13 +298,7 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
         .name(locales)
         .map_or_else(|| entry.appid.clone(), std::borrow::Cow::into_owned);
     let mut argv = expand(path, entry.exec()?)
-        .inspect_err(|error| {
-            if error.is::<Refused>() {
-                warn!("Cannot offer {}: {error}", compact(file));
-            } else {
-                debug!("Skipping {}: {error}", file.display());
-            }
-        })
+        .inspect_err(|error| warn!("Cannot offer {}: {error}", compact(file)))
         .ok()?;
     if entry.terminal() {
         // A terminal application launched with null stdio does nothing at all,

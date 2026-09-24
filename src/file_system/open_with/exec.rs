@@ -22,7 +22,7 @@ use anyhow::{Result, anyhow};
 /// literally), and rejects any `Exec` whose first token contains '='
 /// (`env FOO=1 app %f`).
 ///
-/// Two shapes are refused with `Refused`, so the entry is not offered: a
+/// Two shapes are refused, so the entry is not offered: a
 /// field code in an argument written with quotes or escapes, unless the
 /// argument is nothing but that code (`app "%f"`), and a value in or after an
 /// option that may take code, however it is written, whether a field code or
@@ -50,10 +50,9 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
                 .iter()
                 .any(|token| has_substituting_code(&token.text)))
     {
-        return Err(Refused(format!(
+        return Err(anyhow!(
             "Exec {exec:?}: a path in or after an option that takes code cannot be passed safely"
-        ))
-        .into());
+        ));
     }
 
     // Only ever one path, so %F and %U behave as %f and %u.
@@ -62,10 +61,9 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     for Token { text, quoted } in tokens {
         let is_one_code = text.len() == 2 && text.starts_with('%');
         if quoted && !is_one_code && has_substituting_code(&text) {
-            return Err(Refused(format!(
+            return Err(anyhow!(
                 "Exec {exec:?}: a field code in a quoted argument cannot be passed safely"
-            ))
-            .into());
+            ));
         }
         let expanded = expand_in_token(path, &uri, &text);
         // A token that was nothing but removed field codes is not an empty
@@ -87,20 +85,6 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     }
     Ok(argv)
 }
-
-/// An `Exec` that `expand` refuses because it would let a file name run as
-/// code, as opposed to one that is malformed. Worth telling the user about:
-/// the application is installed and would otherwise have been offered.
-#[derive(Debug)]
-pub(super) struct Refused(String);
-
-impl std::fmt::Display for Refused {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Refused {}
 
 /// The index of the first option cluster among `tokens` whose leading run of
 /// letters and digits holds `c`, `e`, `E` or `S` (`-c`, `-lc`, `-cx`, `-e`,
@@ -285,7 +269,7 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{Refused, expand, file_uri, split, unescape_value};
+    use super::{expand, file_uri, split, unescape_value};
 
     /// The expansion as plain strings, for comparing against the expected argv.
     fn expanded(path: &str, exec: &str) -> Vec<String> {
@@ -409,7 +393,6 @@ mod tests {
     #[test_case("env --split-string \"sh -c %f\"", QUOTED ; "a long option that takes code")]
     fn expand_refuses(exec: &str, rule: &str) {
         let error = expand(Path::new(HOSTILE), exec).expect_err("the entry must not be offered");
-        assert!(error.is::<Refused>(), "{error}");
         assert!(error.to_string().ends_with(rule), "{error}");
     }
 
@@ -443,12 +426,6 @@ mod tests {
     #[test_case(r#"run --command "printf 100%%" %f"#, &["run", "--command", "printf 100%", HOSTILE] ; "a literal percent in a quoted argument")]
     fn expand_offers(exec: &str, expected: &[&str]) {
         assert_eq!(expected, expanded(HOSTILE, exec).as_slice());
-    }
-
-    #[test]
-    fn a_malformed_exec_is_not_reported_as_refused() {
-        let error = expand(Path::new(PATH), "app \"unmatched").unwrap_err();
-        assert!(!error.is::<Refused>(), "{error}");
     }
 
     #[test_case("app \\\n%f", &["app", HOSTILE] ; "a line continuation")]

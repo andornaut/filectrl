@@ -10,6 +10,7 @@ use std::{
     env,
     ffi::OsStr,
     fmt::Write as _,
+    fs,
     io::{IsTerminal, Write, stdout},
     path::{Path, PathBuf},
 };
@@ -101,6 +102,10 @@ fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
             canonical.display()
         ));
     }
+    // A directory that cannot be listed would start the UI on an empty table
+    // with the reason only in an alert, where `ls` exits with it.
+    fs::read_dir(&canonical)
+        .map_err(|error| anyhow!("Failed to open {}: {error}", path.display()))?;
     Ok(canonical)
 }
 
@@ -274,6 +279,33 @@ mod tests {
         let error = validate_initial_directory(&file).unwrap_err().to_string();
         assert!(error.starts_with("Cannot open "), "{error}");
         assert!(error.ends_with(": not a directory"), "{error}");
+    }
+
+    #[test]
+    fn validate_initial_directory_rejects_a_directory_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_support::TempDir::new("lib_unlistable");
+        let locked = dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        // Search permission only, so `canonicalize` and `is_dir` succeed and
+        // only the listing is refused.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o100)).unwrap();
+        // Root lists a mode-100 directory anyway; probe rather than inspect
+        // the euid.
+        let is_unlistable = std::fs::read_dir(&locked).is_err();
+
+        let result = validate_initial_directory(&locked);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        if !is_unlistable {
+            return;
+        }
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.starts_with(&format!("Failed to open {}:", locked.display())),
+            "{error}"
+        );
+        assert!(error.contains("Permission denied"), "{error}");
     }
 
     /// An empty positional would otherwise reach `canonicalize` and be reported

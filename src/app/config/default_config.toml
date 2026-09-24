@@ -27,7 +27,7 @@ search_max_results = 10000
 # %s stands for the relevant path, which the shell receives as an argument
 # ("$@") rather than as part of the command, so a file name never runs as code.
 # Only a template that hands it to another parser (eval, a nested sh -c, ssh,
-# bash arithmetic such as $(( %s ))) can still run it. Write %s unquoted, as its
+# bash arithmetic such as $(( %s )), AppleScript's `do script`) can still run it. Write %s unquoted, as its
 # own word: inside quotes it is split into words or left as literal text.
 [openers.linux]
 # xterm has no working directory option, so the shell changes into the directory
@@ -43,10 +43,11 @@ run_in_terminal = "xterm -e %s" # e.g. "alacritty --command %s"
 [openers.macos]
 open_directory = "open -a Terminal %s"
 open_file = "open %s"
-# Activates Terminal and opens filectrl in a new window. The path reaches the
-# script as an argument, outside any quotes, and `quoted form of` quotes it again
-# for the shell that Terminal runs it in.
-open_filectrl_window = "osascript -e 'on run argv' -e 'tell application \"Terminal\" to activate' -e 'tell application \"Terminal\" to do script \"filectrl \" & quoted form of item 1 of argv' -e 'end run' %s"
+# Terminal has no way to run a program with the path as its own argument: the
+# only scriptable route types a command line into your login shell, which would
+# parse the name. So this opens a Terminal window in the directory instead; run
+# filectrl there.
+open_filectrl_window = "open -a Terminal %s"
 # Linux only: macOS resolves applications through Launch Services
 run_in_terminal = ""
 

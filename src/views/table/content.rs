@@ -311,11 +311,12 @@ impl DirectoryContent {
     /// Replace the listing with the given bookmarks (one synchronous batch,
     /// unlike streamed search results). The current `directory` is left
     /// untouched so breadcrumbs/CWD restore cleanly when the view is dismissed.
+    /// The visible listing is left for `sort` to rebuild, so a reload can read
+    /// the cursor and the marks from it first.
     pub(super) fn set_bookmarks(&mut self, items: Vec<PathInfo>) {
         self.set_mode(ListingMode::Bookmarks);
         self.filter.clear();
         self.items = items;
-        self.items_sorted.clear();
         self.revision += 1;
     }
 

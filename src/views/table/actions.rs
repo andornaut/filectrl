@@ -110,21 +110,11 @@ impl TableView {
     pub(super) fn open_rename_prompt(&self) -> CommandResult {
         match self.selected_path() {
             None => Command::AlertWarn("No file selected".into()).into(),
-            Some(path) => {
-                // The name itself rather than `display_name`, which spells out
-                // disguising characters: submitting the prompt unchanged must
-                // not rename the file to its escaped form.
-                #[allow(clippy::disallowed_methods)]
-                let name = path
-                    .path
-                    .file_name()
-                    .map_or(String::new(), |name| name.to_string_lossy().into_owned());
-                Command::OpenPrompt(PromptAction::Rename {
-                    path: path.clone(),
-                    name,
-                })
-                .into()
-            }
+            Some(path) => Command::OpenPrompt(PromptAction::Rename {
+                path: path.clone(),
+                name: editable_name(path),
+            })
+            .into(),
         }
     }
 
@@ -135,14 +125,11 @@ impl TableView {
         }
         match self.content.directory() {
             None => Command::AlertWarn("No current directory".into()).into(),
-            Some(directory) => {
-                let name = directory.display_name.clone();
-                Command::OpenPrompt(PromptAction::AddBookmark {
-                    directory: directory.clone(),
-                    name,
-                })
-                .into()
-            }
+            Some(directory) => Command::OpenPrompt(PromptAction::AddBookmark {
+                directory: directory.clone(),
+                name: editable_name(directory),
+            })
+            .into(),
         }
     }
 
@@ -169,6 +156,16 @@ impl TableView {
             None => CommandResult::Handled,
         }
     }
+}
+
+/// The text a prompt offers for editing `path`'s name: the name itself rather
+/// than `display_name`, which spells out disguising characters, so submitting
+/// the prompt unchanged does not store the escaped form.
+#[allow(clippy::disallowed_methods)]
+fn editable_name(path: &PathInfo) -> String {
+    path.path
+        .file_name()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned())
 }
 
 /// Which entries each action acts on. Every action here reads either the marks
@@ -333,6 +330,25 @@ mod tests {
             Command::try_from(table.open_add_bookmark_prompt()),
             Ok(Command::AlertWarn(_))
         ));
+    }
+
+    /// As for rename: the bookmark is named by what the prompt holds, so it
+    /// must start from the directory's real name, not the escaped one shown.
+    #[test]
+    fn add_bookmark_starts_from_the_name_rather_than_its_escaped_form() {
+        let (dir, mut table) = marked_table();
+        let path = dir.join("a\tb");
+        std::fs::create_dir(&path).unwrap();
+        table.begin_directory(PathInfo::try_from(path.as_path()).unwrap(), Reselect::Top);
+        table.finish_directory();
+
+        let PromptAction::AddBookmark { directory, name } =
+            prompt(table.open_add_bookmark_prompt())
+        else {
+            panic!("expected an AddBookmark prompt");
+        };
+        assert_eq!("a\\tb", directory.display_name);
+        assert_eq!("a\tb", name);
     }
 
     #[test]

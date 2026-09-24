@@ -84,8 +84,7 @@ impl ListingMode {
     pub(super) fn transition(command: &Command) -> Option<Self> {
         match command {
             Command::NavigatedDirectory { .. } | Command::ResetView => Some(Self::Normal),
-            // The table rejects an empty query, so it must not enter search mode.
-            Command::StartSearch(query) if !query.is_empty() => Some(Self::Search),
+            Command::StartSearch(_) => Some(Self::Search),
             Command::Bookmarks { .. } => Some(Self::Bookmarks),
             _ => None,
         }
@@ -225,11 +224,6 @@ mod tests {
         assert_eq!(
             Some(ListingMode::Search),
             ListingMode::transition(&Command::StartSearch("q".into()))
-        );
-        // An empty query never starts a search.
-        assert_eq!(
-            None,
-            ListingMode::transition(&Command::StartSearch(String::new()))
         );
         assert_eq!(
             Some(ListingMode::Bookmarks),

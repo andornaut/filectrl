@@ -53,7 +53,26 @@ pub(super) fn split_line_count(line: &str, width: usize) -> usize {
     count
 }
 
-pub(super) fn truncate_left(line: &str, width: usize) -> String {
+/// `before`, `text` and `after` as one line of `width` columns. `before` and
+/// `after` are kept whole, and `text` loses its start to an ellipsis when it
+/// does not fit, which keeps the tail of a path (the part that identifies it)
+/// visible. With no room for any of `text` beside the ellipsis, only the
+/// ellipsis shows. When `before` and `after` alone are wider than `width`, the
+/// line is too, and the caller's widget clips it.
+pub(super) fn fit_left(before: &str, text: &str, after: &str, width: usize) -> String {
+    let around = before.cell_width() as usize + after.cell_width() as usize;
+    let room = width.saturating_sub(around);
+    let text = if text.cell_width() as usize <= room {
+        text.to_string()
+    } else if room <= ELLIPSIS_WIDTH {
+        ELLIPSIS.to_string()
+    } else {
+        truncate_left(text, room)
+    };
+    format!("{before}{text}{after}")
+}
+
+fn truncate_left(line: &str, width: usize) -> String {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
     if line.cell_width() as usize <= width {
@@ -177,32 +196,27 @@ mod tests {
         }
     }
 
+    // ── fit_left ──────────────────────────────────────────────────────────────
+
+    #[test_case("[", "abc", "]", 5, "[abc]"; "fits unchanged at exact width")]
+    #[test_case("[", "abc", "]", 9, "[abc]"; "fits unchanged when wider than needed")]
+    #[test_case("[", "a", "]", 3, "[a]"; "fits unchanged in a single column")]
+    #[test_case("", "", "", 0, ""; "empty text stays empty with no room")]
+    #[test_case("[", "abcdef", "]", 5, "[…ef]"; "trimmed from the left keeping before and after")]
+    #[test_case("Copying ", "/tmp/a to /home/developer/Downloads/", "", 24, "Copying …oper/Downloads/"; "a path keeps its tail")]
+    #[test_case("[", "abcdef", "]", 4, "[…f]"; "one column of text beside the ellipsis")]
+    #[test_case("[", "abcdef", "]", 3, "[…]"; "only an ellipsis in one column")]
+    #[test_case("[", "abcdef", "]", 2, "[…]"; "only an ellipsis with no room")]
+    #[test_case("[", "abcdef", "]", 0, "[…]"; "before and after kept whole past the width")]
+    #[test_case("", "中文字", "", 5, "…文字"; "wide graphemes that fit are kept")]
+    #[test_case("", "中文字", "", 4, "…字"; "a wide grapheme that would overflow is dropped whole")]
+    #[test_case("> ", "中文字", "", 5, "> …字"; "wide graphemes measured after before")]
+    #[test_case("", "ae\u{0301}f", "", 2, "…f"; "a combining accent is not split from its base")]
+    fn fit_left_cases(before: &str, text: &str, after: &str, width: usize, expected: &str) {
+        assert_eq!(expected, fit_left(before, text, after, width));
+    }
+
     // ── truncate_left ─────────────────────────────────────────────────────────
-
-    #[test_case("example", "example", 7; "fits unchanged at exact width")]
-    #[test_case("example", "example", 8; "fits unchanged when wider than needed")]
-    #[test_case("…ample",  "example", 6; "truncates at width minus 1")]
-    #[test_case("…e",      "example", 2; "truncates to minimum useful width")]
-    fn truncate_left_ascii(expected: &str, text: &str, width: usize) {
-        assert_eq!(expected, truncate_left(text, width));
-    }
-
-    // CJK characters have display width 2 each.
-    #[test_case("中文",   "中文",   4; "fits unchanged when display width equals target")]
-    #[test_case("…文字", "中文字", 5; "two wide chars fit in remaining width")]
-    #[test_case("…字",   "中文字", 3; "wide char that would overflow is excluded")]
-    fn truncate_left_cjk(expected: &str, text: &str, width: usize) {
-        assert_eq!(expected, truncate_left(text, width));
-    }
-
-    // A base character followed by a combining accent forms one grapheme cluster
-    // (display width 1) stored as two Unicode scalar values. Truncating by scalar
-    // value would cut between them and leave an orphaned combining character.
-    #[test_case("e\u{0301}f", "e\u{0301}f", 3; "combining char string fits unchanged")]
-    #[test_case("…f",         "ae\u{0301}f", 2; "combining char mid-string: not split from base")]
-    fn truncate_left_combining_chars(expected: &str, text: &str, width: usize) {
-        assert_eq!(expected, truncate_left(text, width));
-    }
 
     #[test]
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]

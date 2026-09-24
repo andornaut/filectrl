@@ -2,7 +2,7 @@ mod handler;
 mod view;
 mod widget;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
@@ -45,63 +45,118 @@ pub(super) struct PromptView {
     cached_entries: Vec<(String, bool)>,
 }
 
+/// One line of a prompt's label. A path it names is kept apart from the text
+/// around it, so the widget can trim the path to the width it draws at and
+/// leave the question and its choices visible.
+#[derive(Default)]
+struct LabelLine {
+    before: String,
+    /// Already escaped for display, and without its quotes, which are part of
+    /// `before` and `after` so that trimming keeps them.
+    path: String,
+    after: String,
+}
+
+impl LabelLine {
+    fn plain(text: String) -> Self {
+        Self {
+            before: text,
+            ..Self::default()
+        }
+    }
+
+    /// `before`, then `path` quoted, then `after`.
+    fn quoting(before: &str, path: &str, after: &str) -> Self {
+        Self {
+            before: format!("{before}\""),
+            path: path.to_string(),
+            after: format!("\"{after}"),
+        }
+    }
+}
+
+/// The line untrimmed.
+impl std::fmt::Display for LabelLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}{}", self.before, self.path, self.after)
+    }
+}
+
+/// `path` escaped and quoted as `quoted` renders it, without the quotes.
+fn quoted_inner(path: &Path) -> String {
+    let quoted = quoted(path).to_string();
+    // `quoted` always opens and closes with an ASCII quote.
+    quoted[1..quoted.len() - 1].to_string()
+}
+
 impl PromptView {
-    fn label(&self) -> String {
+    fn label(&self) -> Vec<LabelLine> {
+        let plain = |text: String| vec![LabelLine::plain(text)];
         match &self.actions {
             PromptAction::Chmod { paths, .. } => {
-                format!(" Chmod {} (octal) ", pluralize_items(paths.len()))
+                plain(format!(" Chmod {} (octal) ", pluralize_items(paths.len())))
             }
-            PromptAction::AddBookmark { .. } => " Add bookmark ".to_string(),
-            PromptAction::CreateDirectory => " New directory ".to_string(),
+            PromptAction::AddBookmark { .. } => plain(" Add bookmark ".to_string()),
+            PromptAction::CreateDirectory => plain(" New directory ".to_string()),
             PromptAction::Delete(count) => {
-                format!(" Delete {}? (y/n) ", pluralize_items(*count))
+                plain(format!(" Delete {}? (y/n) ", pluralize_items(*count)))
             }
-            PromptAction::Filter(_) => " Filter ".to_string(),
-            PromptAction::Goto { .. } => " Go to ".to_string(),
-            PromptAction::Rename { .. } => " Rename ".to_string(),
-            PromptAction::Search(_) => " Search ".to_string(),
+            PromptAction::Filter(_) => plain(" Filter ".to_string()),
+            PromptAction::Goto { .. } => plain(" Go to ".to_string()),
+            PromptAction::Rename { .. } => plain(" Rename ".to_string()),
+            PromptAction::Search(_) => plain(" Search ".to_string()),
             PromptAction::ConfirmPaste { entry, .. } => {
                 let verb = match entry {
                     ClipboardEntry::Copy(_) => "copy",
                     ClipboardEntry::Move(_) => "move",
                 };
-                // Each path in full: another program chose it, and an elided
-                // middle would hide which directory it is in.
+                // Each path whole, not `compact`ed: another program chose it,
+                // and an elided middle would hide which directory it is in.
+                // Only what the width cannot hold is trimmed, from the left.
                 let paths = entry.paths();
                 if let [path] = paths {
-                    return format!(
-                        " Clipboard from elsewhere: {verb} {} here? (y/n) ",
-                        quoted(&path.path)
-                    );
+                    return vec![LabelLine::quoting(
+                        &format!(" Clipboard from elsewhere: {verb} "),
+                        &quoted_inner(&path.path),
+                        " here? (y/n) ",
+                    )];
                 }
                 // Every path is named, up to a few lines' worth: the text came
                 // from another program, which chose what follows the first.
-                let mut lines = vec![format!(
+                let mut lines = plain(format!(
                     " Clipboard from elsewhere: {verb} {} here? (y/n) ",
                     pluralize_items(paths.len())
-                )];
+                ));
                 lines.extend(
                     paths
                         .iter()
                         .take(MAX_LISTED_PASTE_PATHS)
-                        .map(|path| format!("   {}", quoted(&path.path))),
+                        .map(|path| LabelLine::quoting("   ", &quoted_inner(&path.path), "")),
                 );
                 if paths.len() > MAX_LISTED_PASTE_PATHS {
                     let more = paths.len() - MAX_LISTED_PASTE_PATHS;
-                    lines.push(format!("   and {more} more"));
+                    lines.push(LabelLine::plain(format!("   and {more} more")));
                 }
-                lines.join("\n")
+                lines
             }
             // `name` is the table's display name, already escaped, so it is
             // quoted as it is rather than escaped a second time.
             PromptAction::Conflict {
                 name,
                 can_overwrite: true,
-            } => format!(" \"{name}\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all "),
+            } => vec![LabelLine::quoting(
+                " ",
+                name,
+                " exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all ",
+            )],
             PromptAction::Conflict {
                 name,
                 can_overwrite: false,
-            } => format!(" \"{name}\" exists as a directory: [s]kip, [S]kip all "),
+            } => vec![LabelLine::quoting(
+                " ",
+                name,
+                " exists as a directory: [s]kip, [S]kip all ",
+            )],
         }
     }
 
@@ -219,14 +274,19 @@ impl PromptView {
         .into()
     }
 
-    /// Resolve user input to a path: leading `~` expands to home, absolute
-    /// paths are used as-is, and relative input is joined onto `basedir`.
+    /// Resolve user input to a path: `~` alone or a leading `~/` expands to
+    /// home, absolute paths are used as-is, and relative input (`~backup`
+    /// included) is joined onto `basedir`.
     fn resolve_path(&self, input: &str) -> PathBuf {
-        if let Some(rest) = input.strip_prefix('~')
+        let home_relative = if input == "~" {
+            Some("")
+        } else {
+            input.strip_prefix("~/")
+        };
+        if let Some(rest) = home_relative
             && let Some(base) = directories::BaseDirs::new()
         {
             let home = base.home_dir();
-            let rest = rest.strip_prefix('/').unwrap_or(rest);
             return if rest.is_empty() {
                 home.to_path_buf()
             } else {
@@ -410,6 +470,15 @@ mod tests {
         view
     }
 
+    /// The label as drawn at unlimited width, one line per row.
+    fn label_text(view: &PromptView) -> String {
+        view.label()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     // ── conflict prompt ──────────────────────────────────────────────────────
 
     fn conflict_chord(can_overwrite: bool, key: char, modifiers: KeyModifiers) -> Option<Command> {
@@ -494,7 +563,7 @@ mod tests {
             name: "a\\u{202e}b".to_string(),
             can_overwrite,
         });
-        view.label()
+        label_text(&view)
     }
 
     #[test]
@@ -577,7 +646,7 @@ mod tests {
             " Clipboard from elsewhere: move {} here? (y/n) ",
             quoted(&dir.join("a"))
         );
-        assert_eq!(expected, view.label());
+        assert_eq!(expected, label_text(&view));
 
         drop(dir);
     }
@@ -589,7 +658,7 @@ mod tests {
         let (dir, entry, dest) = foreign_paste(&names);
         let view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
 
-        let label = view.label();
+        let label = label_text(&view);
 
         let mut expected = vec![" Clipboard from elsewhere: move 7 items here? (y/n) ".to_string()];
         for name in &names[..MAX_LISTED_PASTE_PATHS] {
@@ -614,11 +683,112 @@ mod tests {
             dest,
         });
 
-        let label = view.label();
+        let label = label_text(&view);
 
         let shown = quoted(&parent.join("a")).to_string();
         assert!(shown.ends_with("/one/two/three/four/a\""), "{shown}");
         assert_eq!(count, label.matches(&shown).count(), "{label}");
+    }
+
+    // ── fitting a confirmation to the width ──────────────────────────────────
+
+    /// The rows `view` draws at `width` columns, as text.
+    fn rendered(view: &mut PromptView, width: u16) -> Vec<String> {
+        use ratatui::{Terminal, backend::TestBackend, layout::Constraint};
+
+        let Constraint::Length(rows) = view.constraint(Rect::new(0, 0, width, 10)) else {
+            panic!("expected a fixed height");
+        };
+        let mut terminal = Terminal::new(TestBackend::new(width, rows)).unwrap();
+        terminal
+            .draw(|frame| view.render(Config::global().theme(), frame.area(), frame))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..rows)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// A file named `name` under directories deep enough that its path is
+    /// wider than 150 columns.
+    fn deep_file(dir: &TempDir, name: &str) -> PathInfo {
+        let parent = dir.join("d".repeat(70)).join("e".repeat(70));
+        std::fs::create_dir_all(&parent).unwrap();
+        let path = parent.join(name);
+        std::fs::write(&path, b"x").unwrap();
+        assert!(path.as_os_str().len() > 150);
+        PathInfo::try_from(path.as_path()).unwrap()
+    }
+
+    /// Clipped on the right, the line would lose the file name and the
+    /// question, which are what the answer depends on.
+    #[test]
+    fn a_long_path_loses_its_start_rather_than_its_name_and_question() {
+        let (dir, _, dest) = foreign_paste(&[]);
+        let src = deep_file(&dir, "target.txt");
+        let mut view = prompt_with_action(PromptAction::ConfirmPaste {
+            entry: ClipboardEntry::Move(vec![src]),
+            dest,
+        });
+
+        let rows = rendered(&mut view, 80);
+
+        assert_eq!(1, rows.len());
+        assert!(
+            rows[0].starts_with(" Clipboard from elsewhere: move \"…"),
+            "{rows:?}"
+        );
+        assert!(
+            rows[0].ends_with("eeee/target.txt\" here? (y/n) "),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_list_of_long_paths_keeps_one_row_per_path() {
+        let (dir, _, dest) = foreign_paste(&[]);
+        let paths = vec![deep_file(&dir, "first.txt"), deep_file(&dir, "second.txt")];
+        let mut view = prompt_with_action(PromptAction::ConfirmPaste {
+            entry: ClipboardEntry::Copy(paths),
+            dest,
+        });
+
+        let rows = rendered(&mut view, 80);
+
+        assert_eq!(3, rows.len(), "{rows:?}");
+        assert!(rows[0].contains("copy 2 items here? (y/n)"), "{rows:?}");
+        assert!(rows[1].starts_with("   \"…"), "{rows:?}");
+        assert!(rows[1].trim_end().ends_with("/first.txt\""), "{rows:?}");
+        assert!(rows[2].trim_end().ends_with("/second.txt\""), "{rows:?}");
+    }
+
+    #[test]
+    fn a_conflict_over_a_long_name_keeps_its_choices_visible() {
+        let mut view = prompt_with_action(PromptAction::Conflict {
+            name: format!("{}.txt", "n".repeat(150)),
+            can_overwrite: true,
+        });
+
+        let rows = rendered(&mut view, 80);
+
+        assert_eq!(1, rows.len());
+        assert!(
+            rows[0]
+                .ends_with("nnnn.txt\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all "),
+            "{rows:?}"
+        );
+    }
+
+    /// Only the path yields to the width: a line that fits is drawn as it is.
+    #[test]
+    fn a_path_that_fits_is_shown_whole() {
+        let (dir, entry, dest) = foreign_paste(&["a"]);
+        let mut view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
+
+        let rows = rendered(&mut view, 200);
+
+        assert_eq!(label_text(&view).trim_end(), rows[0].trim_end());
+        drop(dir);
     }
 
     // ── copy and cut ─────────────────────────────────────────────────────────
@@ -1200,5 +1370,16 @@ mod tests {
         let view = goto_prompt(Path::new("/tmp/base"));
         assert_eq!(view.resolve_path("~"), home);
         assert_eq!(view.resolve_path("~/Documents"), home.join("Documents"));
+    }
+
+    /// Only `~` alone or followed by a separator names the home directory; a
+    /// name that starts with one is an ordinary relative name.
+    #[test]
+    fn resolve_path_treats_a_name_starting_with_a_tilde_as_relative() {
+        let view = goto_prompt(Path::new("/tmp/base"));
+        assert_eq!(
+            view.resolve_path("~backup"),
+            PathBuf::from("/tmp/base/~backup")
+        );
     }
 }

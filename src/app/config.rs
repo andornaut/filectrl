@@ -176,7 +176,13 @@ impl Config {
         debug!("Loading the config from {}", path.display());
         let (config_file, content) = match read_regular_file(path) {
             Ok(content) => (Some(path), content),
-            Err(ReadFailure::Io(error)) if is_default && error.kind() == ErrorKind::NotFound => {
+            // A dangling symlink also reads as NotFound, but it is the user's
+            // file pointing somewhere that is missing, not an absent config.
+            Err(ReadFailure::Io(error))
+                if is_default
+                    && error.kind() == ErrorKind::NotFound
+                    && path.symlink_metadata().is_err() =>
+            {
                 debug!("No config file found, using the built-in config");
                 (None, String::new())
             }
@@ -989,6 +995,25 @@ open_directory = "alacritty --working-directory %s"
         // Bookmarks still live beside where the config would be.
         assert_eq!(dir.path(), config.config_dir);
         assert!(select_next_key(&config, 'j'));
+    }
+
+    /// A default config symlinked to a missing file is a broken setup, and
+    /// loading the built-in config instead would hide it.
+    #[test]
+    fn a_dangling_default_config_symlink_is_an_error() {
+        let dir = TempDir::new("config_default_dangling");
+        let path = dir.join("config.toml");
+        std::os::unix::fs::symlink(dir.join("missing.toml"), &path).unwrap();
+
+        let error = match Config::load_from(RuntimeEnv::default(), &path, true, &[]) {
+            Ok(_) => panic!("expected the load to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(
+            error.starts_with(&format!("Failed to read config file {}:", path.display())),
+            "{error}"
+        );
     }
 
     /// Only absence falls back: a default config that exists but cannot be

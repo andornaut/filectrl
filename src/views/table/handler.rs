@@ -73,33 +73,29 @@ impl CommandHandler for TableView {
                 self.finish_directory()
             }
             Command::ResetView => self.reset_view(previous_mode),
-            Command::StartSearch(query) => {
-                if query.is_empty() {
-                    return CommandResult::Handled;
-                }
+            Command::StartSearch(_) => {
                 self.content.start_search();
                 self.table_state.select(None);
                 self.clear_marks_notifying()
             }
             Command::SearchStarted { generation } => {
-                // The empty-query backstop emits SearchStarted without the
-                // table entering search mode; an in-flight load's generation
-                // must not be clobbered then.
-                if self.content.is_searching() {
-                    self.stream_generation = *generation;
-                }
+                self.stream_generation = *generation;
                 CommandResult::Handled
             }
             Command::ExitedSearch { generation } => self.exited_search(*generation),
             Command::Bookmarks { bookmarks } => {
-                self.clear_marks();
+                // Entering the view: nothing marked or selected in the previous
+                // listing names a bookmark. A reload (after a refresh or a
+                // finished task) keeps both, found again by path.
+                if previous_mode != ListingMode::Bookmarks {
+                    self.clear_marks();
+                    self.table_state.select(None);
+                }
                 self.content.set_bookmarks(bookmarks.clone());
-                self.table_state.select(None);
                 // Must keep terminating in `sort`/`select`: its snapshot is the
-                // only `SelectionChanged { mark_count: 0 }` that resets the
-                // mark-count notice for a bookmarks reload, because the
-                // `RefreshedDirectory` branch above defers clearing to here.
-                self.sort()
+                // only one that reports the mark count after entering the view
+                // (zero) or a reload (the marks still found).
+                self.sort_keeping_marks()
             }
             // A bookmark delete runs as an async task; reload the list once it
             // finishes so the deleted entry disappears.
@@ -244,7 +240,7 @@ impl TableView {
         // renaming a bookmark triggers a CWD refresh; reload the
         // bookmarks instead of showing the CWD.
         //
-        // The marks are left for the Bookmarks handler to clear against
+        // The marks are left for the Bookmarks handler to find again in
         // the new listing. Clearing here would drop still valid marks
         // whenever the reload never arrives: a failed bookmarks read
         // broadcasts an alert and no Bookmarks command, leaving the

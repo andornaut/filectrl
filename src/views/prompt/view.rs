@@ -15,7 +15,7 @@ impl View for PromptView {
     /// about.
     fn constraint(&self, _: Rect) -> Constraint {
         let lines = if self.actions.is_confirmation() {
-            self.label().lines().count()
+            self.label().len()
         } else {
             1
         };
@@ -23,13 +23,14 @@ impl View for PromptView {
     }
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
-        let label = self.label();
-        let label_width = label.cell_width();
-
+        let lines = self.label();
         if self.actions.is_confirmation() {
-            confirmation_label_widget(label, theme).render(area, frame.buffer_mut());
+            confirmation_label_widget(&lines, area.width, theme).render(area, frame.buffer_mut());
             return;
         }
+        // A text prompt's label is one line naming no path.
+        let label: String = lines.iter().map(ToString::to_string).collect();
+        let label_width = label.cell_width();
 
         let [label_area, input_area] =
             Layout::horizontal([Constraint::Length(label_width), Constraint::Min(1)]).areas(area);

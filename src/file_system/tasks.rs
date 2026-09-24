@@ -20,8 +20,8 @@ use anyhow::{Result, anyhow};
 use log::{info, warn};
 use rustix::{
     fs::{
-        AtFlags, CWD, Dir, FileType, Mode, OFlags, fcntl_getfl, fcntl_setfl, fstat, mkdirat,
-        openat, readlinkat, statat, symlinkat, unlinkat,
+        AtFlags, CWD, Dir, FileType, Mode, OFlags, Timespec, Timestamps, XattrFlags, fcntl_getfl,
+        fcntl_setfl, fstat, mkdirat, openat, readlinkat, statat, symlinkat, unlinkat,
     },
     io::Errno,
 };
@@ -407,6 +407,16 @@ fn run_move_task(
 fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     let path = match restat(path, "delete") {
         Ok(fresh) => fresh,
+        // Already gone, like `rm -f`: a delete earlier in the same batch may
+        // have removed it, or the directory it was in, before this one starts.
+        Err(_)
+            if path
+                .path
+                .symlink_metadata()
+                .is_err_and(|error| error.kind() == ErrorKind::NotFound) =>
+        {
+            return TaskRunResult::failed(CommandResult::Handled);
+        }
         Err(error) => return TaskRunResult::failed(error.into()),
     };
     let kind = TaskKind::Delete {
@@ -581,7 +591,7 @@ fn scan_tree(
             incomplete: false,
         })
     };
-    let Some(root) = level(open_and_list(None, root)) else {
+    let Some(root) = level(scan_and_list(None, root)) else {
         return Some(());
     };
     let mut stack = vec![root];
@@ -606,7 +616,7 @@ fn scan_tree(
         };
         let dir = top.dir.as_ref().expect("the level being read holds its fd");
         visit(dir, &name, is_directory);
-        if is_directory && let Some(child) = level(open_and_list(Some(dir), &name)) {
+        if is_directory && let Some(child) = level(scan_and_list(Some(dir), &name)) {
             // Closed until the walk returns here, through `reopen_parent`.
             top.dir = None;
             stack.push(child);
@@ -805,7 +815,7 @@ fn copy_tree(
         let Some(name) = next else {
             let level = stack.pop().expect("stack is non-empty");
             let (src, dst) = level.handles();
-            finish_directory(Some(src), dst, &level.source, context);
+            finish_directory(dst, &level.source, context);
             let Some(parent) = stack.last_mut() else {
                 break;
             };
@@ -898,17 +908,15 @@ fn enter_directory(
     } else {
         (stat_mode(stat) & 0o777) | 0o700
     };
-    let created = match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
+    let created: std::io::Result<()> = match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
         // Something took this name while the copy was running: the destination
         // was free when the task started, so this is another process writing
-        // into the tree. A directory is never replaced, so only a standing
-        // "skip all" settles this one, and skipping drops the subtree.
+        // into the tree. A directory never replaces what holds its name, so
+        // only a standing "skip all" settles this one, and skipping drops the
+        // subtree.
         Err(Errno::EXIST) => {
-            if !resolve_nested(context, errors, at.dst, at.dst_name, &paths.new) {
-                return None;
-            }
-            remove_existing_at(at.dst, at.dst_name)
-                .and_then(|()| Ok(mkdirat(at.dst, at.dst_name, mode_bits(creation))?))
+            resolve_nested(context, errors, true, at.dst, at.dst_name, &paths.new);
+            return None;
         }
         result => result.map_err(Into::into),
     };
@@ -933,7 +941,7 @@ fn enter_directory(
     // its final mode.
     let give_up = |errors: &mut Vec<String>, context: &CopyContext<'_>, message: String| {
         errors.push(message);
-        finish_directory(None, &dst, &Source::of(stat), context);
+        finish_directory(&dst, &Source::of(stat), context);
     };
     let read_failure = |error: &dyn std::fmt::Display| {
         format!("Failed to read directory {}: {error}", compact(&paths.old))
@@ -961,12 +969,13 @@ fn enter_directory(
             return None;
         }
     };
+    let source = Source::read(&src, &opened, context.preserve);
     Some(CopyLevel {
         src: Some(src),
         dst: Some(dst),
         src_id: id,
         dst_id,
-        source: Source::of(&opened),
+        source,
         names: names.into_iter(),
     })
 }
@@ -976,11 +985,9 @@ fn enter_directory(
 /// own modification time, and a mode without owner-write would have stopped
 /// them being created. Through the handle, so a path swapped since cannot
 /// redirect either.
-fn finish_directory(src: Option<&File>, dst: &File, source: &Source, context: &CopyContext<'_>) {
-    if context.preserve
-        && let Some(src) = src
-    {
-        apply_times(src, dst);
+fn finish_directory(dst: &File, source: &Source, context: &CopyContext<'_>) {
+    if context.preserve {
+        apply_times(source, dst);
     }
     apply_final_mode(dst, source, context);
 }
@@ -1033,10 +1040,10 @@ fn copy_symlink(
     let created = match symlinkat(&target, at.dst, at.dst_name) {
         // Raced; settled from the standing answer, or recorded.
         Err(Errno::EXIST) => {
-            if !resolve_nested(context, errors, at.dst, at.dst_name, &paths.new) {
+            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
                 return;
             }
-            remove_existing_at(at.dst, at.dst_name)
+            unlink_at(at.dst, at.dst_name, AtFlags::empty())
                 .and_then(|()| Ok(symlinkat(&target, at.dst, at.dst_name)?))
                 .map_err(|error| format!("Failed to replace {}: {error}", compact(&paths.new)))
         }
@@ -1083,17 +1090,17 @@ fn copy_file(
             return true;
         }
     };
-    let source = &Source::of(&stat);
+    let source = &Source::read(&old_file, &stat, context.preserve);
     let mut new_file = match create_file_at(at.dst, at.dst_name, source.mode, context.preserve) {
         Ok(file) => file,
         // A name already taken inside the tree being copied. The top-level
         // collision was answered before the task started, so this one is a
         // race, settled from the paste's standing answer or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            if !resolve_nested(context, errors, at.dst, at.dst_name, &paths.new) {
+            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
                 return true;
             }
-            match remove_existing_at(at.dst, at.dst_name)
+            match unlink_at(at.dst, at.dst_name, AtFlags::empty())
                 .and_then(|()| create_file_at(at.dst, at.dst_name, source.mode, context.preserve))
             {
                 Ok(file) => file,
@@ -1125,7 +1132,7 @@ fn copy_file(
                 // modification time, so it has to be restored once the last
                 // byte is written.
                 if context.preserve {
-                    apply_times(&old_file, &new_file);
+                    apply_times(source, &new_file);
                 }
                 break true;
             }
@@ -1183,10 +1190,10 @@ fn copy_special(
     let created = match make() {
         // Raced; settled from the standing answer, or recorded.
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            if !resolve_nested(context, errors, at.dst, at.dst_name, &paths.new) {
+            if !resolve_nested(context, errors, false, at.dst, at.dst_name, &paths.new) {
                 return;
             }
-            remove_existing_at(at.dst, at.dst_name)
+            unlink_at(at.dst, at.dst_name, AtFlags::empty())
                 .and_then(|()| make())
                 .map_err(|error| format!("Failed to replace {}: {error}", compact(&paths.new)))
         }
@@ -1364,9 +1371,23 @@ fn create_file_at(
 /// to whichever group the destination assigned. Best effort: a user can only
 /// give a file a group they belong to, and the comparison below then clears
 /// setgid for a group that did not carry over.
+///
+/// A move also gets the source's ACLs, like `mv`, or the named users and groups
+/// they grant would be dropped and the mask, which is what the source's group
+/// bits hold, granted to the owning group instead. Before the mode: the ACL
+/// sets the mode's permission bits from its own entries, and the mode then
+/// sets the mask from the group bits, which are the source's mask, so the
+/// order changes nothing but closes the window in which the owning group has
+/// the mask's access. Best effort, since a filesystem without ACLs is no
+/// reason to fail the move.
 fn apply_final_mode(file: &File, source: &Source, context: &CopyContext<'_>) {
     if context.preserve {
         let _ = rustix::fs::fchown(file, None, Some(rustix::fs::Gid::from_raw(source.gid)));
+        for (name, value) in &source.acls {
+            if let Err(error) = rustix::fs::fsetxattr(file, *name, value, XattrFlags::empty()) {
+                warn!("Failed to copy the ACL of a moved entry: {error}");
+            }
+        }
     }
     let Ok(created) = fstat(file) else {
         return;
@@ -1387,31 +1408,24 @@ fn apply_final_mode(file: &File, source: &Source, context: &CopyContext<'_>) {
     }
 }
 
-/// Copies `source`'s access and modification times onto `target`, both open.
-/// Best effort: a filesystem that cannot record them is not a reason to fail
-/// the operation.
-fn apply_times(source: &File, target: &File) {
-    let Ok(metadata) = source.metadata() else {
+/// Gives the open `target` `source`'s access and modification times. Best
+/// effort: a filesystem that cannot record them is not a reason to fail the
+/// operation.
+fn apply_times(source: &Source, target: &File) {
+    let Some(times) = &source.times else {
         return;
     };
-    let mut times = fs::FileTimes::new();
-    if let Ok(accessed) = metadata.accessed() {
-        times = times.set_accessed(accessed);
-    }
-    if let Ok(modified) = metadata.modified() {
-        times = times.set_modified(modified);
-    }
-    if let Err(error) = target.set_times(times) {
+    if let Err(error) = rustix::fs::futimens(target, times) {
         warn!("Failed to set times on a copied entry: {error}");
     }
 }
 
-/// Removes an existing non-directory entry `name` in `dir`, treating one that
-/// is already gone as success: the entry the user agreed to replace may have
-/// been removed by something else in the meantime, which is not a reason to
-/// fail the paste.
-fn remove_existing_at(dir: impl AsFd, name: &CStr) -> std::io::Result<()> {
-    match unlinkat(dir, name, AtFlags::empty()) {
+/// Unlinks `name` in `dir`: a file or symlink with no `flags`, an empty
+/// directory with `AtFlags::REMOVEDIR`. Neither follows a symlink. An entry
+/// that is already gone counts as removed, like `rm -f`: whatever removed it
+/// in the meantime left what the delete or the replace asked for.
+fn unlink_at(dir: impl AsFd, name: &CStr, flags: AtFlags) -> std::io::Result<()> {
+    match unlinkat(dir, name, flags) {
         Err(Errno::NOENT) => Ok(()),
         result => Ok(result?),
     }
@@ -1495,14 +1509,29 @@ impl Paths {
     }
 }
 
-/// What the copy needs of a source entry: its mode, and its owner for deciding
-/// whether a move keeps the setuid and setgid bits.
-#[derive(Clone, Copy)]
+/// What the copy needs of a source entry: its mode, its owner for deciding
+/// whether a move keeps the setuid and setgid bits, and for a move its times
+/// and ACLs. Taken from the entry before the copy reads it, since reading
+/// moves its access time.
 struct Source {
     mode: u32,
     uid: u32,
     gid: u32,
+    times: Option<Timestamps>,
+    /// Each ACL extended attribute the source has, by name.
+    acls: Vec<(&'static CStr, Vec<u8>)>,
 }
+
+/// The extended attributes that hold POSIX ACLs, which a move copies like
+/// `mv`, each with whether only a directory has it. Linux only: macOS keeps
+/// its ACLs elsewhere.
+#[cfg(target_os = "linux")]
+const ACL_ATTRIBUTES: [(&CStr, bool); 2] = [
+    (c"system.posix_acl_access", false),
+    (c"system.posix_acl_default", true),
+];
+#[cfg(not(target_os = "linux"))]
+const ACL_ATTRIBUTES: [(&CStr, bool); 0] = [];
 
 impl Source {
     fn of(stat: &rustix::fs::Stat) -> Self {
@@ -1510,8 +1539,52 @@ impl Source {
             mode: stat_mode(stat),
             uid: stat.st_uid,
             gid: stat.st_gid,
+            times: times_of(stat),
+            acls: Vec::new(),
         }
     }
+
+    /// `of` the open `file`, whose `stat` it is, with its ACLs for a move.
+    /// Best effort: an attribute that cannot be read is not copied.
+    fn read(file: &File, stat: &rustix::fs::Stat, preserve: bool) -> Self {
+        let mut source = Self::of(stat);
+        if preserve {
+            let is_directory = FileType::from_raw_mode(stat.st_mode) == FileType::Directory;
+            source.acls = ACL_ATTRIBUTES
+                .into_iter()
+                .filter(|&(_, directory_only)| is_directory || !directory_only)
+                .filter_map(|(name, _)| Some((name, read_attribute(file, name)?)))
+                .collect();
+        }
+        source
+    }
+}
+
+/// The value of the extended attribute `name` on `file`, or `None` when it has
+/// none or it cannot be read.
+fn read_attribute(file: &File, name: &CStr) -> Option<Vec<u8>> {
+    let size = rustix::fs::fgetxattr(file, name, &mut [0u8; 0]).ok()?;
+    let mut value = Vec::with_capacity(size);
+    let read = rustix::fs::fgetxattr(file, name, rustix::buffer::spare_capacity(&mut value));
+    read.ok().map(|_| value)
+}
+
+/// `stat`'s access and modification times, in the form `futimens` takes.
+/// `None` only where one does not fit it, which no real file reaches.
+// The field types vary by target, and on some they already are the ones
+// `Timespec` has.
+#[allow(clippy::useless_conversion, clippy::unnecessary_fallible_conversions)]
+fn times_of(stat: &rustix::fs::Stat) -> Option<Timestamps> {
+    Some(Timestamps {
+        last_access: Timespec {
+            tv_sec: stat.st_atime.try_into().ok()?,
+            tv_nsec: stat.st_atime_nsec.try_into().ok()?,
+        },
+        last_modification: Timespec {
+            tv_sec: stat.st_mtime.try_into().ok()?,
+            tv_nsec: stat.st_mtime_nsec.try_into().ok()?,
+        },
+    })
 }
 
 /// One directory on `copy_tree`'s stack: the open source and destination
@@ -1560,7 +1633,8 @@ fn replaced_after_copy(path: &Path) -> String {
 /// Removes a file or directory tree the way `rm -rf` does: an entry that
 /// cannot be removed is recorded and the walk continues with the next, and the
 /// directories above it are kept without being reported as well. A directory
-/// that cannot be opened is removed if it is empty. Only a parent that cannot
+/// that cannot be opened is removed if it is empty, and an entry already gone
+/// counts as removed, as `-f` makes it. Only a parent that cannot
 /// be reopened as the directory that was listed ends the walk. Cancelling
 /// mid-delete leaves whatever has not been removed yet. Iterative (explicit
 /// stack), so directory depth cannot overflow the thread stack.
@@ -1589,17 +1663,14 @@ fn remove_path(
         return None;
     }
     let mut errors = Vec::new();
-    let Some(root_name) = c_name(path) else {
-        errors.push(format!(
-            "Cannot delete {}: path has no file name",
-            compact(path)
-        ));
-        return Some((active, errors));
-    };
-    let root_parent = match open_parent(path) {
-        Ok(parent) => parent,
-        Err(error) => {
-            errors.push(format!("Failed to delete {}: {error}", compact(path)));
+    let (root_parent, root_name) = match open_root_parent(path, removal) {
+        Ok(Some(opened)) => opened,
+        Ok(None) => {
+            active.increment(1);
+            return Some((active, errors));
+        }
+        Err(message) => {
+            errors.push(message);
             return Some((active, errors));
         }
     };
@@ -1711,6 +1782,25 @@ fn remove_path(
     Some((active, errors))
 }
 
+/// Opens the directory `path` is in for `remove_path`, with `path`'s name in
+/// it. `None` when a delete finds that directory gone, which took the entry
+/// with it, as an earlier delete of the same batch may have. A moved source is
+/// removed only once it is compared with what was copied, which a missing one
+/// cannot be. The error is the message to record.
+fn open_root_parent(path: &Path, removal: Removal) -> Result<Option<(File, CString)>, String> {
+    let Some(name) = c_name(path) else {
+        return Err(format!(
+            "Cannot delete {}: path has no file name",
+            compact(path)
+        ));
+    };
+    match open_parent(path) {
+        Ok(parent) => Ok(Some((parent, name))),
+        Err(error) if removal == Removal::Delete && error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Failed to delete {}: {error}", compact(path))),
+    }
+}
+
 /// Removes the entry `name` in `parent` for `remove_path`, or opens and lists
 /// it when it is a directory to descend into. An empty directory that cannot
 /// be opened (mode 000) is removed anyway, as `rm -rf` does. Otherwise the
@@ -1750,7 +1840,7 @@ fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<
         // Not a moved source, which is removed only once it is compared, and
         // one that cannot be opened cannot be.
         Err(error) if removal == Removal::Delete => {
-            return unlinkat(root.dir, root.name, AtFlags::REMOVEDIR)
+            return unlink_at(root.dir, root.name, AtFlags::REMOVEDIR)
                 .map(|()| None)
                 .map_err(|_| failed(error));
         }
@@ -1780,14 +1870,15 @@ fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer,
 /// links (never followed): `is_directory` comes from `symlink_metadata`, so a
 /// link to a directory takes this path. The error is the message to record.
 fn remove_file_entry(path: &Path, at: &RootAt<'_>, removal: Removal) -> Result<(), String> {
-    let failed = |error: Errno| format!("Failed to delete {}: {error}", compact(path));
+    let failed = |error: std::io::Error| format!("Failed to delete {}: {error}", compact(path));
     if let Removal::MovedSource(copied) = removal {
-        let stat = statat(at.dir, at.name, AtFlags::SYMLINK_NOFOLLOW).map_err(failed)?;
+        let stat = statat(at.dir, at.name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| failed(error.into()))?;
         if DirId::of_stat(&stat) != copied {
             return Err(replaced_after_copy(path));
         }
     }
-    unlinkat(at.dir, at.name, AtFlags::empty()).map_err(failed)
+    unlink_at(at.dir, at.name, AtFlags::empty()).map_err(failed)
 }
 
 /// The path of `name` in the directory at the top of `stack`, for a message.
@@ -1840,7 +1931,7 @@ fn remove_level(
         }
         // Through the parent the root was opened in, which `rmdir` does not
         // follow a symlink out of.
-        return unlinkat(root_at.dir, root_at.name, AtFlags::REMOVEDIR)
+        return unlink_at(root_at.dir, root_at.name, AtFlags::REMOVEDIR)
             .map(|()| true)
             .map_err(|error| {
                 Unremoved::Failed(format!("Failed to delete {}: {error}", compact(root)))
@@ -1953,9 +2044,14 @@ fn open_directory_fd(
     parent: impl AsFd,
     name: impl rustix::path::Arg,
 ) -> std::io::Result<std::os::fd::OwnedFd> {
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    Ok(openat(parent, name, flags, Mode::empty())?)
+    Ok(openat(parent, name, DIRECTORY_FLAGS, Mode::empty())?)
 }
+
+/// How `open_directory` opens a directory.
+const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
 
 /// `open_directory` then `list_entries`. A `None` parent resolves `name`
 /// against the current directory, like a path.
@@ -1970,16 +2066,38 @@ fn open_and_list(
     list_dir(open_directory(parent, name)?)
 }
 
+/// `open_and_list` for a pre-scan, which on Linux leaves the directory's
+/// access time alone (`O_NOATIME`, which only its owner may ask for; anyone
+/// else lists it as usual). A move takes each directory's times just before
+/// listing it to copy, so they would otherwise record the scan's read.
+fn scan_and_list(
+    parent: Option<&Dir>,
+    name: impl rustix::path::Arg + Copy,
+) -> std::io::Result<(Dir, Entries)> {
+    #[cfg(target_os = "linux")]
+    {
+        let dir = match parent {
+            Some(parent) => parent.fd()?,
+            None => CWD,
+        };
+        match openat(dir, name, DIRECTORY_FLAGS | OFlags::NOATIME, Mode::empty()) {
+            Ok(fd) => return list_dir(Dir::new(fd)?),
+            Err(Errno::PERM) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    open_and_list(parent, name)
+}
+
 /// `list_entries` on `dir`, which it hands back with them.
 fn list_dir(mut dir: Dir) -> std::io::Result<(Dir, Entries)> {
     let entries = list_entries(&mut dir)?;
     Ok((dir, entries))
 }
 
-/// Unlinks `name` in `dir`: a file or symlink with no `flags`, an empty
-/// directory with `AtFlags::REMOVEDIR`. Neither follows a symlink.
+/// `unlink_at` in an open `Dir`.
 fn unlink(dir: &Dir, name: &CStr, flags: AtFlags) -> std::io::Result<()> {
-    Ok(unlinkat(dir.fd()?, name, flags)?)
+    unlink_at(dir.fd()?, name, flags)
 }
 
 /// Collects `(name, is_directory)` for each entry of `dir`, read to the end
@@ -2233,6 +2351,15 @@ fn validate_paths(
             compact(&destination_directory.path)
         )
         .into()),
+        // Nor does a directory replace anything, like `cp -R` and `mv`. The
+        // paste never offers it, so this refuses only an overwrite granted
+        // some other way.
+        _ if overwrite && source.is_directory() => Err(anyhow!(
+            "Cannot {operation} {} into {}: a directory never replaces what holds its name",
+            compact(&old_path),
+            compact(&destination_directory.path)
+        )
+        .into()),
         _ => Ok((old_path, new_path)),
     }
 }
@@ -2249,19 +2376,16 @@ fn validate_paths(
 fn resolve_nested(
     context: &mut CopyContext<'_>,
     errors: &mut Vec<String>,
+    source_is_directory: bool,
     dir: impl AsFd,
     name: &CStr,
     new_path: &Path,
 ) -> bool {
-    // A directory is never replaced, so only the skip choices apply to one,
-    // exactly as at the top level.
+    // Classified exactly as at the top level, so only the skip choices apply
+    // to a directory on either side.
     let is_directory = statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
         .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::Directory);
-    let occupant = if is_directory {
-        Occupant::Directory
-    } else {
-        Occupant::Replaceable
-    };
+    let occupant = Occupant::of(source_is_directory, is_directory);
     let standing = context.conflicts.and_then(Conflicts::standing);
     match step(standing, Some(occupant)) {
         PasteStep::Run { overwrite } => overwrite,
@@ -2324,7 +2448,9 @@ fn prepare_destination(
 }
 
 /// Clears a destination the paste granted permission to replace. Returns `None`
-/// when the task was finalized here and must not continue.
+/// when the task was finalized here and must not continue. Only a
+/// non-directory source gets here with `overwrite`: `validate_paths` refuses
+/// one for a directory.
 ///
 /// Runs in the worker, once the operation is about to write. The caller queues
 /// every source of an "overwrite all" paste in one pass, so clearing there would
@@ -2352,7 +2478,11 @@ fn clear_destination(
         return None;
     }
     let removed = open_parent(new_path).and_then(|dir| {
-        remove_existing_at(&dir, &c_name(new_path).ok_or(ErrorKind::InvalidInput)?)
+        unlink_at(
+            &dir,
+            &c_name(new_path).ok_or(ErrorKind::InvalidInput)?,
+            AtFlags::empty(),
+        )
     });
     if let Err(error) = removed {
         active.error(format!("Failed to replace {}: {error}", compact(new_path)));
@@ -2364,22 +2494,15 @@ fn clear_destination(
 /// Renames `old_path` onto `new_path`, replacing an existing destination when
 /// `overwrite`.
 ///
-/// Prefers the kernel's atomic replace: no window with the destination missing,
-/// and a rename that fails for an unrelated reason (a vanished source, a
-/// permission error) leaves it untouched rather than destroyed for nothing. The
-/// destination is cleared only for the case the kernel refuses outright,
-/// replacing a non-directory with a directory.
+/// The kernel's atomic replace: no window with the destination missing, and a
+/// rename that fails for an unrelated reason (a vanished source, a permission
+/// error) leaves it untouched rather than destroyed for nothing. It refuses a
+/// directory over a non-directory, as `mv` does.
 fn rename_for_move(old_path: &Path, new_path: &Path, overwrite: bool) -> std::io::Result<()> {
-    if !overwrite {
-        return rename_no_replace(old_path, new_path);
-    }
-    match fs::rename(old_path, new_path) {
-        Err(error) if error.kind() == ErrorKind::NotADirectory => {
-            let name = c_name(new_path).ok_or(ErrorKind::InvalidInput)?;
-            remove_existing_at(open_parent(new_path)?, &name)?;
-            fs::rename(old_path, new_path)
-        }
-        result => result,
+    if overwrite {
+        fs::rename(old_path, new_path)
+    } else {
+        rename_no_replace(old_path, new_path)
     }
 }
 
@@ -3265,7 +3388,7 @@ mod tests {
     }
 
     #[test]
-    fn a_raced_file_where_a_directory_goes_is_replaced_when_that_is_the_answer() {
+    fn a_raced_file_where_a_directory_goes_is_never_replaced() {
         let (_fx, src, dst) = raced("tasks_raced_file_for_directory");
         fs::create_dir_all(src.join("sub")).unwrap();
         fs::write(src.join("sub").join("deep.txt"), b"src").unwrap();
@@ -3273,8 +3396,8 @@ mod tests {
         let (mut active, mut errors, conflicts) = raced_parts();
         let mut buffer = [0u8; 64];
 
-        // A file is replaceable even where a directory is being copied, so
-        // "overwrite all" settles this one.
+        // A directory never replaces a file, like `cp -R` and `mv`, so
+        // "overwrite all" cannot settle this one and there is nobody to ask.
         assert!(copy_path(
             &src.join("sub"),
             &dst.join("sub"),
@@ -3284,13 +3407,11 @@ mod tests {
             true,
             mode_of(&src.join("sub")),
         ));
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         active.done();
 
-        assert_eq!(
-            b"src".to_vec(),
-            fs::read(dst.join("sub").join("deep.txt")).unwrap()
-        );
+        assert_eq!(1, errors.len(), "expected the collision: {errors:?}");
+        assert!(errors[0].contains("already exists"), "{}", errors[0]);
+        assert_eq!(b"raced".to_vec(), fs::read(dst.join("sub")).unwrap());
     }
 
     #[test]
@@ -3789,7 +3910,7 @@ mod tests {
     }
 
     #[test]
-    fn an_overwriting_move_clears_a_file_that_a_directory_must_replace() {
+    fn an_overwriting_move_never_replaces_a_file_with_a_directory() {
         let fx = TempDir::new("tasks_move_dir_over_file");
         let src = fx.join("srcdir");
         std::fs::create_dir_all(&src).unwrap();
@@ -3797,12 +3918,31 @@ mod tests {
         let dst = fx.join("dest");
         std::fs::write(&dst, b"dest").unwrap();
 
-        // `rename` refuses to replace a non-directory with a directory, so
-        // this is the one case that has to clear the destination itself.
-        rename_for_move(&src, &dst, true).unwrap();
-        assert_eq!(
-            b"src".to_vec(),
-            std::fs::read(dst.join("inner.txt")).unwrap()
+        // `rename` refuses a directory over a non-directory, as `mv` does, and
+        // nothing clears the file to make way for it.
+        assert!(rename_for_move(&src, &dst, true).is_err());
+        assert_eq!(b"dest".to_vec(), std::fs::read(&dst).unwrap());
+        assert!(src.join("inner.txt").exists());
+    }
+
+    #[test_case("copy" ; "a copy")]
+    #[test_case("move" ; "a move")]
+    fn validate_paths_refuses_a_directory_granted_an_overwrite(operation: &str) {
+        let fx = TempDir::new("tasks_validate_dir_over_file");
+        let src = fx.join("src").join("name");
+        std::fs::create_dir_all(&src).unwrap();
+        let dest = fx.join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("name"), b"dest").unwrap();
+        let src = PathInfo::try_from(src.as_path()).unwrap();
+        let dest = PathInfo::try_from(dest.as_path()).unwrap();
+
+        // The paste never offers it, so only a granted overwrite reaches this.
+        let message = rejection(validate_paths(&src, &dest, operation, true));
+
+        assert!(
+            message.ends_with("never replaces what holds its name"),
+            "{message}"
         );
     }
 
@@ -4570,7 +4710,7 @@ mod tests {
         let source = Source {
             mode: 0o100_6755,
             uid: stat.st_uid.wrapping_add(1),
-            gid: stat.st_gid,
+            ..Source::of(&stat)
         };
 
         apply_final_mode(&file, &source, &context(true, &mut [0u8; 1]));
@@ -4959,5 +5099,240 @@ mod tests {
             errors[0].ends_with("it was replaced while being copied"),
             "{errors:?}"
         );
+    }
+
+    /// Starts two deletes on the shared worker, both registered before either
+    /// runs, as a batch delete of marks can be, and waits for the second. The
+    /// worker is held until both are registered.
+    fn delete_both(first: &Path, second: &Path) -> Task {
+        let (release, gate) = mpsc::channel::<()>();
+        queue_operation(move || {
+            let _ = gate.recv();
+        });
+        let (first_tx, _first_rx) = mpsc::channel();
+        let (second_tx, second_rx) = mpsc::channel();
+        let first = PathInfo::try_from(first).unwrap();
+        let second = PathInfo::try_from(second).unwrap();
+        let started = TaskCommand::Delete(first).run(first_tx, None, 1024, 1024);
+        assert!(started.cancel_info.is_some());
+        let started = TaskCommand::Delete(second).run(second_tx, None, 1024, 1024);
+        assert!(started.cancel_info.is_some());
+        drop(release);
+        loop {
+            match second_rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Command::Progress(task)) if task.is_terminal() => return task,
+                Ok(_) => {}
+                Err(error) => panic!("the delete did not finish: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_an_entry_inside_a_directory_deleted_first_succeeds() {
+        let fx = TempDir::new("tasks_delete_nested_mark");
+        let dir = fx.join("a");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("b"), b"x").unwrap();
+
+        // Like `rm -rf a a/b`: the second finds its directory gone, which is
+        // what it asked for.
+        let task = delete_both(&dir, &dir.join("b"));
+
+        assert!(!dir.exists());
+        assert_eq!(None, task.error_message());
+    }
+
+    #[test_case(false ; "a file")]
+    #[test_case(true  ; "a directory")]
+    fn deleting_an_entry_already_deleted_succeeds(is_directory: bool) {
+        let fx = TempDir::new("tasks_delete_twice");
+        let path = fx.join("doomed");
+        if is_directory {
+            fs::create_dir(&path).unwrap();
+        } else {
+            fs::write(&path, b"x").unwrap();
+        }
+
+        // Its directory is still there, so the second reaches the unlink, or
+        // the open, of the entry itself.
+        let task = delete_both(&path, &path);
+
+        assert!(!path.exists());
+        assert_eq!(None, task.error_message());
+    }
+
+    #[test]
+    fn a_delete_of_an_entry_gone_before_it_starts_is_not_an_error() {
+        let fx = TempDir::new("tasks_delete_gone");
+        let path = fx.join("doomed");
+        fs::write(&path, b"x").unwrap();
+        let listed = PathInfo::try_from(path.as_path()).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        // An earlier delete of the batch already ran, so there is nothing to
+        // start and nothing to report.
+        let result = run_to_end(TaskCommand::Delete(listed));
+
+        assert!(matches!(result, Err(commands) if commands.is_empty()));
+    }
+
+    #[test]
+    fn a_moved_source_already_gone_is_still_reported() {
+        let fx = TempDir::new("tasks_moved_source_gone");
+        let src = fx.join("f");
+        fs::write(&src, b"x").unwrap();
+        let (tx, _rx) = mpsc::channel();
+        let copied = DirId::of(File::open(&src).unwrap()).unwrap();
+        fs::remove_file(&src).unwrap();
+
+        // A missing source cannot be compared with what was copied, so unlike
+        // a delete this is not taken as done.
+        let (active, errors) =
+            remove_path(&src, false, copy_task(tx), Removal::MovedSource(copied)).unwrap();
+        active.done();
+
+        assert_eq!(1, errors.len(), "{errors:?}");
+        assert!(errors[0].starts_with("Failed to delete"), "{errors:?}");
+    }
+
+    fn set_times(path: &Path, atime: i64, mtime: i64) {
+        use nix::sys::{
+            stat::{UtimensatFlags, utimensat},
+            time::TimeSpec,
+        };
+        utimensat(
+            nix::fcntl::AT_FDCWD,
+            path,
+            &TimeSpec::new(atime, 0),
+            &TimeSpec::new(mtime, 0),
+            UtimensatFlags::NoFollowSymlink,
+        )
+        .unwrap();
+    }
+
+    fn times_of(path: &Path) -> (i64, i64) {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::symlink_metadata(path).unwrap();
+        (metadata.atime(), metadata.mtime())
+    }
+
+    #[test]
+    fn a_move_keeps_the_access_time_of_a_file() {
+        let fx = TempDir::new("tasks_move_file_atime");
+        let old = fx.join("f");
+        fs::write(&old, b"data").unwrap();
+        // Older than the modification time, which `relatime` updates on the
+        // first read.
+        set_times(&old, 1_000_000_000, 1_000_000_100);
+        fs::create_dir(fx.join("dest")).unwrap();
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {});
+
+        assert_eq!(None, task.error_message());
+        assert_eq!((1_000_000_000, 1_000_000_100), times_of(&new_path));
+    }
+
+    #[test]
+    fn a_move_keeps_the_access_times_of_a_tree_the_scan_listed() {
+        let fx = TempDir::new("tasks_move_dir_atime");
+        let old = fx.join("d");
+        fs::create_dir_all(old.join("sub")).unwrap();
+        fs::write(old.join("sub").join("x"), b"x").unwrap();
+        // Deepest first, so setting one does not move its parent's again.
+        set_times(&old.join("sub"), 1_000_000_000, 1_000_000_100);
+        set_times(&old, 1_000_000_200, 1_000_000_300);
+        fs::create_dir(fx.join("dest")).unwrap();
+
+        // The progress scan lists every directory before the copy does.
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {});
+
+        assert_eq!(None, task.error_message());
+        assert_eq!((1_000_000_200, 1_000_000_300), times_of(&new_path));
+        assert_eq!(
+            (1_000_000_000, 1_000_000_100),
+            times_of(&new_path.join("sub"))
+        );
+    }
+
+    /// Runs `setfacl` with `args` on `path`. False where it is not installed
+    /// or the filesystem has no ACLs, for a test to skip.
+    fn setfacl(args: &[&str], path: &Path) -> bool {
+        std::process::Command::new("setfacl")
+            .args(args)
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    fn getfacl(path: &Path) -> String {
+        let output = std::process::Command::new("getfacl")
+            .args(["-c", "-p"])
+            .arg(path)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// A source of mode 600 with a named user granted `rw`, which makes the
+    /// mask, and so the group bits of its mode, `rw` too.
+    fn file_with_an_acl(label: &str) -> Option<(TempDir, PathBuf)> {
+        let fx = TempDir::new(label);
+        let old = fx.join("secret");
+        fs::write(&old, b"secret").unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::create_dir(fx.join("dest")).unwrap();
+        setfacl(&["-m", "u:nobody:rw"], &old).then_some((fx, old))
+    }
+
+    #[test]
+    fn a_move_keeps_the_acl_so_the_owning_group_gains_nothing() {
+        let Some((fx, old)) = file_with_an_acl("tasks_move_acl") else {
+            eprintln!("skipped: no ACLs here");
+            return;
+        };
+        let before = getfacl(&old);
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {});
+
+        assert_eq!(None, task.error_message());
+        // Without it the mask would be granted to the owning group instead.
+        assert_eq!(before, getfacl(&new_path));
+        assert!(before.contains("group::---"), "{before}");
+        assert_eq!(0o660, mode_of(&new_path) & 0o7777);
+    }
+
+    #[test]
+    fn a_copy_does_not_keep_the_acl() {
+        let Some((fx, old)) = file_with_an_acl("tasks_copy_acl") else {
+            eprintln!("skipped: no ACLs here");
+            return;
+        };
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), false, || {});
+
+        // Like `cp` without `-p`.
+        assert_eq!(None, task.error_message());
+        assert!(!getfacl(&new_path).contains("nobody"));
+    }
+
+    #[test]
+    fn a_move_keeps_both_acls_of_a_directory() {
+        let fx = TempDir::new("tasks_move_dir_acl");
+        let old = fx.join("d");
+        fs::create_dir(&old).unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir(fx.join("dest")).unwrap();
+        if !(setfacl(&["-m", "u:nobody:rx"], &old) && setfacl(&["-d", "-m", "u:nobody:rwx"], &old))
+        {
+            eprintln!("skipped: no ACLs here");
+            return;
+        }
+        let before = getfacl(&old);
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {});
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(before, getfacl(&new_path));
+        assert!(before.contains("default:user:nobody:rwx"), "{before}");
     }
 }

@@ -89,10 +89,12 @@ impl TableView {
         // them, not what `begin_directory` captured before the load started.
         // Replaying that snapshot would undo a keypress made during the load,
         // twice a second for a directory being written to.
+        let mut range = None;
         if self.content.is_staged() {
             self.pending_load.prev_selected = self.selected_path().cloned();
             self.pending_load.prev_selected_index = self.table_state.selected();
             self.pending_load.prev_marked = self.marked_paths();
+            range = self.range_by_path();
         } else {
             // A navigation streams onto a live listing: the first batch puts
             // the cursor on the top row, and anything done to the listing
@@ -118,7 +120,12 @@ impl TableView {
             self.marks.insert(index);
         }
         // Ends in `select`, whose snapshot then carries the restored count.
-        self.restore_selection()
+        let result = self.restore_selection();
+        // Range mode is carried across a reload the same way, and resumes
+        // only after the cursor is placed: `select` would otherwise mark every
+        // entry that appeared between the anchor and the cursor, unseen.
+        self.restore_range_by_path(range);
+        result
     }
 
     /// Restore the selection captured by `begin_directory`: prefer the child we
@@ -214,7 +221,8 @@ impl TableView {
     /// Every other reorder here is one the user asked for (a sort column, a
     /// filter), and dropping index-based marks answers those honestly. A search
     /// ending is not one: results stream so they can be marked before the walk
-    /// is done. The marks are re-derived from the entries they named, so one the
+    /// is done. Nor is a bookmarks reload, which follows a change made
+    /// elsewhere. The marks are re-derived from the entries they named, so one the
     /// reorder dropped loses its mark. Range mode ends either way, since its
     /// anchor names a position and the positions have just changed.
     pub(super) fn sort_keeping_marks(&mut self) -> CommandResult {
@@ -999,8 +1007,8 @@ mod tests {
             generation: 1,
         });
 
-        // The marks belong to the listing still on screen and are cleared by
-        // the Bookmarks handler once the new one arrives. Clearing them here
+        // The marks belong to the listing still on screen and are found again
+        // by the Bookmarks handler once the new one arrives. Clearing them here
         // would drop valid marks when the read fails and no Bookmarks command
         // follows.
         assert_eq!(table.marks.len(), 2);
@@ -1074,6 +1082,115 @@ mod tests {
         // The anchor names a position, and the positions have just changed, so
         // the next cursor move would sweep a range from somewhere else.
         assert!(!table.marks.in_range_mode());
+    }
+
+    fn marked_names(table: &TableView) -> Vec<String> {
+        table
+            .marked_paths()
+            .into_iter()
+            .map(|item| item.display_name)
+            .collect()
+    }
+
+    /// Items `a` to `e`, with `e` marked and a range from `a` to `b`, so the
+    /// range has earlier marks under it that are not next to it.
+    fn table_in_range_mode(fx: &Fixture) -> TableView {
+        let mut table = TableView::default();
+        let items = ["a", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
+        table.set_directory(fx.directory(), &items, Reselect::Top);
+        table.select(4);
+        table.toggle_mark();
+        table.select(0);
+        table.enter_range_mode();
+        table.select(1);
+        assert_eq!(vec!["a", "b", "e"], marked_names(&table));
+        table
+    }
+
+    #[test]
+    fn a_reload_keeps_range_mode_by_the_entries_it_names() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_in_range_mode(&fx);
+
+        // A watcher reload with an entry sorting first, so every position
+        // shifts by one.
+        let items = ["0", "a", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
+        table.set_directory(fx.directory(), &items, Reselect::Keep);
+        assert!(table.marks.in_range_mode());
+        press(&mut table, 'j');
+
+        // By position, the range would run from "0" and the earlier mark would
+        // have moved onto "d".
+        assert_eq!(Some("c".to_string()), selected_basename(&table));
+        assert_eq!(vec!["a", "b", "c", "e"], marked_names(&table));
+    }
+
+    /// The range covers what it covered before the reload until the cursor
+    /// moves, so an entry that appears inside it is not marked unseen.
+    #[test]
+    fn a_reload_does_not_mark_an_entry_that_appears_inside_the_range() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_in_range_mode(&fx);
+
+        let items = ["a", "ab", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
+        table.set_directory(fx.directory(), &items, Reselect::Keep);
+
+        assert!(table.marks.in_range_mode());
+        assert_eq!(vec!["a", "b", "e"], marked_names(&table));
+    }
+
+    #[test]
+    fn a_reload_that_removes_the_range_anchor_ends_range_mode() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = table_in_range_mode(&fx);
+
+        let items = ["b", "c", "d", "e"].map(|name| fx.file(name, 1));
+        table.set_directory(fx.directory(), &items, Reselect::Keep);
+
+        // Nothing is left to measure the range from, so the marks it made that
+        // survive stay as ordinary marks.
+        assert!(!table.marks.in_range_mode());
+        assert_eq!(vec!["b", "e"], marked_names(&table));
+    }
+
+    #[test]
+    fn a_bookmarks_reload_keeps_the_cursor_and_the_marks() {
+        Config::init_test();
+        let fx = Fixture::new();
+        let mut table = TableView::default();
+        table.set_directory(fx.directory(), &[fx.file("x", 1)], Reselect::Top);
+        let bookmarks = vec![fx.file("a", 1), fx.file("b", 1), fx.file("c", 1)];
+        table.handle_command(&Command::Bookmarks {
+            bookmarks: bookmarks.clone(),
+        });
+        table.select(0);
+        table.toggle_mark();
+        table.select(2);
+
+        // A watcher refresh while the bookmarks are shown reloads them, here
+        // with an entry sorting first so every position shifts by one.
+        let result = table.handle_command(&Command::RefreshedDirectory {
+            directory: fx.directory(),
+            generation: 9,
+        });
+        assert_eq!(result, Command::GetBookmarks.into());
+        let result = table.handle_command(&Command::Bookmarks {
+            bookmarks: [vec![fx.file("0", 1)], bookmarks].concat(),
+        });
+
+        assert_eq!(Some("c".to_string()), selected_basename(&table));
+        assert_eq!(vec!["a"], marked_names(&table));
+        assert_eq!(
+            result,
+            Command::SelectionChanged {
+                selected: table.selected_path().cloned(),
+                mark_count: 1,
+            }
+            .into()
+        );
     }
 
     #[test]
@@ -1176,20 +1293,6 @@ mod tests {
             Reselect::Top,
         );
         assert_eq!(table.content.len(), 2);
-    }
-
-    #[test]
-    fn an_empty_search_query_leaves_the_listing_alone() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = table_with_two_marks(&fx);
-
-        let result = table.handle_command(&Command::StartSearch(String::new()));
-
-        assert_eq!(CommandResult::Handled, result);
-        assert!(!table.content.is_searching());
-        assert_eq!(vec!["a", "b", "c"], visible_names(&table));
-        assert_eq!(2, table.marks.len());
     }
 
     #[test]
@@ -1519,26 +1622,6 @@ mod tests {
         });
         assert!(table.content.is_showing_bookmarks());
         assert_eq!(table.content.len(), 0);
-    }
-
-    #[test]
-    fn search_started_outside_search_mode_keeps_the_load_generation() {
-        Config::init_test();
-        let fx = Fixture::new();
-        let mut table = TableView::default();
-        table.handle_command(&Command::NavigatedDirectory {
-            directory: fx.directory(),
-            generation: 2,
-        });
-
-        // The empty-query backstop emits SearchStarted while the table never
-        // entered search mode; the in-flight load must keep streaming.
-        table.handle_command(&Command::SearchStarted { generation: 9 });
-        table.handle_command(&Command::ListingBatch {
-            items: vec![fx.file("a", 1)],
-            generation: 2,
-        });
-        assert_eq!(table.content.len(), 1);
     }
 
     #[test]

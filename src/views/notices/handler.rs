@@ -41,13 +41,8 @@ impl CommandHandler for NoticesView {
                 self.search_started_at = Some(Instant::now());
                 self.search_cancelled = false;
                 // Search results are unfiltered (`start_search` clears the
-                // filter), so the notice has to clear with it. The table
-                // rejects an empty query and keeps its filter applied, so
-                // mirror that guard or the notice would vanish while the
-                // listing stays silently filtered.
-                if !query.is_empty() {
-                    self.filter.clear();
-                }
+                // filter), so the notice has to clear with it.
+                self.filter.clear();
                 CommandResult::NotHandled
             }
             Command::CancelSearch => {
