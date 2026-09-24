@@ -13,16 +13,28 @@ use log::warn;
 
 pub struct Clipboard {
     backend: Option<ClipboardBackend>,
-    /// In-process fallback so copy/paste within this window keeps working
-    /// when no system clipboard is available (e.g. no X11/Wayland session).
-    /// The system clipboard, when present, remains the storage, which is what
-    /// makes copy/paste work across filectrl windows.
-    fallback: Option<String>,
-    /// The entry this process last wrote, beside the exact text written for
-    /// it. The text renders a name that is not valid UTF-8 lossily, so parsing
-    /// it back would name a different file; while the clipboard still holds
-    /// that text, the paths are taken from here instead.
-    last_entry: Option<(String, ClipboardEntry)>,
+    /// What this window last wrote. `None` once `clear` has run, or before
+    /// anything was written.
+    last_written: Option<Written>,
+}
+
+/// Text this window wrote to the clipboard, and the entry it serializes when
+/// it was one rather than text copied from a prompt.
+///
+/// - Without a system clipboard (no X11/Wayland session) the text is the
+///   storage, so copy/paste within this window keeps working. With one, the
+///   system clipboard is the storage, which is what makes copy/paste work
+///   across filectrl windows.
+/// - The entry keeps the exact paths. The text renders a name that is not
+///   valid UTF-8 lossily, so parsing it back would name a different file;
+///   while the clipboard still holds the text, the paths are taken from here.
+/// - `clear` blanks only an entry, and only while the clipboard still holds
+///   its text, so text copied from a prompt, or written since by another
+///   application or filectrl window, is never discarded. Each window is its
+///   own process with its own record, so only the most recent writer clears.
+struct Written {
+    text: String,
+    entry: Option<ClipboardEntry>,
 }
 
 impl Default for Clipboard {
@@ -37,16 +49,16 @@ impl Default for Clipboard {
 
         Self {
             backend,
-            fallback: None,
-            last_entry: None,
+            last_written: None,
         }
     }
 }
 
 impl Clipboard {
     /// Whether a system clipboard backend is available. When it is not (e.g.
-    /// no X11/Wayland session), copy/paste cannot work: the system clipboard
-    /// is the only storage for clipboard entries.
+    /// no X11/Wayland session), copy/paste still works within this window
+    /// through the text it last wrote, but an entry copied in another window
+    /// cannot be reached.
     pub fn is_available(&self) -> bool {
         self.backend.is_some()
     }
@@ -59,21 +71,23 @@ impl Clipboard {
     pub fn disabled() -> Self {
         Self {
             backend: None,
-            fallback: None,
-            last_entry: None,
+            last_written: None,
         }
     }
 
     /// Clears the entry this window copied or cut. Text copied from a prompt
     /// is not an entry, so it stays for other applications to paste.
     pub fn clear(&mut self) -> Result<(), Error> {
-        if self.last_entry.take().is_some() {
-            self.fallback = None;
+        let Some(written) = self.last_written.take_if(|written| written.entry.is_some()) else {
+            return Ok(());
+        };
+        let Some(backend) = &mut self.backend else {
+            return Ok(());
+        };
+        if should_clear(&written.text, || backend.get_string().ok()) {
+            return backend.set_string("");
         }
-        match &mut self.backend {
-            Some(backend) => backend.clear(),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
     /// Reads the system clipboard as a `ClipboardEntry`.
@@ -88,14 +102,23 @@ impl Clipboard {
     /// confirmed before it is acted on.
     pub fn get_clipboard_entry(&mut self) -> Result<Option<(ClipboardEntry, bool)>> {
         match self.get_text() {
-            Some(text) => resolve_clipboard_text(self.last_entry.as_ref(), &text),
+            Some(text) => resolve_clipboard_text(self.last_entry(), &text),
             None => Ok(None),
         }
     }
 
+    /// The entry this window last wrote, beside the text written for it.
+    fn last_entry(&self) -> Option<(&str, &ClipboardEntry)> {
+        let written = self.last_written.as_ref()?;
+        Some((&written.text, written.entry.as_ref()?))
+    }
+
     pub fn get_text(&mut self) -> Option<String> {
         let Some(backend) = &mut self.backend else {
-            return self.fallback.clone();
+            return self
+                .last_written
+                .as_ref()
+                .map(|written| written.text.clone());
         };
         match backend.get_string() {
             Ok(t) => Some(t),
@@ -107,10 +130,12 @@ impl Clipboard {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        self.fallback = Some(text.to_string());
-        self.last_entry = None;
+        self.last_written = Some(Written {
+            text: text.to_string(),
+            entry: None,
+        });
         if let Some(backend) = &mut self.backend
-            && let Err(e) = backend.set_string(text, false)
+            && let Err(e) = backend.set_string(text)
         {
             warn!("Failed to set clipboard text: {e}");
         }
@@ -118,12 +143,15 @@ impl Clipboard {
 
     pub fn set_clipboard_entry(&mut self, entry: &ClipboardEntry) -> Result<(), Error> {
         let text = entry.to_string();
-        self.fallback = Some(text.clone());
-        self.last_entry = Some((text.clone(), entry.clone()));
-        match &mut self.backend {
-            Some(backend) => backend.set_string(&text, true),
+        let result = match &mut self.backend {
+            Some(backend) => backend.set_string(&text),
             None => Ok(()),
-        }
+        };
+        self.last_written = Some(Written {
+            text,
+            entry: Some(entry.clone()),
+        });
+        result
     }
 }
 
@@ -170,10 +198,10 @@ impl Display for ClipboardEntry {
 /// still what was written for it. The paths are looked up again either way, so
 /// a path removed since the copy is reported the same as one parsed from text.
 fn resolve_clipboard_text(
-    last_entry: Option<&(String, ClipboardEntry)>,
+    last_entry: Option<(&str, &ClipboardEntry)>,
     text: &str,
 ) -> Result<Option<(ClipboardEntry, bool)>> {
-    let Some((_, entry)) = last_entry.filter(|(written, _)| written == text) else {
+    let Some((_, entry)) = last_entry.filter(|(written, _)| *written == text) else {
         return Ok(parse_clipboard_text(text)?.map(|entry| (entry, false)));
     };
     let paths: Vec<PathInfo> = entry
@@ -255,19 +283,12 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
 
 struct ClipboardBackend {
     clipboard: ArboardClipboard,
-    /// The last entry text this process wrote to the system clipboard, or the
-    /// empty text `clear` wrote. `clear` uses it so a window clears only an
-    /// entry it wrote itself, never text copied from a prompt. Each filectrl
-    /// window is its own process with its own tracker, so only the most recent
-    /// writer clears.
-    last_written: Option<String>,
 }
 
 impl ClipboardBackend {
     fn try_new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             clipboard: ArboardClipboard::new()?,
-            last_written: None,
         })
     }
 
@@ -277,54 +298,23 @@ impl ClipboardBackend {
             .map_err(|e| anyhow!("Failed to get clipboard contents: {e}"))
     }
 
-    /// Writes `text`, recording it for `clear` when `clearable`.
-    fn set_string(&mut self, text: &str, clearable: bool) -> Result<(), Error> {
+    fn set_string(&mut self, text: &str) -> Result<(), Error> {
         self.clipboard
             .set_text(text.to_string())
-            .map_err(|e| anyhow!("Failed to set clipboard contents: {e}"))?;
-        record_write(&mut self.last_written, text, clearable);
-        Ok(())
-    }
-
-    fn clear(&mut self) -> Result<(), Error> {
-        // Cloned so the closure below can borrow `self` mutably for the read.
-        let last_written = self.last_written.clone();
-        if should_clear(last_written.as_deref(), || self.get_string().ok()) {
-            return self.set_string("", true);
-        }
-        Ok(())
+            .map_err(|e| anyhow!("Failed to set clipboard contents: {e}"))
     }
 }
 
-/// Records a write for `clear`: an entry (or the empty text `clear` writes)
-/// replaces what it would clear, and text copied from a prompt does not, so
-/// that text is never blanked.
-fn record_write(last_written: &mut Option<String>, text: &str, clearable: bool) {
-    if clearable {
-        *last_written = Some(text.to_string());
-    }
-}
-
-/// Whether `clear` should blank the system clipboard, given what this window
-/// last wrote to it and (only where that can decide it) what it holds now.
+/// Whether `clear` should blank the system clipboard holding the entry this
+/// window wrote as `entry_text`: only while it still holds that text. Anything
+/// else there now (or a read that failed) means another window or application
+/// took it over.
 ///
-/// `read_current` is a closure rather than a value because reading the
-/// clipboard blocks on whichever application owns the selection, and the first
-/// two cases answer without it.
-fn should_clear(last_written: Option<&str>, read_current: impl FnOnce() -> Option<String>) -> bool {
-    let Some(previous) = last_written else {
-        // This window never wrote to the clipboard, so blanking it would
-        // discard whatever another application or filectrl window put there.
-        return false;
-    };
-    if previous.is_empty() {
-        // Already cleared by this window. A second empty write would make
-        // arboard reacquire the X11 selection for no change.
-        return false;
-    }
-    // Clear only what this window still owns. Anything else there now (or a
-    // read that failed) means another window or application took it over.
-    read_current().as_deref() == Some(previous)
+/// `read_current` is a closure so that tests can see the read happen; reading
+/// blocks on whichever application owns the selection, so `clear` reads only
+/// when it has an entry to clear.
+fn should_clear(entry_text: &str, read_current: impl FnOnce() -> Option<String>) -> bool {
+    read_current().as_deref() == Some(entry_text)
 }
 
 #[cfg(test)]
@@ -333,45 +323,18 @@ mod tests {
 
     use super::*;
 
-    /// Reports whether the clipboard was read, so the cases that must decide
-    /// without reading can say so.
-    fn should_clear_reading(last_written: Option<&str>, current: Option<&str>) -> (bool, bool) {
-        let mut was_read = false;
-        let clear = should_clear(last_written, || {
-            was_read = true;
-            current.map(ToString::to_string)
-        });
-        (clear, was_read)
-    }
-
     #[test]
     fn the_clipboard_is_cleared_only_while_this_window_still_owns_it() {
         // Still holding what this window wrote, so clearing it discards only
         // this window's own entry.
-        assert_eq!(
-            (true, true),
-            should_clear_reading(Some("cp /a"), Some("cp /a"))
-        );
+        assert!(should_clear("cp /a", || Some("cp /a".to_string())));
 
         // Another window or application has written since. Blanking now would
         // throw away someone else's clipboard.
-        assert_eq!(
-            (false, true),
-            should_clear_reading(Some("cp /a"), Some("other"))
-        );
+        assert!(!should_clear("cp /a", || Some("other".to_string())));
         // A read that failed says nothing about ownership, so it is not a
         // licence to overwrite either.
-        assert_eq!((false, true), should_clear_reading(Some("cp /a"), None));
-    }
-
-    #[test]
-    fn a_window_that_wrote_nothing_clears_nothing_and_does_not_read() {
-        // Reading blocks on whichever application owns the selection, so these
-        // two cases must answer without touching it.
-        assert_eq!((false, false), should_clear_reading(None, Some("someone")));
-        // Already cleared by this window: a second empty write would reacquire
-        // the X11 selection for no change.
-        assert_eq!((false, false), should_clear_reading(Some(""), Some("")));
+        assert!(!should_clear("cp /a", || None));
     }
 
     #[test_case("some copied text" ; "prose")]
@@ -526,27 +489,17 @@ mod tests {
         let other = ClipboardEntry::Move(vec![PathInfo::try_from(second.as_path()).unwrap()]);
         assert_eq!(
             Some((other.clone(), false)),
-            resolve_clipboard_text(Some(&written), &other.to_string()).unwrap()
+            resolve_clipboard_text(Some((&written.0, &written.1)), &other.to_string()).unwrap()
         );
     }
 
-    /// Text copied from a prompt is not recorded, so the system clipboard
-    /// holding it no longer matches what `clear` would blank.
-    #[test]
-    fn a_prompt_copy_on_the_system_clipboard_is_never_cleared() {
-        let mut last_written = None;
-        record_write(&mut last_written, "cp '/a'", true);
-        record_write(&mut last_written, "a name", false);
-
-        assert_eq!(Some("cp '/a'"), last_written.as_deref());
-        assert!(!should_clear(last_written.as_deref(), || Some(
-            "a name".to_string()
-        )));
-    }
-
+    /// Text copied from a prompt replaces the entry as what this window
+    /// wrote, so clearing leaves it for other applications to paste.
     #[test]
     fn clearing_keeps_text_copied_from_a_prompt() {
         let mut clipboard = Clipboard::disabled();
+        let entry = ClipboardEntry::Copy(vec![PathInfo::try_from("/").unwrap()]);
+        clipboard.set_clipboard_entry(&entry).unwrap();
         clipboard.set_text("a name");
         clipboard.clear().unwrap();
         assert_eq!(Some("a name".to_string()), clipboard.get_text());

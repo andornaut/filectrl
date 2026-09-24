@@ -19,7 +19,10 @@ use super::{
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
     tasks::{is_same_file, rename_no_replace, restat},
 };
-use crate::command::{Command, progress::CancellationToken};
+use crate::{
+    command::{Command, progress::CancellationToken},
+    visible,
+};
 
 const CD_BATCH_SIZE: usize = 256;
 
@@ -95,8 +98,10 @@ pub(super) fn stream_cd(
     });
 }
 
-/// Runs the opener `template` names on `path`. `key` is the config key the
-/// template came from, which names it when it is empty.
+/// Runs the opener `template` names on `path`. `key` is the `openers` setting
+/// the template came from, which names it in a refusal or a failure: a
+/// template is a shell command, so its first word need not be the program that
+/// failed (`cd %s && exec xterm`).
 pub(super) fn open_in(
     key: &str,
     path: &PathInfo,
@@ -104,14 +109,15 @@ pub(super) fn open_in(
     command_tx: Sender<Command>,
 ) -> Result<()> {
     info!("Opening \"{path:?}\" using template: \"{template}\"");
+    let setting = opener_setting(key);
     if template.trim().is_empty() {
         return Err(anyhow!(
-            "Cannot open {}: {key} is empty",
+            "Cannot open {}: {setting} is empty",
             visible_name(path.path.file_name().unwrap_or(path.path.as_os_str()))
         ));
     }
     let argv = shell::command(template, [path.path.as_os_str().to_os_string()]);
-    let failure = failure_prefix(&template_program(template), &path.path);
+    let failure = run_failure(&setting, &path.path);
     let child = detached_command(&argv[0], &argv[1..])
         .spawn()
         .map_err(|error| anyhow!("{failure}: {error}"))?;
@@ -119,20 +125,31 @@ pub(super) fn open_in(
     Ok(())
 }
 
-/// The program a template runs, as the user wrote it: its first word.
-fn template_program(template: &str) -> String {
-    shell_words::split(template)
-        .ok()
-        .and_then(|words| words.into_iter().next())
-        .unwrap_or_else(|| template.trim().to_string())
+/// The config setting of the opener `key`, as the README and the "open with"
+/// picker name it.
+pub(crate) fn opener_setting(key: &str) -> String {
+    format!("openers.{key}")
+}
+
+/// A program's name as a failure names it: quoted, since it is not a config
+/// setting. An application's name is already shown text, so it is quoted
+/// rather than formatted with `{:?}`, which would escape its escapes a second
+/// time; `visible` leaves shown text as it is and escapes anything else.
+pub(crate) fn quoted_program(name: &str) -> String {
+    format!("\"{}\"", visible(name))
 }
 
 /// The start of every message about a launched program that failed:
-/// `Failed to run <program> on <path>`. `program` is the name the user knows
-/// it by: a template's first word, an application's name, or the editor or
-/// pager.
+/// `Failed to run "<program>" on <path>`. `program` is the name the user knows
+/// it by: an application's name, or the editor or pager.
 pub(crate) fn failure_prefix(program: &str, path: &Path) -> String {
-    format!("Failed to run {program:?} on {}", compact(path))
+    run_failure(&quoted_program(program), path)
+}
+
+/// `Failed to run <shown> on <path>`, where `shown` is already rendered: a
+/// quoted program or an `openers` setting.
+fn run_failure(shown: &str, path: &Path) -> String {
+    format!("Failed to run {shown} on {}", compact(path))
 }
 
 /// Why a program that ran did not succeed: its exit code, or the signal that
@@ -146,8 +163,9 @@ pub(crate) fn exit_cause(status: ExitStatus) -> String {
 }
 
 /// Launch `argv` directly, without a shell, so that nothing in a file name can
-/// be reinterpreted. `label` names the application and `path` what it opens,
-/// in a failure. An empty `argv` is a no-op.
+/// be reinterpreted. `label` names what runs, already rendered as a failure
+/// shows it (`AppCandidate::failure_name`), and `path` what it opens. An empty
+/// `argv` is a no-op.
 pub(super) fn spawn_argv(
     working_dir: Option<&Path>,
     label: &str,
@@ -155,7 +173,7 @@ pub(super) fn spawn_argv(
     argv: &[OsString],
     command_tx: Sender<Command>,
 ) -> Result<()> {
-    info!("Opening {label:?} using: {argv:?}");
+    info!("Opening {label} using: {argv:?}");
     let Some((program, rest)) = argv.split_first() else {
         return Ok(());
     };
@@ -167,13 +185,13 @@ pub(super) fn spawn_argv(
         // the user looking for the wrong thing.
         if !working_dir.is_dir() {
             return Err(anyhow!(
-                "Cannot run {label:?}: its working directory {} is not a directory",
+                "Cannot run {label}: its working directory {} is not a directory",
                 compact(working_dir)
             ));
         }
         command.current_dir(working_dir);
     }
-    let failure = failure_prefix(label, path);
+    let failure = run_failure(label, path);
     let child = command
         .spawn()
         .map_err(|error| anyhow!("{failure}: {error}"))?;
@@ -849,7 +867,7 @@ mod tests {
         // would send the user looking for the wrong thing.
         let error = spawn_argv(
             Some(&missing),
-            "App",
+            "\"App\"",
             Path::new("/f"),
             &[OsString::from("true")],
             tx,
@@ -870,7 +888,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
 
-        spawn_argv(None, "App", Path::new("/f"), &argv, tx).unwrap();
+        spawn_argv(None, "\"App\"", Path::new("/f"), &argv, tx).unwrap();
 
         // The watcher thread holds the only sender, so this returns once it
         // has either reported or dropped it.
@@ -882,17 +900,30 @@ mod tests {
         }
     }
 
+    /// An application's name arrives already shown, its invisible characters
+    /// spelled out, and is not escaped again. Raw text is still escaped once.
+    #[test_case("Text\\u{2063} Editor" => "Failed to run \"Text\\u{2063} Editor\" on \"/f\"" ; "a shown name is kept as it is")]
+    #[test_case("Text\u{2063} Editor" => "Failed to run \"Text\\u{2063} Editor\" on \"/f\"" ; "a raw name is escaped once")]
+    fn failure_prefix_names(program: &str) -> String {
+        failure_prefix(program, Path::new("/f"))
+    }
+
+    /// A template's first word need not be what failed (`cd` here), so the
+    /// failure names the setting.
     #[test]
-    fn an_opener_template_is_reported_by_its_program() {
+    fn an_opener_template_is_reported_by_its_setting() {
         let (tx, rx) = std::sync::mpsc::channel();
         let path = PathInfo::try_from(Path::new("/")).unwrap();
 
-        open_in("open_file", &path, "false %s", tx).unwrap();
+        open_in("open_directory", &path, "cd %s && false", tx).unwrap();
 
         let Ok(Command::AlertError(message)) = rx.recv_timeout(Duration::from_secs(5)) else {
             panic!("expected an alert");
         };
-        assert_eq!("Failed to run \"false\" on \"/\": exit code 1", message);
+        assert_eq!(
+            "Failed to run openers.open_directory on \"/\": exit code 1",
+            message
+        );
     }
 
     #[test_case("" ; "empty")]
@@ -908,7 +939,7 @@ mod tests {
             .expect_err("an empty template must be refused")
             .to_string();
 
-        assert_eq!("Cannot open notes.txt: open_file is empty", error);
+        assert_eq!("Cannot open notes.txt: openers.open_file is empty", error);
     }
 
     /// Linux only: the group is read from `/proc`.

@@ -33,7 +33,10 @@ use std::{
 
 use log::debug;
 
-use super::shell;
+use super::{
+    operations::{opener_setting, quoted_program},
+    shell,
+};
 use crate::app::config::{Config, Openers};
 
 /// An application offered by the "open with" picker, and the argv that launches
@@ -48,7 +51,22 @@ pub struct AppCandidate {
     pub is_default: bool,
     /// Human readable application name.
     pub name: String,
+    /// The `openers` key of the configured opener's row, which names it in a
+    /// failure: its `name` is a shell command, whose first word need not be
+    /// what failed. `None` for an application.
+    pub setting: Option<&'static str>,
     pub working_dir: Option<PathBuf>,
+}
+
+impl AppCandidate {
+    /// What a failure to run this row calls it: the `openers` setting, or the
+    /// application's quoted name.
+    pub fn failure_name(&self) -> String {
+        match self.setting {
+            Some(key) => opener_setting(key),
+            None => quoted_program(&self.name),
+        }
+    }
 }
 
 /// The applications that can open `path`, most preferred first, always followed
@@ -120,7 +138,7 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
     } else {
         ("open_file", &openers.open_file)
     };
-    if template.is_empty() {
+    if template.trim().is_empty() {
         debug!("No configured opener for {}", path.display());
         return None;
     }
@@ -131,6 +149,7 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
         detail: format!("openers.{key}"),
         is_default: false,
         name: shown_name(template),
+        setting: Some(key),
         working_dir: None,
     })
 }
@@ -150,6 +169,7 @@ mod tests {
             detail: detail.to_string(),
             is_default: false,
             name: name.to_string(),
+            setting: None,
             working_dir: None,
         }
     }
@@ -182,6 +202,36 @@ mod tests {
         };
         let opener = configured_opener(&openers, std::path::Path::new("/")).unwrap();
         assert_eq!("a\\u{202e} %s", opener.name);
+    }
+
+    /// The configured opener's name is a shell command, so a failure names
+    /// the setting it came from; an application keeps its quoted name.
+    #[test]
+    fn a_failure_names_the_setting_or_the_application() {
+        let openers = Openers {
+            open_directory: "cd %s && exec xterm".to_string(),
+            open_file: "xdg-open %s".to_string(),
+            open_filectrl_window: String::new(),
+            run_in_terminal: String::new(),
+        };
+        let directory = configured_opener(&openers, std::path::Path::new("/")).unwrap();
+        assert_eq!("openers.open_directory", directory.failure_name());
+
+        assert_eq!("\"gedit\"", candidate("gedit", "gedit").failure_name());
+    }
+
+    /// Blank reads as unset, as it does when the opener is run directly, so
+    /// the picker does not offer a row that runs nothing.
+    #[test_case("" ; "empty")]
+    #[test_case("  \t" ; "only whitespace")]
+    fn a_blank_opener_is_not_offered(template: &str) {
+        let openers = Openers {
+            open_directory: template.to_string(),
+            open_file: template.to_string(),
+            open_filectrl_window: String::new(),
+            run_in_terminal: String::new(),
+        };
+        assert!(configured_opener(&openers, std::path::Path::new("/")).is_none());
     }
 
     #[test]

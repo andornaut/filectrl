@@ -1,13 +1,17 @@
 use std::{
     fs::{File, OpenOptions},
     io::{Result, Stdout, stdin, stdout},
+    mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     os::fd::AsFd,
     panic,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
+use nix::{
+    sys::termios::{SetArg, Termios, tcgetattr, tcsetattr},
+    unistd::{getpgrp, tcgetpgrp},
+};
 
 use ratatui::{
     Terminal,
@@ -68,7 +72,9 @@ fn restore_terminal_once() {
 /// `TERMINAL_RESTORED` leaves whichever runs first the only one to emit escape
 /// sequences.
 pub struct CleanupOnDropTerminal {
-    terminal: CrosstermTerminal,
+    /// Dropped by hand, so that ratatui's own drop never runs on a terminal
+    /// that could not show the cursor (see `Drop`).
+    terminal: ManuallyDrop<CrosstermTerminal>,
     /// The terminal's settings as the shell left them, read before raw mode.
     /// A foreground program can exit with other settings (killed with echo
     /// off), and raw mode records whatever it finds as the settings to restore
@@ -120,7 +126,7 @@ impl CleanupOnDropTerminal {
             terminal.hide_cursor()?;
             terminal.clear()?;
             Ok(Self {
-                terminal,
+                terminal: ManuallyDrop::new(terminal),
                 shell_settings,
             })
         };
@@ -141,7 +147,7 @@ impl CleanupOnDropTerminal {
     /// being taken back, ignoring a failure: the process is quitting.
     pub fn release(&mut self) {
         if let Some(settings) = &self.shell_settings {
-            let _ = on_terminal(|fd| restore_settings(fd, settings));
+            let _ = on_terminal(|fd| release_settings(fd, settings));
         }
     }
 
@@ -179,6 +185,17 @@ fn take_back(
     Ok(())
 }
 
+/// `restore_settings`, only while this process group owns the terminal `fd`.
+/// From the background the write raises SIGTTOU, which stops a process that is
+/// quitting (a stopped job sent `kill %1`), and it would overwrite the settings
+/// of the job that now owns the terminal.
+fn release_settings(fd: impl AsFd, settings: &Termios) -> Result<()> {
+    if tcgetpgrp(&fd) != Ok(getpgrp()) {
+        return Ok(());
+    }
+    restore_settings(fd, settings)
+}
+
 /// Puts `settings` back on the terminal `fd`, so the next raw mode records
 /// them rather than whatever a foreground program left behind.
 fn restore_settings(fd: impl AsFd, settings: &Termios) -> Result<()> {
@@ -214,7 +231,21 @@ impl DerefMut for CleanupOnDropTerminal {
 
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
+        // Shown here first, so ratatui's own drop has no cursor left to show.
+        // On a terminal that hung up that attempt fails, and ratatui reports
+        // it with `eprintln!`, which panics writing to the dead terminal; with
+        // `panic = "abort"` the process then dies by SIGABRT instead of
+        // exiting. When the cursor cannot be shown, ratatui's drop is skipped:
+        // the process is exiting and the terminal holds nothing else to free.
+        let shown = self.terminal.show_cursor().is_ok();
         restore_terminal_once();
+        if shown {
+            // SAFETY: `self.terminal` is not used again, since this is `drop`.
+            #[allow(unsafe_code)]
+            unsafe {
+                ManuallyDrop::drop(&mut self.terminal);
+            }
+        }
     }
 }
 
@@ -222,7 +253,7 @@ impl Drop for CleanupOnDropTerminal {
 mod tests {
     use test_case::test_case;
 
-    use super::{restore_settings, supports_truecolor, take_back};
+    use super::{release_settings, restore_settings, supports_truecolor, take_back};
 
     #[test_case(Some("truecolor") => true ; "truecolor")]
     #[test_case(Some("24bit") => true ; "24bit")]
@@ -253,6 +284,32 @@ mod tests {
 
         assert!(
             tcgetattr(&pty.slave)
+                .unwrap()
+                .local_flags
+                .contains(LocalFlags::ECHO)
+        );
+    }
+
+    /// A terminal this process group does not own in the foreground is left
+    /// alone: the write would stop a quitting process with SIGTTOU. A pty the
+    /// test did not make its controlling terminal stands in for one.
+    #[test]
+    fn a_terminal_owned_by_another_group_keeps_its_settings() {
+        use nix::{
+            pty::openpty,
+            sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr},
+        };
+
+        let pty = openpty(None, None).unwrap();
+        let shell = tcgetattr(&pty.slave).unwrap();
+        let mut left = shell.clone();
+        left.local_flags.remove(LocalFlags::ECHO);
+        tcsetattr(&pty.slave, SetArg::TCSANOW, &left).unwrap();
+
+        release_settings(&pty.slave, &shell).unwrap();
+
+        assert!(
+            !tcgetattr(&pty.slave)
                 .unwrap()
                 .local_flags
                 .contains(LocalFlags::ECHO)

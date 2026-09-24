@@ -12,7 +12,10 @@ use super::{View, as_dimension, scroll_to_show, unicode::pluralize_items};
 use crate::{
     app::clipboard::ClipboardEntry,
     command::{Command, PromptAction, result::CommandResult},
-    file_system::path_info::{PathInfo, compact, quoted},
+    file_system::{
+        chmod_mode,
+        path_info::{PathInfo, compact, quoted},
+    },
 };
 
 /// Paths a confirmation of a paste from elsewhere lists, one per line, before
@@ -104,6 +107,12 @@ impl PromptView {
             PromptAction::Delete(count) => {
                 plain(format!(" Delete {}? (y/n) ", pluralize_items(*count)))
             }
+            PromptAction::ConfirmQuit(1) => {
+                plain(" 1 task is running. Quit anyway? (y/n) ".to_string())
+            }
+            PromptAction::ConfirmQuit(tasks) => {
+                plain(format!(" {tasks} tasks are running. Quit anyway? (y/n) "))
+            }
             PromptAction::Filter(_) => plain(" Filter ".to_string()),
             PromptAction::Goto { .. } => plain(" Go to ".to_string()),
             PromptAction::Rename { .. } => plain(" Rename ".to_string()),
@@ -168,6 +177,7 @@ impl PromptView {
             PromptAction::Chmod { mode, .. } => mode.clone(),
             PromptAction::Conflict { .. }
             | PromptAction::ConfirmPaste { .. }
+            | PromptAction::ConfirmQuit(_)
             | PromptAction::CreateDirectory
             | PromptAction::Delete(_)
             | PromptAction::Goto { .. } => String::new(),
@@ -236,9 +246,14 @@ impl PromptView {
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
         match &self.actions {
-            PromptAction::Chmod { paths, .. } => Command::Chmod {
-                paths: paths.clone(),
-                mode: value,
+            // A mode that is not octal is refused with the prompt still open,
+            // as Go to does for a missing path, so the typo can be corrected.
+            PromptAction::Chmod { paths, .. } => match chmod_mode(paths, &value) {
+                Ok(_) => Command::Chmod {
+                    paths: paths.clone(),
+                    mode: value,
+                },
+                Err(error) => error.into(),
             },
             PromptAction::AddBookmark { directory, .. } => Command::AddBookmark {
                 directory: directory.clone(),
@@ -248,9 +263,9 @@ impl PromptView {
             // The confirmation prompts resolve in `handle_key` on a single
             // keypress, so submit never reaches them; treat it as a cancel
             // rather than guessing an answer on the user's behalf.
-            PromptAction::Conflict { .. } | PromptAction::ConfirmPaste { .. } => {
-                Command::CancelPrompt
-            }
+            PromptAction::Conflict { .. }
+            | PromptAction::ConfirmPaste { .. }
+            | PromptAction::ConfirmQuit(_) => Command::CancelPrompt,
             PromptAction::Delete(_) => Command::ConfirmDelete,
             PromptAction::Filter(_) => Command::FilterChanged(value),
             PromptAction::Goto { .. } => {
@@ -575,6 +590,23 @@ mod tests {
     }
 
     // ── delete prompt ────────────────────────────────────────────────────────
+
+    #[test_case(KeyCode::Char('y'), KeyModifiers::NONE => Command::Quit ; "y quits")]
+    #[test_case(KeyCode::Char('Y'), KeyModifiers::SHIFT => Command::Quit ; "uppercase Y quits")]
+    #[test_case(KeyCode::Char('n'), KeyModifiers::NONE => Command::CancelPrompt ; "n cancels")]
+    #[test_case(KeyCode::Esc, KeyModifiers::NONE => Command::CancelPrompt ; "Esc cancels")]
+    #[test_case(KeyCode::Char('q'), KeyModifiers::NONE => Command::CancelPrompt ; "the quit key again cancels")]
+    #[test_case(KeyCode::Char('y'), KeyModifiers::CONTROL => Command::CancelPrompt ; "a chord cancels")]
+    fn the_quit_prompt_answers(code: KeyCode, modifiers: KeyModifiers) -> Command {
+        let mut view = prompt_with_action(PromptAction::ConfirmQuit(2));
+        Command::try_from(view.handle_key(code, modifiers)).unwrap()
+    }
+
+    #[test_case(1 => " 1 task is running. Quit anyway? (y/n) " ; "one")]
+    #[test_case(3 => " 3 tasks are running. Quit anyway? (y/n) " ; "several")]
+    fn the_quit_prompt_counts_the_tasks(tasks: usize) -> String {
+        label_text(&prompt_with_action(PromptAction::ConfirmQuit(tasks)))
+    }
 
     #[test_case(KeyCode::Char('y'), KeyModifiers::NONE => Command::ConfirmDelete ; "y confirms")]
     #[test_case(KeyCode::Char('Y'), KeyModifiers::SHIFT => Command::ConfirmDelete ; "uppercase Y confirms")]
@@ -1437,6 +1469,44 @@ mod tests {
             Command::try_from(result).unwrap(),
             Command::AlertWarn(_)
         ));
+    }
+
+    #[test]
+    fn a_mode_that_is_not_octal_keeps_the_chmod_prompt_and_its_text() {
+        let mut view = prompt_with_action(PromptAction::Chmod {
+            paths: vec![test_path()],
+            mode: String::new(),
+        });
+        type_str(&mut view, "79");
+
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+
+        // An alert rather than `Chmod`, which is what closes the prompt.
+        let Ok(Command::AlertError(message)) = Command::try_from(result) else {
+            panic!("expected Command::AlertError");
+        };
+        assert_eq!(
+            "Cannot chmod \"/tmp\": \"79\" is not an octal mode",
+            message
+        );
+        assert_eq!("79", view.text_area.lines().join(""));
+    }
+
+    #[test]
+    fn an_octal_mode_submits_the_chmod() {
+        let mut view = prompt_with_action(PromptAction::Chmod {
+            paths: vec![test_path()],
+            mode: String::new(),
+        });
+        type_str(&mut view, "750");
+
+        assert_eq!(
+            Command::Chmod {
+                paths: vec![test_path()],
+                mode: "750".into(),
+            },
+            Command::try_from(view.handle_key(KeyCode::Enter, KeyModifiers::NONE)).unwrap()
+        );
     }
 
     #[test]

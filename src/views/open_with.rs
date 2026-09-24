@@ -121,7 +121,7 @@ impl OpenWithView {
         };
         let command = Command::OpenWith {
             argv: candidate.argv.clone(),
-            label: candidate.name.clone(),
+            label: candidate.failure_name(),
             path: self.path.clone(),
             working_dir: candidate.working_dir.clone(),
         };
@@ -163,6 +163,7 @@ mod tests {
                 detail: "prog".to_string(),
                 is_default: false,
                 name: format!("App{index}"),
+                setting: None,
                 working_dir: None,
             })
             .collect();
@@ -200,7 +201,22 @@ mod tests {
         let Ok(Command::OpenWith { label, .. }) = Command::try_from(result) else {
             panic!("expected the third row to launch");
         };
-        assert_eq!("App2", label);
+        assert_eq!("\"App2\"", label);
+    }
+
+    /// The configured opener's name is its template, so a failure to run it
+    /// names the setting instead.
+    #[test]
+    fn the_configured_opener_launches_under_its_setting() {
+        let mut view = picker(1);
+        view.candidates[0].setting = Some("open_file");
+
+        let result = view.handle_key(KeyCode::Char('1'), KeyModifiers::NONE);
+
+        let Ok(Command::OpenWith { label, .. }) = Command::try_from(result) else {
+            panic!("expected the row to launch");
+        };
+        assert_eq!("openers.open_file", label);
     }
 
     #[test]

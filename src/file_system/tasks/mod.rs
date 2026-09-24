@@ -173,23 +173,15 @@ fn run_copy_task(
     let uncancellable = active.uncancellable_handle();
 
     queue_operation(move || {
-        let Some((active, source)) = check_cancelled(active).and_then(|active| {
-            prepare_destination(active, "copy", &old_path, &new_path, overwrite, path.mode())
-        }) else {
-            return;
-        };
-        let settings = CopySettings {
-            // Like `cp`, which does not preserve timestamps without `-p`.
-            preserve: false,
-            conflicts: conflicts.as_ref(),
-        };
-        if let Some((active, outcome)) =
-            copy_with_progress(&old_path, &new_path, active, source, &path, settings)
-        {
-            // A skipped entry needs no mention here: nothing is left behind by
-            // a copy that did not make it, and the standing "skip all" that
-            // settled it was the user's own answer.
-            finalize(active, outcome.errors);
+        if let Some(active) = check_cancelled(active) {
+            copy_to(
+                active,
+                &old_path,
+                &new_path,
+                &path,
+                overwrite,
+                conflicts.as_ref(),
+            );
         }
     });
 
@@ -233,35 +225,14 @@ fn run_move_task(
             }
             Err(error) => match error.kind() {
                 // If the file is on a different device/mount-point, we must copy-then-delete it instead
-                ErrorKind::CrossesDevices => {
-                    // There is no rename to replace the destination here, and
-                    // the copy below opens it with `create_new`, so a granted
-                    // overwrite has to clear it first.
-                    let Some((active, source)) = prepare_destination(
-                        active,
-                        "move",
-                        &old_path,
-                        &new_path,
-                        overwrite,
-                        path.mode(),
-                    ) else {
-                        return;
-                    };
-                    let settings = CopySettings {
-                        // A same-device move is a rename, which keeps the
-                        // timestamps; the copy fallback has to put them back
-                        // so the result does not depend on which mount the
-                        // destination happens to be on.
-                        preserve: true,
-                        conflicts: conflicts.as_ref(),
-                    };
-                    let Some((active, outcome)) =
-                        copy_with_progress(&old_path, &new_path, active, source, &path, settings)
-                    else {
-                        return;
-                    };
-                    finish_cross_device_move(active, outcome, &old_path, is_directory);
-                }
+                ErrorKind::CrossesDevices => move_across_devices(
+                    active,
+                    &old_path,
+                    &new_path,
+                    &path,
+                    overwrite,
+                    conflicts.as_ref(),
+                ),
                 _ if SameFile::is(&error) => active.error(format!(
                     "Cannot move {}: {} is the same file",
                     compact(&old_path),
@@ -322,6 +293,68 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     });
 
     TaskRunResult::started(&initial, token, uncancellable)
+}
+
+/// The worker side of a copy whose paths are validated: clears a granted
+/// overwrite, copies `path`, and reports how it went.
+fn copy_to(
+    active: ActiveTask,
+    old_path: &Path,
+    new_path: &Path,
+    path: &PathInfo,
+    overwrite: bool,
+    conflicts: Option<&Conflicts>,
+) {
+    let Some((active, source)) =
+        prepare_destination(active, "copy", old_path, new_path, overwrite, path.mode())
+    else {
+        return;
+    };
+    let settings = CopySettings {
+        // Like `cp`, which does not preserve timestamps without `-p`.
+        preserve: false,
+        conflicts,
+    };
+    if let Some((active, outcome)) =
+        copy_with_progress(old_path, new_path, active, source, path, settings)
+    {
+        // A skipped entry needs no mention here: nothing is left behind by a
+        // copy that did not make it, and the standing "skip all" that settled
+        // it was the user's own answer.
+        finalize(active, outcome.errors);
+    }
+}
+
+/// A move whose rename crossed devices: copies `path`, then removes the
+/// source (`finish_cross_device_move`).
+fn move_across_devices(
+    active: ActiveTask,
+    old_path: &Path,
+    new_path: &Path,
+    path: &PathInfo,
+    overwrite: bool,
+    conflicts: Option<&Conflicts>,
+) {
+    // There is no rename to replace the destination here, and the copy opens
+    // it with `create_new`, so a granted overwrite has to clear it first.
+    let Some((active, source)) =
+        prepare_destination(active, "move", old_path, new_path, overwrite, path.mode())
+    else {
+        return;
+    };
+    let settings = CopySettings {
+        // A same-device move is a rename, which keeps the timestamps; the copy
+        // fallback has to put them back so the result does not depend on which
+        // mount the destination happens to be on.
+        preserve: true,
+        conflicts,
+    };
+    let Some((active, outcome)) =
+        copy_with_progress(old_path, new_path, active, source, path, settings)
+    else {
+        return;
+    };
+    finish_cross_device_move(active, outcome, old_path, path.is_directory());
 }
 
 /// Finishes a cross-device move once the copy stage is done, removing the
@@ -389,6 +422,16 @@ fn finalize(active: ActiveTask, errors: Vec<String>) {
     active.error(summary);
 }
 
+/// Finalizes a task cancelled part way through. The task shows only that it
+/// was cancelled, so each error recorded before the cancel is logged, as
+/// `finalize` logs them.
+fn cancel_logging(errors: &[String], active: ActiveTask) {
+    for error in errors {
+        warn!("{error}");
+    }
+    active.cancelled();
+}
+
 /// Honors a cancel that landed while the task sat in the queue, which can be a
 /// long time: a single worker runs every operation in turn. Returns `None` when
 /// the task was finalized here and must not continue.
@@ -411,7 +454,9 @@ mod tests {
     use test_case::test_case;
 
     use super::{
-        test_support::{copy_task, destination, finished_task, id_of, run_to_end},
+        test_support::{
+            copy_task, destination, finished_task, id_of, paste_after, paste_over, run_to_end,
+        },
         *,
     };
     use crate::{
@@ -586,6 +631,47 @@ mod tests {
             message.ends_with("it was replaced after it was copied"),
             "{message}"
         );
+    }
+
+    /// The whole arm `run_move_task` falls back to when the rename crosses
+    /// devices, from the copy through the removal.
+    #[test_case(false ; "into a free name")]
+    #[test_case(true ; "over a file the paste was allowed to replace")]
+    fn a_move_across_devices_leaves_only_the_destination(occupied: bool) {
+        let fx = TempDir::new("tasks_move_across");
+        let old = fx.join("a.txt");
+        fs::write(&old, b"src").unwrap();
+        let dest = fx.join("dest");
+        fs::create_dir(&dest).unwrap();
+        if occupied {
+            fs::write(dest.join("a.txt"), b"dest").unwrap();
+        }
+
+        let (new_path, task) = if occupied {
+            paste_over(&old, &dest, true)
+        } else {
+            paste_after(&old, &dest, true, || {})
+        };
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(b"src".as_slice(), fs::read(&new_path).unwrap());
+        assert!(old.symlink_metadata().is_err());
+    }
+
+    #[test]
+    fn a_copy_over_a_file_the_paste_was_allowed_to_replace_keeps_its_source() {
+        let fx = TempDir::new("tasks_copy_over");
+        let old = fx.join("a.txt");
+        fs::write(&old, b"src").unwrap();
+        let dest = fx.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("a.txt"), b"dest").unwrap();
+
+        let (new_path, task) = paste_over(&old, &dest, false);
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(b"src".as_slice(), fs::read(&new_path).unwrap());
+        assert_eq!(b"src".as_slice(), fs::read(&old).unwrap());
     }
 
     #[test]

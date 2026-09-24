@@ -30,7 +30,7 @@ sudo mv filectrl /usr/local/bin/
 
 The archives also contain `LICENSE` and `README.md`; `tar -xz filectrl` extracts only the binary.
 
-On macOS, allow the _unsigned_ binary to run:
+On macOS, a binary downloaded with a browser is quarantined; allow the _unsigned_ binary to run (`curl` sets no quarantine attribute, so this step is not needed after the command above):
 
 ```bash
 xattr -d com.apple.quarantine filectrl
@@ -73,7 +73,7 @@ Flag | Also accepts
 
 Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` on Linux and so is not always under `~/.config`.
 
-SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit with status 128 plus the signal number (143 for SIGTERM), as a shell reports a process the signal killed. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself. A quit signal is passed to the program so both exit: SIGHUP as itself, the others as SIGTERM. SIGINT and SIGQUIT are the program's alone meanwhile, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
+SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit with status 128 plus the signal number (143 for SIGTERM), as a shell reports a process the signal killed. A terminal that closes is answered as SIGHUP (status 129) even when no SIGHUP arrives, which happens when the shell ignores it (`trap "" HUP`). On macOS, which cannot poll a terminal device, only the signal counts. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself. A quit signal is passed to the program so both exit: SIGHUP as itself, the others as SIGTERM. SIGINT and SIGQUIT are the program's alone meanwhile, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
 
 ### Bookmarks
 
@@ -94,9 +94,9 @@ Names must be unique, cannot be empty, and cannot contain a path separator. A na
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, except that where the terminal is too narrow a path loses its start to `…`, so the file name and the question stay visible. An entry from elsewhere with a `.` or `..` component in a path is refused.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the setuid, setgid and sticky bits are dropped. A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the modification times of files and directories and their access times (on macOS, a directory's access time becomes the time of the move; symlinks and special files keep neither), the POSIX ACLs on Linux where the destination supports them, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the original's setuid, setgid and sticky bits are dropped (a directory created inside a setgid directory keeps the setgid bit it inherits). A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the modification times of files and directories and their access times (on macOS, a directory's access time becomes the time of the move; symlinks and special files keep neither), the extended attributes (including the POSIX ACLs on Linux) where the destination accepts them, and the group when you belong to it (setuid and setgid only when the copy has the original's owner and group). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
 
-Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste and no system clipboard to read shows a warning, since an entry copied in another window would be unreachable.
+Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste shows a warning, which without a system clipboard says so, since an entry copied in another window would be unreachable. A confirmed delete clears the clipboard; declining it leaves the clipboard as it was.
 
 When the destination already contains an entry with the same name, the paste stops and asks:
 
@@ -109,9 +109,10 @@ Key | Action
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
 - An existing **directory** is never replaced, and a directory never replaces anything (like `cp -R` and `mv`), so only the skip choices are offered when either side is a directory. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
+- Two pasted entries with the same name (marks from search results can span directories) never collide with each other: like `mv a/x b/x dest/`, the first takes the name and the second is refused, whatever the standing answer, so neither replaces what the other pasted.
 - <kbd>S</kbd> and <kbd>O</kbd> also cover copies and moves already running: if another program takes a name inside a directory being copied, or the name a move is about to take, the standing answer settles it without stopping the paste. Only <kbd>S</kbd> settles a collision where either side is a directory. Anything left unsettled is reported when the paste finishes.
 - A cut that skipped an entry keeps its original: the skipped entry is not at the destination, so removing the source would take the only copy of it.
-- Whatever is not pasted (collisions you abandon, entries that failed) stays on the clipboard, so pasting again retries exactly those. Entries you skip deliberately do not. If nothing was pasted at all, the clipboard is unchanged.
+- A paste consumes the clipboard as its entries start. What never started stays on it (collisions you abandon, entries refused before starting), so pasting again retries exactly those; entries you skip deliberately do not. If nothing started at all, the clipboard is unchanged. An entry that fails after it started is reported and is not put back on the clipboard; its original is left where it was.
 
 ### Chmod
 
@@ -163,9 +164,9 @@ While a filter or hidden files leave entries out of a directory listing, the sta
 
 ### Searching
 
-Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so.
+Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so. Directories the walk cannot read are skipped and counted in one warning when it ends.
 
-Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. Navigating to another directory stops the walk; a reload does not.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. The cursor then goes to the top row, unless you moved it or marked a row while the results streamed in, in which case it stays on that entry. Navigating to another directory stops the walk; a reload does not. A finished search keeps its notice, with the query and how many results it found (`[Search: 42 results] query`), and the status bar's `# Items` counts the results while they are listed.
 
 ### Sorting
 
@@ -219,7 +220,7 @@ Cancel file or search operations | <kbd>K</kbd> (Uppercase)
 Clear alerts, progress | <kbd>Ctrl</kbd>+<kbd>l</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd>
 Reset the view: clear the copied or cut entry, filter, marks and search, and leave the bookmarks view (with help shown, only closes help) | <kbd>Esc</kbd>
 Toggle help | <kbd>?</kbd>
-Quit | <kbd>q</kbd>
+Quit (asks first while a copy, move or delete is running, which quitting would end part way through) | <kbd>q</kbd>
 
 _**Prompt mode**_
 
@@ -345,7 +346,7 @@ The list is built per platform:
 - **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` matches one of the shapes below, which could hand the file name to an interpreter as code, is not offered either, nor is one whose `Exec` is malformed, and the log names each at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--execute-command`, `--print`, `--run` and `--split-string`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line.
+On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--execute-command`, `--print`, `--run` and `--split-string`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line, and a cluster is recognized after they are removed, so `perl -%ce %f` is the cluster `-e`.
 
 `Exec` shape | Example | Result
 --- | --- | ---
@@ -398,7 +399,7 @@ Section | Description
 `[theme]` / `[theme256]` | Base foreground, background, and modifiers
 `alert` | Alert bar (its own style, plus `error`, `info`, `warn`)
 `breadcrumbs` | Path breadcrumbs (its own style, plus `ancestor`, `basename`, `bookmarks`, `search`, `separator`)
-`clipboard` | Clipboard status indicators (`copy`, `cut`, `delete`)
+`clipboard` | Clipboard status indicators (`copy`, `cut`)
 `file_modified_date` | Date column by age (`less_than_minute`, `less_than_hour`, `less_than_day`, `less_than_month`, `less_than_year`, `greater_than_year`)
 `file_size` | Size column by magnitude (`bytes`, `kib`, `mib`, `gib`, `tib`, `pib`)
 `file_type` | Row colors by file type (`directory`, `executable`, `symlink`, `regular_file`, etc.)
@@ -412,10 +413,15 @@ Section | Description
 
 #### LS_COLORS integration
 
-With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key.
+With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key. A reset clears the colors and attributes before it, so `31;00` renders plain too.
+
+The setting belongs to each theme, so set it in both, or a 256-color terminal ignores `$LS_COLORS`:
 
 ```toml
 [theme.file_type]
+ls_colors_take_precedence = true
+
+[theme256.file_type]
 ls_colors_take_precedence = true
 ```
 
@@ -451,8 +457,18 @@ Theme | Inspired by | Screenshot
 [IBM1970](./themes/ibm1970.toml) (default) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme) | [![IBM1970](./screenshots/IBM1970.png)](./screenshots/IBM1970.png)
 [42KM](./themes/42km.toml) | [vscode-42km-theme](https://github.com/andornaut/vscode-42km-theme) | [![42KM](./screenshots/42KM.png)](./screenshots/42KM.png)
 
+The release archives do not include the theme files, so from a source checkout:
+
 ```bash
 filectrl --include themes/42km.toml
+```
+
+Otherwise, download the theme file first:
+
+```bash
+curl -fsSL --create-dirs -o ~/.config/filectrl/42km.toml \
+  https://raw.githubusercontent.com/andornaut/filectrl/main/themes/42km.toml
+filectrl --include ~/.config/filectrl/42km.toml
 ```
 
 ### Customizing keybindings
@@ -477,12 +493,12 @@ Form | Examples
 --- | ---
 Single characters | `"q"`, `"/"`, `"~"`, `"^"`, `"$"`
 Uppercase (implies Shift) | `"G"`, `"V"`, `"N"`
-Named keys | `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
+Named keys (any case) | `"Enter"`, `"Esc"`, `"Backspace"`, `"Delete"`, `"Space"`, `"Tab"`, `"BackTab"`, `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"Home"`, `"End"`, `"PgUp"`, `"PgDn"`
 Aliases | `"Return"` (`"Enter"`), `"Escape"` (`"Esc"`), `"Del"` (`"Delete"`), `"PageUp"` (`"PgUp"`), `"PageDown"` (`"PgDn"`)
 Function keys | `"F1"` to `"F24"`
 Modifier prefixes (`Ctrl+`, `Shift+`, `Alt+`, any case) | `"Ctrl+c"`, `"Shift+Left"`, `"Alt+x"`, `"Ctrl+Shift+a"`
 
-`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`. For a character key, Shift on its own applies only to letters with a single uppercase form: a shifted digit or symbol arrives as the character it produces, so bind `"!"` rather than `"Shift+1"`, which is refused, as is Shift on a letter such as `ß`. With <kbd>Ctrl</kbd> or <kbd>Alt</kbd>, write the letter lowercase and add `Shift+` (`"Ctrl+Shift+g"`, not `"Ctrl+G"`): an uppercase letter with either modifier matches no key press, so it is refused.
+`"Shift+g"` is equivalent to `"G"`, and `"Shift+Tab"` to `"BackTab"`. For a character key, Shift on its own applies only to letters with a single uppercase form: a shifted digit or symbol arrives as the character it produces, so bind `"!"` rather than `"Shift+1"`, which is refused, as are `"Shift+Space"` (it arrives as a plain Space) and Shift on a letter such as `ß`. With <kbd>Ctrl</kbd> or <kbd>Alt</kbd>, write the letter lowercase and add `Shift+` for the uppercase one (`"Ctrl+Shift+g"` or `"Alt+Shift+g"`); `"Ctrl+G"` and `"Alt+G"` are refused. `"Alt+Shift+g"` works in any terminal, while `"Ctrl+Shift+g"` needs the kitty keyboard protocol (see the note under the prompt keys).
 
 Binding one key to two actions in the same mode prevents startup, including a collision between a key you configured and a default you did not override. Assigning the same key to one action more than once is allowed.
 

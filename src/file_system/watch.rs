@@ -236,6 +236,29 @@ mod tests {
         assert!(waited >= WIDENED, "refreshed after {waited:?}");
     }
 
+    /// Listing the watched directory opens it, which inotify reports as an
+    /// access. Refreshing on one would make every reload trigger the next.
+    #[test]
+    fn opening_or_closing_the_directory_does_not_refresh() {
+        use notify::event::{AccessKind, AccessMode};
+        let debouncer = Mutex::new(debounce::TimeDebouncer::new(Duration::ZERO));
+        let (command_tx, command_rx) = channel();
+        let (notify_tx, notify_rx) = channel();
+        for kind in [
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Read),
+        ] {
+            notify_tx
+                .send(Ok(Event::new(notify::EventKind::Access(kind))))
+                .unwrap();
+        }
+        drop(notify_tx);
+
+        watch_for_notify_events(&command_tx, &notify_rx, &debouncer);
+
+        assert_eq!(0, command_rx.try_iter().count());
+    }
+
     #[test]
     fn watch_directory_tracks_only_successful_watches() {
         let temp = TempDir::new("watch");

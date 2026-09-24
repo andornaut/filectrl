@@ -72,6 +72,9 @@ pub enum PromptAction {
         entry: ClipboardEntry,
         dest: PathInfo,
     },
+    /// Quit while this many file operations are running or queued, which
+    /// quitting would end part way through.
+    ConfirmQuit(usize),
     /// A paste found `name` already present in the destination directory.
     /// `can_overwrite` is false when the existing entry is a directory, which
     /// is never replaced, so the prompt offers only the skip choices.
@@ -90,6 +93,7 @@ impl PromptAction {
             PromptAction::Delete(_)
                 | PromptAction::Conflict { .. }
                 | PromptAction::ConfirmPaste { .. }
+                | PromptAction::ConfirmQuit(_)
         )
     }
 }

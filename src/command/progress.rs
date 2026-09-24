@@ -202,8 +202,9 @@ impl Progress {
 /// twice, or reporting an error after `done`, is a compile-time error rather
 /// than an update to a task the UI has already dropped.
 ///
-/// Dropped without either (an early `?` return), `Drop` sends a final update
-/// marking it done, so no phantom progress bar is left behind.
+/// Dropped without any of them (an early `?` return), `Drop` reports the task
+/// as failed with "Task interrupted", so no phantom progress bar is left
+/// behind and the user is told it did not finish.
 pub struct ActiveTask {
     cancel_token: CancellationToken,
     /// Set once the task can no longer be meaningfully cancelled: it reached

@@ -12,6 +12,11 @@ impl ScrollbarView {
         self.is_dragging
     }
 
+    /// Ends a drag whose release never arrived, as when another view took it.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+
     /// A drag begun without the click that starts one, for a test whose view
     /// has no scrollbar drawn to click.
     #[cfg(test)]

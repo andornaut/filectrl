@@ -319,6 +319,7 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
         detail: entry.appid.clone(),
         is_default: false,
         name,
+        setting: None,
         working_dir: entry
             .path()
             .filter(|dir| !dir.is_empty())
@@ -332,7 +333,7 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
 /// `xterm -e %s` runs `xterm -e vim '/a b'`, not `xterm -e 'vim /a b'`. `None`
 /// when no terminal is configured.
 fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
-    if template.is_empty() {
+    if template.trim().is_empty() {
         return None;
     }
     Some(shell::command(template, argv.iter().cloned()))
@@ -415,7 +416,10 @@ fn scan_mime_types(text: &str) -> Vec<String> {
         if !in_desktop_entry {
             continue;
         }
-        if let Some(values) = line.strip_prefix("MimeType=") {
+        // The spec ignores whitespace around the '='.
+        if let Some((key, values)) = line.split_once('=')
+            && key.trim_end() == "MimeType"
+        {
             return values
                 .split(';')
                 .map(str::trim)
@@ -1021,9 +1025,10 @@ mod tests {
         assert_eq!(expected, wrapped);
     }
 
-    #[test]
-    fn in_terminal_declines_when_no_terminal_is_configured() {
-        assert_eq!(None, in_terminal("", &[OsString::from("vim")]));
+    #[test_case("" ; "empty")]
+    #[test_case(" \t" ; "only whitespace")]
+    fn in_terminal_declines_when_no_terminal_is_configured(template: &str) {
+        assert_eq!(None, in_terminal(template, &[OsString::from("vim")]));
     }
 
     #[test]
@@ -1040,8 +1045,18 @@ mod tests {
         );
     }
 
+    #[test_case("MimeType=text/plain;" ; "no space")]
+    #[test_case("MimeType = text/plain;" ; "spaces around the equals sign")]
+    #[test_case("MimeType\t=text/plain" ; "a tab before the equals sign")]
+    fn scan_mime_types_ignores_whitespace_around_the_equals_sign(line: &str) {
+        let text = format!("[Desktop Entry]\n{line}\n");
+        assert_eq!(strings(&["text/plain"]), scan_mime_types(&text));
+    }
+
     #[test_case("Name=Viewer" ; "no group header")]
     #[test_case("[Desktop Entry]\nName=Viewer" ; "no MimeType key")]
+    #[test_case("[Desktop Entry]\nMimeTypes=text/plain" ; "a longer key")]
+    #[test_case("[Desktop Entry]\nX-MimeType=text/plain" ; "a key ending in MimeType")]
     #[test_case("[Desktop Entry]\nMimeType=;;" ; "no usable values")]
     #[test_case("[Desktop Action new]\nMimeType=application/pdf" ; "only in a later group")]
     fn scan_mime_types_returns_nothing(text: &str) {

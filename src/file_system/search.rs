@@ -79,6 +79,7 @@ fn search(
     queue.push_back((root.to_path_buf(), 0));
     let mut depth_limit_hit = false;
     let mut result_count: u32 = 0;
+    let mut unreadable: u32 = 0;
 
     let send = batch_sender(tx, generation);
     let mut batcher = Batcher::new(SEARCH_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
@@ -102,6 +103,7 @@ fn search(
             Ok(entries) => entries,
             Err(e) => {
                 warn!("Search: failed to read directory {}: {e}", dir.display());
+                unreadable += 1;
                 continue;
             }
         };
@@ -175,6 +177,20 @@ fn search(
         }
     }
 
+    // Once, at the end, like the depth warning: one per directory would bury
+    // the listing under repeats.
+    if unreadable > 0 {
+        let directories = if unreadable == 1 {
+            "1 directory".to_string()
+        } else {
+            format!("{unreadable} directories")
+        };
+        warn_unless_superseded(
+            tx,
+            cancel,
+            format!("{directories} could not be read; some results may be missing"),
+        );
+    }
     exit(&mut batcher);
 }
 
@@ -431,6 +447,45 @@ mod tests {
         let commands: Vec<Command> = rx.into_iter().collect();
         assert_eq!(vec!["live".to_string()], warnings(&commands));
         assert_eq!(1, commands.len(), "nothing else may be sent: {commands:?}");
+    }
+
+    /// Like `find`, a directory the walk cannot read is reported rather than
+    /// passed over in silence, once for the whole search.
+    #[test_case::test_case(1 ; "one directory")]
+    #[test_case::test_case(2 ; "several directories")]
+    fn unreadable_directories_are_counted_in_one_warning(count: usize) {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new("search_unreadable");
+        let locked: Vec<_> = (0..count)
+            .map(|i| root.join(format!("locked{i}")))
+            .collect();
+        for dir in &locked {
+            std::fs::create_dir(dir).unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        // Root reads any directory, so the fixture proves nothing there.
+        let readable = std::fs::read_dir(&locked[0]).is_ok();
+
+        let commands = (!readable).then(|| run(&default_limits(), &root, "x").0);
+
+        for dir in &locked {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let Some(commands) = commands else {
+            return;
+        };
+        let directories = if count == 1 {
+            "1 directory"
+        } else {
+            "2 directories"
+        };
+        assert_eq!(
+            vec![format!(
+                "{directories} could not be read; some results may be missing"
+            )],
+            warnings(&commands)
+        );
+        assert_eq!(1, exits(&commands));
     }
 
     #[test]

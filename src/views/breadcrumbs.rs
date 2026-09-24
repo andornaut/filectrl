@@ -20,6 +20,9 @@ pub(super) struct BreadcrumbsView {
     /// The path each breadcrumb names, index for index. A click resolves
     /// through these, since the shown text is not always the real name.
     ancestors: Vec<PathBuf>,
+    /// The directory listed behind the bookmarks view, which is the one a
+    /// search walks, so leaving the view for a search shows it again.
+    directory: PathBuf,
     /// Which listing the header describes; transitions come solely from
     /// `ListingMode::transition`.
     mode: ListingMode,
@@ -70,7 +73,16 @@ impl BreadcrumbsView {
     }
 
     fn set_directory(&mut self, directory: &PathInfo) -> CommandResult {
+        self.directory.clone_from(&directory.path);
         self.set_path(directory.as_path());
+        CommandResult::Handled
+    }
+
+    /// Shows the directory again after the bookmarks view replaced it.
+    fn restore_directory(&mut self) -> CommandResult {
+        if !self.directory.as_os_str().is_empty() {
+            self.set_path(&self.directory.clone());
+        }
         CommandResult::Handled
     }
 
@@ -115,6 +127,30 @@ mod tests {
         });
 
         assert_eq!(vec!["", "home", "bookmarks"], v.breadcrumbs);
+    }
+
+    /// A search from the bookmarks view walks the working directory, so the
+    /// header names it rather than the bookmarks directory. The refresh while
+    /// the bookmarks were shown still counts: it is the directory the search
+    /// walks.
+    #[test]
+    fn a_search_from_the_bookmarks_view_shows_the_directory_it_walks() {
+        Config::init_test();
+        let dir = |path: &str| crate::file_system::path_info::PathInfo::try_from(path).unwrap();
+        let mut v = view("/", ListingMode::Normal);
+        v.handle_command(&Command::NavigatedDirectory {
+            directory: dir("/tmp"),
+            generation: 1,
+        });
+        v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
+        v.handle_command(&Command::RefreshedDirectory {
+            directory: dir("/usr"),
+            generation: 2,
+        });
+
+        v.handle_command(&Command::StartSearch("q".into()));
+
+        assert_eq!(vec!["", "usr"], v.breadcrumbs);
     }
 
     #[test]

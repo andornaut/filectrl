@@ -251,4 +251,24 @@ mod tests {
         // leaving it on the row number, which now holds a different entry.
         assert_eq!(Some("b".to_string()), selected(&table));
     }
+
+    /// The release of a scrollbar drag can go to another view (help opened
+    /// with the button held). The next press, on the breadcrumbs above the
+    /// table, still reaches the table while the drag is recorded, and taken
+    /// as a table click it would land on the header row and sort.
+    #[test]
+    fn a_press_above_the_table_after_a_lost_release_ends_the_drag_without_sorting() {
+        let (_dir, mut table) = table_for_clicks();
+        table.scrollbar_view.begin_drag();
+        let direction = table.columns.sort_direction();
+
+        let press = mouse(MouseEventKind::Down(MouseButton::Left), 1, 0);
+        assert!(table.should_handle_mouse(press));
+        table.handle_mouse(press);
+
+        assert!(!table.scrollbar_view.is_dragging());
+        assert_eq!(direction, table.columns.sort_direction());
+        // The drag is over, so the table no longer claims presses elsewhere.
+        assert!(!table.should_handle_mouse(press));
+    }
 }

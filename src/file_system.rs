@@ -13,7 +13,7 @@ mod tasks;
 mod watch;
 
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     env,
     ffi::OsString,
     fmt::Display,
@@ -101,9 +101,9 @@ impl FileSystem {
     pub fn new(config: &Config, command_tx: Sender<Command>) -> Self {
         let watcher = DirectoryWatcher::try_new(config.file_system.refresh_debounce_milliseconds)
             .inspect_err(|e| {
-                warn!("Failed to initialize directory watcher: {e}");
+                warn!("Failed to start the directory watcher: {e}");
                 let _ = command_tx.send(Command::AlertWarn(format!(
-                    "Directory watcher unavailable: {e}. Use Ctrl+R to refresh manually."
+                    "Failed to start the directory watcher: {e}"
                 )));
             })
             .ok();
@@ -219,7 +219,12 @@ impl FileSystem {
         if let Some(watcher) = &mut self.watcher
             && let Err(e) = watcher.watch_directory(path_buf.clone())
         {
-            self.send_directory_error(&path_buf, e);
+            // The listing itself may load fine: only the automatic refresh is
+            // lost.
+            let _ = self.command_tx.send(Command::AlertWarn(format!(
+                "Failed to watch directory {}: {e}",
+                compact(&path_buf)
+            )));
         }
 
         // Cancel any in-flight load so its batches don't bleed into this one,
@@ -310,6 +315,15 @@ impl FileSystem {
         if generation == self.current_search_generation {
             self.cancel_search();
         }
+    }
+
+    /// How many file operations are running or queued. A task stays counted
+    /// until its terminal progress arrives.
+    pub(crate) fn task_count(&self) -> usize {
+        self.cancellables
+            .iter()
+            .filter(|cancellable| matches!(cancellable, Cancellable::Task(_)))
+            .count()
     }
 
     /// The entry a cancel keypress targets, so it always aims at work that is
@@ -439,12 +453,9 @@ impl FileSystem {
     }
 
     fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {
-        let Some(mode) = parse_octal_mode(mode_str) else {
-            let object = match paths {
-                [path] => compact(&path.path).to_string(),
-                _ => format!("{} items", paths.len()),
-            };
-            return anyhow!("Cannot chmod {object}: {mode_str:?} is not an octal mode").into();
+        let mode = match chmod_mode(paths, mode_str) {
+            Ok(mode) => mode,
+            Err(error) => return error.into(),
         };
         // Return the failures alongside the refresh instead of sending them
         // separately, so they are ordered against it rather than racing the
@@ -530,7 +541,7 @@ impl FileSystem {
             failed: Vec::new(),
             started: 0,
             conflicts: Conflicts::default(),
-            claimed: HashMap::new(),
+            claimed: HashSet::new(),
         });
         self.advance_paste()
     }
@@ -545,6 +556,12 @@ impl FileSystem {
         };
         let mut commands = Vec::new();
         while let Some(src) = pending.remaining.front().cloned() {
+            if pending.is_claimed(&src) {
+                pending.remaining.pop_front();
+                commands.push(Command::AlertError(claimed_message(&pending, &src)));
+                pending.failed.push(src);
+                continue;
+            }
             match pending.step(pending.occupant(&src)) {
                 PasteStep::Ask { can_overwrite } => {
                     commands.push(Command::OpenPrompt(PromptAction::Conflict {
@@ -570,7 +587,8 @@ impl FileSystem {
     }
 
     /// Applies a conflict answer to the source at the front of the queue, then
-    /// keeps going.
+    /// keeps going. The front source is never a claimed one, which
+    /// `advance_paste` refuses before asking.
     fn resolve_conflict(&mut self, choice: ConflictChoice) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::Handled;
@@ -736,9 +754,38 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
         .collect())
 }
 
+/// The refusal for a source whose destination name an earlier source of the
+/// same paste already took.
+fn claimed_message(pending: &PendingPaste, src: &PathInfo) -> String {
+    let operation = if pending.is_move { "move" } else { "copy" };
+    format!(
+        "Cannot {operation} {} into {}: another source in this paste has the same name",
+        compact(&src.path),
+        compact(&pending.dest.path)
+    )
+}
+
 /// Parses a chmod-style octal mode string. Returns `None` for non-octal input
 /// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
+/// Digits only: `from_str_radix` alone would take a leading `+`, which `chmod`
+/// reads as symbolic notation.
+/// The mode a chmod of `paths` to `mode_str` sets, or the refusal naming what
+/// it was for. The chmod prompt checks this before it closes, so that a typo
+/// can be corrected rather than typed again.
+pub(crate) fn chmod_mode(paths: &[PathInfo], mode_str: &str) -> Result<u32> {
+    parse_octal_mode(mode_str).ok_or_else(|| {
+        let object = match paths {
+            [path] => compact(&path.path).to_string(),
+            _ => format!("{} items", paths.len()),
+        };
+        anyhow!("Cannot chmod {object}: {mode_str:?} is not an octal mode")
+    })
+}
+
 fn parse_octal_mode(mode_str: &str) -> Option<u32> {
+    if !mode_str.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     match u32::from_str_radix(mode_str, 8) {
         Ok(mode) if mode <= 0o7777 => Some(mode),
         _ => None,
@@ -1191,6 +1238,68 @@ mod tests {
         assert!(matches!(result, CommandResult::NotHandled));
         await_terminal_task(&rx);
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+    }
+
+    #[test_case(true ; "a cut")]
+    #[test_case(false ; "a copy")]
+    fn a_second_source_of_a_taken_name_is_refused_whatever_the_standing_answer(is_move: bool) {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_claimed_twin");
+        let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("a.txt"), b"twin").unwrap();
+        let twin = PathInfo::try_from(elsewhere.join("a.txt").as_path()).unwrap();
+        fx.occupy("b.txt");
+        let srcs = vec![fx.other.clone(), fx.src.clone(), twin.clone()];
+        let paste = if is_move {
+            Command::Move {
+                srcs,
+                dest: fx.dest.clone(),
+            }
+        } else {
+            Command::Copy {
+                srcs,
+                dest: fx.dest.clone(),
+            }
+        };
+
+        let commands = file_system.handle_command(&paste).into_commands();
+        assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
+            .into_commands();
+        await_terminal_task(&rx);
+        await_terminal_task(&rx);
+
+        // The standing "overwrite all" covers only what was in the destination
+        // before the paste: the twin would replace the file `src/a.txt` just
+        // put there, which for a cut is its only copy.
+        let operation = if is_move { "move" } else { "copy" };
+        let refusal = format!(
+            "Cannot {operation} {} into {}: another source in this paste has the same name",
+            compact(&twin.path),
+            compact(&fx.dest.path)
+        );
+        assert!(
+            commands.contains(&Command::AlertError(refusal)),
+            "{commands:?}"
+        );
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"twin".to_vec(), fs::read(&twin.path).unwrap());
+        assert_eq!(is_move, !fx.src.path.exists());
+        // The refused source stays on the clipboard, so it can be pasted
+        // somewhere else.
+        let entry = if is_move {
+            ClipboardEntry::Move(vec![twin])
+        } else {
+            ClipboardEntry::Copy(vec![twin])
+        };
+        assert_eq!(
+            Some(&Command::SetClipboardEntry(Some(entry))),
+            commands.last()
+        );
     }
 
     #[test]
@@ -1844,6 +1953,7 @@ mod tests {
     #[test_case("rwx" => None ; "symbolic notation")]
     #[test_case("" => None ; "empty")]
     #[test_case("-1" => None ; "negative")]
+    #[test_case("+644" => None ; "a leading plus")]
     fn parse_octal_mode_accepts_only_a_mode(mode: &str) -> Option<u32> {
         parse_octal_mode(mode)
     }

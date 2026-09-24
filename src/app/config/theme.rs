@@ -135,7 +135,6 @@ file_type! {
     directory_sticky_other_writable => "tw",
     door => "do",
     executable => "ex",
-    missing => "mi",
     normal_file => "no",
     pipe => "pi",
     regular_file => "fi",
@@ -297,7 +296,7 @@ style_struct!(Breadcrumbs {
     separator,
 });
 
-style_struct!(Clipboard { copy, cut, delete });
+style_struct!(Clipboard { copy, cut });
 
 style_struct!(Notice {
     filter,

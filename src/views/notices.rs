@@ -17,6 +17,16 @@ use crate::{
     command::{progress::Task, result::CommandResult},
 };
 
+/// Where the current search is. Its notice stays after it ends, relabelled,
+/// until the listing changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SearchState {
+    Running,
+    Cancelled,
+    /// The walk ended on its own, so the notice names the result count.
+    Finished,
+}
+
 pub(super) struct NoticesView {
     area: Rect,
     /// When the current search began, which is what the loading indicator's
@@ -32,7 +42,10 @@ pub(super) struct NoticesView {
     /// names so that range mode is visible.
     range: bool,
     search_query: Option<String>,
-    search_cancelled: bool,
+    search_state: SearchState,
+    /// How many results the finished search listed, handed over by the root
+    /// before each render. `None` while the table shows no search results.
+    result_count: Option<usize>,
     /// Generation of the current search (from `SearchStarted`), used to
     /// ignore `ExitedSearch` from superseded searches.
     search_generation: u64,
@@ -65,7 +78,8 @@ impl NoticesView {
             mark_count: 0,
             range: false,
             search_query: None,
-            search_cancelled: false,
+            search_state: SearchState::Running,
+            result_count: None,
             search_generation: 0,
             tasks: HashSet::new(),
             notices: Vec::new(),
@@ -92,14 +106,15 @@ impl NoticesView {
             (!self.tasks.is_empty()).then_some(Notice::Operations),
             self.search_query
                 .as_ref()
-                .filter(|_| !self.search_cancelled)
+                .filter(|_| self.search_state == SearchState::Running)
                 .map(|_| Notice::SearchLoading),
-            self.search_query.as_ref().map(|q| {
-                if self.search_cancelled {
-                    Notice::SearchCancelled(q.clone())
-                } else {
-                    Notice::Search(q.clone())
-                }
+            self.search_query.as_ref().map(|q| match self.search_state {
+                SearchState::Running => Notice::Search(q.clone()),
+                SearchState::Cancelled => Notice::SearchCancelled(q.clone()),
+                SearchState::Finished => Notice::SearchFinished {
+                    query: q.clone(),
+                    results: self.result_count.unwrap_or_default(),
+                },
             }),
             marked,
             clipboard,
@@ -127,8 +142,17 @@ impl NoticesView {
     /// loading indicator's start time.
     fn clear_search_notice(&mut self) {
         self.search_query = None;
-        self.search_cancelled = false;
+        self.search_state = SearchState::Running;
         self.search_started_at = None;
+    }
+
+    /// Hand over how many search results the table lists, which the finished
+    /// search's notice names. Rebuilds the notices only when that changes.
+    pub(super) fn set_result_count(&mut self, result_count: Option<usize>) {
+        if self.result_count != result_count {
+            self.result_count = result_count;
+            self.rebuild_notices();
+        }
     }
 
     /// How long the current search has been loading, which the indicator's
@@ -181,6 +205,7 @@ mod tests {
                 Notice::Progress => "progress",
                 Notice::Operations => "operations",
                 Notice::Search(_) => "search",
+                Notice::SearchFinished { .. } => "search_finished",
                 Notice::SearchCancelled(_) => "search_cancelled",
                 Notice::SearchLoading => "search_loading",
                 Notice::Marked { .. } => "marked",
@@ -218,7 +243,7 @@ mod tests {
         let mut v = view();
         v.search_query = Some("foo".into());
         assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
-        v.search_cancelled = true;
+        v.search_state = SearchState::Cancelled;
         assert_eq!(tags(&v.build_notices()), vec!["search_cancelled"]);
     }
 
@@ -399,6 +424,29 @@ mod tests {
         assert_eq!(result, Command::SetClipboardEntry(None).into());
     }
 
+    /// Copying marked entries keeps the marks. A reload that finds one of
+    /// them gone lowers the count, which is not the user marking anything, so
+    /// the clipboard stays.
+    #[test]
+    fn a_mark_lost_to_a_reload_keeps_the_clipboard() {
+        let mut v = view();
+        v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 2,
+            range: false,
+        });
+        v.clipboard_entry = Some(clipboard_entry());
+
+        let result = v.handle_command(&Command::SelectionChanged {
+            selected: None,
+            mark_count: 1,
+            range: false,
+        });
+
+        assert_eq!(result, CommandResult::Handled);
+        assert!(v.clipboard_entry.is_some());
+    }
+
     #[test]
     fn showing_bookmarks_clears_the_search_notice() {
         let mut v = view();
@@ -427,7 +475,26 @@ mod tests {
         assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
 
         v.handle_command(&Command::ExitedSearch { generation: 2 });
-        assert!(v.build_notices().is_empty());
+        assert_eq!(tags(&v.build_notices()), vec!["search_finished"]);
+    }
+
+    /// A finished search keeps its query, now with the result count the root
+    /// hands over, until the listing changes.
+    #[test]
+    fn a_finished_search_keeps_its_query_and_counts_its_results() {
+        let mut v = view();
+        v.handle_command(&Command::StartSearch("q".into()));
+        v.handle_command(&Command::SearchStarted { generation: 1 });
+        v.handle_command(&Command::ExitedSearch { generation: 1 });
+        v.set_result_count(Some(42));
+
+        assert!(matches!(
+            v.notices.as_slice(),
+            [Notice::SearchFinished { query, results: 42 }] if query == "q"
+        ));
+
+        v.handle_command(&Command::ResetView);
+        assert!(v.notices.is_empty());
     }
 
     #[test]

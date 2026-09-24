@@ -451,10 +451,12 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     let divisor = FACTOR.pow(exponent) as f64;
     let value = (bytes as f64) / divisor;
 
-    // Show one decimal place only for fractional values below 10; otherwise
-    // round to a whole number.
-    let formatted_value = if value < 10.0 && value.fract() != 0.0 {
-        format!("{value:.1}")
+    // Show one decimal place only for values below 10 that are not whole once
+    // rounded to it; otherwise round to a whole number. Rounding first keeps
+    // 9.96 from rendering as "10.0" and 1.04 as "1.0".
+    let tenths = (value * 10.0).round() / 10.0;
+    let formatted_value = if tenths < 10.0 && tenths.fract() != 0.0 {
+        format!("{tenths:.1}")
     } else {
         format!("{value:.0}")
     };
@@ -556,36 +558,54 @@ impl PartialOrd for NameKey {
 /// Compares character by character, except that where both sides reach an
 /// ASCII digit, the two runs of digits are compared as numbers: by length once
 /// leading zeros are dropped, then digit by digit. `01` and `1` compare equal.
-fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+///
+/// It walks bytes, which orders UTF-8 text the way comparing characters does,
+/// and an ASCII digit byte is never part of a longer character.
+fn natural_cmp(left: &str, right: &str) -> Ordering {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    let (mut at_left, mut at_right) = (0, 0);
     loop {
-        match (a.peek().copied(), b.peek().copied()) {
+        match (left.get(at_left), right.get(at_right)) {
             (None, None) => return Ordering::Equal,
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
-            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
-                let run = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>| {
-                    let mut digits = String::new();
-                    while let Some(c) = chars.next_if(char::is_ascii_digit) {
-                        digits.push(c);
-                    }
-                    digits.trim_start_matches('0').to_string()
-                };
-                let (x, y) = (run(&mut a), run(&mut b));
-                let order = x.len().cmp(&y.len()).then_with(|| x.cmp(&y));
+            (Some(l), Some(r)) if l.is_ascii_digit() && r.is_ascii_digit() => {
+                let (left_run, left_end) = digit_run(left, at_left);
+                let (right_run, right_end) = digit_run(right, at_right);
+                let order = left_run
+                    .len()
+                    .cmp(&right_run.len())
+                    .then_with(|| left_run.cmp(right_run));
                 if order != Ordering::Equal {
                     return order;
                 }
+                (at_left, at_right) = (left_end, right_end);
             }
-            (Some(x), Some(y)) => {
-                if x != y {
-                    return x.cmp(&y);
+            (Some(l), Some(r)) => {
+                if l != r {
+                    return l.cmp(r);
                 }
-                a.next();
-                b.next();
+                at_left += 1;
+                at_right += 1;
             }
         }
     }
+}
+
+/// The run of ASCII digits in `bytes` from `start`, without its leading
+/// zeros, and the index just past the run.
+fn digit_run(bytes: &[u8], start: usize) -> (&[u8], usize) {
+    let end = start
+        + bytes[start..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+    let digits = &bytes[start..end];
+    let significant = digits
+        .iter()
+        .position(|&digit| digit != b'0')
+        .unwrap_or(digits.len());
+    (&digits[significant..], end)
 }
 
 pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
@@ -666,6 +686,11 @@ mod tests {
     #[test_case("1K",  1024u64 ; "1024 bytes is exactly 1K")]
     #[test_case("9.7K",  9900u64 ; "9900 bytes")]
     #[test_case("10K",  10400u64 ; "10400 bytes")]
+    #[test_case("10K",  10200u64 ; "just below 10K rounds up to a whole 10K")]
+    #[test_case("9.9K",  10188u64 ; "the largest value that keeps a decimal")]
+    #[test_case("10K",  10189u64 ; "the smallest value that rounds up to 10K")]
+    #[test_case("1K",  1065u64 ; "a fraction that rounds to a whole number drops the decimal")]
+    #[test_case("1.1K",  1076u64 ; "a fraction that rounds up keeps the decimal")]
     #[test_case("9.5M",  10_000_000u64 ; "10 million bytes (MB)")]
     #[test_case("10M",  1024u64.pow(2) * 10; "10 MiB")]
     #[test_case("1G",  1024u64.pow(3); "1 GiB")]

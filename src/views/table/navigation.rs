@@ -1,4 +1,4 @@
-use super::{TableView, columns::SortColumn};
+use super::{TableView, columns::SortColumn, content::DirectoryContent};
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 /// What to select after the visible items change.
@@ -68,16 +68,19 @@ impl TableView {
         self.content.start_listing(new_directory, staged);
     }
 
-    /// Records that input moved the cursor while a navigation streams in, so
-    /// that `finish_directory` keeps it there. Read from the selection before
-    /// and after the input rather than from where the cursor ends up, since
-    /// moving away and back to the top row is still a choice the user made.
-    pub(super) fn note_cursor_move(&mut self, before: Option<usize>) {
-        if self.content.is_loading()
-            && !self.content.is_staged()
-            && self.table_state.selected() != before
-        {
+    /// Records that input moved the cursor while a navigation or a search
+    /// streams in, so that `finish_directory` or `exited_search` keeps it
+    /// there. Read from the selection before and after the input rather than
+    /// from where the cursor ends up, since moving away and back to the top
+    /// row is still a choice the user made. During a search, marking the row
+    /// the first result put the cursor on chooses that row too.
+    pub(super) fn note_cursor_move(&mut self, before: Option<usize>, marks_before: usize) {
+        let moved = self.table_state.selected() != before;
+        if moved && self.content.is_loading() && !self.content.is_staged() {
             self.pending_load.cursor_moved = true;
+        }
+        if self.content.is_searching() && (moved || self.marks.len() != marks_before) {
+            self.search_cursor_chosen = true;
         }
     }
 
@@ -189,12 +192,14 @@ impl TableView {
     }
 
     pub(super) fn set_filter(&mut self, filter: String) -> CommandResult {
-        // Avoid an extra sort/SelectionChanged when there is no filter change
-        if self.content.filter().is_empty() && filter.is_empty() {
+        // An unchanged filter reorders nothing, so it must not cost the marks
+        // or a sort: dismissing the filter prompt, or submitting it unedited,
+        // sends the filter already applied.
+        if self.content.filter() == filter {
             return CommandResult::Handled;
         }
-        self.content.set_filter(filter);
-        self.sort()
+        let (column, direction) = (self.columns.sort_column(), self.columns.sort_direction());
+        self.reorder(|content| content.apply_filter(filter, column, direction))
     }
 
     /// Reorder the visible items, following the selection to where it moved.
@@ -204,6 +209,13 @@ impl TableView {
     /// the top. Holding the cursor's position instead is a reload's job, where
     /// the entry under it may have been deleted (`restore_selection`).
     pub(super) fn sort(&mut self) -> CommandResult {
+        let (column, direction) = (self.columns.sort_column(), self.columns.sort_direction());
+        self.reorder(|content| content.sort(column, direction))
+    }
+
+    /// Change the visible items with `apply`, following the selection as
+    /// `sort` describes.
+    fn reorder(&mut self, apply: impl FnOnce(&mut DirectoryContent)) -> CommandResult {
         // Marks are stored by index, so any change to the visible items invalidates them.
         self.clear_marks();
 
@@ -218,8 +230,7 @@ impl TableView {
         // because a rename is possible.
         let selected = self.selected_path().cloned();
 
-        self.content
-            .sort(self.columns.sort_column(), self.columns.sort_direction());
+        apply(&mut self.content);
 
         if let Some(selected_path) = selected
             && let Some(new_index) = self.content.find_by_path(selected_path.as_path())
@@ -1025,14 +1036,21 @@ mod tests {
         assert_mark_reset_snapshot(&result);
     }
 
-    #[test]
-    fn a_filter_change_that_reorders_nothing_keeps_the_marks() {
+    /// A filter the same as the one applied reorders nothing, so it must not
+    /// cost the user their marks. Dismissing the filter prompt, or submitting
+    /// it unedited, sends this.
+    #[test_case("" ; "no filter")]
+    #[test_case("a" ; "a filter")]
+    fn a_filter_change_that_reorders_nothing_keeps_the_marks(filter: &str) {
         let fx = TempDir::new("nav");
-        let mut table = table_with_two_marks(&fx);
+        let mut table = listed(&fx, &[fx.file("a1", 1), fx.file("a2", 1), fx.file("b", 1)]);
+        table.handle_command(&Command::FilterChanged(filter.to_string()));
+        table.select(0);
+        table.toggle_mark();
+        table.select(1);
+        table.toggle_mark();
 
-        // Clearing a filter that was never set reorders nothing, so it must not
-        // cost the user their marks. Dismissing the filter prompt sends this.
-        let result = table.handle_command(&Command::FilterChanged(String::new()));
+        let result = table.handle_command(&Command::FilterChanged(filter.to_string()));
 
         assert_eq!(CommandResult::Handled, result);
         assert_eq!(2, table.marks.len());
@@ -1367,6 +1385,69 @@ mod tests {
         );
     }
 
+    /// A search that ended with three results in walk order: `cab`, `bat`,
+    /// `art`. The first batch put the cursor on `cab`.
+    fn streamed_search(fx: &TempDir) -> TableView {
+        let mut table = listed(fx, &[]);
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("cab", 1), fx.file("bat", 1), fx.file("art", 1)],
+            generation: 1,
+        });
+        table
+    }
+
+    fn selected_name(table: &TableView) -> Option<&str> {
+        table.selected_path().map(|item| item.display_name.as_str())
+    }
+
+    #[test]
+    fn a_finished_search_puts_a_cursor_the_user_never_moved_on_the_top_row() {
+        let fx = TempDir::new("nav");
+        let mut table = streamed_search(&fx);
+        assert_eq!(Some("cab"), selected_name(&table));
+
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        // Following `cab` through the sort would leave the cursor on the last
+        // row, a place the user never put it.
+        assert_eq!(Some(0), table.table_state.selected());
+        assert_eq!(Some("art"), selected_name(&table));
+    }
+
+    #[test]
+    fn a_finished_search_keeps_a_cursor_the_user_moved() {
+        let fx = TempDir::new("nav");
+        let mut table = streamed_search(&fx);
+        table.handle_key(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(Some("bat"), selected_name(&table));
+
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        assert_eq!(Some("bat"), selected_name(&table));
+    }
+
+    /// The flag belongs to one search: a move during the last one says
+    /// nothing about where the user wants the cursor in this one.
+    #[test]
+    fn a_new_search_forgets_that_the_last_one_moved_the_cursor() {
+        let fx = TempDir::new("nav");
+        let mut table = streamed_search(&fx);
+        table.handle_key(KeyCode::Char('j'), KeyModifiers::NONE);
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 2 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("cab", 1), fx.file("art", 1)],
+            generation: 2,
+        });
+        table.handle_command(&Command::ExitedSearch { generation: 2 });
+
+        assert_eq!(Some("art"), selected_name(&table));
+    }
+
     #[test]
     fn search_results_are_sorted_by_the_name_the_column_shows() {
         let fx = TempDir::new("nav");
@@ -1489,8 +1570,9 @@ mod tests {
             items: vec![link.clone(), first],
             generation: 1,
         });
-        table.select(0);
-        table.toggle_mark();
+        // Marked with the key, as the user would, which also chooses the row
+        // the first result put the cursor on.
+        table.handle_key(KeyCode::Char('v'), KeyModifiers::NONE);
 
         table.handle_command(&Command::ExitedSearch { generation: 1 });
 

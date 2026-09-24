@@ -8,11 +8,11 @@ use std::{
 };
 
 use super::{
-    PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL,
-    sys::{AtFlags, Dir, UnlinkatFlags, fstatat},
+    PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL, cancel_logging,
+    sys::{AtFlags, UnlinkatFlags, fstatat},
     walk::{
-        DirId, Entries, Level, c_name, list_dir, open_and_list, open_directory, open_parent,
-        reopen_parent, scan_tree, unlink, unlink_at,
+        DirId, Entries, Level, Walk, c_name, list_entries, open_directory, open_parent, scan_tree,
+        unlink_at,
     },
 };
 use crate::{
@@ -58,8 +58,8 @@ pub(super) fn replaced_after_copy(path: &Path) -> String {
 /// that cannot be opened is removed if it is empty, and an entry already gone
 /// counts as removed, as `-f` makes it. Only a parent that cannot
 /// be reopened as the directory that was listed ends the walk. Cancelling
-/// mid-delete leaves whatever has not been removed yet. Iterative (explicit
-/// stack), so directory depth cannot overflow the thread stack.
+/// mid-delete leaves whatever has not been removed yet. Iterative (`Walk`),
+/// so directory depth cannot overflow the thread stack.
 ///
 /// A moved source is removed only while `path` still names the entry that was
 /// copied, by device and inode: another renamed onto its name since would be
@@ -120,14 +120,10 @@ pub(super) fn remove_path(
     // after it was listed fails to open instead of leading the walk outside the
     // tree.
     //
-    // Only the directory being worked in holds an fd, so depth is not bounded
-    // by the open-file limit. Descending closes the parent's fd; returning
-    // reopens it through the child's "..", which is never a symlink, and
-    // refuses to continue unless it is the same directory (device and inode)
-    // that was listed, since the child may have been moved in between.
+    // Only the directory being worked in holds an fd (see `Walk`).
     //
     // A level holds its name rather than its path, and a path is built from
-    // the stack only for a message: one path per level would make memory grow
+    // the walk only for a message: one path per level would make memory grow
     // with the square of the depth.
     let (dir, id, entries) = match open_root(path, &root, removal) {
         Ok(Some(opened)) => opened,
@@ -142,13 +138,7 @@ pub(super) fn remove_path(
             return Some((active, errors));
         }
     };
-    let mut stack = vec![Level {
-        dir: Some(dir),
-        id,
-        name: None,
-        entries: entries.into_iter(),
-        incomplete: false,
-    }];
+    let mut walk = Walk::new(Level::open(dir, id, Removing::new(None, entries)));
     // One unit of progress per entry removed, against the total counted by
     // `dir_total_entries` before the walk. Debounced so a wide tree does not
     // put one progress command per entry ahead of terminal input.
@@ -157,15 +147,14 @@ pub(super) fn remove_path(
         PROGRESS_MIN_INTERVAL,
         active.total_size(),
     );
-    while let Some(top) = stack.last_mut() {
+    while let Some((dir, level)) = walk.top() {
         if cancellable && active.is_cancelled() {
-            active.cancelled();
+            cancel_logging(&errors, active);
             return None;
         }
-        let Some((name, is_dir)) = top.entries.next() else {
+        let Some((name, is_dir)) = level.entries.next() else {
             // This directory's entries are done; remove it.
-            let level = stack.pop().expect("stack is non-empty");
-            match remove_level(path, &root, &mut stack, level) {
+            match remove_level(path, &root, &mut walk) {
                 Ok(true) => advance(&mut active, &mut debouncer, cancellable),
                 Ok(false) => {}
                 Err(Unremoved::Failed(message)) => errors.push(message),
@@ -176,28 +165,16 @@ pub(super) fn remove_path(
             }
             continue;
         };
-        let parent = top
-            .dir
-            .as_ref()
-            .expect("the level being worked in holds its fd");
-        match remove_entry(parent, &name, is_dir) {
+        match remove_entry(dir, &name, is_dir) {
             Ok(None) => advance(&mut active, &mut debouncer, cancellable),
+            // Descending is not a removal, so it advances no progress.
             Ok(Some((dir, id, entries))) => {
-                // Closed until the walk returns here, through `reopen_parent`.
-                top.dir = None;
-                stack.push(Level {
-                    dir: Some(dir),
-                    id,
-                    name: Some(name),
-                    entries: entries.into_iter(),
-                    incomplete: false,
-                });
-                // Descending is not a removal, so it advances no progress.
+                walk.descend(Level::open(dir, id, Removing::new(Some(name), entries)));
             }
             Err((what, error)) => {
-                let failed = entry_path(path, &stack, &name);
+                let failed = entry_path(path, &walk, &name);
                 errors.push(format!("{what} {}: {error}", compact(&failed)));
-                stack.last_mut().expect("stack is non-empty").incomplete = true;
+                walk.top().expect("the walk is not done").1.incomplete = true;
             }
         }
     }
@@ -229,20 +206,20 @@ fn open_root_parent(path: &Path, removal: Removal) -> Result<Option<(File, CStri
 /// open's error is the one returned, since it is why the entries stayed. The
 /// error names what failed, for the message.
 fn remove_entry(
-    parent: &Dir,
+    parent: &File,
     name: &CStr,
     is_dir: bool,
 ) -> Result<Option<Opened>, (&'static str, std::io::Error)> {
     if !is_dir {
-        return unlink(parent, name, UnlinkatFlags::NoRemoveDir)
+        return unlink_at(parent, name, UnlinkatFlags::NoRemoveDir)
             .map(|()| None)
             .map_err(|error| ("Failed to delete", error));
     }
-    let opened = open_and_list(Some(parent), name)
-        .and_then(|(dir, entries)| Ok((DirId::of_dir(&dir)?, dir, entries)));
+    let opened = open_directory(parent, name)
+        .and_then(|dir| Ok((list_entries(&dir)?, DirId::of(&dir)?, dir)));
     match opened {
-        Ok((id, dir, entries)) => Ok(Some((dir, id, entries))),
-        Err(error) => unlink(parent, name, UnlinkatFlags::RemoveDir)
+        Ok((entries, id, dir)) => Ok(Some((dir, id, entries))),
+        Err(error) => unlink_at(parent, name, UnlinkatFlags::RemoveDir)
             .map(|()| None)
             .map_err(|_| ("Failed to read directory", error)),
     }
@@ -255,8 +232,7 @@ fn remove_entry(
 fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<Opened>, String> {
     let failed =
         |error: std::io::Error| format!("Failed to read directory {}: {error}", compact(path));
-    let opened =
-        open_directory(root.dir, root.name).and_then(|dir| Ok((DirId::of_dir(&dir)?, dir)));
+    let opened = open_directory(root.dir, root.name).and_then(|dir| Ok((DirId::of(&dir)?, dir)));
     let (id, dir) = match opened {
         Ok(opened) => opened,
         // Not a moved source, which is removed only once it is compared, and
@@ -273,7 +249,7 @@ fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<
     {
         return Err(replaced_after_copy(path));
     }
-    let (dir, entries) = list_dir(dir).map_err(failed)?;
+    let entries = list_entries(&dir).map_err(failed)?;
     Ok(Some((dir, id, entries)))
 }
 
@@ -303,17 +279,36 @@ fn remove_file_entry(path: &Path, at: &RootAt<'_>, removal: Removal) -> Result<(
     unlink_at(at.dir, at.name, UnlinkatFlags::NoRemoveDir).map_err(failed)
 }
 
-/// The path of `name` in the directory at the top of `stack`, for a message.
-fn entry_path(root: &Path, stack: &[Level], name: &CStr) -> PathBuf {
-    let mut path = level_path(root, stack);
+/// One directory `remove_path` is inside: its name in the parent (`None` for
+/// the root), the entries not yet removed, and whether one of them could not
+/// be removed.
+struct Removing {
+    name: Option<CString>,
+    entries: <Entries as IntoIterator>::IntoIter,
+    incomplete: bool,
+}
+
+impl Removing {
+    fn new(name: Option<CString>, entries: Entries) -> Self {
+        Self {
+            name,
+            entries: entries.into_iter(),
+            incomplete: false,
+        }
+    }
+}
+
+/// The path of `name` in the directory being worked in, for a message.
+fn entry_path(root: &Path, walk: &Walk<File, Removing>, name: &CStr) -> PathBuf {
+    let mut path = level_path(root, walk);
     path.push(OsStr::from_bytes(name.to_bytes()));
     path
 }
 
-/// The path of the directory at the top of `stack`, for a message.
-fn level_path(root: &Path, stack: &[Level]) -> PathBuf {
+/// The path of the directory being worked in, for a message.
+fn level_path(root: &Path, walk: &Walk<File, Removing>) -> PathBuf {
     let mut path = root.to_path_buf();
-    for name in stack.iter().filter_map(|level| level.name.as_ref()) {
+    for name in walk.payloads().filter_map(|level| level.name.as_ref()) {
         path.push(OsStr::from_bytes(name.to_bytes()));
     }
     path
@@ -328,8 +323,8 @@ enum Unremoved {
     Lost(String),
 }
 
-/// Removes the directory `level` names, now that its entries are done, from
-/// the parent at the top of `stack`, reopening that parent's fd first, or from
+/// Leaves the directory being worked in, now that its entries are done, and
+/// removes it from its parent, reopening that parent's fd first, or from
 /// `root_at` for the root. Returns whether it was removed: one holding an entry
 /// that could not be removed is kept, since that failure is already recorded
 /// and the directory's `ENOTEMPTY` would only repeat it. Its parent is then
@@ -337,16 +332,13 @@ enum Unremoved {
 fn remove_level(
     root: &Path,
     root_at: &RootAt<'_>,
-    stack: &mut [Level],
-    level: Level,
+    walk: &mut Walk<File, Removing>,
 ) -> Result<bool, Unremoved> {
-    let Level {
-        dir,
-        name,
-        incomplete,
-        ..
+    let (dir, level) = walk.pop().expect("the walk is not done");
+    let Removing {
+        name, incomplete, ..
     } = level;
-    let Some(parent) = stack.last() else {
+    if walk.is_empty() {
         drop(dir);
         if incomplete {
             return Ok(false);
@@ -358,25 +350,22 @@ fn remove_level(
             .map_err(|error| {
                 Unremoved::Failed(format!("Failed to delete {}: {error}", compact(root)))
             });
-    };
+    }
     let name = name.expect("only the root has no name");
-    let child = dir
-        .as_ref()
-        .expect("the level being worked in holds its fd");
-    let reopened = reopen_parent(child, parent.id).map_err(|error| {
-        let lost = level_path(root, stack);
-        Unremoved::Lost(format!("Failed to delete {}: {error}", compact(&lost)))
-    })?;
+    walk.reopen(&dir, "it was moved while its contents were being deleted")
+        .map_err(|error| {
+            let lost = level_path(root, walk);
+            Unremoved::Lost(format!("Failed to delete {}: {error}", compact(&lost)))
+        })?;
     drop(dir);
-    let parent = stack.last_mut().expect("the parent is on the stack");
-    let parent_dir = parent.dir.insert(reopened);
+    let (parent_dir, parent) = walk.top().expect("the parent was reopened");
     if incomplete {
         parent.incomplete = true;
         return Ok(false);
     }
-    if let Err(error) = unlink(parent_dir, &name, UnlinkatFlags::RemoveDir) {
+    if let Err(error) = unlink_at(parent_dir, &name, UnlinkatFlags::RemoveDir) {
         parent.incomplete = true;
-        let failed = entry_path(root, stack, &name);
+        let failed = entry_path(root, walk, &name);
         return Err(Unremoved::Failed(format!(
             "Failed to delete {}: {error}",
             compact(&failed)
@@ -387,7 +376,7 @@ fn remove_level(
 
 /// A directory `remove_path` opened to descend into: its handle, its identity
 /// and its entries.
-type Opened = (Dir, DirId, Entries);
+type Opened = (File, DirId, Entries);
 
 /// The directory an operation's root entry was opened in, and its name there.
 struct RootAt<'a> {

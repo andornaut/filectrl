@@ -361,13 +361,17 @@ impl SameFile {
 /// The kernel's atomic replace: no window with the destination missing, and a
 /// rename that fails for an unrelated reason (a vanished source, a permission
 /// error) leaves it untouched rather than destroyed for nothing. It refuses a
-/// directory over a non-directory, as `mv` does.
+/// directory over a non-directory, as `mv` does. A destination that is another
+/// link to the source is refused with `SameFile`, since `rename(2)` onto it
+/// does nothing and reports success.
 pub(super) fn rename_for_move(
     old_path: &Path,
     new_path: &Path,
     overwrite: bool,
 ) -> std::io::Result<()> {
-    if overwrite {
+    if overwrite && is_same_file(old_path, new_path) {
+        Err(std::io::Error::other(SameFile))
+    } else if overwrite {
         fs::rename(old_path, new_path)
     } else {
         rename_no_replace(old_path, new_path)
@@ -780,6 +784,24 @@ mod tests {
             Some(Err(error)) => assert!(SameFile::is(&error), "{error}"),
             other => panic!("expected the same-file refusal, got {other:?}"),
         }
+        assert!(src.exists());
+        assert!(dst.exists());
+    }
+
+    /// The same refusal for an overwrite granted before the task started, when
+    /// another process linked the destination name to the source since.
+    #[test]
+    fn a_granted_overwrite_onto_a_hard_link_to_the_source_is_refused() {
+        let fx = TempDir::new("tasks_move_granted_link");
+        let src = fx.join("src.txt");
+        let dst = fx.join("dest.txt");
+        std::fs::write(&src, b"src").unwrap();
+        std::fs::hard_link(&src, &dst).unwrap();
+
+        let renamed = rename_for_move(&src, &dst, true);
+
+        let error = renamed.expect_err("the move should have been refused");
+        assert!(SameFile::is(&error), "{error}");
         assert!(src.exists());
         assert!(dst.exists());
     }

@@ -34,6 +34,10 @@ impl Fixture {
         Self { root }
     }
 
+    pub(super) fn bookmarks(&self) -> PathBuf {
+        self.root.join("bookmarks")
+    }
+
     pub(super) fn cwd(&self) -> PathBuf {
         self.root.join("cwd")
     }

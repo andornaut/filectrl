@@ -16,7 +16,7 @@ impl ScrollbarView {
     pub fn hide(&mut self) {
         self.area = Rect::default();
         self.track = Rect::default();
-        self.is_dragging = false;
+        self.end_drag();
     }
 
     pub fn render(

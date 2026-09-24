@@ -35,16 +35,42 @@ impl PendingDelete {
     }
 }
 
+/// What an operation on the selection acts on.
+pub(super) enum Targets<'a> {
+    /// The marked entries, whenever any are held.
+    Marked(Vec<PathInfo>),
+    /// The entry under the cursor, when nothing is marked.
+    Cursor(&'a PathInfo),
+}
+
+impl Targets<'_> {
+    pub(super) fn into_paths(self) -> Vec<PathInfo> {
+        match self {
+            Targets::Marked(paths) => paths,
+            Targets::Cursor(path) => vec![path.clone()],
+        }
+    }
+}
+
 impl TableView {
-    pub(super) fn delete(&mut self) -> CommandResult {
-        let paths = if self.has_marks() {
-            self.marked_paths()
+    /// The marked entries, else the entry under the cursor; `None` when there
+    /// is neither. Decided by the marked entries themselves, not by whether
+    /// any marks are held: a mark with no entry under it must not become an
+    /// operation on nothing.
+    pub(super) fn targets(&self) -> Option<Targets<'_>> {
+        let marked = self.marked_paths();
+        if marked.is_empty() {
+            self.selected_path().map(Targets::Cursor)
         } else {
-            match self.selected_path() {
-                Some(path) => vec![path.clone()],
-                None => return CommandResult::Handled,
-            }
+            Some(Targets::Marked(marked))
+        }
+    }
+
+    pub(super) fn delete(&mut self) -> CommandResult {
+        let Some(targets) = self.targets() else {
+            return CommandResult::Handled;
         };
+        let paths = targets.into_paths();
         let count = paths.len();
         self.pending_delete.set(paths);
         Command::OpenPrompt(PromptAction::Delete(count)).into()
@@ -67,25 +93,24 @@ impl TableView {
     }
 
     pub(super) fn open_chmod_prompt(&self) -> CommandResult {
-        let (paths, initial_mode) = if self.has_marks() {
-            (self.marked_paths(), String::new())
-        } else {
-            match self.selected_path() {
-                // A symlink's own mode is always 777 and chmod would apply to
-                // its target, so the prompt would offer the wrong mode for the
-                // wrong file. A marked symlink is refused when the chmod runs.
-                Some(path) if path.is_symlink() => {
-                    return Command::AlertWarn(format!(
-                        "Cannot chmod {}: it is a symlink",
-                        compact(&path.path)
-                    ))
-                    .into();
-                }
-                Some(path) => {
-                    let mode = format!("{:o}", path.mode() & 0o7777);
-                    (vec![path.clone()], mode)
-                }
-                None => return Command::AlertWarn("No file(s) selected".into()).into(),
+        let (paths, initial_mode) = match self.targets() {
+            Some(Targets::Marked(marked)) => (marked, String::new()),
+            // A symlink's own mode is always 777 and chmod would apply to its
+            // target, so the prompt would offer the wrong mode for the wrong
+            // file. A marked symlink is refused when the chmod runs.
+            Some(Targets::Cursor(path)) if path.is_symlink() => {
+                return Command::AlertWarn(format!(
+                    "Cannot chmod {}: it is a symlink",
+                    compact(&path.path)
+                ))
+                .into();
+            }
+            Some(Targets::Cursor(path)) => {
+                let mode = format!("{:o}", path.mode() & 0o7777);
+                (vec![path.clone()], mode)
+            }
+            None => {
+                return Command::AlertWarn("Cannot chmod: nothing is selected".into()).into();
             }
         };
         Command::OpenPrompt(PromptAction::Chmod {
@@ -111,7 +136,7 @@ impl TableView {
 
     pub(super) fn open_rename_prompt(&self) -> CommandResult {
         match self.selected_path() {
-            None => Command::AlertWarn("No file selected".into()).into(),
+            None => Command::AlertWarn("Cannot rename: nothing is selected".into()).into(),
             Some(path) => Command::OpenPrompt(PromptAction::Rename {
                 path: path.clone(),
                 name: editable_name(path),
@@ -126,7 +151,10 @@ impl TableView {
                 .into();
         }
         match self.content.directory() {
-            None => Command::AlertWarn("No current directory".into()).into(),
+            None => {
+                Command::AlertWarn("Cannot add a bookmark: there is no current directory".into())
+                    .into()
+            }
             Some(directory) => Command::OpenPrompt(PromptAction::AddBookmark {
                 directory: directory.clone(),
                 name: editable_name(directory),
@@ -216,6 +244,31 @@ mod tests {
             Ok(Command::OpenPrompt(action)) => action,
             other => panic!("expected an OpenPrompt, got {other:?}"),
         }
+    }
+
+    /// An empty listing has no cursor, so each action that falls back to it
+    /// says what it could not do and why.
+    #[test_case("copy" ; "copy")]
+    #[test_case("cut" ; "cut")]
+    #[test_case("chmod" ; "chmod")]
+    #[test_case("rename" ; "rename")]
+    fn an_action_with_nothing_selected_says_so(verb: &str) {
+        let mut table = TableView::default();
+
+        let result = match verb {
+            "copy" => table.copy_to_clipboard(),
+            "cut" => table.cut_to_clipboard(),
+            "chmod" => table.open_chmod_prompt(),
+            "rename" => table.open_rename_prompt(),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(
+            CommandResult::from(Command::AlertWarn(format!(
+                "Cannot {verb}: nothing is selected"
+            ))),
+            result
+        );
     }
 
     #[test]
@@ -384,6 +437,20 @@ mod tests {
     fn delete_falls_back_to_the_cursor_when_nothing_is_marked() {
         let (_dir, mut table) = marked_table();
         table.clear_marks();
+
+        let action = prompt(table.delete());
+
+        assert_eq!(PromptAction::Delete(1), action);
+        assert_eq!(vec!["c"], names(&table.pending_delete.paths));
+    }
+
+    /// A mark with no entry under it names nothing to delete, so the delete
+    /// acts on the cursor rather than prompting to delete zero items.
+    #[test]
+    fn a_mark_past_the_end_of_the_listing_is_not_a_selection() {
+        let (_dir, mut table) = marked_table();
+        table.clear_marks();
+        table.marks.insert(99);
 
         let action = prompt(table.delete());
 

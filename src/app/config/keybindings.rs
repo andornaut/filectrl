@@ -231,6 +231,9 @@ keybindings! {
 pub struct KeyBindings {
     normal: HashMap<KeyCombo, Action>,
     prompt: HashMap<KeyCombo, Action>,
+    /// Each action's keys as displayed, hardcoded ones first.
+    action_keys: HashMap<Action, Vec<String>>,
+    /// `action_keys` joined with "/", for the help table.
     action_display: HashMap<Action, String>,
 }
 
@@ -240,11 +243,16 @@ impl KeyBindings {
 
         let normal = build_action_map(&normal_bindings)?;
         let prompt = build_action_map(&prompt_bindings)?;
-        let action_display = build_display_map(&normal_bindings, &prompt_bindings);
+        let action_keys = build_display_map(&normal_bindings, &prompt_bindings);
+        let action_display = action_keys
+            .iter()
+            .map(|(action, keys)| (*action, keys.join("/")))
+            .collect();
 
         Ok(Self {
             normal,
             prompt,
+            action_keys,
             action_display,
         })
     }
@@ -268,14 +276,32 @@ impl KeyBindings {
         if let Some(action) = map.get(&combo) {
             return Some(*action);
         }
-        // Fallback: uppercase chars may arrive with or without SHIFT depending on terminal
-        if let KeyCode::Char(c) = code
-            && c.is_uppercase()
-        {
-            let toggled = modifiers ^ KeyModifiers::SHIFT;
-            return map.get(&KeyCombo::new(code, toggled)).copied();
+        let KeyCode::Char(c) = code else {
+            return None;
+        };
+        if !c.is_uppercase() {
+            return None;
         }
-        None
+        // Fallback: uppercase chars may arrive with or without SHIFT depending on terminal
+        let toggled = modifiers ^ KeyModifiers::SHIFT;
+        if let Some(action) = map.get(&KeyCombo::new(code, toggled)) {
+            return Some(*action);
+        }
+        // The legacy encoding sends Alt+Shift+q as ESC then "Q", which arrives
+        // as the uppercase letter with Alt, where a binding holds the lowercase
+        // letter with Shift (the kitty protocol's spelling).
+        if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+            return None;
+        }
+        let mut lower = c.to_lowercase();
+        let (Some(lower), None) = (lower.next(), lower.next()) else {
+            return None;
+        };
+        map.get(&KeyCombo::new(
+            KeyCode::Char(lower),
+            modifiers | KeyModifiers::SHIFT,
+        ))
+        .copied()
     }
 
     /// Get the display string for an action (includes hardcoded + rebindable keys).
@@ -284,14 +310,19 @@ impl KeyBindings {
         self.action_display.get(&action).map_or("", |s| s.as_str())
     }
 
+    /// The keys bound to `action`, in binding order.
+    pub fn keys_for(&self, action: Action) -> &[String] {
+        self.action_keys.get(&action).map_or(&[], Vec::as_slice)
+    }
+
     /// Get a display string for use in hints, e.g. `"D" or "x"`.
     /// Each key is quoted and joined with " or ".
     /// Accepts multiple actions to combine all their keys into one list.
     pub fn hint_for(&self, actions: &[Action]) -> String {
         actions
             .iter()
-            .filter_map(|action| self.action_display.get(action))
-            .flat_map(|s| s.split('/'))
+            .filter_map(|action| self.action_keys.get(action))
+            .flatten()
             .map(|k| {
                 let mut chars = k.chars();
                 match (chars.next(), chars.next()) {
@@ -413,11 +444,12 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
     Ok(map)
 }
 
-/// Build action→display string map. Combines hardcoded + rebindable keys.
+/// Build action→displayed keys map. Combines hardcoded + rebindable keys.
+/// Kept as a list rather than joined, since a key may itself be "/".
 fn build_display_map(
     normal: &[(Action, Vec<KeyCombo>)],
     prompt: &[(Action, Vec<KeyCombo>)],
-) -> HashMap<Action, String> {
+) -> HashMap<Action, Vec<String>> {
     let mut map = HashMap::new();
 
     for (action, combos) in normal.iter().chain(prompt.iter()) {
@@ -427,7 +459,7 @@ fn build_display_map(
             .chain(combos.iter())
             .map(format_key_combo)
             .collect();
-        map.insert(*action, display.join("/"));
+        map.insert(*action, display);
     }
 
     map
@@ -476,25 +508,33 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
     }
 
     let key_str = rest;
-    let mut code = match key_str {
-        "Enter" | "Return" => KeyCode::Enter,
-        "Esc" | "Escape" => KeyCode::Esc,
-        "Backspace" => KeyCode::Backspace,
-        "Delete" | "Del" => KeyCode::Delete,
-        "Space" => KeyCode::Char(' '),
-        "Tab" => KeyCode::Tab,
-        "BackTab" => KeyCode::BackTab,
-        "Up" => KeyCode::Up,
-        "Down" => KeyCode::Down,
-        "Left" => KeyCode::Left,
-        "Right" => KeyCode::Right,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        "PgUp" | "PageUp" => KeyCode::PageUp,
-        "PgDn" | "PageDown" => KeyCode::PageDown,
+    // Named keys match in any case, like the modifiers. Every name is longer
+    // than one character, so a single letter never matches one.
+    let mut code = match key_str.to_ascii_lowercase().as_str() {
+        "enter" | "return" => KeyCode::Enter,
+        "esc" | "escape" => KeyCode::Esc,
+        "backspace" => KeyCode::Backspace,
+        "delete" | "del" => KeyCode::Delete,
+        // Shift+Space arrives as a plain space, like "Shift+1" arrives as "!".
+        "space" if modifiers == KeyModifiers::SHIFT => {
+            return Err(anyhow!(
+                "Invalid key: '{spelling}' (Shift+Space arrives as a plain Space; bind 'Space')"
+            ));
+        }
+        "space" => KeyCode::Char(' '),
+        "tab" => KeyCode::Tab,
+        "backtab" => KeyCode::BackTab,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pgup" | "pageup" => KeyCode::PageUp,
+        "pgdn" | "pagedown" => KeyCode::PageDown,
         // Only "F" and digits is a function key, so a word such as an
         // unknown modifier ("Foo+x") is reported as an unknown key.
-        s if s.len() > 1 && s.starts_with('F') && s[1..].bytes().all(|b| b.is_ascii_digit()) => {
+        s if s.len() > 1 && s.starts_with('f') && s[1..].bytes().all(|b| b.is_ascii_digit()) => {
             // No terminal emits F0 or beyond F24; reject them so a typo fails
             // config loading instead of producing a binding that never fires.
             // A number too large for a u8 is out of range too.
@@ -502,19 +542,19 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
                 .parse::<u8>()
                 .ok()
                 .filter(|num| (1..=24).contains(num))
-                .ok_or_else(|| anyhow!("Invalid F-key: '{s}' (must be F1-F24)"))?;
+                .ok_or_else(|| anyhow!("Invalid F-key: '{key_str}' (must be F1-F24)"))?;
             KeyCode::F(num)
         }
         // Counted in chars, not bytes, so a non-ASCII key such as "é" is one
         // character rather than a multi-byte name.
-        s if s.chars().count() == 1 => {
-            let mut ch = s.chars().next().expect("the guard counted one char");
+        _ if key_str.chars().count() == 1 => {
+            let mut ch = key_str.chars().next().expect("the guard counted one char");
             // A key that draws nothing, or runs as a command when shown, could
             // not be told apart in the help screen from another binding or none.
             if crate::is_disguising(ch) {
                 return Err(anyhow!(
                     "Invalid key: '{}' (a control or invisible character cannot be bound)",
-                    crate::visible(s)
+                    crate::visible(key_str)
                 ));
             }
             // Terminals emit a plain shifted letter as the uppercase character,
@@ -538,24 +578,13 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             }
             // With Ctrl or Alt, the kitty protocol reports the unshifted
             // letter plus Shift ("Ctrl+Shift+g" arrives as g with Ctrl+Shift),
-            // and the legacy encoding cannot carry the Shift at all (Ctrl+G
-            // is the byte Ctrl+g sends), so an uppercase letter here matches
-            // no key press on either.
+            // so that is the one spelling bound. The legacy encoding cannot
+            // carry the Shift with Ctrl at all (Ctrl+G is the byte Ctrl+g
+            // sends); its Alt+Shift+g arrives as G with Alt, which `lookup`
+            // matches to the same binding.
             if ch.is_uppercase() && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             {
-                let lower: String = ch.to_lowercase().collect();
-                let named = modifiers.difference(KeyModifiers::SHIFT);
-                let prefix: String = [
-                    (KeyModifiers::CONTROL, "Ctrl+"),
-                    (KeyModifiers::ALT, "Alt+"),
-                ]
-                .iter()
-                .filter(|(modifier, _)| named.contains(*modifier))
-                .map(|(_, name)| *name)
-                .collect();
-                return Err(anyhow!(
-                    "Invalid key: '{spelling}' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as '{prefix}Shift+{lower}')"
-                ));
+                return Err(uppercase_with_modifier(spelling, ch, modifiers));
             }
             // Uppercase letter without explicit Shift modifier → add SHIFT
             if ch.is_uppercase() && !modifiers.contains(KeyModifiers::SHIFT) {
@@ -578,6 +607,24 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
     Ok(KeyCombo::new(code, modifiers))
 }
 
+/// The refusal of an uppercase letter with Ctrl or Alt, naming the spelling
+/// to write instead.
+fn uppercase_with_modifier(spelling: &str, ch: char, modifiers: KeyModifiers) -> anyhow::Error {
+    let lower: String = ch.to_lowercase().collect();
+    let named = modifiers.difference(KeyModifiers::SHIFT);
+    let prefix: String = [
+        (KeyModifiers::CONTROL, "Ctrl+"),
+        (KeyModifiers::ALT, "Alt+"),
+    ]
+    .iter()
+    .filter(|(modifier, _)| named.contains(*modifier))
+    .map(|(_, name)| *name)
+    .collect();
+    anyhow!(
+        "Invalid key: '{spelling}' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as '{prefix}Shift+{lower}')"
+    )
+}
+
 /// Format a KeyCombo into a human-readable display string.
 fn format_key_combo(combo: &KeyCombo) -> String {
     let mut prefix = String::new();
@@ -588,11 +635,17 @@ fn format_key_combo(combo: &KeyCombo) -> String {
     if combo.modifiers.contains(KeyModifiers::ALT) {
         prefix.push_str("Alt+");
     }
-    // Only show Shift explicitly for non-character keys (uppercase chars imply
-    // Shift, and BackTab renders as "Shift+Tab" below)
-    if combo.modifiers.contains(KeyModifiers::SHIFT)
-        && !matches!(combo.code, KeyCode::Char(_) | KeyCode::BackTab)
-    {
+    // Shift is implied by an uppercase letter on its own, and BackTab renders
+    // as "Shift+Tab" below. With Ctrl or Alt a letter is bound lowercase, so
+    // Shift is the only thing telling Ctrl+Shift+a from Ctrl+a.
+    let shift_is_implied = match combo.code {
+        KeyCode::Char(_) => !combo
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT),
+        KeyCode::BackTab => true,
+        _ => false,
+    };
+    if combo.modifiers.contains(KeyModifiers::SHIFT) && !shift_is_implied {
         prefix.push_str("Shift+");
     }
 
@@ -680,6 +733,12 @@ mod tests {
     // "F" alone is the letter, not a function key missing its number.
     #[test_case("F", KeyCode::Char('F'), KeyModifiers::SHIFT     ; "F on its own is a character")]
     #[test_case("\u{e9}", KeyCode::Char('\u{e9}'), KeyModifiers::NONE ; "a non-ASCII character")]
+    // Named keys match in any case, like the modifiers.
+    #[test_case("enter", KeyCode::Enter, KeyModifiers::NONE     ; "a named key in lowercase")]
+    #[test_case("ESC", KeyCode::Esc, KeyModifiers::NONE         ; "a named key in uppercase")]
+    #[test_case("ctrl+space", KeyCode::Char(' '), KeyModifiers::CONTROL ; "space in lowercase")]
+    #[test_case("f5", KeyCode::F(5), KeyModifiers::NONE         ; "a function key in lowercase")]
+    #[test_case("f", KeyCode::Char('f'), KeyModifiers::NONE      ; "f on its own is still the letter")]
     #[test_case("Alt+\u{2713}", KeyCode::Char('\u{2713}'), KeyModifiers::ALT ; "a modifier on a multibyte character")]
     fn a_spelling_parses_to_its_combo(spelling: &str, code: KeyCode, modifiers: KeyModifiers) {
         let combo = parse_key_combo(spelling).unwrap();
@@ -710,14 +769,15 @@ mod tests {
     // shifted key at all.
     #[test_case("Shift+1"         => "Invalid key: 'Shift+1' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a digit")]
     #[test_case("Shift+/"         => "Invalid key: 'Shift+/' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a symbol")]
+    #[test_case("Shift+Space"     => "Invalid key: 'Shift+Space' (Shift+Space arrives as a plain Space; bind 'Space')" ; "shift on space")]
     #[test_case("Shift+\u{df}"    => "Invalid key: 'Shift+\u{df}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a letter with no single uppercase")]
-    // With Ctrl or Alt an uppercase letter matches no key press: kitty
-    // reports the lowercase letter with Shift, and the legacy encoding drops
-    // the Shift.
-    #[test_case("Ctrl+G"          => "Invalid key: 'Ctrl+G' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Shift+g')" ; "ctrl on an uppercase letter")]
-    #[test_case("Alt+A"           => "Invalid key: 'Alt+A' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Alt+Shift+a')" ; "alt on an uppercase letter")]
-    #[test_case("Ctrl+Shift+A"    => "Invalid key: 'Ctrl+Shift+A' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Shift+a')" ; "ctrl and shift on an uppercase letter")]
-    #[test_case("Ctrl+Alt+\u{c9}" => "Invalid key: 'Ctrl+Alt+\u{c9}' (an uppercase letter with Ctrl or Alt never arrives; write it lowercase with Shift, as 'Ctrl+Alt+Shift+\u{e9}')" ; "two modifiers on a non-ascii uppercase letter")]
+    // With Ctrl or Alt a letter is bound lowercase, plus Shift for the
+    // uppercase one: the spelling the kitty protocol reports, and the one
+    // `lookup` matches a legacy Alt+Shift press to.
+    #[test_case("Ctrl+G"          => "Invalid key: 'Ctrl+G' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Shift+g')" ; "ctrl on an uppercase letter")]
+    #[test_case("Alt+A"           => "Invalid key: 'Alt+A' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Alt+Shift+a')" ; "alt on an uppercase letter")]
+    #[test_case("Ctrl+Shift+A"    => "Invalid key: 'Ctrl+Shift+A' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Shift+a')" ; "ctrl and shift on an uppercase letter")]
+    #[test_case("Ctrl+Alt+\u{c9}" => "Invalid key: 'Ctrl+Alt+\u{c9}' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Alt+Shift+\u{e9}')" ; "two modifiers on a non-ascii uppercase letter")]
     fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // No terminal emits these, so they must fail config loading rather
         // than silently producing a binding that never fires. Which refusal
@@ -770,6 +830,8 @@ mod tests {
             "+",
             "Ctrl++",
             "Shift+Tab",
+            "Ctrl+Shift+a",
+            "Alt+Shift+n",
         ];
         for case in cases {
             let combo = parse_key_combo(case).unwrap();
@@ -789,6 +851,9 @@ mod tests {
     #[test_case("PageDown" => "PgDn" ; "page down in its short spelling")]
     #[test_case("Alt+x" => "Alt+x" ; "alt")]
     #[test_case("Ctrl+Alt+Shift+Down" => "Ctrl+Alt+Shift+\u{2193}" ; "every modifier in order")]
+    #[test_case("Ctrl+Shift+a" => "Ctrl+Shift+a" ; "shift on a letter with ctrl")]
+    #[test_case("Alt+Shift+n" => "Alt+Shift+n" ; "shift on a letter with alt")]
+    #[test_case("Ctrl+a" => "Ctrl+a" ; "a letter with ctrl alone")]
     fn a_combo_displays_as(spelling: &str) -> String {
         format_key_combo(&parse_key_combo(spelling).unwrap())
     }
@@ -966,6 +1031,46 @@ mod tests {
             kb.normal_action(KeyCode::Char('G'), KeyModifiers::NONE),
             Some(Action::SelectLast)
         );
+    }
+
+    /// The legacy encoding sends Alt+Shift+q as ESC then "Q", which crossterm
+    /// reports as the uppercase letter with Alt, with or without Shift.
+    #[test_case(KeyModifiers::ALT ; "alt alone")]
+    #[test_case(KeyModifiers::ALT.union(KeyModifiers::SHIFT) ; "alt and shift")]
+    fn a_legacy_alt_shift_letter_resolves_to_its_binding(modifiers: KeyModifiers) {
+        let kb = keybindings_with_override(
+            r#"
+            [keybindings]
+            quit = "Alt+Shift+q"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            Some(Action::Quit),
+            kb.normal_action(KeyCode::Char('Q'), modifiers)
+        );
+        // The unshifted press stays unbound.
+        assert_eq!(
+            None,
+            kb.normal_action(KeyCode::Char('q'), KeyModifiers::ALT)
+        );
+    }
+
+    /// A key that is itself "/" is one key in a hint, not a separator between
+    /// two empty ones.
+    #[test]
+    fn a_hint_names_a_slash_key() {
+        let kb = keybindings_with_override(
+            r#"
+            [keybindings]
+            clear_alerts = ["/", "Ctrl+l"]
+            search = "F9"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!("\"/\" or \"Ctrl+l\"", kb.hint_for(&[Action::ClearAlerts]));
     }
 
     #[test]

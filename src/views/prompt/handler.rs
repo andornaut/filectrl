@@ -48,6 +48,16 @@ impl CommandHandler for PromptView {
             };
         }
 
+        // Quitting with file operations running: confirmed like a delete,
+        // since it ends them part way through.
+        if matches!(self.actions, PromptAction::ConfirmQuit(_)) {
+            let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
+            return match code {
+                KeyCode::Char('y' | 'Y') if plain => Command::Quit.into(),
+                _ => Command::CancelPrompt.into(),
+            };
+        }
+
         // Paste of an entry from elsewhere: confirmed like a delete, since the
         // text could have been put on the clipboard by any program.
         if let PromptAction::ConfirmPaste { entry, dest } = &self.actions {

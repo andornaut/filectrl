@@ -38,6 +38,10 @@ pub(super) struct DirectoryContent {
     /// `ui.show_hidden_files` and toggled at runtime.
     show_hidden: bool,
     name_order: NameOrder,
+    /// The order `items_sorted` is in, while it is exactly the visible
+    /// `items` sorted that way. `None` once anything leaves it otherwise: an
+    /// append in read order, or a visibility change not yet re-derived.
+    sorted_by: Option<(SortColumn, SortDirection)>,
 }
 
 /// How the Name column orders entries, fixed for the listing's life.
@@ -71,6 +75,7 @@ impl DirectoryContent {
                 directories_first: ui.sort_directories_first,
                 natural: ui.natural_sort,
             },
+            sorted_by: None,
         }
     }
 
@@ -80,6 +85,11 @@ impl DirectoryContent {
 
     pub(super) fn len(&self) -> usize {
         self.items_sorted.len()
+    }
+
+    /// Every entry read, before the filter and the hidden-file setting.
+    pub(super) fn total_len(&self) -> usize {
+        self.items.len()
     }
 
     pub(super) fn directory(&self) -> Option<&PathInfo> {
@@ -102,6 +112,7 @@ impl DirectoryContent {
     pub(super) fn set_items(&mut self, directory: PathInfo, items: Vec<PathInfo>) {
         self.directory = Some(directory);
         self.items = items;
+        self.sorted_by = None;
     }
 
     /// Begin a streamed directory load: switch to `directory`, and either stage
@@ -124,6 +135,7 @@ impl DirectoryContent {
         self.staged = None;
         self.items.clear();
         self.items_sorted.clear();
+        self.sorted_by = None;
         self.revision += 1;
     }
 
@@ -145,6 +157,7 @@ impl DirectoryContent {
                 .cloned(),
         );
         self.items.extend_from_slice(items);
+        self.sorted_by = None;
     }
 
     /// Apply a listing-mode transition (see `ListingMode::transition`).
@@ -155,6 +168,7 @@ impl DirectoryContent {
             return;
         }
         self.mode = mode;
+        self.sorted_by = None;
         if mode != ListingMode::Search {
             self.search_root = None;
         }
@@ -216,6 +230,7 @@ impl DirectoryContent {
             return;
         }
         self.sort_in_place(sort_column, sort_direction);
+        self.sorted_by = Some((sort_column, sort_direction));
         self.revision += 1;
     }
 
@@ -229,12 +244,45 @@ impl DirectoryContent {
         self.staged.is_some()
     }
 
+    #[cfg(test)]
     pub(super) fn set_filter(&mut self, filter: String) {
         self.filter = filter;
+        self.sorted_by = None;
+    }
+
+    /// Filter the listing by `filter`, sorted by `sort_column`.
+    ///
+    /// A filter that holds the one applied (typing onto it) only hides more
+    /// entries, so they are dropped from the sorted listing in place rather
+    /// than filtered and sorted again from every entry, which on a large
+    /// directory costs a sort per keystroke. That holds because the filter is
+    /// a case-insensitive substring test on the displayed name (pinned by
+    /// `filter_agrees_with_a_substring_search_of_the_displayed_name`): a name
+    /// holding the longer text holds the shorter. A stable sort of a subset
+    /// keeps the order the subset had in the whole, so what remains is what a
+    /// full sort would give.
+    pub(super) fn apply_filter(
+        &mut self,
+        filter: String,
+        sort_column: SortColumn,
+        sort_direction: SortDirection,
+    ) {
+        let narrows = self.sorted_by == Some((sort_column, sort_direction))
+            && filter.to_lowercase().contains(&self.filter.to_lowercase());
+        self.filter = filter;
+        if !narrows {
+            self.sort(sort_column, sort_direction);
+            return;
+        }
+        let visibility = self.visibility();
+        self.items_sorted
+            .retain(|path| visibility.matches_filter(path));
+        self.revision += 1;
     }
 
     pub(super) fn clear_filter(&mut self) {
         self.filter.clear();
+        self.sorted_by = None;
     }
 
     fn show_hidden(&self) -> bool {
@@ -243,6 +291,7 @@ impl DirectoryContent {
 
     pub(super) fn toggle_show_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
+        self.sorted_by = None;
     }
 
     /// Sort and filter items into `items_sorted`. Visibility is re-derived
@@ -257,6 +306,7 @@ impl DirectoryContent {
             .cloned()
             .collect();
         self.sort_in_place(sort_column, sort_direction);
+        self.sorted_by = Some((sort_column, sort_direction));
         self.revision += 1;
     }
 
@@ -312,6 +362,7 @@ impl DirectoryContent {
         self.items.clear();
         self.items_sorted.clear();
         self.filter.clear();
+        self.sorted_by = None;
         self.revision += 1;
     }
 
@@ -337,6 +388,7 @@ impl DirectoryContent {
         self.set_mode(ListingMode::Bookmarks);
         self.filter.clear();
         self.items = items;
+        self.sorted_by = None;
         self.revision += 1;
     }
 
@@ -1037,6 +1089,94 @@ mod tests {
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
+    }
+
+    /// Typing onto a filter narrows the listing in place; every step has to
+    /// equal filtering and sorting the whole listing afresh, under each sort.
+    #[test]
+    fn a_narrowed_filter_matches_a_fresh_filter_and_sort() {
+        Config::init_test();
+        let fx = TempDir::new("content");
+        let items = vec![
+            fx.file("report10.txt", 3),
+            fx.subdirectory("Reports"),
+            fx.file("report2.txt", 1),
+            fx.file("Équipe report", 2),
+            fx.file(".report", 5),
+            fx.file("other", 4),
+            fx.file("REPORT1.TXT", 3),
+        ];
+        let steps = ["", "r", "rep", "REPO", "report", "report1", "rt"];
+        let orders = [
+            (SortColumn::Name, SortDirection::Ascending),
+            (SortColumn::Name, SortDirection::Descending),
+            (SortColumn::Size, SortDirection::Descending),
+            (SortColumn::Modified, SortDirection::Ascending),
+        ];
+        for (column, direction) in orders {
+            let mut typed = content();
+            typed.set_items(fx.directory(), items.clone());
+            typed.sort(column, direction);
+            for filter in steps {
+                typed.apply_filter(filter.to_string(), column, direction);
+
+                let mut fresh = content();
+                fresh.set_items(fx.directory(), items.clone());
+                fresh.set_filter(filter.to_string());
+                fresh.sort(column, direction);
+                assert_eq!(names(&fresh), names(&typed), "{filter:?} by {column:?}");
+            }
+        }
+    }
+
+    /// The narrowing works from the listing shown rather than from every
+    /// entry, which is what saves the sort. Shown by a listing reordered
+    /// behind the content's back: narrowing keeps that order, a widened or
+    /// replaced filter sorts again.
+    #[test]
+    fn only_a_filter_holding_the_last_one_narrows_the_shown_listing() {
+        Config::init_test();
+        let fx = TempDir::new("content");
+        let mut content = content();
+        content.set_items(
+            fx.directory(),
+            vec![fx.file("ab", 1), fx.file("abc", 1), fx.file("b", 1)],
+        );
+        let (column, direction) = (SortColumn::Name, SortDirection::Ascending);
+        content.apply_filter("a".to_string(), column, direction);
+        content.items_sorted.reverse();
+
+        content.apply_filter("ab".to_string(), column, direction);
+        assert_eq!(vec!["abc", "ab"], names(&content));
+
+        content.apply_filter("b".to_string(), column, direction);
+        assert_eq!(vec!["ab", "abc", "b"], names(&content));
+
+        // Asked for another order than the listing is in: sorted again.
+        content.items_sorted.reverse();
+        content.apply_filter("b".to_string(), column, SortDirection::Descending);
+        assert_eq!(vec!["b", "abc", "ab"], names(&content));
+    }
+
+    /// A finished stream is sorted, so it narrows in place; entries appended
+    /// since the last sort are in read order, so the listing sorts again.
+    #[test]
+    fn a_listing_narrows_in_place_only_while_it_is_sorted() {
+        Config::init_test();
+        let fx = TempDir::new("content");
+        let (column, direction) = (SortColumn::Name, SortDirection::Ascending);
+        let mut content = content();
+        content.start_listing(fx.directory(), false);
+        content.append(&[fx.file("ab", 1), fx.file("abc", 1)]);
+        content.finalize_listing(column, direction);
+        content.items_sorted.reverse();
+
+        content.apply_filter("a".to_string(), column, direction);
+        assert_eq!(vec!["abc", "ab"], names(&content));
+
+        content.append(&[fx.file("aa", 1)]);
+        content.apply_filter("ab".to_string(), column, direction);
+        assert_eq!(vec!["ab", "abc"], names(&content));
     }
 
     /// `matches_filter` avoids building the displayed name by special-casing

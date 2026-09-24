@@ -2,7 +2,7 @@
 //! destination, and what to do about it.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashSet, VecDeque},
     ffi::OsString,
 };
 
@@ -37,13 +37,12 @@ pub(super) struct PendingPaste {
     /// here also settles a name another process takes inside a tree already
     /// being copied.
     pub(super) conflicts: Conflicts,
-    /// Destination names already spoken for by sources queued earlier in this
-    /// paste, whose work may not have run yet, so the filesystem does not show
-    /// them. Without this, two marked sources sharing a basename (which search
-    /// results make easy) would both see a free name, and the second would fail
-    /// at the copy instead of being asked about. Each maps to whether its
-    /// source is a directory, which is what its work will leave at the name.
-    pub(super) claimed: HashMap<OsString, bool>,
+    /// Destination names already taken by sources started earlier in this
+    /// paste. Two marked sources can share a basename (search results make it
+    /// easy), and the second is refused rather than asked about, like `mv a/x
+    /// b/x d/`: whatever the answer, replacing the name would destroy what the
+    /// first source put there, and for a cut that is the only copy.
+    pub(super) claimed: HashSet<OsString>,
 }
 
 /// What already holds a source's name in the destination directory.
@@ -84,24 +83,26 @@ pub(super) enum PasteStep {
 }
 
 impl PendingPaste {
-    /// What holds `src`'s destination name, counting names an earlier source in
-    /// this same paste has already claimed. Replacing a claimed name is safe
-    /// because the worker runs the sources in order, so it removes what the
-    /// earlier source wrote rather than racing it.
+    /// What holds `src`'s destination name on disk.
     pub(super) fn occupant(&self, src: &PathInfo) -> Option<Occupant> {
-        existing_destination(&self.dest, src).or_else(|| {
-            let is_directory = *self.claimed.get(src.path.file_name()?)?;
-            Some(Occupant::of(src.is_directory(), is_directory))
-        })
+        existing_destination(&self.dest, src)
     }
 
-    /// Records that `src`'s destination name is spoken for, once its work is
-    /// actually running. The claim carries the source's own kind: that is what
-    /// its work will leave at the name, so a directory claimed here is no more
-    /// replaceable than one already on disk.
+    /// Whether an earlier source of this paste already took `src`'s
+    /// destination name. Checked before the disk, which may not show the name
+    /// yet (the earlier work is only queued) or may show what the earlier
+    /// source replaced it with.
+    pub(super) fn is_claimed(&self, src: &PathInfo) -> bool {
+        src.path
+            .file_name()
+            .is_some_and(|name| self.claimed.contains(name))
+    }
+
+    /// Records that `src`'s destination name is taken, once its work is
+    /// actually running.
     pub(super) fn claim(&mut self, src: &PathInfo) {
         if let Some(name) = src.path.file_name() {
-            self.claimed.insert(name.to_os_string(), src.is_directory());
+            self.claimed.insert(name.to_os_string());
         }
     }
 
@@ -200,7 +201,7 @@ mod tests {
             failed: Vec::new(),
             started: 0,
             conflicts,
-            claimed: HashMap::new(),
+            claimed: HashSet::new(),
         }
     }
 
@@ -221,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_claimed_earlier_in_the_paste_counts_as_taken() {
+    fn a_name_claimed_earlier_in_the_paste_is_taken_whatever_the_disk_shows() {
         let fx = CopyFixture::new("fs_claimed");
         let mut pending = pending(None);
         pending.dest = fx.dest.clone();
@@ -236,38 +237,14 @@ mod tests {
             .join("elsewhere")
             .join("a.txt");
 
-        assert_eq!(None, pending.occupant(&twin));
+        assert!(!pending.is_claimed(&twin));
         pending.claim(&fx.src);
 
-        // The first source's work is only queued, so the filesystem still
-        // shows the name as free. Without the claim the second source would
-        // fail at the copy instead of being asked about.
-        assert_eq!(Some(Occupant::Replaceable), pending.occupant(&twin));
-    }
-
-    #[test]
-    fn a_directory_claimed_earlier_in_the_paste_is_never_offered_a_replace() {
-        let fx = CopyFixture::new("fs_claimed_directory");
-        let parent = fx.dest.path.parent().unwrap().to_path_buf();
-        let mut pending = pending(None);
-        pending.dest = fx.dest.clone();
-        // A directory source, and a second marked source of the same name.
-        let source = PathInfo::try_from(parent.join("src").as_path()).unwrap();
-        let mut twin = source.clone();
-        twin.path = parent.join("elsewhere").join("src");
-
-        pending.claim(&source);
-
-        // The claim carries the source's kind, making this the same collision
-        // as a directory on disk: replacing it would remove the one the earlier
-        // source is busy creating.
-        assert_eq!(Some(Occupant::Irreplaceable), pending.occupant(&twin));
-        assert_eq!(
-            PasteStep::Ask {
-                can_overwrite: false
-            },
-            pending.step(pending.occupant(&twin))
-        );
+        // The first source's work is only queued, so the disk still shows the
+        // name as free.
+        assert_eq!(None, pending.occupant(&twin));
+        assert!(pending.is_claimed(&twin));
+        assert!(!pending.is_claimed(&fx.other));
     }
 
     #[test]
@@ -306,7 +283,7 @@ mod tests {
             failed,
             started,
             conflicts: Conflicts::default(),
-            claimed: HashMap::new(),
+            claimed: HashSet::new(),
         }
         .clipboard_follow_up()
     }
@@ -350,20 +327,6 @@ mod tests {
             Some(Occupant::Irreplaceable),
             existing_destination(&fx.dest, &dir_source)
         );
-    }
-
-    #[test]
-    fn a_file_claimed_earlier_in_the_paste_is_never_replaced_by_a_directory() {
-        let fx = CopyFixture::new("fs_claimed_file");
-        let mut pending = pending(None);
-        pending.dest = fx.dest.clone();
-        let dir_source = fx.src.path.parent().unwrap().join("dirs").join("a.txt");
-        fs::create_dir_all(&dir_source).unwrap();
-        let dir_source = PathInfo::try_from(dir_source.as_path()).unwrap();
-
-        pending.claim(&fx.src);
-
-        assert_eq!(Some(Occupant::Irreplaceable), pending.occupant(&dir_source));
     }
 
     #[test]

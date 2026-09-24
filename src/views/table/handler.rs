@@ -73,6 +73,7 @@ impl CommandHandler for TableView {
             Command::StartSearch(_) => {
                 self.content.start_search();
                 self.table_state.select(None);
+                self.search_cursor_chosen = false;
                 self.clear_marks_notifying()
             }
             Command::SearchStarted { generation } => {
@@ -114,16 +115,16 @@ impl CommandHandler for TableView {
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        let before = self.table_state.selected();
+        let (before, marks_before) = (self.table_state.selected(), self.marks.len());
         let result = self.dispatch_key(code, modifiers);
-        self.note_cursor_move(before);
+        self.note_cursor_move(before, marks_before);
         result
     }
 
     fn handle_mouse(&mut self, event: MouseEvent) -> CommandResult {
-        let before = self.table_state.selected();
+        let (before, marks_before) = (self.table_state.selected(), self.marks.len());
         let result = self.dispatch_mouse(event);
-        self.note_cursor_move(before);
+        self.note_cursor_move(before, marks_before);
         result
     }
 
@@ -207,6 +208,18 @@ impl TableView {
                 // Check for scrollbar click first
                 if self.scrollbar_view.is_clicked(event) {
                     return self.handle_scroll(event);
+                }
+                // A press while a drag is still recorded means its release
+                // went to a view that took it (help, a prompt). A drag routes
+                // every mouse event here, so end it first, and leave a press
+                // outside the table to the view it landed on: it would
+                // otherwise saturate to the header row and sort.
+                if self.scrollbar_view.is_dragging() {
+                    self.scrollbar_view.end_drag();
+                    self.drag_line = None;
+                    if !contains(self.table_area, event) {
+                        return CommandResult::Handled;
+                    }
                 }
 
                 // Then handle table clicks
@@ -300,7 +313,14 @@ impl TableView {
         // Marks carry across: results stream so they can be marked
         // while the walk is still running, and the walk finishing is
         // not a reorder the user asked for.
-        self.sort_keeping_marks()
+        let result = self.sort_keeping_marks();
+        // The cursor went to the first result in walk order, which the sort
+        // moves anywhere. Unless the user chose that row, it goes to the top.
+        if self.search_cursor_chosen {
+            result
+        } else {
+            self.select(0)
+        }
     }
 
     fn reset_view(&mut self, previous_mode: ListingMode) -> CommandResult {

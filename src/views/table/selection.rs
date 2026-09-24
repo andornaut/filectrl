@@ -1,25 +1,39 @@
 use super::{TableView, scroll};
+use crate::views::ListingCount;
 use crate::{
     command::{Command, result::CommandResult},
     file_system::path_info::PathInfo,
 };
 
 impl TableView {
-    /// Puts the cursor on `item`. An empty listing has no row to put it on, so
-    /// it gets no cursor, and nothing that acts on the cursor finds an entry.
+    /// Puts the cursor on `item`, or on the last row when `item` is past the
+    /// end. An empty listing has no row to put it on, so it gets no cursor, and
+    /// nothing that acts on the cursor finds an entry.
+    ///
+    /// The clamp is needed because the page and screen-relative moves read the
+    /// last render's line map, and the listing can shrink between that render
+    /// and the key (a filter or a reload drained in the same batch).
     pub(super) fn select(&mut self, item: usize) -> CommandResult {
+        let len = self.content.len();
         self.table_state
-            .select((self.content.len() != 0).then_some(item));
+            .select((len != 0).then(|| item.min(len - 1)));
         self.update_range_marks();
         self.selection_snapshot()
     }
 
-    /// How many of the directory's entries are shown, or `None` when the
-    /// listing is not the directory's (search results, bookmarks), so the
-    /// status bar's count does not describe it.
-    pub(in crate::views) fn shown_len(&self) -> Option<usize> {
-        (!self.content.is_searching() && !self.content.is_showing_bookmarks())
-            .then(|| self.content.len())
+    /// What the table lists, counted for the status bar and the notices.
+    pub(in crate::views) fn listing_count(&self) -> ListingCount {
+        let shown = self.content.len();
+        if self.content.is_searching() {
+            ListingCount::Results {
+                shown,
+                total: self.content.total_len(),
+            }
+        } else if self.content.is_showing_bookmarks() {
+            ListingCount::Bookmarks
+        } else {
+            ListingCount::Directory { shown }
+        }
     }
 
     /// The current selection and mark count as a single snapshot command.
@@ -105,21 +119,35 @@ mod tests {
         display_names(&table.marked_paths())
     }
 
-    /// The status bar counts the directory's entries, so only a listing of
-    /// that directory reports how many of them it shows.
+    /// A directory's count is of its entries, which the status bar totals
+    /// itself; search results carry both, since nothing else counts them.
     #[test]
-    fn the_shown_count_describes_only_a_listing_of_the_directory() {
+    fn the_listing_count_says_what_the_table_lists() {
         use crate::command::{Command, handler::CommandHandler};
+        use crate::views::ListingCount;
 
         let (dir, mut table) = marked_table();
-        assert_eq!(Some(3), table.shown_len());
+        assert_eq!(ListingCount::Directory { shown: 3 }, table.listing_count());
         table.handle_command(&Command::FilterChanged("a".to_string()));
-        assert_eq!(Some(1), table.shown_len());
+        assert_eq!(ListingCount::Directory { shown: 1 }, table.listing_count());
+
+        let results = table.content.items_sorted().to_vec();
+        table.content.start_search();
+        table.content.append(&results);
+        table.content.set_filter("b".to_string());
+        table.content.sort(
+            super::super::columns::SortColumn::Name,
+            super::super::columns::SortDirection::Ascending,
+        );
+        assert_eq!(
+            ListingCount::Results { shown: 0, total: 1 },
+            table.listing_count()
+        );
 
         table.content.set_bookmarks(vec![
             crate::file_system::path_info::PathInfo::try_from(dir.path()).unwrap(),
         ]);
-        assert_eq!(None, table.shown_len());
+        assert_eq!(ListingCount::Bookmarks, table.listing_count());
     }
 
     fn selected(table: &TableView) -> Option<String> {
@@ -201,6 +229,36 @@ mod tests {
         table.previous_page();
 
         assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn a_row_past_the_end_puts_the_cursor_on_the_last_row() {
+        let (_dir, mut table) = table();
+
+        table.select(7);
+
+        assert_eq!(Some(2), table.table_state.selected());
+        assert_eq!(Some("c".to_string()), selected(&table));
+    }
+
+    /// The screen-relative keys read the last render's line map. A filter
+    /// applied since that render has shrunk the listing to one row, so the
+    /// row the map names no longer exists, and in range mode a cursor past
+    /// the end would mark it: a mark with no entry under it.
+    #[test]
+    fn a_screen_relative_move_after_the_listing_shrank_lands_on_a_real_row() {
+        use crate::command::{Command, handler::CommandHandler};
+
+        let (_dir, mut table) = table();
+        table.mapper = LineItemMap::new(&[1; 3], 3, 0);
+        table.handle_command(&Command::FilterChanged("a".to_string()));
+        table.enter_range_mode();
+
+        table.select_last_visible_item();
+
+        assert_eq!(Some("a".to_string()), selected(&table));
+        assert_eq!(vec!["a"], marked(&table));
+        assert_eq!(1, table.marks.len());
     }
 
     #[test]

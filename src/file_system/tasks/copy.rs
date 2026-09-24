@@ -19,13 +19,13 @@ use nix::{
 use rustix::fs::XattrFlags;
 
 use super::{
-    PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL,
+    PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL, cancel_logging,
     sys::{
         AtFlags, Errno, FileType, Mode, OFlag, Stat, UnlinkatFlags, fstat, fstatat, mkdirat,
         mode_bits, openat, readlinkat, stat_mode, symlinkat,
     },
     walk::{
-        DirId, c_name, list_names, open_directory_file, open_parent, reopen_parent_fd, scan_tree,
+        DirId, Handles, Level, Walk, c_name, list_names, open_directory, open_parent, scan_tree,
         unlink_at,
     },
 };
@@ -173,7 +173,7 @@ pub(super) fn copy_with_progress(
         is_directory,
         listed.mode(),
     ) {
-        active.cancelled();
+        cancel_logging(&errors, active);
         return None;
     }
     Some((
@@ -299,12 +299,8 @@ fn copy_path(
 }
 
 /// Copies the directory tree below `root`, then finishes each directory: its
-/// mode, and its times for a move. Iterative, so depth cannot overflow the
-/// thread stack, and like the delete walk only the directory being worked in
-/// holds its handles, so depth is not bounded by the open-file limit either.
-/// Descending closes the parent's handles; returning reopens them through the
-/// child's "..", refusing to continue unless they are the directories that
-/// were listed, since the child may have been moved in between.
+/// mode, and its times for a move. The source and destination are walked in
+/// step, holding only the directories being worked in open (see `Walk`).
 ///
 /// A cancel stops the walk between entries, and every directory entered is
 /// still finished on the way out, so none is left owner-only.
@@ -315,40 +311,28 @@ fn copy_tree(
     errors: &mut Vec<String>,
     context: &mut CopyContext<'_>,
 ) -> bool {
-    let mut stack = vec![root];
+    let mut walk = Walk::new(root);
     let mut cancelled = false;
-    while let Some(top) = stack.last_mut() {
+    while let Some((Pair { src, dst }, level)) = walk.top() {
         cancelled |= active.is_cancelled();
-        let next = if cancelled { None } else { top.names.next() };
+        let next = if cancelled { None } else { level.names.next() };
         let Some(name) = next else {
-            let level = stack.pop().expect("stack is non-empty");
-            let (src, dst) = level.handles();
-            finish_directory(dst, &level.source, context);
-            let Some(parent) = stack.last_mut() else {
+            let (handles, level) = walk.pop().expect("the walk is not done");
+            finish_directory(&handles.dst, &level.source, level.umask_left, context);
+            if walk.is_empty() {
                 break;
-            };
+            }
             paths.pop();
-            let moved = "it was moved while it was being copied";
-            match (
-                reopen_parent_fd(moved, parent.src_id, src),
-                reopen_parent_fd(moved, parent.dst_id, dst),
-            ) {
-                (Ok(src), Ok(dst)) => {
-                    parent.src = Some(src.into());
-                    parent.dst = Some(dst.into());
-                }
-                (Err(error), _) | (_, Err(error)) => {
-                    // Neither this directory nor any above it can be reached
-                    // again, so the walk ends here. They keep the owner-only
-                    // mode they were created with.
-                    errors.push(format!("Failed to copy {}: {error}", compact(&paths.old)));
-                    return !cancelled;
-                }
+            if let Err(error) = walk.reopen(&handles, "it was moved while it was being copied") {
+                // Neither this directory nor any above it can be reached
+                // again, so the walk ends here. They keep the owner-only mode
+                // they were created with.
+                errors.push(format!("Failed to copy {}: {error}", compact(&paths.old)));
+                return !cancelled;
             }
             continue;
         };
         paths.push(&name);
-        let (src, dst) = top.handles();
         let stat = match fstatat(src, name.as_c_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
             Ok(stat) => stat,
             Err(error) => {
@@ -368,10 +352,7 @@ fn copy_tree(
         };
         if FileType::of(&stat) == FileType::Directory {
             if let Some(child) = enter_directory(&at, paths, errors, context, &stat) {
-                // Closed until the walk returns here.
-                top.src = None;
-                top.dst = None;
-                stack.push(child);
+                walk.descend(child);
                 // The child's path stays pushed until it is finished.
                 continue;
             }
@@ -427,7 +408,7 @@ fn enter_directory(
         result => result.map_err(Into::into),
     };
     let opened = created.and_then(|()| {
-        let dst = open_directory_file(at.dst, at.dst_name)?;
+        let dst = open_directory(at.dst, at.dst_name)?;
         Ok((DirId::of(&dst)?, dst))
     });
     let (dst_id, dst) = match opened {
@@ -443,16 +424,17 @@ fn enter_directory(
         }
     };
     context.created.insert(dst_id);
+    let umask_left = grant_owner_access(&dst);
     // Abandons the subtree, leaving the destination directory empty and with
     // its final mode.
     let give_up = |errors: &mut Vec<String>, context: &CopyContext<'_>, message: String| {
         errors.push(message);
-        finish_directory(&dst, &Source::of(stat), context);
+        finish_directory(&dst, &Source::of(stat), umask_left, context);
     };
     let read_failure = |error: &dyn std::fmt::Display| {
         format!("Failed to read directory {}: {error}", compact(&paths.old))
     };
-    let opened = open_directory_file(at.src, at.src_name).and_then(|src| Ok((fstat(&src)?, src)));
+    let opened = open_directory(at.src, at.src_name).and_then(|src| Ok((fstat(&src)?, src)));
     let (opened, src) = match opened {
         Ok(opened) => opened,
         Err(error) => {
@@ -476,22 +458,48 @@ fn enter_directory(
         }
     };
     let source = Source::read(&src, &opened, context.preserve);
-    Some(CopyLevel {
-        src: Some(src),
-        dst: Some(dst),
-        src_id: id,
-        dst_id,
-        source,
-        names: names.into_iter(),
-    })
+    Some(Level::open(
+        Pair { src, dst },
+        Pair {
+            src: id,
+            dst: dst_id,
+        },
+        Copying {
+            source,
+            umask_left,
+            names: names.into_iter(),
+        },
+    ))
+}
+
+/// Adds owner access to the directory `dst` a copy just created, when the
+/// umask took it away: a umask such as `0o277` leaves it unwritable, and no
+/// child could be created in it. `cp` does the same. Returns the mode the
+/// umask left, which `finish_directory` puts back before computing the final
+/// mode from it.
+fn grant_owner_access(dst: &File) -> Option<u32> {
+    let mode = stat_mode(&fstat(dst).ok()?) & 0o7777;
+    if mode & 0o700 == 0o700 {
+        return None;
+    }
+    nix::sys::stat::fchmod(dst, mode_bits(mode | 0o700)).ok()?;
+    Some(mode)
 }
 
 /// Gives a copied directory its final mode, and for a move the source's
 /// times, now that its children are written: writing them is what moved its
 /// own modification time, and a mode without owner-write would have stopped
 /// them being created. Through the handle, so a path swapped since cannot
-/// redirect either.
-fn finish_directory(dst: &File, source: &Source, context: &CopyContext<'_>) {
+/// redirect either. `umask_left` is the mode `grant_owner_access` replaced.
+fn finish_directory(
+    dst: &File,
+    source: &Source,
+    umask_left: Option<u32>,
+    context: &CopyContext<'_>,
+) {
+    if let Some(mode) = umask_left {
+        let _ = nix::sys::stat::fchmod(dst, mode_bits(mode));
+    }
     if context.preserve {
         apply_times(source, dst);
     }
@@ -718,6 +726,16 @@ fn copy_special(
         }
     }
     if context.preserve {
+        // The source's group first, as a moved file or directory gets it, so the
+        // group bits restored below are granted to the group they were granted
+        // to before. Best effort, the same way.
+        let _ = nix::unistd::fchownat(
+            at.dst,
+            at.dst_name,
+            None,
+            Some(Gid::from_raw(stat.st_gid)),
+            AtFlags::AT_SYMLINK_NOFOLLOW,
+        );
         restore_node_mode(at, paths, errors, stat_mode(stat));
     }
 }
@@ -854,9 +872,10 @@ fn create_file_at(
 /// Applies the mode a copied entry ends with, through its handle.
 ///
 /// A copy keeps the permission bits the umask left at creation, and never the
-/// setuid, setgid or sticky bits, like `cp` without `-p`: a file copied into a
-/// directory someone else can reach must not become a setuid program of the
-/// user who copied it. The creation mode had owner access added so the entry
+/// source's setuid, setgid or sticky bits, like `cp` without `-p`: a file
+/// copied into a directory someone else can reach must not become a setuid
+/// program of the user who copied it. A directory keeps the setgid bit it
+/// inherited from its parent. The creation mode had owner access added so the entry
 /// could be written, so the source's owner bits are put back.
 ///
 /// A move keeps the full mode, like `mv`, except setuid and setgid when the
@@ -868,20 +887,24 @@ fn create_file_at(
 /// give a file a group they belong to, and the comparison below then clears
 /// setgid for a group that did not carry over.
 ///
-/// A move also gets the source's ACLs, like `mv`, or the named users and groups
-/// they grant would be dropped and the mask, which is what the source's group
-/// bits hold, granted to the owning group instead. Before the mode: the ACL
-/// sets the mode's permission bits from its own entries, and the mode then
-/// sets the mask from the group bits, which are the source's mask, so the
-/// order changes nothing but closes the window in which the owning group has
-/// the mask's access. Best effort, since a filesystem without ACLs is no
-/// reason to fail the move.
+/// A move also gets the source's extended attributes, like `mv`. They include
+/// the POSIX ACLs on Linux, without which the named users and groups an ACL
+/// grants would be dropped and the mask, which is what the source's group bits
+/// hold, granted to the owning group instead. Before the mode: an ACL sets the
+/// mode's permission bits from its own entries, and the mode then sets the
+/// mask from the group bits, which are the source's mask, so the order changes
+/// nothing but closes the window in which the owning group has the mask's
+/// access. Best effort, since a destination that cannot hold an attribute (no
+/// ACLs on FAT, a namespace only root may write) is no reason to fail the move.
 fn apply_final_mode(file: &File, source: &Source, context: &CopyContext<'_>) {
     if context.preserve {
         let _ = fchown(file, None, Some(Gid::from_raw(source.gid)));
-        for (name, value) in &source.acls {
-            if let Err(error) = rustix::fs::fsetxattr(file, *name, value, XattrFlags::empty()) {
-                warn!("Failed to copy the ACL of a moved entry: {error}");
+        for (name, value) in &source.attributes {
+            if let Err(error) = rustix::fs::fsetxattr(file, name, value, XattrFlags::empty()) {
+                warn!(
+                    "Failed to copy the extended attribute {} of a moved entry: {error}",
+                    name.to_string_lossy()
+                );
             }
         }
     }
@@ -897,7 +920,15 @@ fn apply_final_mode(file: &File, source: &Source, context: &CopyContext<'_>) {
         };
         source.mode & (0o777 | special)
     } else {
-        (created_mode & 0o077) | (source.mode & created_mode & 0o700)
+        // A directory created in a setgid directory inherits the setgid bit,
+        // which `cp -R` keeps so what is later created in it takes the shared
+        // group.
+        let inherited = if FileType::of(&created) == FileType::Directory {
+            stat_mode(&created) & 0o2000
+        } else {
+            0
+        };
+        (created_mode & 0o077) | (source.mode & created_mode & 0o700) | inherited
     };
     if let Err(error) = file.set_permissions(fs::Permissions::from_mode(mode)) {
         warn!("Failed to set permissions on a copied entry: {error}");
@@ -947,27 +978,16 @@ impl Paths {
 
 /// What the copy needs of a source entry: its mode, its owner for deciding
 /// whether a move keeps the setuid and setgid bits, and for a move its times
-/// and ACLs. Taken from the entry before the copy reads it, since reading
-/// moves its access time.
+/// and extended attributes. Taken from the entry before the copy reads it,
+/// since reading moves its access time.
 struct Source {
     mode: u32,
     uid: u32,
     gid: u32,
     times: Option<Times>,
-    /// Each ACL extended attribute the source has, by name.
-    acls: Vec<(&'static CStr, Vec<u8>)>,
+    /// Each extended attribute the source has, by name.
+    attributes: Vec<(CString, Vec<u8>)>,
 }
-
-/// The extended attributes that hold POSIX ACLs, which a move copies like
-/// `mv`, each with whether only a directory has it. Linux only: macOS keeps
-/// its ACLs elsewhere.
-#[cfg(target_os = "linux")]
-const ACL_ATTRIBUTES: [(&CStr, bool); 2] = [
-    (c"system.posix_acl_access", false),
-    (c"system.posix_acl_default", true),
-];
-#[cfg(not(target_os = "linux"))]
-const ACL_ATTRIBUTES: [(&CStr, bool); 0] = [];
 
 impl Source {
     fn of(stat: &Stat) -> Self {
@@ -976,30 +996,53 @@ impl Source {
             uid: stat.st_uid,
             gid: stat.st_gid,
             times: times_of(stat),
-            acls: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 
-    /// `of` the open `file`, whose `stat` it is, with its ACLs for a move.
-    /// Best effort: an attribute that cannot be read is not copied.
+    /// `of` the open `file`, whose `stat` it is, with its extended attributes
+    /// for a move.
     fn read(file: &File, stat: &Stat, preserve: bool) -> Self {
         let mut source = Self::of(stat);
         if preserve {
-            let is_directory = FileType::of(stat) == FileType::Directory;
-            source.acls = ACL_ATTRIBUTES
-                .into_iter()
-                .filter(|&(_, directory_only)| is_directory || !directory_only)
-                .filter_map(|(name, _)| Some((name, read_attribute(file, name)?)))
-                .collect();
+            source.attributes = read_attributes(file);
         }
         source
     }
+}
+
+/// Every extended attribute of `file` with its value. Best effort: one that
+/// cannot be read is not copied, and none are when the list cannot be read
+/// (it grew between measuring and reading it, say).
+fn read_attributes(file: &File) -> Vec<(CString, Vec<u8>)> {
+    // `spare_capacity` panics on a `Vec` with none, which an entry without
+    // attributes would ask for.
+    let Ok(size @ 1..) = rustix::fs::flistxattr(file, &mut [0u8; 0]) else {
+        return Vec::new();
+    };
+    let mut names = Vec::with_capacity(size);
+    if rustix::fs::flistxattr(file, rustix::buffer::spare_capacity(&mut names)).is_err() {
+        return Vec::new();
+    }
+    names
+        .split(|&byte| byte == 0)
+        .filter_map(|name| {
+            let name = CString::new(name).ok().filter(|name| !name.is_empty())?;
+            let value = read_attribute(file, &name)?;
+            Some((name, value))
+        })
+        .collect()
 }
 
 /// The value of the extended attribute `name` on `file`, or `None` when it has
 /// none or it cannot be read.
 fn read_attribute(file: &File, name: &CStr) -> Option<Vec<u8>> {
     let size = rustix::fs::fgetxattr(file, name, &mut [0u8; 0]).ok()?;
+    // An empty value is valid, and `spare_capacity` panics on a `Vec` with no
+    // capacity.
+    if size == 0 {
+        return Some(Vec::new());
+    }
     let mut value = Vec::with_capacity(size);
     let read = rustix::fs::fgetxattr(file, name, rustix::buffer::spare_capacity(&mut value));
     read.ok().map(|_| value)
@@ -1029,26 +1072,37 @@ fn times_of(stat: &Stat) -> Option<Times> {
     })
 }
 
-/// One directory on `copy_tree`'s stack: the open source and destination
-/// (`None` while the walk is below it), their identities for reopening them,
-/// the source's metadata for finishing it, and the names not yet copied.
-struct CopyLevel {
-    src: Option<File>,
-    dst: Option<File>,
-    src_id: DirId,
-    dst_id: DirId,
+/// A source directory and the destination directory it is copied into, or
+/// their identities: `copy_tree` walks the two in step.
+#[derive(Clone, Copy)]
+struct Pair<T> {
+    src: T,
+    dst: T,
+}
+
+impl Handles for Pair<File> {
+    type Id = Pair<DirId>;
+
+    fn reopen_parent(&self, parent: Pair<DirId>, moved: &str) -> std::io::Result<Self> {
+        Ok(Self {
+            src: self.src.reopen_parent(parent.src, moved)?,
+            dst: self.dst.reopen_parent(parent.dst, moved)?,
+        })
+    }
+}
+
+/// One directory `copy_tree` is inside: the source's metadata for finishing
+/// the copy of it, and the names not yet copied.
+struct Copying {
     source: Source,
+    /// The mode the umask left on the destination, when owner access was
+    /// added over it.
+    umask_left: Option<u32>,
     names: std::vec::IntoIter<CString>,
 }
 
-impl CopyLevel {
-    fn handles(&self) -> (&File, &File) {
-        match (&self.src, &self.dst) {
-            (Some(src), Some(dst)) => (src, dst),
-            _ => unreachable!("the level being worked in holds its directories"),
-        }
-    }
-}
+/// A directory `copy_tree` has entered.
+type CopyLevel = Level<Pair<File>, Copying>;
 
 /// What to do about `new_path`, a name another process took at a destination
 /// inside the tree being copied: the destination was free when the task
@@ -1173,6 +1227,7 @@ mod tests {
     use test_case::test_case;
 
     use super::{
+        super::sys::CWD,
         super::test_support::{
             copy_task, destination, finished_task, mode_of, paste_after, paste_after_unless,
         },
@@ -2051,6 +2106,8 @@ mod tests {
     /// Run by `a_copy_takes_the_umask_on_the_owner_bits_too` under a umask
     /// that clears owner bits; on its own it proves nothing. The fixture is
     /// made before the umask is set, so the directory can still be written.
+    /// The directory's child can only be created if the copy gives the
+    /// directory owner access while filling it.
     #[test]
     #[ignore = "run under a umask of 0o277 by the test below"]
     fn a_copy_under_a_umask_clearing_owner_bits() {
@@ -2058,15 +2115,25 @@ mod tests {
         let src = fx.join("src");
         fs::write(&src, b"x").unwrap();
         fs::set_permissions(&src, fs::Permissions::from_mode(0o777)).unwrap();
+        let src_dir = fx.join("src_dir");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("child"), b"x").unwrap();
+        fs::set_permissions(&src_dir, fs::Permissions::from_mode(0o777)).unwrap();
         nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o277));
 
         let errors = copy_one(&src, &fx.join("dst"), false);
+        let dir_errors = copy_one(&src_dir, &fx.join("dst_dir"), false);
 
         assert!(errors.is_empty(), "{errors:?}");
+        assert!(dir_errors.is_empty(), "{dir_errors:?}");
+        let leaves = 0o777 & umask_leaves(fx.path());
+        assert_eq!(leaves, mode_of(&fx.join("dst")) & 0o7777);
+        assert_eq!(leaves, mode_of(&fx.join("dst_dir")) & 0o7777);
         assert_eq!(
-            0o777 & umask_leaves(fx.path()),
-            mode_of(&fx.join("dst")) & 0o7777
+            b"x",
+            &fs::read(fx.join("dst_dir").join("child")).unwrap()[..]
         );
+        fs::set_permissions(fx.join("dst_dir"), fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     /// A copy's owner bits are the source's as the umask leaves them, like
@@ -2098,6 +2165,7 @@ mod tests {
     // given its mode: a copy's owner bits come back to what the source had.
     #[test_case(0o555, false ; "a copy of a read only directory")]
     #[test_case(0o1777, false ; "a copy drops the sticky bit and takes the umask")]
+    #[test_case(0o2755, false ; "a copy drops the source's setgid bit")]
     #[test_case(0o555, true ; "a move of a read only directory")]
     #[test_case(0o1777, true ; "a move keeps the sticky bit")]
     fn a_copied_directory_ends_with_the_mode_of_its_kind_of_copy(mode: u32, preserve: bool) {
@@ -2120,6 +2188,28 @@ mod tests {
         fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// A directory created in a setgid directory inherits its setgid bit, and a
+    /// copy keeps it, like `cp -R`, so what is later created in the copy takes
+    /// the shared group. A file created there does not inherit it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_copied_directory_keeps_the_setgid_bit_its_parent_gives_it() {
+        let fx = TempDir::new("tasks_directory_setgid");
+        let shared = fx.join("shared");
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o2775)).unwrap();
+        let src = fx.join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("child"), b"x").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let errors = copy_one(&src, &shared.join("dst"), false);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(0o2000, mode_of(&shared.join("dst")) & 0o7000);
+        assert_eq!(0, mode_of(&shared.join("dst").join("child")) & 0o7000);
+    }
+
     /// A node is created with the umask applied, like any other entry, so a
     /// move puts the source's mode back afterwards.
     #[test_case(true ; "a move keeps the mode")]
@@ -2140,6 +2230,35 @@ mod tests {
             0o666 & umask_leaves(fx.path())
         };
         assert_eq!(expected, mode_of(&dst) & 0o7777);
+    }
+
+    /// A moved node gets the source's group before its mode, like a moved
+    /// file, so a group-writable FIFO is not writable by whichever group the
+    /// destination assigned. Needs a supplementary group to tell the two apart,
+    /// and proves nothing for a user without one. Linux only: macOS has no
+    /// `getgroups` in nix.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_moved_fifo_keeps_its_group() {
+        let primary = nix::unistd::getegid();
+        let Some(other) = nix::unistd::getgroups()
+            .unwrap()
+            .into_iter()
+            .find(|&group| group != primary)
+        else {
+            return;
+        };
+        let fx = TempDir::new("tasks_fifo_group");
+        let src = fx.join("fifo");
+        nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o660)).unwrap();
+        nix::unistd::chown(&src, None, Some(other)).unwrap();
+        let dst = fx.join("moved");
+
+        let errors = copy_one(&src, &dst, true);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        let gid = std::os::unix::fs::MetadataExt::gid(&fs::symlink_metadata(&dst).unwrap());
+        assert_eq!(other.as_raw(), gid);
     }
 
     /// `mv` clears setuid and setgid when it cannot carry the ownership over,
@@ -2458,6 +2577,42 @@ mod tests {
         );
     }
 
+    /// The copy returns through both of its directories, and each has to be
+    /// the one it left.
+    #[test_case(false ; "the source moved")]
+    #[test_case(true ; "the destination moved")]
+    fn a_copy_returns_only_to_the_parents_it_left(destination_moved: bool) {
+        let fx = TempDir::new("tasks_copy_reopen_pair");
+        for side in ["src", "dst"] {
+            fs::create_dir_all(fx.join(side).join("child")).unwrap();
+        }
+        fs::create_dir(fx.join("elsewhere")).unwrap();
+        let open = |side: &str| {
+            let parent = open_directory(CWD, &fx.join(side)).unwrap();
+            let child = open_directory(&parent, "child").unwrap();
+            (DirId::of(&parent).unwrap(), child)
+        };
+        let ((src_id, src), (dst_id, dst)) = (open("src"), open("dst"));
+        let child = Pair { src, dst };
+        let parent = Pair {
+            src: src_id,
+            dst: dst_id,
+        };
+        let reopened = child.reopen_parent(parent, "moved").unwrap();
+        assert_eq!(src_id, DirId::of(&reopened.src).unwrap());
+        assert_eq!(dst_id, DirId::of(&reopened.dst).unwrap());
+
+        let side = if destination_moved { "dst" } else { "src" };
+        fs::rename(
+            fx.join(side).join("child"),
+            fx.join("elsewhere").join("child"),
+        )
+        .unwrap();
+
+        let error = child.reopen_parent(parent, "moved").err().unwrap();
+        assert_eq!("moved", error.to_string());
+    }
+
     fn set_times(path: &Path, atime: i64, mtime: i64) {
         use nix::sys::stat::{UtimensatFlags, utimensat};
         utimensat(
@@ -2576,6 +2731,66 @@ mod tests {
         // Like `cp` without `-p`.
         assert_eq!(None, task.error_message());
         assert!(!getfacl(&new_path).contains("nobody"));
+    }
+
+    /// Gives `path` the user attributes `user.filectrl`, and `user.empty`
+    /// with an empty value. False where the filesystem has no user
+    /// attributes, for a test to skip.
+    fn set_user_attribute(path: &Path) -> bool {
+        let set = |name, value: &[u8]| rustix::fs::setxattr(path, name, value, XattrFlags::empty());
+        set("user.filectrl", b"kept").is_ok() && set("user.empty", b"").is_ok()
+    }
+
+    fn attribute(path: &Path, name: &str) -> Option<Vec<u8>> {
+        let mut value = Vec::with_capacity(64);
+        rustix::fs::getxattr(path, name, rustix::buffer::spare_capacity(&mut value)).ok()?;
+        Some(value)
+    }
+
+    fn user_attribute(path: &Path) -> Option<Vec<u8>> {
+        attribute(path, "user.filectrl")
+    }
+
+    /// Like `mv`, which keeps every attribute it can, not only the ACLs.
+    #[test_case(false ; "a file")]
+    #[test_case(true ; "a directory")]
+    fn a_move_keeps_the_extended_attributes(is_directory: bool) {
+        let fx = TempDir::new("tasks_move_xattr");
+        let old = fx.join("item");
+        if is_directory {
+            fs::create_dir(&old).unwrap();
+        } else {
+            fs::write(&old, b"data").unwrap();
+        }
+        fs::create_dir(fx.join("dest")).unwrap();
+        if !set_user_attribute(&old) {
+            eprintln!("skipped: no user extended attributes here");
+            return;
+        }
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), true, || {});
+
+        assert_eq!(None, task.error_message());
+        assert_eq!(Some(b"kept".to_vec()), user_attribute(&new_path));
+        assert_eq!(Some(Vec::new()), attribute(&new_path, "user.empty"));
+    }
+
+    #[test]
+    fn a_copy_does_not_keep_the_extended_attributes() {
+        let fx = TempDir::new("tasks_copy_xattr");
+        let old = fx.join("item");
+        fs::write(&old, b"data").unwrap();
+        fs::create_dir(fx.join("dest")).unwrap();
+        if !set_user_attribute(&old) {
+            eprintln!("skipped: no user extended attributes here");
+            return;
+        }
+
+        let (new_path, task) = paste_after(&old, &fx.join("dest"), false, || {});
+
+        // Like `cp` without `-p`.
+        assert_eq!(None, task.error_message());
+        assert_eq!(None, user_attribute(&new_path));
     }
 
     #[test]

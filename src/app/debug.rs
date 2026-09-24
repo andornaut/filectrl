@@ -22,7 +22,7 @@ fn debug_command(ch: char) -> Option<Command> {
         ),
         // Exercises display-width handling.
         '5' => Command::AlertInfo("Debug: unicode alert, こんにちは 🦀 café naïve 北京".into()),
-        '6' => Command::AlertWarn("No file selected".into()),
+        '6' => Command::AlertWarn("Cannot copy: nothing is selected".into()),
         '7' => Command::AlertError("Permission denied: /etc/hosts".into()),
         '8' => Command::AlertError(
             "Failed to rename \"foo.txt\" to \"bar.txt\": file already exists".into(),

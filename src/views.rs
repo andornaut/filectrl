@@ -105,6 +105,19 @@ pub(super) trait View: CommandHandler {
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>);
 }
 
+/// What the table lists, counted, for the views that report it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum ListingCount {
+    /// The directory's entries, `shown` of them in the table. The directory's
+    /// total is counted as it loads, by the status bar.
+    Directory { shown: usize },
+    /// Search results, `shown` of the `total` found.
+    Results { shown: usize, total: usize },
+    /// The bookmarks, which no count describes.
+    #[default]
+    Bookmarks,
+}
+
 /// Which listing the table is showing. Search and bookmarks are mutually
 /// exclusive. Every view with mode-dependent state must derive transitions
 /// from [`ListingMode::transition`] so the rules are written exactly once.

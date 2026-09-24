@@ -48,6 +48,11 @@ pub(super) struct TableView {
     /// Selection state captured at the start of a streamed load, applied once it
     /// completes (see `begin_directory`/`finish_directory`).
     pending_load: PendingLoad,
+    /// Whether input moved the cursor, or marked, while the current search
+    /// streamed in. The first result takes the cursor in walk order, so
+    /// unless the user chose that row, the finished search puts the cursor on
+    /// the top row.
+    search_cursor_chosen: bool,
 
     columns: Columns,
     double_click: DoubleClick,
@@ -81,6 +86,7 @@ impl TableView {
             drag_line: None,
             stream_generation: 0,
             pending_load: PendingLoad::default(),
+            search_cursor_chosen: false,
             columns: Columns::default(),
             double_click: DoubleClick::new(ui.double_click_interval_milliseconds),
             mapper: LineItemMap::default(),

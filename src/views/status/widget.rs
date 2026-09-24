@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{DateTime, Local};
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
@@ -47,18 +47,25 @@ fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, count: &str
 fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     let now = Local::now();
     spans.push(Span::styled(" Selected ", theme.status.label()));
-    let mut fields = account_fields(selected.owner(), selected.group());
-    fields.push((" Type:", kind_field(selected)));
+    let fields = selected_fields(selected, now);
+    let default_style = theme.status.detail();
+    let label_style = default_style.add_modifier(Modifier::BOLD);
+    spans.extend(to_entries(fields, default_style, label_style));
+}
+
+/// The type and a symlink's target come first: the line is clipped at the
+/// terminal's width, and they are what an 80-column terminal must still show.
+fn selected_fields(selected: &PathInfo, now: DateTime<Local>) -> Vec<(&'static str, String)> {
+    let mut fields = vec![(" Type:", kind_field(selected))];
     fields.extend(target_field(selected));
+    fields.extend(account_fields(selected.owner(), selected.group()));
     if let Some(accessed) = selected.accessed(now) {
         fields.push((" Accessed:", accessed));
     }
     if let Some(created) = selected.created(now) {
         fields.push((" Created:", created));
     }
-    let default_style = theme.status.detail();
-    let label_style = default_style.add_modifier(Modifier::BOLD);
-    spans.extend(to_entries(fields, default_style, label_style));
+    fields
 }
 
 /// Read from the user and group databases, which can hold any text.
@@ -159,7 +166,7 @@ fn to_entries(
 mod tests {
     use test_case::test_case;
 
-    use super::{account_fields, item_count, kind_field, target_field};
+    use super::{account_fields, item_count, kind_field, selected_fields, target_field};
     use crate::file_system::path_info::PathInfo;
 
     #[test_case(120, Some(3) => "3 of 120" ; "fewer shown than read")]
@@ -226,6 +233,22 @@ mod tests {
             target_field(&PathInfo::try_from(&link).unwrap())
         );
         assert_eq!(None, target_field(&PathInfo::with_mode(SYMLINK)));
+    }
+
+    #[test]
+    fn the_type_and_target_lead_the_selected_fields() {
+        use std::os::unix::fs::symlink;
+
+        let fx = crate::test_support::TempDir::new("status_order");
+        let link = fx.join("link");
+        symlink("target", &link).unwrap();
+
+        let labels: Vec<_> =
+            selected_fields(&PathInfo::try_from(&link).unwrap(), chrono::Local::now())
+                .into_iter()
+                .map(|(label, _)| label)
+                .collect();
+        assert_eq!([" Type:", " -> ", " Owner:", " Group:"], labels[..4]);
     }
 
     #[test]

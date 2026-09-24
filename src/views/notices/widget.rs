@@ -27,7 +27,7 @@ const RANGE_PREFIX: &str = "[Range] ";
 const MOVE_PREFIX: &str = "[Cut] ";
 const FILTER_PREFIX: &str = "[Filtered] ";
 const SEARCH_PREFIX: &str = "[Searching...] ";
-const SEARCH_CANCELLED_PREFIX: &str = "Cancelled: [Searching] ";
+const SEARCH_CANCELLED_PREFIX: &str = "[Search cancelled] ";
 
 // Number of terminal columns per unit of search-loading indicator speed.
 // The indicator advances `width / SEARCH_LOADING_SPEED_DIVISOR` cells per
@@ -91,11 +91,12 @@ pub(super) fn clipboard_widget<'a>(
         ClipboardEntry::Move(_) => theme.cut(),
     };
 
-    let detail = if paths.len() > 1 {
-        pluralize_items(paths.len())
-    } else {
-        let path = crate::file_system::path_info::visible_path(&paths[0].path);
-        detail_after(prefix, &path, width)
+    let detail = match paths {
+        [only] => {
+            let path = crate::file_system::path_info::visible_path(&only.path);
+            detail_after(prefix, &path, width)
+        }
+        _ => pluralize_items(paths.len()),
     };
 
     let left = Line::from(vec![
@@ -130,7 +131,10 @@ pub(super) fn filter_widget<'a>(
 ) -> Block<'a> {
     let left = Line::from(vec![
         FILTER_PREFIX.into(),
-        Span::styled(filter, theme.filter().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            crate::visible(filter),
+            theme.filter().add_modifier(Modifier::BOLD),
+        ),
     ]);
     create_notice_block(left, theme.filter(), width, hint)
 }
@@ -228,12 +232,12 @@ pub(super) fn operations_widget<'a>(
 fn search_message_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
-    prefix: &'a str,
+    prefix: String,
     query: &str,
     hint: &'a str,
 ) -> Block<'a> {
     let style = theme.search();
-    let query = detail_after(prefix, query, width);
+    let query = detail_after(&prefix, &crate::visible(query), width);
     let left = Line::from(vec![
         prefix.into(),
         Span::styled(query, style.add_modifier(Modifier::BOLD)),
@@ -247,7 +251,7 @@ pub(super) fn search_widget<'a>(
     query: &str,
     cancel_hint: &'a str,
 ) -> Block<'a> {
-    search_message_widget(theme, width, SEARCH_PREFIX, query, cancel_hint)
+    search_message_widget(theme, width, SEARCH_PREFIX.to_string(), query, cancel_hint)
 }
 
 pub(super) fn search_cancelled_widget<'a>(
@@ -256,7 +260,32 @@ pub(super) fn search_cancelled_widget<'a>(
     query: &str,
     hint: &'a str,
 ) -> Block<'a> {
-    search_message_widget(theme, width, SEARCH_CANCELLED_PREFIX, query, hint)
+    search_message_widget(
+        theme,
+        width,
+        SEARCH_CANCELLED_PREFIX.to_string(),
+        query,
+        hint,
+    )
+}
+
+/// A search that ran to the end, named with how many results it listed. The
+/// count leads, so a query too long for the width is what gets cut.
+pub(super) fn search_finished_widget<'a>(
+    theme: &NoticeTheme,
+    width: u16,
+    query: &str,
+    results: usize,
+    hint: &'a str,
+) -> Block<'a> {
+    search_message_widget(theme, width, search_finished_prefix(results), query, hint)
+}
+
+fn search_finished_prefix(results: usize) -> String {
+    match results {
+        1 => "[Search: 1 result] ".to_string(),
+        _ => format!("[Search: {results} results] "),
+    }
 }
 
 pub(super) fn search_loading_widget<'a>(
@@ -304,17 +333,16 @@ mod tests {
 
     use test_case::test_case;
 
-    use super::{marked_widget, operation_detail, search_loading_position};
+    use super::{
+        clipboard_widget, filter_widget, marked_widget, operation_detail, search_cancelled_widget,
+        search_finished_prefix, search_loading_position, search_widget,
+    };
     use crate::{
-        app::config::Config,
+        app::{clipboard::ClipboardEntry, config::Config},
         command::progress::{TaskKind, Transfer},
     };
 
-    #[test_case(false => "[Selected] 3 items" ; "marks")]
-    #[test_case(true => "[Range] 3 items" ; "a range")]
-    fn the_marked_notice_names_range_mode(range: bool) -> String {
-        Config::init_test();
-        let block = marked_widget(&Config::global().theme.table, 80, 3, range, "");
+    fn rendered(block: ratatui::widgets::Block) -> String {
         let area = ratatui::layout::Rect::new(0, 0, 80, 1);
         let mut buffer = ratatui::buffer::Buffer::empty(area);
         ratatui::widgets::Widget::render(block, area, &mut buffer);
@@ -323,6 +351,65 @@ mod tests {
             .collect::<String>()
             .trim()
             .to_string()
+    }
+
+    #[test_case(false => "[Selected] 3 items" ; "marks")]
+    #[test_case(true => "[Range] 3 items" ; "a range")]
+    fn the_marked_notice_names_range_mode(range: bool) -> String {
+        Config::init_test();
+        rendered(marked_widget(
+            &Config::global().theme.table,
+            80,
+            3,
+            range,
+            "",
+        ))
+    }
+
+    /// Typed text reaches the notices as typed, so a bidi override in a filter
+    /// or a search would reorder the text drawn after it. The notices spell it
+    /// out, as every other shown text is.
+    #[test]
+    fn typed_text_in_the_notices_is_spelled_out() {
+        Config::init_test();
+        let theme = &Config::global().theme.notice;
+        let typed = "a\u{202e}b";
+
+        for text in [
+            rendered(filter_widget(theme, 80, typed, "")),
+            rendered(search_widget(theme, 80, typed, "")),
+            rendered(search_cancelled_widget(theme, 80, typed, "")),
+        ] {
+            assert!(text.contains("a\\u{202e}b"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_cancelled_search_is_labelled_as_one() {
+        Config::init_test();
+        let theme = &Config::global().theme.notice;
+
+        assert_eq!(
+            "[Search cancelled] q",
+            rendered(search_cancelled_widget(theme, 80, "q", ""))
+        );
+    }
+
+    /// No action builds an empty entry, but the notice reads the entry it is
+    /// given rather than assuming a first path.
+    #[test]
+    fn an_empty_clipboard_entry_renders_as_a_count() {
+        Config::init_test();
+        let entry = ClipboardEntry::Copy(Vec::new());
+
+        let text = rendered(clipboard_widget(
+            &Config::global().theme.clipboard,
+            80,
+            &entry,
+            "",
+        ));
+
+        assert!(text.ends_with("0 items"), "{text}");
     }
 
     // Width 80 gives a travel of 77 cells at 2 cells per 80 ms step, so the
@@ -388,5 +475,12 @@ mod tests {
             path: "/home/developer/projects/old/cache/data.bin".into(),
         };
         assert_eq!(expected, operation_detail(&kind, width));
+    }
+
+    #[test_case(0 => "[Search: 0 results] " ; "none")]
+    #[test_case(1 => "[Search: 1 result] " ; "one")]
+    #[test_case(42 => "[Search: 42 results] " ; "several")]
+    fn a_finished_search_counts_its_results(results: usize) -> String {
+        search_finished_prefix(results)
     }
 }

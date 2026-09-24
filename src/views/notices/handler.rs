@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use super::{NoticesView, notice::Notice};
+use super::{NoticesView, SearchState, notice::Notice};
 use crate::{
     app::config::{Config, keybindings::Action},
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
@@ -36,15 +36,15 @@ impl CommandHandler for NoticesView {
             Command::StartSearch(query) => {
                 self.search_query = Some(query.clone());
                 self.search_started_at = Some(Instant::now());
-                self.search_cancelled = false;
+                self.search_state = SearchState::Running;
                 // Search results are unfiltered (`start_search` clears the
                 // filter), so the notice has to clear with it.
                 self.filter.clear();
                 CommandResult::NotHandled
             }
             Command::CancelSearch => {
-                // Keep the search notice visible; relabel it to "Cancelled: ...".
-                self.search_cancelled = true;
+                // Keep the search notice visible; relabel it "[Search cancelled]".
+                self.search_state = SearchState::Cancelled;
                 self.search_started_at = None;
                 CommandResult::Handled
             }
@@ -55,9 +55,12 @@ impl CommandHandler for NoticesView {
             Command::ExitedSearch { generation } => {
                 // Ignore exits from superseded searches (the current search
                 // is still running). For the current search: a cancelled exit
-                // keeps the relabeled notice, a natural one clears it.
-                if *generation == self.search_generation && !self.search_cancelled {
-                    self.search_query = None;
+                // keeps the relabeled notice, a natural one relabels it with
+                // the result count, and both stay until the listing changes.
+                if *generation == self.search_generation
+                    && self.search_state == SearchState::Running
+                {
+                    self.search_state = SearchState::Finished;
                     self.search_started_at = None;
                 }
                 CommandResult::Handled
@@ -99,13 +102,15 @@ impl CommandHandler for NoticesView {
                 if *mark_count == self.mark_count && *range == self.range {
                     return CommandResult::Handled;
                 }
-                let count_changed = *mark_count != self.mark_count;
+                let marked_more = *mark_count > self.mark_count;
                 self.mark_count = *mark_count;
                 self.range = *range;
-                // Marks and clipboard are mutually exclusive. Fires only on a
-                // mark-count change: a clipboard set while marks are held
-                // (copying marked files) must survive plain cursor movement.
-                if count_changed && *mark_count > 0 && self.clipboard_entry.is_some() {
+                // Marking clears the clipboard. Fires only when the count
+                // grows: a clipboard set while marks are held (copying marked
+                // files) must survive plain cursor movement, and a reload
+                // that drops a marked entry which is gone is not the user
+                // marking anything.
+                if marked_more && self.clipboard_entry.is_some() {
                     Command::SetClipboardEntry(None).into()
                 } else {
                     CommandResult::Handled
@@ -147,6 +152,7 @@ impl CommandHandler for NoticesView {
                         | Notice::Marked { .. }
                         | Notice::Search(_)
                         | Notice::SearchCancelled(_)
+                        | Notice::SearchFinished { .. }
                         | Notice::SearchLoading,
                     ) => Command::ResetView.into(),
                     _ => CommandResult::Handled,

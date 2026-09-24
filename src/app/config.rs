@@ -257,13 +257,14 @@ impl Config {
     ) -> Result<Self> {
         // Precedence (low → high): built-in defaults → user config file →
         // include_files from the user config → CLI --include paths.
+        // Each file is validated on its own before it is merged, so that a
+        // mistake names the file it is in.
         let defaults = merge_default_config()?;
-        let mut value = merge_toml_values(defaults.clone(), parse_toml(config_file, content)?);
-        value = Self::merge_config_includes(config_file, value, config_dir)?;
-        value = merge_include_paths(config_file, value, include_paths)?;
-        // Reject typo'd / unknown keys before deserializing so a broken config
-        // fails loudly instead of silently falling back to defaults.
-        reject_unknown_keys(&value, &defaults, "")?;
+        let own = parse_toml(config_file, content)?;
+        validate_file(config_file, &own, &defaults)?;
+        let mut value = merge_toml_values(defaults.clone(), own);
+        value = Self::merge_config_includes(config_file, value, config_dir, &defaults)?;
+        value = merge_include_paths(config_file, value, include_paths, &defaults)?;
         Self::parse_value(env, value, config_dir)
     }
 
@@ -273,9 +274,10 @@ impl Config {
         config_file: Option<&Path>,
         value: Value,
         config_dir: &Path,
+        defaults: &Value,
     ) -> Result<Value> {
         let includes = Self::resolve_include_files(&value, config_dir)?;
-        merge_include_paths(config_file, value, &includes)
+        merge_include_paths(config_file, value, &includes, defaults)
     }
 
     /// The directory containing the resolved config file. Bookmarks live in a
@@ -319,7 +321,8 @@ impl Config {
     fn parse_value(env: RuntimeEnv<'_>, value: Value, config_dir: &Path) -> Result<Self> {
         let raw: RawConfig = value
             .try_into()
-            .map_err(|error| anyhow!("Failed to deserialize the config: {error}"))?;
+            // The toml error's message ends with a newline.
+            .map_err(|error| deserialize_error(None, &error))?;
 
         validate_file_system(&raw.file_system)?;
 
@@ -430,7 +433,8 @@ fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
 /// symlinked into a dotfiles repository is left alone rather than replaced or
 /// written through to its target. A file it replaces is renamed over only once
 /// the new content is written in full beside it, so a failed write leaves the
-/// old file in place.
+/// old file in place, and the new file keeps the old one's permission bits, so
+/// a private config does not become readable by others.
 fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
     let parent = path.parent().ok_or_else(|| {
         anyhow!(
@@ -442,7 +446,19 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
         .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
     // A failed lookup leaves the path to `create_new`, which reports whatever
     // is there.
-    let Some(metadata) = path.symlink_metadata().ok().filter(|_| force) else {
+    let existing = path.symlink_metadata().ok();
+    // Refused with or without `force`, so the message never suggests a flag
+    // that would be refused too.
+    if existing
+        .as_ref()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(anyhow!(
+            "Cannot write {}: it is a symbolic link",
+            path.display()
+        ));
+    }
+    let Some(metadata) = existing.filter(|_| force) else {
         return create_and_write(path, content).map_err(|error| {
             if error.kind() == ErrorKind::AlreadyExists {
                 anyhow!(
@@ -454,17 +470,15 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
             }
         });
     };
-    if metadata.file_type().is_symlink() {
-        return Err(anyhow!(
-            "Cannot write {}: it is a symbolic link",
-            path.display()
-        ));
-    }
     let mut staged = path.as_os_str().to_owned();
     staged.push(format!(".{}.tmp", std::process::id()));
     let staged = PathBuf::from(staged);
     let failed = |error: std::io::Error| anyhow!("Failed to replace {}: {error}", path.display());
-    let written = create_and_write(&staged, content);
+    let written = create_and_write(&staged, content).and_then(|()| {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        fs::set_permissions(&staged, fs::Permissions::from_mode(mode))
+    });
     // Removed only once this call created it: a failed exclusive create means
     // whatever holds the name belongs to someone else.
     if let Err(error) = written.and_then(|()| fs::rename(&staged, path)) {
@@ -499,10 +513,11 @@ fn merge_include_paths(
     config_file: Option<&Path>,
     mut value: Value,
     include_paths: &[PathBuf],
+    defaults: &Value,
 ) -> Result<Value> {
     let mut visited: HashSet<PathBuf> = config_file.map(canonical_or_raw).into_iter().collect();
     for path in include_paths {
-        value = merge_include_file(value, path, &mut visited)?;
+        value = merge_include_file(value, path, &mut visited, defaults)?;
     }
     Ok(value)
 }
@@ -511,7 +526,12 @@ fn canonical_or_raw(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Value> {
+fn merge_include_file(
+    value: Value,
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    defaults: &Value,
+) -> Result<Value> {
     // Canonicalize so the same file referenced via different paths is detected.
     // Fall back to the raw path if canonicalization fails: a missing file or
     // permission error will then surface from `read_regular_file` below with
@@ -529,6 +549,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     let content =
         read_regular_file(path).map_err(|failure| failure.describe(INCLUDE_FILE, path))?;
     let include_value = parse_toml(Some(path), &content)?;
+    validate_file(Some(path), &include_value, defaults)?;
 
     // Resolve this file's own include_files from the directory of the path as
     // named, not of a symlink's target, the same rule the config file follows.
@@ -543,7 +564,7 @@ fn merge_include_file(value: Value, path: &Path, visited: &mut HashSet<PathBuf>)
     // that requested them).
     let mut value = merge_toml_values(value, include_value);
     for nested_path in &nested {
-        value = merge_include_file(value, nested_path, visited)?;
+        value = merge_include_file(value, nested_path, visited, defaults)?;
     }
     Ok(value)
 }
@@ -595,6 +616,70 @@ fn takes_style_keys(schema: &toml::map::Map<String, Value>) -> bool {
 /// every other unrecognized key is an error.
 fn is_theme_path(path: &str) -> bool {
     matches!(path.split('.').next(), Some("theme" | "theme256"))
+}
+
+/// Checks the keys, types and 256-color indexes of one file's own `value`
+/// against the embedded `defaults`, before it is merged with any other file,
+/// so that a mistake says which file it is in. `file` is `None` for content
+/// read from no file. Types are checked with the defaults underneath, since a
+/// file need not set every key; a value that fails there fails the same way
+/// in the merged config.
+fn validate_file(file: Option<&Path>, value: &Value, defaults: &Value) -> Result<()> {
+    let located = |error: anyhow::Error| match file {
+        Some(file) => anyhow!("{error} in {}", file.display()),
+        None => error,
+    };
+    // Unknown keys first, so a typo fails loudly instead of falling back to
+    // the default the typo left in place.
+    reject_unknown_keys(value, defaults, "").map_err(located)?;
+    if let Some(theme256) = value.get("theme256") {
+        reject_unindexed_colors(theme256, "theme256").map_err(located)?;
+    }
+    merge_toml_values(defaults.clone(), value.clone())
+        .try_into::<RawConfig>()
+        .map_err(|error| deserialize_error(file, &error))?;
+    Ok(())
+}
+
+/// A deserialization failure, naming the file it came from when there is one.
+/// The toml error's message ends with a newline, which is trimmed.
+fn deserialize_error(file: Option<&Path>, error: &toml::de::Error) -> anyhow::Error {
+    let message = error.to_string();
+    let message = message.trim_end();
+    match file {
+        Some(file) => anyhow!("Failed to deserialize {}: {message}", file.display()),
+        None => anyhow!("Failed to deserialize the config: {message}"),
+    }
+}
+
+/// Rejects an `fg` or `bg` under `[theme256]` that is not a decimal index
+/// from 0 to 255, or empty (inherited). That theme is the one read on a
+/// terminal without truecolor, which may not render an RGB color, and a named
+/// color is left to the terminal's palette. `path` is the dotted key path of
+/// `value`.
+fn reject_unindexed_colors(value: &Value, path: &str) -> Result<()> {
+    let Value::Table(table) = value else {
+        return Ok(());
+    };
+    for (key, child) in table {
+        let key_path = format!("{path}.{key}");
+        match (key.as_str(), child) {
+            ("fg" | "bg", Value::String(color)) if !color.is_empty() && !is_color_index(color) => {
+                return Err(anyhow!(
+                    "{key_path}: {color:?} is not a 256-color index (0-255)"
+                ));
+            }
+            (_, Value::Table(_)) => reject_unindexed_colors(child, &key_path)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Whether `color` is written as a 256-color index: decimal digits only (no
+/// sign), from 0 to 255.
+fn is_color_index(color: &str) -> bool {
+    color.bytes().all(|byte| byte.is_ascii_digit()) && color.parse::<u8>().is_ok()
 }
 
 /// Recursively rejects any key in `value` that is absent from the embedded
@@ -717,6 +802,35 @@ open_directory = "alacritty --working-directory %s"
         }
     }
 
+    /// `[theme256]` takes decimal indexes only, so a hex or named color there
+    /// fails the load and names the field.
+    #[test_case("#ff0000" ; "hex")]
+    #[test_case("Red" ; "named")]
+    #[test_case("256" ; "past the last index")]
+    #[test_case("+5" ; "a sign")]
+    fn a_theme256_color_that_is_not_an_index_is_refused(color: &str) {
+        let error = parse_err(&format!("[theme256.table.body]\nfg = {color:?}\n"));
+
+        assert_eq!(
+            format!("theme256.table.body.fg: {color:?} is not a 256-color index (0-255)"),
+            error
+        );
+    }
+
+    #[test_case("0" ; "the first index")]
+    #[test_case("255" ; "the last index")]
+    #[test_case("" ; "inherited")]
+    fn a_theme256_index_is_accepted(color: &str) {
+        Config::parse(
+            RuntimeEnv::default(),
+            None,
+            &format!("[theme256.table.body]\nbg = {color:?}\n"),
+            &inert_dir(),
+            &[],
+        )
+        .unwrap();
+    }
+
     /// Both files are embedded source rather than a re-serialized merge, so
     /// their inline documentation survives being written out, and each must
     /// round-trip through the loader on its own.
@@ -725,6 +839,34 @@ open_directory = "alacritty --working-directory %s"
     fn a_written_default_parses_and_keeps_its_comments(content: &str) {
         Config::parse(RuntimeEnv::default(), None, content, &inert_dir(), &[]).unwrap();
         assert!(content.contains('#'), "comments should be preserved");
+    }
+
+    /// A bundled theme is loaded with `--include`, so each must parse on its
+    /// own as the default theme does.
+    #[test_case(include_str!("../../themes/42km.toml") ; "42km")]
+    #[test_case(include_str!("../../themes/ibm1970.toml") ; "ibm1970")]
+    fn a_bundled_theme_parses(content: &str) {
+        Config::parse(RuntimeEnv::default(), None, content, &inert_dir(), &[]).unwrap();
+    }
+
+    /// The ibm1970 theme is the default theme, kept as a file so it can be
+    /// included by name after another theme.
+    #[test]
+    fn the_ibm1970_theme_is_the_default_theme() {
+        assert_eq!(DEFAULT_THEME, include_str!("../../themes/ibm1970.toml"));
+    }
+
+    /// A deserialization error ends with its message, not with the newline
+    /// the toml crate's message carries.
+    #[test]
+    fn a_type_error_has_no_trailing_newline() {
+        let error = parse_err("[file_system]\nsearch_max_depth = \"deep\"\n");
+
+        assert!(
+            error.starts_with("Failed to deserialize the config:"),
+            "{error}"
+        );
+        assert_eq!(error.trim_end(), error);
     }
 
     /// The two write flags produce two files that do not restate each other:
@@ -757,11 +899,8 @@ open_directory = "alacritty --working-directory %s"
     }
 
     #[test_case("[theme.alert]\nbg = \"#000000\"\nmodifiers = [\"bold\"]\n" ; "nested theme table")]
-    #[test_case("[theme256.alert]\nbg = \"#000000\"\n" ; "nested theme256 table")]
+    #[test_case("[theme256.alert]\nbg = \"0\"\n" ; "nested theme256 table")]
     #[test_case("[theme]\nfg = \"#ffffff\"\n" ; "theme root")]
-    // The default leaves this leaf empty, so only its being a leaf says it is
-    // a style.
-    #[test_case("[theme.file_type.missing]\nfg = \"Red\"\n" ; "a leaf the default leaves empty")]
     fn style_property_absent_from_default_is_accepted(toml: &str) {
         // The default `[theme.alert]` lists only `fg`; adding `bg`/`modifiers`
         // must not be mistaken for an unknown key.
@@ -813,7 +952,7 @@ open_directory = "alacritty --working-directory %s"
 
     #[test]
     fn the_theme_read_is_the_one_for_the_terminals_color_support() {
-        let toml = "[theme]\nfg = \"#010203\"\n[theme256]\nfg = \"#040506\"\n";
+        let toml = "[theme]\nfg = \"#010203\"\n[theme256]\nfg = \"4\"\n";
         let parse = |is_truecolor| {
             let env = RuntimeEnv {
                 is_truecolor,
@@ -823,7 +962,7 @@ open_directory = "alacritty --working-directory %s"
         };
 
         assert_eq!(Some(Color::Rgb(1, 2, 3)), parse(true).theme().base().fg);
-        assert_eq!(Some(Color::Rgb(4, 5, 6)), parse(false).theme().base().fg);
+        assert_eq!(Some(Color::Indexed(4)), parse(false).theme().base().fg);
     }
 
     #[test]
@@ -838,9 +977,13 @@ open_directory = "alacritty --working-directory %s"
         assert_eq!(expected, config.openers.open_file);
     }
 
-    #[test_case(true, Some(Color::Red) ; "applied when they take precedence")]
-    #[test_case(false, Some(Color::Rgb(1, 2, 3)) ; "ignored otherwise")]
-    fn ls_colors_reach_both_themes(take_precedence: bool, expected: Option<Color>) {
+    #[test_case(true, Some(Color::Red), Some(Color::Red) ; "applied when they take precedence")]
+    #[test_case(false, Some(Color::Rgb(1, 2, 3)), Some(Color::Indexed(5)) ; "ignored otherwise")]
+    fn ls_colors_reach_both_themes(
+        take_precedence: bool,
+        expected: Option<Color>,
+        expected256: Option<Color>,
+    ) {
         let env = RuntimeEnv {
             is_truecolor: false,
             ls_colors: Some("di=31"),
@@ -849,12 +992,12 @@ open_directory = "alacritty --working-directory %s"
             "[theme.file_type]\nls_colors_take_precedence = {take_precedence}\n\
              [theme.file_type.directory]\nfg = \"#010203\"\n\
              [theme256.file_type]\nls_colors_take_precedence = {take_precedence}\n\
-             [theme256.file_type.directory]\nfg = \"#010203\"\n"
+             [theme256.file_type.directory]\nfg = \"5\"\n"
         );
         let config = Config::parse(env, None, &toml, &inert_dir(), &[]).unwrap();
 
         assert_eq!(expected, config.theme.file_type.directory().fg);
-        assert_eq!(expected, config.theme256.file_type.directory().fg);
+        assert_eq!(expected256, config.theme256.file_type.directory().fg);
     }
 
     // ── writing the defaults ────────────────────────────────────────────────
@@ -924,6 +1067,25 @@ open_directory = "alacritty --working-directory %s"
         assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
     }
 
+    /// A private config stays private: the replacement is created under the
+    /// umask, which would otherwise leave it readable by others.
+    #[test]
+    fn force_keeps_the_replaced_files_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("config_force_mode");
+        let path = dir.join("config.toml");
+        fs::write(&path, b"# hand written\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        Config::write_default(Some(path.clone()), true).unwrap();
+
+        assert_eq!(
+            0o600,
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777
+        );
+    }
+
     #[test]
     fn writing_a_default_refuses_to_follow_a_symlink() {
         let dir = TempDir::new("config_symlink");
@@ -934,11 +1096,15 @@ open_directory = "alacritty --working-directory %s"
         // file to refuse, not one to write through to its target.
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        let error = Config::write_default(Some(link), false)
+        let error = Config::write_default(Some(link.clone()), false)
             .expect_err("a symlink must not be written through")
             .to_string();
 
-        assert!(error.contains("already exists; pass --force"), "{error}");
+        // Not "pass --force", which refuses a symlink too.
+        assert_eq!(
+            format!("Cannot write {}: it is a symbolic link", link.display()),
+            error
+        );
         assert!(!target.exists());
     }
 
@@ -1375,6 +1541,45 @@ open_directory = "alacritty --working-directory %s"
         let bad = dir.path().canonicalize().unwrap().join("bad.toml");
         let expected = format!("Failed to parse {}: ", bad.display());
         assert!(error.starts_with(&expected), "{error}");
+    }
+
+    /// Each file is validated before the merge, so a mistake names the file
+    /// it is in: the config itself, or the second of two includes.
+    #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in the config")]
+    #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in an include")]
+    #[test_case(false, "[theme256.table.body]\nfg = \"#ff0000\"\n" => "theme256.table.body.fg: \"#ff0000\" is not a 256-color index (0-255) in {}" ; "a hex color under theme256 in an include")]
+    #[test_case(false, "[file_system]\nsearch_max_depth = \"deep\"\n" => "Failed to deserialize {}: " ; "a type error in an include")]
+    fn a_mistake_names_the_file_it_is_in(in_config: bool, mistake: &str) -> String {
+        let dir = TempDir::new("config_mistake_names_file");
+        let config = dir.join("config.toml");
+        let includes = "include_files = [\"good.toml\", \"bad.toml\"]\n";
+        let config_content = if in_config {
+            format!("{includes}{mistake}")
+        } else {
+            includes.to_string()
+        };
+        fs::write(&config, config_content).unwrap();
+        fs::write(dir.join("good.toml"), "log_level = \"warn\"\n").unwrap();
+        fs::write(dir.join("bad.toml"), if in_config { "" } else { mistake }).unwrap();
+
+        let error = load_err(Some(config.clone()), &[]);
+
+        // Includes resolve from the canonical config directory, which differs
+        // where the temporary directory is reached through a symlink (macOS).
+        let named = if in_config {
+            config
+        } else {
+            dir.path().canonicalize().unwrap().join("bad.toml")
+        };
+        let named = named.display().to_string();
+        // Only the start of a type error is fixed; the rest is the toml
+        // crate's.
+        match error.split_once(&named) {
+            Some((before, after)) if after.is_empty() || after.starts_with(": ") => {
+                format!("{before}{{}}{}", if after.is_empty() { "" } else { ": " })
+            }
+            _ => error,
+        }
     }
 
     #[test]

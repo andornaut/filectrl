@@ -9,9 +9,7 @@ use std::{
 };
 
 use super::{
-    TaskCommand,
-    copy::{CopySettings, copy_with_progress, prepare_destination},
-    finalize, finish_cross_device_move,
+    TaskCommand, copy_to, move_across_devices,
     sys::{AtFlags, CWD, fstatat},
     validate::validate_paths,
     walk::DirId,
@@ -98,10 +96,10 @@ pub(super) fn destination(
     (fx, src, dst, active, token)
 }
 
-/// Pastes `old` into `dest` the way the worker does, from a selection made
-/// before `change` runs: a copy, or the cross-device arm of
-/// `run_move_task`, which removes what it copied. Returns the destination
-/// and the finished task.
+/// Pastes `old` into `dest` through the worker's own code, from a selection
+/// made before `change` runs: a copy, or the cross-device arm of
+/// `run_move_task`, which removes what it copied, whatever devices the two
+/// are on. Returns the destination and the finished task.
 ///
 /// The paste runs on its own thread under a deadline, so a copy that never
 /// ends fails the test rather than hanging it; the task is cancelled before
@@ -126,13 +124,30 @@ pub(super) fn paste_after_unless(
     change: impl FnOnce(),
     runaway: impl Fn() -> bool,
 ) -> (PathBuf, Task) {
+    transfer(old, dest, is_move, false, change, runaway)
+}
+
+/// `paste_after` with the replacement of what holds the name already granted,
+/// as a conflict answer grants it.
+pub(super) fn paste_over(old: &Path, dest: &Path, is_move: bool) -> (PathBuf, Task) {
+    transfer(old, dest, is_move, true, || {}, || false)
+}
+
+fn transfer(
+    old: &Path,
+    dest: &Path,
+    is_move: bool,
+    overwrite: bool,
+    change: impl FnOnce(),
+    runaway: impl Fn() -> bool,
+) -> (PathBuf, Task) {
     const DEADLINE: Duration = Duration::from_secs(10);
     const POLL: Duration = Duration::from_millis(5);
 
     let verb = if is_move { "move" } else { "copy" };
     let path = PathInfo::try_from(old).unwrap();
     let dest = PathInfo::try_from(dest).unwrap();
-    let (old_path, new_path) = validate_paths(&path, &dest, verb, false).ok().unwrap();
+    let (old_path, new_path) = validate_paths(&path, &dest, verb, overwrite).ok().unwrap();
     change();
     let (tx, rx) = mpsc::channel();
     let (active, _, token) = ActiveTask::new(
@@ -143,28 +158,15 @@ pub(super) fn paste_after_unless(
         }),
         1,
     );
-    let (active, source) =
-        prepare_destination(active, verb, &old_path, &new_path, false, path.mode()).unwrap();
     let (done_tx, done_rx) = mpsc::channel();
     let destination = new_path.clone();
     let worker = std::thread::spawn(move || {
-        if let Some((active, outcome)) = copy_with_progress(
-            &old_path,
-            &destination,
-            active,
-            source,
-            &path,
-            CopySettings {
-                preserve: is_move,
-                conflicts: None,
-            },
-        ) {
-            if is_move {
-                finish_cross_device_move(active, outcome, &old_path, path.is_directory());
-            } else {
-                finalize(active, outcome.errors);
-            }
-        }
+        let transfer = if is_move {
+            move_across_devices
+        } else {
+            copy_to
+        };
+        transfer(active, &old_path, &destination, &path, overwrite, None);
         let _ = done_tx.send(());
     });
     let started = std::time::Instant::now();

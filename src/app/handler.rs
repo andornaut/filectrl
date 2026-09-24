@@ -25,16 +25,12 @@ impl CommandHandler for Handlers {
                 }
                 CommandResult::Handled
             }
-            Command::OpenPrompt(kind) => {
-                if matches!(kind, PromptAction::Delete(_)) {
-                    // The derived SetClipboardEntry(None) re-enters the arm
-                    // above, which performs the actual clear (and surfaces any
-                    // error). Don't also clear inline here, or it would clear
-                    // twice and swallow the first error.
-                    return Command::SetClipboardEntry(None).into();
-                }
-                CommandResult::NotHandled
-            }
+            // A confirmed delete clears the clipboard, which may name the
+            // entries it removes; declining the prompt leaves it alone. The
+            // derived SetClipboardEntry(None) re-enters the arm above, which
+            // performs the actual clear (and surfaces any error), so this arm
+            // does not also clear inline.
+            Command::ConfirmDelete => CommandResult::from(Command::SetClipboardEntry(None)),
             Command::Paste(dest) => match self.clipboard.get_clipboard_entry() {
                 Ok(Some((entry, true))) => entry.into_paste(dest.clone()).into(),
                 Ok(Some((entry, false))) => Command::OpenPrompt(PromptAction::ConfirmPaste {
@@ -42,13 +38,7 @@ impl CommandHandler for Handlers {
                     dest: dest.clone(),
                 })
                 .into(),
-                // Nothing to paste and no system clipboard to read: an entry
-                // copied in another window would be unreachable here, so warn
-                // rather than surprise the user with a silent no-op.
-                Ok(None) if !self.clipboard.is_available() => {
-                    Command::AlertWarn("Cannot paste: no system clipboard available".into()).into()
-                }
-                Ok(None) => CommandResult::Handled,
+                Ok(None) => nothing_to_paste(self.clipboard.is_available()).into(),
                 Err(error) => {
                     Command::AlertWarn(format!("Failed to read the clipboard: {error:#}")).into()
                 }
@@ -80,7 +70,13 @@ impl CommandHandler for Handlers {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::CancelTask) => Command::CancelTask.into(),
-            Some(Action::Quit) => Command::Quit.into(),
+            // Quitting ends the worker, and with it any file operation part
+            // way through, so that is confirmed first. A signal still quits
+            // at once: it does not come through here.
+            Some(Action::Quit) => match self.file_system.task_count() {
+                0 => Command::Quit.into(),
+                tasks => Command::OpenPrompt(PromptAction::ConfirmQuit(tasks)).into(),
+            },
             // Closing help is all the key does there, which RootView handles:
             // a reset would also drop the marks, filter and clipboard entry
             // the help screen was covering.
@@ -91,6 +87,21 @@ impl CommandHandler for Handlers {
     }
 }
 
+/// The warning for a paste that found no entry: the clipboard is empty or
+/// holds text another program put there. Without a system clipboard, an entry
+/// copied in another window is unreachable, which is the more useful thing to
+/// say.
+fn nothing_to_paste(system_clipboard: bool) -> Command {
+    Command::AlertWarn(
+        if system_clipboard {
+            "Cannot paste: nothing has been copied or cut"
+        } else {
+            "Cannot paste: no system clipboard available"
+        }
+        .into(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
@@ -98,9 +109,12 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
-    use crate::app::{
-        claims::{Fixture, test_handlers},
-        clipboard::ClipboardEntry,
+    use crate::{
+        app::{
+            claims::{Fixture, test_handlers},
+            clipboard::ClipboardEntry,
+        },
+        file_system::path_info::PathInfo,
     };
 
     fn handlers(fixture: &Fixture) -> Handlers {
@@ -205,19 +219,38 @@ mod tests {
         ));
     }
 
+    /// The clipboard may name the entries a delete removes, so a confirmed
+    /// delete clears it. Opening the prompt and declining it leave it alone.
     #[test]
-    fn only_a_delete_prompt_clears_the_clipboard() {
+    fn only_a_confirmed_delete_clears_the_clipboard() {
         let fixture = Fixture::new();
         let mut handlers = handlers(&fixture);
+        let entry = ClipboardEntry::Copy(vec![fixture.file()]);
+        handlers.handle_command(&Command::SetClipboardEntry(Some(entry.clone())));
 
         assert_eq!(
-            CommandResult::from(Command::SetClipboardEntry(None)),
+            CommandResult::NotHandled,
             handlers.handle_command(&Command::OpenPrompt(PromptAction::Delete(1)))
         );
         assert_eq!(
             CommandResult::NotHandled,
-            handlers.handle_command(&Command::OpenPrompt(PromptAction::CreateDirectory))
+            handlers.handle_command(&Command::CancelPrompt)
         );
+        assert_eq!(
+            CommandResult::from(entry.into_paste(fixture.directory())),
+            handlers.handle_command(&Command::Paste(fixture.directory()))
+        );
+
+        assert_eq!(
+            CommandResult::from(Command::SetClipboardEntry(None)),
+            handlers.handle_command(&Command::ConfirmDelete)
+        );
+    }
+
+    #[test_case(true => Command::AlertWarn("Cannot paste: nothing has been copied or cut".into()) ; "with a system clipboard")]
+    #[test_case(false => Command::AlertWarn("Cannot paste: no system clipboard available".into()) ; "without one")]
+    fn a_paste_with_nothing_to_paste_says_why(system_clipboard: bool) -> Command {
+        nothing_to_paste(system_clipboard)
     }
 
     #[test]
@@ -233,7 +266,29 @@ mod tests {
         );
     }
 
-    #[test_case(KeyCode::Char('q'), KeyModifiers::NONE => CommandResult::from(Command::Quit) ; "quit")]
+    /// Quitting ends the worker, so a delete it has not finished is confirmed
+    /// first. A task counts until its terminal progress is handled, which
+    /// nothing feeds back here, so the count holds for the whole test.
+    #[test]
+    fn quit_asks_first_while_file_operations_are_running() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let paths: Vec<_> = ["a.txt", "b.txt"]
+            .map(|name| {
+                let path = fixture.cwd().join(name);
+                std::fs::write(&path, b"x").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .into();
+        handlers.file_system.handle_command(&Command::Delete(paths));
+
+        assert_eq!(
+            CommandResult::from(Command::OpenPrompt(PromptAction::ConfirmQuit(2))),
+            handlers.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        );
+    }
+
+    #[test_case(KeyCode::Char('q'), KeyModifiers::NONE => CommandResult::from(Command::Quit) ; "quit while idle")]
     #[test_case(KeyCode::Char('K'), KeyModifiers::SHIFT => CommandResult::from(Command::CancelTask) ; "cancel task")]
     #[test_case(KeyCode::Esc, KeyModifiers::NONE => CommandResult::from(Command::ResetView) ; "reset view")]
     #[test_case(KeyCode::Char('j'), KeyModifiers::NONE => CommandResult::NotHandled ; "an action another handler owns")]

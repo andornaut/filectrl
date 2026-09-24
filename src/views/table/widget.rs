@@ -52,8 +52,8 @@ pub(super) fn header_labels(keybindings: &KeyBindings) -> [String; 3] {
         ("Size", Action::SortBySize),
     ]
     .map(|(name, action)| {
-        let first_key = keybindings.display_for(action).split('/').next();
-        header_label(name, first_key.unwrap_or_default())
+        let first_key = keybindings.keys_for(action).first();
+        header_label(name, first_key.map_or("", String::as_str))
     })
 }
 

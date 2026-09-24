@@ -19,6 +19,8 @@ use anyhow::{Context, Result, anyhow};
 use env_logger::{Builder, DEFAULT_FILTER_ENV, Env};
 use log::{LevelFilter, info};
 
+use self::file_system::path_info::quoted;
+
 use self::app::{
     App,
     config::{Config, RuntimeEnv},
@@ -52,11 +54,17 @@ pub fn run(
         ls_colors: ls_colors.as_deref(),
     };
 
+    // Records would be drawn over the interface, or left on the screen before
+    // it starts, so they are kept only when stderr is redirected away from the
+    // terminal. The config's own level is not known until it loads, so loading
+    // is silenced too (a warning about `$LS_COLORS`, say), unless `$RUST_LOG`
+    // asks for the loader's records.
+    let stderr_is_terminal = std::io::stderr().is_terminal();
+    if stderr_is_terminal && env::var(DEFAULT_FILTER_ENV).is_err() {
+        log::set_max_level(LevelFilter::Off);
+    }
     let config = Config::load(env, config_path, include_paths)?;
-    // Records from here on would be drawn over the interface, or left on the
-    // screen before it starts, so they are kept only when stderr is redirected
-    // away from the terminal.
-    if std::io::stderr().is_terminal() {
+    if stderr_is_terminal {
         log::set_max_level(LevelFilter::Off);
     } else {
         apply_log_level(&config);
@@ -84,11 +92,13 @@ pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: &[PathBuf]
     configure_logging();
     let config = Config::load(RuntimeEnv::default(), config_path, include_paths)?;
     let bold = std::io::stdout().is_terminal();
-    print!(
-        "{}",
-        views::keybindings_help_text(&config.keybindings, bold)
-    );
-    Ok(())
+    let text = views::keybindings_help_text(&config.keybindings, bold);
+    // Written rather than `print!`ed, which panics on a failed write (a full
+    // disk, a closed pipe), and `panic = "abort"` makes that an abort.
+    let mut out = stdout().lock();
+    out.write_all(text.as_bytes())
+        .and_then(|()| out.flush())
+        .context("Failed to write to standard output")
 }
 
 fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
@@ -97,17 +107,17 @@ fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
     }
     let canonical = path
         .canonicalize()
-        .map_err(|error| anyhow!("Failed to open {}: {error}", path.display()))?;
+        .map_err(|error| anyhow!("Failed to open {}: {error}", quoted(path)))?;
     if !canonical.is_dir() {
         return Err(anyhow!(
             "Cannot open {}: not a directory",
-            canonical.display()
+            quoted(&canonical)
         ));
     }
     // A directory that cannot be listed would start the UI on an empty table
     // with the reason only in an alert, where `ls` exits with it.
     fs::read_dir(&canonical)
-        .map_err(|error| anyhow!("Failed to open {}: {error}", path.display()))?;
+        .map_err(|error| anyhow!("Failed to open {}: {error}", quoted(path)))?;
     Ok(canonical)
 }
 
@@ -320,10 +330,23 @@ mod tests {
         }
         let error = result.unwrap_err().to_string();
         assert!(
-            error.starts_with(&format!("Failed to open {}:", locked.display())),
+            error.starts_with(&format!("Failed to open {}:", quoted(&locked))),
             "{error}"
         );
         assert!(error.contains("Permission denied"), "{error}");
+    }
+
+    /// A byte that is not UTF-8 is spelled out rather than replaced, so the
+    /// message names the path that was typed.
+    #[test]
+    fn validate_initial_directory_spells_out_a_byte_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut bytes = env::temp_dir().into_os_string().into_vec();
+        bytes.extend_from_slice(b"/filectrl-does-not-exist-\xe9");
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        let error = validate_initial_directory(&path).unwrap_err().to_string();
+        assert!(error.contains("filectrl-does-not-exist-\\xe9\""), "{error}");
     }
 
     /// An empty positional would otherwise reach `canonicalize` and be reported

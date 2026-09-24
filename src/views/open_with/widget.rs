@@ -95,6 +95,7 @@ mod tests {
             detail: "prog".to_string(),
             is_default,
             name: name.to_string(),
+            setting: None,
             working_dir: None::<PathBuf>,
         }
     }

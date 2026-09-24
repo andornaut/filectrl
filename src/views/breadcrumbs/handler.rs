@@ -20,11 +20,14 @@ impl CommandHandler for BreadcrumbsView {
                 // In bookmarks mode the listing reloads via a follow-up
                 // Bookmarks command; keep the bookmarks breadcrumbs meanwhile.
                 if self.mode == ListingMode::Bookmarks {
+                    self.directory.clone_from(&directory.path);
                     return CommandResult::Handled;
                 }
                 self.set_directory(&directory.clone())
             }
-            Command::StartSearch(_) | Command::ResetView => CommandResult::Handled,
+            // A search walks the directory behind the bookmarks, not the
+            // bookmarks, and a reset lists it again.
+            Command::StartSearch(_) | Command::ResetView => self.restore_directory(),
             Command::Bookmarks { .. } => {
                 self.set_path(&Config::global().bookmarks_dir());
                 self.positions.clear();

@@ -7,8 +7,9 @@ use ratatui::{
 };
 
 use super::{
-    View, alerts::AlertsView, breadcrumbs::BreadcrumbsView, help::HelpView, notices::NoticesView,
-    open_with::OpenWithView, prompt::PromptView, status::StatusView, table::TableView,
+    ListingCount, View, alerts::AlertsView, breadcrumbs::BreadcrumbsView, help::HelpView,
+    notices::NoticesView, open_with::OpenWithView, prompt::PromptView, status::StatusView,
+    table::TableView,
 };
 use crate::app::config::theme::Theme;
 use crate::{
@@ -283,7 +284,12 @@ impl View for RootView {
 
         // RootView owns both, so the count is handed over directly rather
         // than broadcast after every change that could alter it.
-        self.status.set_shown_len(self.table.shown_len());
+        let listing_count = self.table.listing_count();
+        self.status.set_listing_count(listing_count);
+        self.notices.set_result_count(match listing_count {
+            ListingCount::Results { total, .. } => Some(total),
+            _ => None,
+        });
         let views = self.views();
         Layout::default()
             .direction(Direction::Vertical)

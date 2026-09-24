@@ -7,23 +7,23 @@ use crate::{
 
 impl TableView {
     pub(super) fn copy_to_clipboard(&mut self) -> CommandResult {
-        self.set_clipboard(ClipboardEntry::Copy)
+        self.set_clipboard("copy", ClipboardEntry::Copy)
     }
 
     pub(super) fn cut_to_clipboard(&mut self) -> CommandResult {
-        self.set_clipboard(ClipboardEntry::Move)
+        self.set_clipboard("cut", ClipboardEntry::Move)
     }
 
-    fn set_clipboard(&mut self, make_entry: fn(Vec<PathInfo>) -> ClipboardEntry) -> CommandResult {
-        if self.has_marks() {
-            Command::SetClipboardEntry(Some(make_entry(self.marked_paths()))).into()
-        } else {
-            match self.selected_path() {
-                None => Command::AlertWarn("No file selected".into()).into(),
-                Some(path) => {
-                    Command::SetClipboardEntry(Some(make_entry(vec![path.clone()]))).into()
-                }
+    fn set_clipboard(
+        &mut self,
+        verb: &str,
+        make_entry: fn(Vec<PathInfo>) -> ClipboardEntry,
+    ) -> CommandResult {
+        match self.targets() {
+            Some(targets) => {
+                Command::SetClipboardEntry(Some(make_entry(targets.into_paths()))).into()
             }
+            None => Command::AlertWarn(format!("Cannot {verb}: nothing is selected")).into(),
         }
     }
 
@@ -69,6 +69,19 @@ mod tests {
             std::mem::discriminant(&entry)
         );
         assert_eq!(vec!["a", "b"], display_names(entry.paths()));
+    }
+
+    /// A mark with no entry under it would put an empty entry on the
+    /// clipboard; the cursor is what the copy takes instead.
+    #[test]
+    fn a_mark_past_the_end_of_the_listing_is_not_a_selection() {
+        let (_dir, mut table) = marked_table();
+        table.clear_marks();
+        table.marks.insert(99);
+
+        let entry = entry(table.copy_to_clipboard());
+
+        assert_eq!(vec!["c"], display_names(entry.paths()));
     }
 
     #[test]

@@ -48,10 +48,6 @@ fg = "#282a2c"
 bg = "#ff5c00" # Orange
 fg = "#282a2c"
 
-[theme.clipboard.delete]
-bg = "#c4071c" # Red
-fg = "#f1f1f1"
-
 [theme.file_modified_date.less_than_minute]
 fg = "#4893c2" # Steel Blue
 
@@ -125,8 +121,6 @@ modifiers = ["bold"]
 [theme.file_type.executable]
 fg = "#00f080"
 modifiers = ["bold"]
-
-[theme.file_type.missing]
 
 [theme.file_type.normal_file]
 fg = "#c0c8cf"
@@ -327,10 +321,6 @@ fg = "235" # #262626
 bg = "202" # #ff5f00 - orange (approx #ff5c00)
 fg = "235" # #262626
 
-[theme256.clipboard.delete]
-bg = "160" # #d70000 - red (approx #c4071c)
-fg = "255" # #eeeeee
-
 [theme256.file_modified_date.less_than_minute]
 fg = "67" # #5f87af - steel blue (approx #4893c2)
 
@@ -403,8 +393,6 @@ modifiers = ["bold"]
 [theme256.file_type.executable]
 fg = "48" # #00ff87 - green
 modifiers = ["bold"]
-
-[theme256.file_type.missing]
 
 [theme256.file_type.normal_file]
 fg = "251" # #c6c6c6 (approx #c0c8cf)

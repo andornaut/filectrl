@@ -112,7 +112,8 @@ pub(super) struct Level {
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Associations {
     /// The configured defaults, most specific type first and then highest
-    /// precedence first, less any removed for their type. None has been
+    /// precedence first, less any removed for their type or a more specific
+    /// one. None has been
     /// checked: the first that the picker can offer is the default.
     ///
     /// The spec also requires the default to be an associated application,
@@ -135,18 +136,20 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
     let mut ordered: Vec<DesktopId> = Vec::new();
     let mut seen: HashSet<DesktopId> = HashSet::new();
     let mut defaults: Vec<DesktopId> = Vec::new();
+    // `[Removed Associations]` cancels an id outright, for every later source
+    // and for every less specific type after it: removing an application for
+    // `text/markdown` does not bring it back through `text/plain`. This is the
+    // blocklist GLib keeps across the whole chain.
+    let mut removed: HashSet<&DesktopId> = HashSet::new();
 
     for mime in mime_chain {
-        // Both exclusions are keyed by MIME type, so they restart here.
-        // `ordered` and `seen` do not: an id already ranked for a more specific
-        // type keeps its rank.
+        // Shadowing restarts for each type. `ordered` and `seen` do not: an id
+        // already ranked for a more specific type keeps its rank.
         //
-        // `[Removed Associations]` cancels an id outright and so applies to every
-        // later source. An id already defined by a higher precedence applications
-        // directory is excluded from the directory scan alone, to avoid adding
-        // the same file twice; the spec does not let that cancel an association a
-        // lower level states explicitly.
-        let mut removed: HashSet<&DesktopId> = HashSet::new();
+        // An id defined by a higher precedence applications directory masks
+        // every lower definition of that id, both in the directory scan and in
+        // a lower list's `[Added Associations]`: the id names the higher file,
+        // which may not handle the type at all.
         let mut shadowed: HashSet<&DesktopId> = HashSet::new();
 
         for level in levels {
@@ -160,7 +163,7 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
                     continue;
                 }
                 for id in list.added.get(mime).into_iter().flatten() {
-                    if !removed.contains(id) && seen.insert(id.clone()) {
+                    if !removed.contains(id) && !shadowed.contains(id) && seen.insert(id.clone()) {
                         ordered.push(id.clone());
                     }
                 }
@@ -454,21 +457,22 @@ mod tests {
     }
 
     #[test]
-    fn shadowing_does_not_cancel_an_explicit_association_below_it() {
-        // The user's own copy of a.desktop shadows the system file for the
-        // directory scan, but the system list's explicit association stands.
+    fn a_higher_directory_masks_a_lower_lists_addition_of_the_same_id() {
+        // The user's own a.desktop handles only images, so the system list's
+        // association of a.desktop with text names a file that no longer
+        // applies. Its neighbour b.desktop is not masked and stands.
         let levels = vec![
             level(vec![], Some(app_dir(&[("a.desktop", &["image/png"])]))),
             level(
                 vec![MimeAppsList::parse(
                     false,
-                    "[Added Associations]\ntext/plain=a.desktop",
+                    "[Added Associations]\ntext/plain=a.desktop;b.desktop",
                 )],
-                Some(app_dir(&[("a.desktop", &[TEXT])])),
+                Some(app_dir(&[("a.desktop", &[TEXT]), ("b.desktop", &[])])),
             ),
         ];
         assert_eq!(
-            ids(&["a.desktop"]),
+            ids(&["b.desktop"]),
             associations(&levels, &ids(&[TEXT])).ordered
         );
     }
@@ -514,7 +518,9 @@ mod tests {
     }
 
     #[test]
-    fn a_removal_for_one_type_does_not_leak_into_another() {
+    fn a_removal_for_a_type_also_holds_for_its_parents() {
+        // a.desktop declares only the parent type, so it can reach a markdown
+        // file only through text/plain, which the removal must still block.
         let levels = vec![
             level(
                 vec![MimeAppsList::parse(
@@ -523,13 +529,18 @@ mod tests {
                 )],
                 None,
             ),
-            level(
-                vec![],
-                Some(app_dir(&[("a.desktop", &[TEXT, "text/markdown"])])),
-            ),
+            level(vec![], Some(app_dir(&[("a.desktop", &[TEXT])]))),
         ];
-        let result = associations(&levels, &ids(&["text/markdown", TEXT]));
-        assert_eq!(ids(&["a.desktop"]), result.ordered);
+        assert_eq!(
+            Vec::<DesktopId>::new(),
+            associations(&levels, &ids(&["text/markdown", TEXT])).ordered
+        );
+        // A plain text file's chain never names text/markdown, so the removal
+        // does not reach it.
+        assert_eq!(
+            ids(&["a.desktop"]),
+            associations(&levels, &ids(&[TEXT])).ordered
+        );
     }
 
     #[test]

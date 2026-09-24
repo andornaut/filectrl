@@ -15,7 +15,8 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     while i < codes.len() {
         match codes[i] {
             // Text attributes
-            "00" | "0" => attrs = Modifier::empty(), // Reset/Normal
+            // Reset/Normal: every attribute and both colors, as `ls` renders it
+            "00" | "0" => (fg, bg, attrs) = (None, None, Modifier::empty()),
             "01" | "1" => attrs |= Modifier::BOLD,   // Bold
             "02" | "2" => attrs |= Modifier::DIM,    // Dim
             "03" | "3" => attrs |= Modifier::ITALIC, // Italic
@@ -147,6 +148,8 @@ mod tests {
     #[test_case("09" => style(None, None, Modifier::CROSSED_OUT) ; "crossed out")]
     #[test_case("01;32" => style(Some(Color::Green), None, Modifier::BOLD) ; "modifier then foreground")]
     #[test_case("01;00" => NONE ; "reset clears the modifiers set before it")]
+    #[test_case("31;44;00" => NONE ; "reset clears the colors set before it")]
+    #[test_case("31;00;32" => style(Some(Color::Green), None, Modifier::empty()) ; "a color after a reset applies")]
     #[test_case("38;5;200" => style(Some(Color::Indexed(200)), None, Modifier::empty()) ; "extended 256 foreground")]
     #[test_case("48;5;100" => style(None, Some(Color::Indexed(100)), Modifier::empty()) ; "extended 256 background")]
     #[test_case("38;2;255;128;0" => style(Some(Color::Rgb(255, 128, 0)), None, Modifier::empty()) ; "extended rgb foreground")]

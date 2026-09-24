@@ -43,8 +43,15 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     let takes_path = tokens
         .iter()
         .any(|token| has_substituting_code(&token.text));
+    // Options are recognized in the arguments as the program will receive
+    // them, so a removed code cannot join an option letter to the text after
+    // it (`-%ce` reaches the program as `-e`).
+    let shapes: Vec<String> = tokens
+        .iter()
+        .map(|token| without_removed_codes(&token.text))
+        .collect();
     // Without a field code the path is appended, so it follows the option too.
-    if let Some(start) = code_option(&tokens)
+    if let Some(start) = code_option(&shapes)
         && (!takes_path
             || tokens[start..]
                 .iter()
@@ -111,19 +118,37 @@ const CODE_LONG_OPTIONS: [&str; 7] = [
 /// be attached to the option, and every later argument counts, since options
 /// may stand between the option and the code (`sh -c -x %f`) and a program
 /// may read an argument after the code as code too (`eval "$1"`).
-fn code_option(tokens: &[Token]) -> Option<usize> {
-    tokens.iter().position(|token| {
-        if let Some(long) = token.text.strip_prefix("--") {
+fn code_option(words: &[String]) -> Option<usize> {
+    words.iter().position(|word| {
+        if let Some(long) = word.strip_prefix("--") {
             let name = long.split_once('=').map_or(long, |(name, _)| name);
             return CODE_LONG_OPTIONS.contains(&name);
         }
-        token.text.strip_prefix('-').is_some_and(|options| {
+        word.strip_prefix('-').is_some_and(|options| {
             options
                 .bytes()
                 .take_while(u8::is_ascii_alphanumeric)
                 .any(|byte| matches!(byte, b'c' | b'e' | b'E' | b'S' | b'p' | b'r' | b'R' | b'B'))
         })
     })
+}
+
+/// `token` with the field codes that expand to nothing taken out, and every
+/// other code (`%%`, `%f`, `%u` and their plurals) left as written.
+fn without_removed_codes(token: &str) -> String {
+    let mut kept = String::with_capacity(token.len());
+    let mut chars = token.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            kept.push(c);
+            continue;
+        }
+        if let Some(code @ ('%' | 'f' | 'F' | 'u' | 'U')) = chars.next() {
+            kept.push('%');
+            kept.push(code);
+        }
+    }
+    kept
 }
 
 /// One argument of an `Exec` line, with its quotes and escapes removed.
@@ -419,6 +444,9 @@ mod tests {
     #[test_case("ruby -e %f", CODE_OPTION ; "ruby")]
     #[test_case("sh -c", CODE_OPTION ; "no code so the path would be the script")]
     #[test_case("foo -c %i", CODE_OPTION ; "only a removed code so the path is appended")]
+    #[test_case("perl -%ce%f", CODE_OPTION ; "a removed code joining an option letter to the code")]
+    #[test_case("sh -%cc%f", CODE_OPTION ; "a removed code joining c to the code")]
+    #[test_case("sh -x%kc %f", CODE_OPTION ; "a removed code inside a cluster")]
     #[test_case("run --command \"mpv %f\"", QUOTED ; "double quoted script")]
     #[test_case("run --command 'mpv %f'", QUOTED ; "single quoted script")]
     #[test_case("run --command \"%f --flag\"", QUOTED ; "a quoted script that starts with the code")]

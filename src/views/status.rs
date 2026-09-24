@@ -2,6 +2,7 @@ mod handler;
 mod view;
 mod widget;
 
+use super::ListingCount;
 use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
 
 #[derive(Default)]
@@ -11,9 +12,8 @@ pub(super) struct StatusView {
     /// Generation of the directory load whose entries the count follows.
     load_generation: u64,
     selected: Option<PathInfo>,
-    /// How many of the directory's entries the table shows, set by the root
-    /// before each render. `None` while the table shows something else.
-    shown_len: Option<usize>,
+    /// What the table lists, set by the root before each render.
+    listing_count: ListingCount,
     /// Entries counted for a reload, applied once it completes. `None` while a
     /// navigation loads, which counts straight into `directory_len` because
     /// the listing it described is gone.
@@ -60,8 +60,19 @@ impl StatusView {
         CommandResult::Handled
     }
 
-    pub(super) fn set_shown_len(&mut self, shown_len: Option<usize>) {
-        self.shown_len = shown_len;
+    pub(super) fn set_listing_count(&mut self, listing_count: ListingCount) {
+        self.listing_count = listing_count;
+    }
+
+    /// The `# Items` count as `(total, shown)`. Search results are counted by
+    /// the table, since they are not the directory's entries; the bookmarks
+    /// view shows no count of its own, so the directory's stands.
+    fn item_count(&self) -> (usize, Option<usize>) {
+        match self.listing_count {
+            ListingCount::Directory { shown } => (self.directory_len, Some(shown)),
+            ListingCount::Results { shown, total } => (total, Some(shown)),
+            ListingCount::Bookmarks => (self.directory_len, None),
+        }
     }
 
     fn set_selected(&mut self, selected: Option<PathInfo>) -> CommandResult {
@@ -81,6 +92,25 @@ mod tests {
         let mut info = PathInfo::try_from(Path::new(".")).unwrap();
         info.display_name = name.to_string();
         info
+    }
+
+    /// Search results are counted by the table, not by the directory load
+    /// the status bar follows, which counts the searched directory.
+    #[test]
+    fn the_item_count_follows_what_the_table_lists() {
+        let mut view = StatusView::default();
+        navigated(&mut view, 1);
+        batch(&mut view, 5, 1);
+
+        view.set_listing_count(ListingCount::Directory { shown: 2 });
+        assert_eq!((5, Some(2)), view.item_count());
+        view.set_listing_count(ListingCount::Results {
+            shown: 3,
+            total: 42,
+        });
+        assert_eq!((42, Some(3)), view.item_count());
+        view.set_listing_count(ListingCount::Bookmarks);
+        assert_eq!((5, None), view.item_count());
     }
 
     fn navigated(view: &mut StatusView, generation: u64) {

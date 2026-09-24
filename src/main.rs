@@ -2,17 +2,18 @@ use std::{
     error::Error,
     ffi::{OsStr, OsString},
     fmt,
+    io::{self, Write},
     os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use argh::FromArgs;
 
 use filectrl::{
     app::{config::Config, events::quit_signal},
-    escape_for_terminal, print_keybindings, run,
+    escape_for_terminal, print_keybindings, run, visible_os,
 };
 
 #[derive(FromArgs)]
@@ -170,7 +171,7 @@ fn decode_path(value: &str) -> Result<PathBuf, String> {
 fn parse_args() -> Args {
     let strings: Vec<String> = std::env::args_os().map(|arg| encode_arg(&arg)).collect();
     let Some((program, rest)) = strings.split_first() else {
-        eprintln!("No program name, argv is empty");
+        print_error(format_args!("No program name, argv is empty"));
         std::process::exit(1)
     };
     let command = Path::new(program)
@@ -180,31 +181,75 @@ fn parse_args() -> Args {
     let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
     Args::from_args(&[command], &rest).unwrap_or_else(|early_exit| {
         if early_exit.status.is_ok() {
-            println!("{}", early_exit.output);
+            if let Err(error) = print_line(format_args!("{}", early_exit.output)) {
+                print_error(format_args!("Error: {error:#}"));
+                std::process::exit(1)
+            }
             std::process::exit(0)
         }
-        eprintln!(
+        print_error(format_args!(
             "{}\nRun {command} --help for more information.",
-            escape_for_terminal(&early_exit.output)
-        );
+            shown_argh_output(&early_exit.output)
+        ));
         std::process::exit(1)
     })
 }
 
+/// argh's message for a usage error, which quotes the arguments it names as
+/// `encode_arg` spelled them: decoded back to their bytes, then escaped a line
+/// at a time, so a byte that is not UTF-8 reads `\xNN` rather than as the
+/// private-use character standing for it.
+fn shown_argh_output(output: &str) -> String {
+    decode_arg(output)
+        .as_bytes()
+        .split(|byte| *byte == b'\n')
+        .map(|line| visible_os(OsStr::from_bytes(line)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Writes a line to standard output, returning a failure (a full disk, a closed
+/// pipe) where `println!` would panic, which `panic = "abort"` makes an abort.
+fn print_line(args: fmt::Arguments<'_>) -> Result<()> {
+    let mut out = io::stdout().lock();
+    out.write_fmt(args)
+        .and_then(|()| out.write_all(b"\n"))
+        .and_then(|()| out.flush())
+        .context("Failed to write to standard output")
+}
+
+/// Writes a line to standard error, ignoring a failure: there is nowhere left
+/// to report it, and `eprintln!` would panic on a terminal that hung up.
+fn print_error(args: fmt::Arguments<'_>) {
+    let _ = writeln!(io::stderr(), "{args}");
+}
+
 fn main() -> ExitCode {
     let args = parse_args();
-    match dispatch(&args) {
-        Ok(()) => success_status(quit_signal()),
+    let result = dispatch(&args);
+    // After a quit signal an error is most likely the signal's consequence (a
+    // draw to a terminal that hung up), and the terminal may be gone, so the
+    // status alone reports the run.
+    if let Some(signal) = quit_signal() {
+        return success_status(Some(signal));
+    }
+    match result {
+        Ok(()) => success_status(None),
         Err(error) => {
             match error.downcast_ref::<UsageError>() {
                 Some(usage) => {
                     let usage = escape_for_terminal(&usage.to_string()).into_owned();
-                    eprintln!("{usage}\n\nRun filectrl --help for more information.");
+                    print_error(format_args!(
+                        "{usage}\n\nRun filectrl --help for more information."
+                    ));
                 }
                 // `{error:#}` flattens the cause chain onto one line, so a
                 // failure here reads the same as the alert the app would show
                 // for it.
-                None => eprintln!("Error: {}", escape_for_terminal(&format!("{error:#}"))),
+                None => print_error(format_args!(
+                    "Error: {}",
+                    escape_for_terminal(&format!("{error:#}"))
+                )),
             }
             ExitCode::FAILURE
         }
@@ -225,18 +270,17 @@ fn dispatch(args: &Args) -> Result<()> {
     let config = args.config.clone();
 
     match action {
-        Some(Action::PrintVersion) => {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
+        Some(Action::PrintVersion) => print_line(format_args!(
+            "{} {}",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        )),
         Some(Action::PrintKeybindings) => print_keybindings(config, &args.include),
         Some(Action::WriteDefaultConfig) => {
-            report_written(&Config::write_default(config, args.force)?);
-            Ok(())
+            report_written(&Config::write_default(config, args.force)?)
         }
         Some(Action::WriteDefaultThemes) => {
-            report_written(&Config::write_default_themes(config, args.force)?);
-            Ok(())
+            report_written(&Config::write_default_themes(config, args.force)?)
         }
         None => run(
             config,
@@ -250,8 +294,8 @@ fn dispatch(args: &Args) -> Result<()> {
 /// Names the file on stdout, resolved rather than as it was written, because
 /// the config directory follows `$XDG_CONFIG_HOME` and need not be the
 /// `~/.config` path the documentation names.
-fn report_written(path: &Path) {
-    println!("Wrote {}", escape_for_terminal(&path.display().to_string()));
+fn report_written(path: &Path) -> Result<()> {
+    print_line(format_args!("Wrote {}", visible_os(path.as_os_str())))
 }
 
 fn selected_action(args: &Args) -> Result<Option<Action>> {

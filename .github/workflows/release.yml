@@ -60,11 +60,15 @@ jobs:
     strategy:
       matrix:
         include:
+          # Both Linux legs build with cross, in a container whose glibc (2.23,
+          # Ubuntu 16.04 in cross 0.2.5) is older than the runner's, so the
+          # binaries run on older distributions: a binary needs the glibc it
+          # was linked against or newer. The container also supplies the
+          # aarch64 sysroot; the crate graph needs no other native libraries.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: filectrl_linux_x86_64
-          # cross builds in a container that supplies the aarch64 glibc
-          # sysroot; the crate graph needs no other native libraries.
+            cross: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             archive: filectrl_linux_arm64
@@ -89,7 +93,9 @@ jobs:
         if: matrix.cross
         uses: taiki-e/install-action@v2.87.8
         with:
-          tool: cross
+          # Pinned: the container image, and so the glibc the binaries need,
+          # comes with the cross version.
+          tool: cross@0.2.5
 
       - name: Add Rust target
         if: ${{ !matrix.cross }}

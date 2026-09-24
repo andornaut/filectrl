@@ -792,4 +792,68 @@ mod tests {
         assert!(!should_quit(&[Command::AlertInfo("x".into())]));
         assert!(!should_quit(&[]));
     }
+
+    /// The real handler tree, counting the cycles `broadcast_command` runs: it
+    /// reads the mode once per cycle.
+    struct CountingCycles<'a> {
+        handlers: &'a mut Handlers,
+        cycles: std::cell::Cell<usize>,
+    }
+
+    impl CommandHandler for CountingCycles<'_> {
+        fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+            visitor(self.handlers);
+        }
+    }
+
+    impl Broadcast for CountingCycles<'_> {
+        fn mode(&self) -> InputMode {
+            self.cycles.set(self.cycles.get() + 1);
+            self.handlers.mode()
+        }
+    }
+
+    /// The longest chain `MAX_BROADCAST_CHAIN_LENGTH` documents, driven through
+    /// the real handlers, so a step added to it fails here rather than ending
+    /// the session with the cycle limit's error.
+    #[test]
+    fn renaming_a_bookmark_is_the_documented_chain() {
+        let fixture = claims::Fixture::new();
+        let (tx, _rx) = mpsc::channel();
+        let mut handlers = claims::test_handlers(tx, &fixture);
+        handlers.file_system.run_once(Some(fixture.cwd())).unwrap();
+        let key = |c| Command::Key(KeyCode::Char(c), KeyModifiers::NONE);
+        broadcast_command(
+            &mut handlers,
+            Command::AddBookmark {
+                directory: fixture.directory(),
+                name: "mark".to_string(),
+            },
+        )
+        .unwrap();
+        for command in [Command::GetBookmarks, key('r'), key('x')] {
+            broadcast_command(&mut handlers, command).unwrap();
+        }
+
+        let mut counting = CountingCycles {
+            handlers: &mut handlers,
+            cycles: std::cell::Cell::new(0),
+        };
+        let unhandled = broadcast_command(
+            &mut counting,
+            Command::Key(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        .unwrap();
+
+        assert_eq!(Vec::<Command>::new(), unhandled);
+        assert!(
+            fixture.bookmarks().join("markx").symlink_metadata().is_ok(),
+            "the bookmark was not renamed, so the chain under test did not run"
+        );
+        assert_eq!(
+            6,
+            counting.cycles.get(),
+            "update the chain documented on MAX_BROADCAST_CHAIN_LENGTH"
+        );
+    }
 }
