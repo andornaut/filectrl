@@ -577,12 +577,12 @@ mod tests {
 
     // ── a paste never replaces what it wrote itself ──────────────────────────
 
-    /// Two sources of one paste, `first/Foo` holding "first" and `second/foo`
+    /// Two sources of one paste, `first/one` holding "first" and `second/two`
     /// holding "second", and its destination directory.
     fn two_sources(label: &str) -> (TempDir, PathBuf, PathBuf, PathBuf) {
         let fx = TempDir::new(label);
-        let first = fx.join("first").join("Foo");
-        let second = fx.join("second").join("foo");
+        let first = fx.join("first").join("one");
+        let second = fx.join("second").join("two");
         let dest = fx.join("dest");
         for dir in [first.parent().unwrap(), second.parent().unwrap(), &dest] {
             fs::create_dir(dir).unwrap();
@@ -609,8 +609,9 @@ mod tests {
         run_in_paste(task, Some(conflicts)).expect("the paste should start")
     }
 
-    // A filesystem that folds case gives `Foo` and `foo` one entry. A hard
-    // link reproduces that here: `dest/foo` names what the first source wrote.
+    // A filesystem that folds case or normalization gives two names one entry.
+    // A hard link reproduces that on any filesystem: `dest/two` names what the
+    // first source wrote.
     #[test_case(true ; "a move under a standing overwrite")]
     #[test_case(false ; "a copy granted an overwrite")]
     fn a_later_source_never_replaces_what_an_earlier_one_wrote(is_move: bool) {
@@ -620,7 +621,7 @@ mod tests {
 
         let task = paste(&conflicts, is_move, &first, &dest, false);
         assert_eq!(None, task.error_message());
-        fs::hard_link(dest.join("Foo"), dest.join("foo")).unwrap();
+        fs::hard_link(dest.join("one"), dest.join("two")).unwrap();
         let task = paste(&conflicts, is_move, &second, &dest, true);
 
         let message = task.error_message().expect("the second source is refused");
@@ -628,7 +629,7 @@ mod tests {
             message.ends_with("another source in this paste has the same name"),
             "{message}"
         );
-        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("one")).unwrap());
         assert_eq!(b"second".to_vec(), fs::read(&second).unwrap());
     }
 
@@ -640,13 +641,13 @@ mod tests {
         let conflicts = Conflicts::default();
         let task = paste(&conflicts, true, &first, &dest, false);
         assert_eq!(None, task.error_message());
-        fs::hard_link(dest.join("Foo"), dest.join("foo")).unwrap();
+        fs::hard_link(dest.join("one"), dest.join("two")).unwrap();
         let (tx, rx) = mpsc::channel();
 
         move_across_devices(
             copy_task(tx),
             &second,
-            &dest.join("foo"),
+            &dest.join("two"),
             &PathInfo::try_from(second.as_path()).unwrap(),
             true,
             Some(&conflicts),
@@ -659,7 +660,7 @@ mod tests {
             message.ends_with("another source in this paste has the same name"),
             "{message}"
         );
-        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("one")).unwrap());
         assert_eq!(b"second".to_vec(), fs::read(&second).unwrap());
     }
 
@@ -671,13 +672,13 @@ mod tests {
         conflicts.answer(ConflictChoice::OverwriteAll);
         let task = paste(&conflicts, is_move, &first, &dest, false);
         assert_eq!(None, task.error_message());
-        fs::write(dest.join("foo"), b"already there").unwrap();
+        fs::write(dest.join("two"), b"already there").unwrap();
 
         let task = paste(&conflicts, is_move, &second, &dest, true);
 
         assert_eq!(None, task.error_message());
-        assert_eq!(b"second".to_vec(), fs::read(dest.join("foo")).unwrap());
-        assert_eq!(b"first".to_vec(), fs::read(dest.join("Foo")).unwrap());
+        assert_eq!(b"second".to_vec(), fs::read(dest.join("two")).unwrap());
+        assert_eq!(b"first".to_vec(), fs::read(dest.join("one")).unwrap());
     }
 
     #[test]

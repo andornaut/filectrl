@@ -821,7 +821,7 @@ mod tests {
     fn a_raced_name_the_paste_wrote_is_refused_under_overwrite_all() {
         let fx = TempDir::new("tasks_move_raced_pasted");
         let src = fx.join("src.txt");
-        let pasted = fx.join("Dest.txt");
+        let pasted = fx.join("pasted.txt");
         let dst = fx.join("dest.txt");
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&pasted, b"pasted").unwrap();
