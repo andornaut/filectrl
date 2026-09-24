@@ -155,7 +155,7 @@ impl PromptView {
             } => vec![LabelLine::quoting(
                 " ",
                 name,
-                " exists as a directory: [s]kip, [S]kip all ",
+                " exists and cannot be replaced: [s]kip, [S]kip all ",
             )],
         }
     }
@@ -550,7 +550,7 @@ mod tests {
     /// The name arrives as the table shows it, escapes included, so the
     /// prompt must not escape its backslashes a second time.
     #[test_case(true => " \"a\\u{202e}b\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all " ; "a file")]
-    #[test_case(false => " \"a\\u{202e}b\" exists as a directory: [s]kip, [S]kip all " ; "a directory")]
+    #[test_case(false => " \"a\\u{202e}b\" exists and cannot be replaced: [s]kip, [S]kip all " ; "a directory")]
     fn a_conflict_names_the_entry_as_the_table_shows_it(can_overwrite: bool) -> String {
         let view = prompt_with_action(PromptAction::Conflict {
             name: "a\\u{202e}b".to_string(),

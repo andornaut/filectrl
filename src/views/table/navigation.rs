@@ -119,13 +119,14 @@ impl TableView {
         for index in self.content.find_all_by_path(&marked) {
             self.marks.insert(index);
         }
-        // Ends in `select`, whose snapshot then carries the restored count.
-        let result = self.restore_selection();
+        let _ = self.restore_selection();
         // Range mode is carried across a reload the same way, and resumes
         // only after the cursor is placed: `select` would otherwise mark every
-        // entry that appeared between the anchor and the cursor, unseen.
+        // entry that appeared between the anchor and the cursor, unseen. The
+        // snapshot is taken after both, so it carries the restored count and
+        // range.
         self.restore_range_by_path(range);
-        result
+        self.selection_snapshot()
     }
 
     /// Restore the selection captured by `begin_directory`: prefer the child we
@@ -1045,8 +1046,16 @@ mod tests {
         // A watcher reload with an entry sorting first, so every position
         // shifts by one.
         let items = ["0", "a", "b", "c", "d", "e"].map(|name| fx.file(name, 1));
-        table.set_directory(fx.directory(), &items, Reselect::Keep);
+        let result = table.set_directory(fx.directory(), &items, Reselect::Keep);
         assert!(table.marks.in_range_mode());
+        // The notices bar reads range mode from this snapshot.
+        assert!(
+            matches!(
+                result.into_commands().as_slice(),
+                [.., Command::SelectionChanged { range: true, .. }]
+            ),
+            "the reload's snapshot must report range mode"
+        );
         press(&mut table, 'j');
 
         // By position, the range would run from "0" and the earlier mark would
