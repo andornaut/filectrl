@@ -5232,6 +5232,9 @@ mod tests {
         assert_eq!((1_000_000_000, 1_000_000_100), times_of(&new_path));
     }
 
+    /// Linux only: macOS has no `O_NOATIME`, so the pre-scan's listing sets a
+    /// directory's access time before the copy reads it.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_move_keeps_the_access_times_of_a_tree_the_scan_listed() {
         let fx = TempDir::new("tasks_move_dir_atime");
