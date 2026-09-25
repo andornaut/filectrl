@@ -22,9 +22,9 @@ use super::{
     PROGRESS_DEBOUNCE_PERCENTAGE, PROGRESS_MIN_INTERVAL, cancel_logging,
     sys::{
         AtFlags, Errno, FileType, Mode, OFlag, Stat, UnlinkatFlags, fstat, fstatat, mkdirat,
-        mode_bits, openat, readlinkat, stat_mode, symlinkat,
+        mode_bits, openat, readlinkat, set_mode_at, stat_mode, symlinkat,
     },
-    validate::{Holds, rename_no_replace_at, still_holds},
+    validate::{Holds, look_again, rename_no_replace_at, still_holds},
     walk::{
         Handles, Level, Walk, c_name, list_names, open_directory, open_parent, scan_tree, unlink_at,
     },
@@ -33,11 +33,11 @@ use crate::{
     command::progress::ActiveTask,
     file_system::{
         conflicts::{
-            Conflicts, changed_refusal, failed_transfer, not_replaced, raced_in_copy_refusal,
-            raced_refusal, verb,
+            Conflicts, changed_refusal, failed_replacement, failed_transfer, not_replaced,
+            raced_in_copy_refusal, raced_refusal, rename_failure, verb,
         },
         debounce,
-        entry_id::{EntryId, Seen},
+        entry_id::{EntryId, Seen, changed},
         path_info::{PathInfo, compact},
     },
 };
@@ -48,8 +48,7 @@ use crate::{
 struct CopyContext<'a> {
     /// One read buffer for the whole tree; see `copy_with_progress`.
     buffer: &'a mut [u8],
-    /// The paste's standing `*All` answer, whose "skip all" skips a name taken
-    /// since it was free instead of recording it (`resolve_raced`).
+    /// The paste's standing `*All` answer (`Conflicts`).
     conflicts: &'a Conflicts,
     /// The copy is the one a move across devices makes. It keeps each entry's
     /// full mode, times and extended attributes, as `mv` does, so the move
@@ -71,8 +70,6 @@ struct CopyContext<'a> {
     /// errors: skipping is a choice rather than a failure, but a move still
     /// must not remove a source whose entries never reached the destination.
     skipped: usize,
-    /// The top-level entry itself was skipped, so nothing was copied.
-    top_skipped: bool,
     /// Something now holds the top-level destination name that the copy put
     /// there, whole or not: what a move that fails leaves behind.
     wrote: bool,
@@ -115,7 +112,6 @@ impl<'a> CopyContext<'a> {
             staging: None,
             staged: None,
             skipped: 0,
-            top_skipped: false,
             wrote: false,
             created: std::collections::HashSet::new(),
             root: None,
@@ -141,9 +137,7 @@ impl<'a> CopyContext<'a> {
             return;
         }
         if self.staging.is_some() {
-            self.staged = fstatat(at.dst, at.dst_name, AtFlags::AT_SYMLINK_NOFOLLOW)
-                .ok()
-                .map(|stat| EntryId::of_stat(&stat));
+            self.staged = EntryId::at(at.dst, at.dst_name).ok();
         } else {
             self.wrote = true;
         }
@@ -176,12 +170,18 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Whether the top-level entry itself was skipped, so nothing was copied:
+    /// any skip inside the tree comes after the copy made its top directory.
+    #[cfg(test)]
+    fn top_skipped(&self) -> bool {
+        self.skipped > 0 && !self.wrote
+    }
+
     /// What the copy left behind, with the `errors` it recorded.
     fn into_outcome(self, errors: Vec<String>) -> CopyOutcome {
         CopyOutcome {
             errors,
             skipped: self.skipped,
-            top_skipped: self.top_skipped,
             wrote: self.wrote,
             root: self.root,
             #[cfg(test)]
@@ -193,20 +193,17 @@ impl<'a> CopyContext<'a> {
 /// What `prepare_destination` hands the copy: the top-level source file it
 /// opened, and the entry a granted overwrite lets the copy replace, if it
 /// still held the name.
-#[cfg_attr(test, derive(Default))]
 pub(super) struct Prepared {
     pub(super) source: Option<File>,
     pub(super) replace: Option<Seen>,
 }
 
 /// What a tree copy left behind: the entries that could not be written, how
-/// many a standing "skip all" left alone and whether the top-level entry was
-/// one, and which entry was copied.
+/// many a standing "skip all" left alone, and which entry was copied.
 #[derive(Default)]
 pub(super) struct CopyOutcome {
     pub(super) errors: Vec<String>,
     pub(super) skipped: usize,
-    pub(super) top_skipped: bool,
     /// Something the copy made holds the top-level destination name.
     pub(super) wrote: bool,
     pub(super) root: Option<EntryId>,
@@ -214,6 +211,14 @@ pub(super) struct CopyOutcome {
     /// time floor gives no other way to observe.
     #[cfg(test)]
     pub(super) progress_threshold: u64,
+}
+
+impl CopyOutcome {
+    /// Whether the top-level entry itself was skipped, so nothing was copied
+    /// (`CopyContext::top_skipped`).
+    pub(super) fn top_skipped(&self) -> bool {
+        self.skipped > 0 && !self.wrote
+    }
 }
 
 /// The copy read buffer, one per task. Benchmarked fastest on ext4, btrfs and
@@ -230,23 +235,32 @@ pub(super) struct CopySettings<'a> {
     pub(super) conflicts: &'a Conflicts,
 }
 
-/// The byte-copy stage shared by copy and cross-device move: for a directory
-/// source, scans the real transfer total (a directory entry's own size is not
-/// the transfer size) and applies it via `set_total`, and copies the tree.
-/// `prepared` is what `prepare_destination` found, and `listed` the source as
+/// The byte-copy stage shared by copy and cross-device move: checks the
+/// destination and opens the source (`prepare_destination`, with the entry
+/// `overwrite` grants replacing), for a directory source scans the real
+/// transfer total (a directory entry's own size is not the transfer size) and
+/// applies it via `set_total`, and copies the tree. `listed` is the source as
 /// the task was started for it: its type, mode and size.
 ///
-/// Returns `None` when the task was cancelled, in which case it has already
-/// been finalized via `active.cancelled()`. Otherwise returns the task and
-/// what the walk left behind, for the caller to finalize.
+/// Returns `None` when the task was finalized on the way: cancelled, via
+/// `active.cancelled()`, or refused by `prepare_destination`. Otherwise
+/// returns the task and what the walk left behind, for the caller to finalize.
 pub(super) fn copy_with_progress(
     settings: CopySettings<'_>,
-    prepared: Prepared,
+    overwrite: Option<Seen>,
     listed: &PathInfo,
-    mut active: ActiveTask,
+    active: ActiveTask,
     old_path: &Path,
     new_path: &Path,
 ) -> Option<(ActiveTask, CopyOutcome)> {
+    let (mut active, prepared) = prepare_destination(
+        active,
+        settings,
+        overwrite,
+        old_path,
+        new_path,
+        listed.mode(),
+    )?;
     let is_directory = listed.is_directory();
     let total_size = if is_directory {
         let Some(size) = dir_total_size(&active, old_path) else {
@@ -340,8 +354,9 @@ fn copy_path(
     } else {
         String::new()
     };
-    let failed =
-        |error: &dyn std::fmt::Display| failed_transfer(is_move, old_path, new_path, error) + &kept;
+    let failed = |error: &dyn std::fmt::Display| {
+        failed_replacement(replace.is_some(), is_move, old_path, new_path, error)
+    };
     let (Some(src_name), Some(dst_name)) = (c_name(old_path), c_name(new_path)) else {
         errors.push(format!(
             "Cannot {verb} {}: path has no file name{kept}",
@@ -384,19 +399,13 @@ fn copy_path(
         src_name: &src_name,
         dst_name: &dst_name,
     };
-    // Counted before the entry itself, so a skip there tells the skipped
-    // top-level entry apart from one inside the tree.
-    let skipped_before = context.skipped;
     if !listed.is_directory() {
-        let finished = match replace {
+        return match replace {
             Some(granted) => replace_entry(context, active, errors, granted, &at, &paths, &stat),
             None => copy_entry(&at, &paths, active, errors, context, &stat),
         };
-        context.top_skipped = context.skipped > skipped_before;
-        return finished;
     }
     let Some(level) = enter_directory(&at, &paths, errors, context, &stat) else {
-        context.top_skipped = context.skipped > skipped_before;
         return true;
     };
     // Only the directories being worked in are held open.
@@ -449,13 +458,11 @@ fn copy_tree(
                 // again, so the walk ends here. They keep the owner-only mode
                 // they were created with. An error with no errno is the walk's
                 // own refusal of a parent that is no longer the one listed.
-                let verb = verb(context.is_move);
-                let shape = if error.raw_os_error().is_some() {
-                    "Failed to"
-                } else {
-                    "Cannot"
-                };
-                errors.push(format!("{shape} {verb} {}: {error}", compact(&paths.old)));
+                errors.push(refused_or_failed(
+                    context.is_move,
+                    &compact(&paths.old),
+                    &error,
+                ));
                 return !cancelled;
             }
             continue;
@@ -621,11 +628,10 @@ fn make_directory(
         // is not this copy's to touch.
         Err(error) if NotNew::is(&error) => {
             let _ = unlink_at(at.dst, at.dst_name, UnlinkatFlags::RemoveDir);
-            errors.push(format!(
-                "Cannot {} {} to {}: {error}",
-                verb(context.is_move),
-                compact(&paths.old),
-                compact(&paths.new)
+            errors.push(refused_or_failed(
+                context.is_move,
+                &transfer_object(paths),
+                &error,
             ));
             None
         }
@@ -653,7 +659,7 @@ fn open_created(
     name: &CStr,
     floor: Option<(i64, i64)>,
 ) -> std::io::Result<(File, EntryId, Option<u32>)> {
-    let (dir, id, had) = open_new_directory(parent, name, floor, |had| had | 0o700)?;
+    let (dir, id, had) = open_new_directory(parent, name, floor)?;
     let left = had.or_else(|| grant_owner_access(&dir));
     Ok((dir, id, left))
 }
@@ -667,14 +673,13 @@ fn open_created(
 ///
 /// A directory left without owner read or search (a umask of `0o477`, a
 /// default ACL of `u::---`) cannot be opened to check it, so it is held
-/// through a handle that needs no permission, checked there, and given the
-/// mode `grant` makes of the one it has (`open_unreadable`); that mode is put
-/// back if it then proves not to be empty.
+/// through a handle that needs no permission, checked there, and given owner
+/// access over the mode it has (`open_unreadable`); that mode is put back if
+/// it then proves not to be empty.
 fn open_new_directory(
     parent: &File,
     name: &CStr,
     floor: Option<(i64, i64)>,
-    grant: impl FnOnce(u32) -> u32,
 ) -> std::io::Result<(File, EntryId, Option<u32>)> {
     let (dir, had) = match open_directory(parent, name) {
         Err(error) if error.raw_os_error() == Some(nix::libc::EACCES) => {
@@ -685,7 +690,7 @@ fn open_new_directory(
                     Err(NotNew::error())
                 }
             };
-            let (dir, had) = open_unreadable(parent, name, admit, grant)
+            let (dir, had) = open_unreadable(parent, name, admit)
                 .map_err(|refused| if NotNew::is(&refused) { refused } else { error })?;
             (dir, Some(had))
         }
@@ -701,28 +706,48 @@ fn open_new_directory(
     Ok((dir, seen.id(), had))
 }
 
-/// The refusal of a directory found where one was just made that proves not
-/// to be it (`is_new_empty_directory`): another swapped in at its name.
-#[derive(Debug)]
-struct NotNew;
+/// A refusal of filectrl's own, an error with no errno that reads `$message`
+/// and is told apart from others by its type.
+macro_rules! refusal {
+    ($(#[$doc:meta])* $name:ident, $message:literal) => {
+        $(#[$doc])*
+        #[derive(Debug)]
+        struct $name;
 
-impl std::fmt::Display for NotNew {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the directory it was creating was replaced")
-    }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str($message)
+            }
+        }
+
+        impl std::error::Error for $name {}
+
+        impl $name {
+            fn error() -> std::io::Error {
+                std::io::Error::other(Self)
+            }
+
+            #[cfg_attr(not(test), allow(dead_code))]
+            fn is(error: &std::io::Error) -> bool {
+                matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
+            }
+        }
+    };
 }
 
-impl std::error::Error for NotNew {}
+refusal!(
+    /// The refusal of a directory found where one was just made that proves
+    /// not to be it (`is_new_empty_directory`): another swapped in at its name.
+    NotNew,
+    "the directory it was creating was replaced"
+);
 
-impl NotNew {
-    fn error() -> std::io::Error {
-        std::io::Error::other(Self)
-    }
-
-    fn is(error: &std::io::Error) -> bool {
-        matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
-    }
-}
+refusal!(
+    /// The refusal of a staging directory that proves not to be the one just
+    /// made: another directory swapped in at its name.
+    StagingReplaced,
+    "its staging directory was replaced"
+);
 
 /// Adds owner access to the open directory `dst` when it lacks it, returning
 /// the mode it had.
@@ -736,8 +761,8 @@ fn grant_owner_access(dst: &File) -> Option<u32> {
 }
 
 /// Opens the directory `name` in `parent` that its owner cannot read, by
-/// giving it the mode `mode` makes of the one it has, and returns it with
-/// the mode it had. Nothing is changed by name: the directory is held first
+/// adding owner access to the mode it has, and returns it with the mode it
+/// had. Nothing is changed by name: the directory is held first
 /// through an `O_PATH` handle, which needs no permission on it and does not
 /// follow a symlink at the name, `admit` sees it through that handle, the
 /// mode is set on the entry that handle holds (through `/proc/self/fd`,
@@ -750,7 +775,6 @@ fn open_unreadable(
     parent: &File,
     name: &CStr,
     admit: impl FnOnce(&std::os::fd::OwnedFd) -> std::io::Result<()>,
-    mode: impl FnOnce(u32) -> u32,
 ) -> std::io::Result<(File, u32)> {
     use std::os::fd::AsRawFd;
     let held = openat(
@@ -762,7 +786,7 @@ fn open_unreadable(
     admit(&held)?;
     let had = stat_mode(&fstat(&held)?) & 0o7777;
     let by_handle = format!("/proc/self/fd/{}", held.as_raw_fd());
-    fs::set_permissions(&by_handle, fs::Permissions::from_mode(mode(had)))?;
+    fs::set_permissions(&by_handle, fs::Permissions::from_mode(had | 0o700))?;
     let dir = open_directory(&held, c".")?;
     if EntryId::of(&dir)? != EntryId::of(&held)? {
         return Err(std::io::Error::from(Errno::EACCES));
@@ -775,24 +799,8 @@ fn open_unreadable(
     _parent: &File,
     _name: &CStr,
     _admit: impl FnOnce(&std::os::fd::OwnedFd) -> std::io::Result<()>,
-    _mode: impl FnOnce(u32) -> u32,
 ) -> std::io::Result<(File, u32)> {
     Err(std::io::Error::from(Errno::EACCES))
-}
-
-/// Sets the mode of `name` in `parent` without following a symlink at the
-/// name. `EOPNOTSUPP` is returned as it is, never retried with a change that
-/// follows: it is what a symlink at the name answers, as well as a system
-/// that cannot change a mode without following (glibc before 2.32), as
-/// `operations::set_mode_without_following` does.
-fn set_mode_by_name(parent: &File, name: &CStr, mode: u32) -> std::io::Result<()> {
-    use nix::sys::stat::{FchmodatFlags, fchmodat};
-    Ok(fchmodat(
-        parent,
-        name,
-        mode_bits(mode),
-        FchmodatFlags::NoFollowSymlink,
-    )?)
 }
 
 /// Gives a copied directory its final mode, and for a move the source's
@@ -1022,8 +1030,8 @@ fn copy_special(
 
 /// Gives a node a move created the source's permission bits, which the umask
 /// trimmed at creation and `mv` keeps. By name, since a FIFO cannot be opened
-/// without blocking, and without following a link swapped in at the name since,
-/// as `operations::set_mode_without_following` does. A filesystem that cannot
+/// without blocking, and without following a link swapped in at the name since
+/// (`set_mode_at`). A filesystem that cannot
 /// set a mode that way leaves the node as created, with a warning.
 fn restore_node_mode(
     context: &CopyContext<'_>,
@@ -1032,7 +1040,7 @@ fn restore_node_mode(
     errors: &mut Vec<String>,
     source_mode: u32,
 ) {
-    let Err(error) = set_mode_by_name(at.dst, at.dst_name, source_mode & 0o777) else {
+    let Err(error) = set_mode_at(at.dst, at.dst_name, source_mode & 0o777) else {
         return;
     };
     if error.raw_os_error() == Some(nix::libc::EOPNOTSUPP) {
@@ -1467,11 +1475,10 @@ type CopyLevel = Level<Pair<File>, Copying>;
 
 /// Settles an entry's destination name (`paths.new`), taken since the queue
 /// saw it free: when the task started for the top-level entry, and at any time
-/// inside a directory this copy created. Nothing decided to replace what holds
-/// it now (another program, another paste, or a name the filesystem folds
-/// onto one this copy or paste wrote), so it is never replaced. A standing
-/// "skip all" skips it, which also makes a move keep its source; otherwise it
-/// is recorded like any other entry that could not be written.
+/// inside a directory this copy created. It is never replaced (`Conflicts`):
+/// a standing "skip all" skips it, which also makes a move keep its source,
+/// and otherwise it is recorded like any other entry that could not be
+/// written.
 fn resolve_raced(context: &mut CopyContext<'_>, errors: &mut Vec<String>, paths: &Paths) {
     // The staging directory was created empty for the one entry, so a name
     // taken in it is no race another paste or program could win fairly: it
@@ -1518,7 +1525,8 @@ fn replace_entry(
         }
         Err(error) => {
             errors.push(
-                refused_or_failed(context.is_move, paths, &error) + &not_replaced(&paths.new),
+                refused_or_failed(context.is_move, &transfer_object(paths), &error)
+                    + &not_replaced(&paths.new),
             );
             true
         }
@@ -1566,7 +1574,11 @@ fn replace_through(
     // is refused (`resolve_raced`), so only an error or a cancel stops it.
     if finished && errors.len() == errors_before {
         match land(context, &staging, granted, at, paths) {
-            Ok(true) => context.wrote = true,
+            Ok(true) => {
+                context.wrote = true;
+                // Landed, so nothing of it is left in staging to remove.
+                staging.staged = None;
+            }
             Ok(false) => {}
             Err(message) => errors.push(message),
         }
@@ -1575,19 +1587,24 @@ fn replace_through(
     finished
 }
 
-/// How an error making the staging directory reads: filectrl's own refusal
-/// (no errno) in the `Cannot` form, anything else as the transfer that failed.
-fn refused_or_failed(is_move: bool, paths: &Paths, error: &std::io::Error) -> String {
-    if error.raw_os_error().is_none() {
-        format!(
-            "Cannot {} {} to {}: {error}",
-            verb(is_move),
-            compact(&paths.old),
-            compact(&paths.new)
-        )
+/// How an error copying `object` reads: filectrl's own refusal (no errno) in
+/// the `Cannot` form, anything else in the `Failed to` form.
+fn refused_or_failed(
+    is_move: bool,
+    object: &dyn std::fmt::Display,
+    error: &std::io::Error,
+) -> String {
+    let shape = if error.raw_os_error().is_none() {
+        "Cannot"
     } else {
-        failed_transfer(is_move, &paths.old, &paths.new, error)
-    }
+        "Failed to"
+    };
+    format!("{shape} {} {object}: {error}", verb(is_move))
+}
+
+/// The object of a transfer's message: its source and destination.
+fn transfer_object(paths: &Paths) -> String {
+    format!("{} to {}", compact(&paths.old), compact(&paths.new))
 }
 
 /// The refusal of an entry whose staging directory holds something the copy
@@ -1607,13 +1624,18 @@ fn staging_changed(is_move: bool, paths: &Paths) -> String {
 fn clear_staging(active: &ActiveTask, staging: Staging<'_>) {
     let path = staging.path.clone();
     if let Err(error) = staging.remove() {
-        let message = format!(
-            "Failed to remove the staging directory {}: {error}",
-            compact(&path)
-        );
+        let message = staging_left_behind(&path, &error);
         warn!("{message}");
         active.warn(message);
     }
+}
+
+/// What a staging directory at `path` that could not be removed says.
+fn staging_left_behind(path: &Path, error: &std::io::Error) -> String {
+    format!(
+        "Failed to remove the staging directory {}: {error}",
+        compact(path)
+    )
 }
 
 /// Renames the replacement staged under `at`'s name in `staging` onto that
@@ -1637,7 +1659,7 @@ fn land(
         return Err(staging_changed(context.is_move, paths) + &kept);
     }
     let found = Seen::at(at.dst, at.dst_name).map_err(|error| {
-        failed_transfer(context.is_move, &paths.old, &paths.new, &error) + &kept
+        failed_replacement(true, context.is_move, &paths.old, &paths.new, &error)
     })?;
     let replaces = match still_holds(granted, found) {
         Holds::Granted => true,
@@ -1648,36 +1670,25 @@ fn land(
     landed(context, paths, replaces, renamed)
 }
 
-/// What the rename that lands a replacement (`renamed`) means. A name taken
-/// since the check, which only a rename that replaces nothing can find, is
-/// skipped under a standing "skip all" (`Ok(false)`), as a raced name
-/// anywhere else is, and refused as raced otherwise. Any other failure is
-/// one, and only a rename that `replaces` the entry granted leaves that entry
-/// at the name, which the message then says.
+/// What the rename that lands a replacement (`renamed`) means
+/// (`conflicts::rename_failure`): `Ok(false)` when a standing "skip all"
+/// skipped a name taken since the check.
 fn landed(
     context: &mut CopyContext<'_>,
     paths: &Paths,
     replaces: bool,
     renamed: std::io::Result<()>,
 ) -> Result<bool, String> {
-    match renamed {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            if context.conflicts.skips_raced() {
-                context.skipped += 1;
-                Ok(false)
-            } else {
-                Err(raced_refusal(context.is_move, &paths.old, &paths.new))
-            }
+    let Err(error) = renamed else {
+        return Ok(true);
+    };
+    let (conflicts, is_move) = (context.conflicts, context.is_move);
+    match rename_failure(conflicts, is_move, replaces, &paths.old, &paths.new, &error) {
+        None => {
+            context.skipped += 1;
+            Ok(false)
         }
-        Err(error) => {
-            let failed = failed_transfer(context.is_move, &paths.old, &paths.new, &error);
-            if replaces {
-                Err(failed + &not_replaced(&paths.new))
-            } else {
-                Err(failed)
-            }
-        }
+        Some(message) => Err(message),
     }
 }
 
@@ -1693,6 +1704,9 @@ fn rename_staged(replaces: bool, staging: &File, dst: &File, name: &CStr) -> std
     }
 }
 
+/// What every staging directory's name starts with.
+pub(super) const STAGING_PREFIX: &str = ".filectrl-";
+
 /// How many names `staging_names` offers before giving up.
 const STAGING_ATTEMPTS: u64 = 16;
 
@@ -1702,7 +1716,7 @@ fn staging_names() -> impl Iterator<Item = CString> {
     let pid = std::process::id();
     (0..STAGING_ATTEMPTS).map(move |_| {
         let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        CString::new(format!(".filectrl-{pid}-{serial}")).expect("the name holds no NUL")
+        CString::new(format!("{STAGING_PREFIX}{pid}-{serial}")).expect("the name holds no NUL")
     })
 }
 
@@ -1789,13 +1803,7 @@ impl<'a> Staging<'a> {
 
     /// Which entry holds `entry` in the staging directory now, if any.
     fn holds_staged(&self) -> Option<EntryId> {
-        fstatat(
-            &self.dir,
-            self.entry.as_c_str(),
-            AtFlags::AT_SYMLINK_NOFOLLOW,
-        )
-        .ok()
-        .map(|stat| EntryId::of_stat(&stat))
+        EntryId::at(&self.dir, &self.entry).ok()
     }
 
     /// Removes the staging directory, with its entry if that is still there.
@@ -1812,41 +1820,12 @@ impl<'a> Staging<'a> {
         if self.staged.is_some() && self.holds_staged() == self.staged {
             unlink_at(&self.dir, &self.entry, UnlinkatFlags::NoRemoveDir)?;
         }
-        let at_name = fstatat(
-            self.parent,
-            self.name.as_c_str(),
-            AtFlags::AT_SYMLINK_NOFOLLOW,
-        )?;
-        if EntryId::of_stat(&at_name) != self.id {
+        if EntryId::at(self.parent, &self.name)? != self.id {
             return Err(std::io::Error::other(
                 "another entry holds its name, and was left alone",
             ));
         }
         unlink_at(self.parent, &self.name, UnlinkatFlags::RemoveDir)
-    }
-}
-
-/// The refusal of a staging directory that proves not to be the one just
-/// made: another directory swapped in at its name.
-#[derive(Debug)]
-struct StagingReplaced;
-
-impl std::fmt::Display for StagingReplaced {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("its staging directory was replaced")
-    }
-}
-
-impl std::error::Error for StagingReplaced {}
-
-impl StagingReplaced {
-    fn error() -> std::io::Error {
-        std::io::Error::other(Self)
-    }
-
-    #[cfg(test)]
-    fn is(error: &std::io::Error) -> bool {
-        matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
     }
 }
 
@@ -1881,24 +1860,30 @@ fn floor_across(before: (i64, i64), after: (i64, i64)) -> Option<(i64, i64)> {
     (before <= after).then_some(before)
 }
 
-/// When `stat`'s entry last changed, with nanoseconds.
-// The field types vary by target.
-#[allow(clippy::unnecessary_cast)]
-fn changed(stat: &Stat) -> (i64, i64) {
-    (stat.st_ctime as i64, stat.st_ctime_nsec as i64)
-}
-
-/// Whether the open directory `dir` has no entries, read through a duplicate
-/// of its handle, which needs only the read permission it was opened with.
+/// Whether the open directory `dir` has no entries, read straight from its
+/// handle, which needs only the read permission it was opened with. The
+/// handle's position moves to the end, which nothing else reads it by: the
+/// copy only ever uses it to name entries relative to it.
+#[cfg(target_os = "linux")]
 fn is_empty_directory(dir: &File) -> std::io::Result<bool> {
-    let mut stream = nix::dir::Dir::from_fd(dir.try_clone()?.into())?;
-    for entry in stream.iter() {
+    let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 1024];
+    let mut entries = rustix::fs::RawDir::new(dir, &mut buffer);
+    while let Some(entry) = entries.next() {
         let entry = entry?;
         if entry.file_name() != c"." && entry.file_name() != c".." {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// Whether the open directory `dir` has no entries, read through a duplicate
+/// of its handle, which needs only the read permission it was opened with.
+#[cfg(not(target_os = "linux"))]
+fn is_empty_directory(dir: &File) -> std::io::Result<bool> {
+    use super::walk::is_named;
+    let mut stream = nix::dir::Dir::from_fd(dir.try_clone()?.into())?;
+    Ok(stream.iter().find(is_named).transpose()?.is_none())
 }
 
 /// Opens the directory `name` just created in `parent`, at `path`, once it
@@ -1916,7 +1901,9 @@ fn open_owned(
     path: &Path,
     floor: Option<(i64, i64)>,
 ) -> std::io::Result<(File, EntryId)> {
-    let (dir, id, _) = open_new_directory(parent, name, floor, |_| 0o700).map_err(|error| {
+    // Made with `0o700`, so owner access over what the umask left is exactly
+    // owner-only.
+    let (dir, id, _) = open_new_directory(parent, name, floor).map_err(|error| {
         if NotNew::is(&error) {
             StagingReplaced::error()
         } else {
@@ -1943,10 +1930,7 @@ impl Drop for Staging<'_> {
             return;
         }
         if let Err(error) = self.unlink_all() {
-            warn!(
-                "Failed to remove the staging directory {}: {error}",
-                compact(&self.path)
-            );
+            warn!("{}", staging_left_behind(&self.path, &error));
         }
     }
 }
@@ -1975,34 +1959,27 @@ pub(super) fn prepare_destination(
     new_path: &Path,
     source_mode: u32,
 ) -> Option<(ActiveTask, Prepared)> {
-    let failed = |error: &dyn std::fmt::Display| {
-        failed_transfer(settings.is_move, old_path, new_path, error)
+    let failed = |kept: bool, error: &dyn std::fmt::Display| {
+        failed_replacement(kept, settings.is_move, old_path, new_path, error)
     };
-    let replace = match overwrite {
-        None => None,
-        Some(granted) => match Seen::of_path(new_path).map(|found| still_holds(granted, found)) {
-            Ok(Holds::Granted) => Some(granted),
-            Ok(Holds::Free) => None,
-            Ok(Holds::Changed) => {
-                active.error(changed_refusal(settings.is_move, old_path, new_path));
-                return None;
-            }
-            Err(error) => {
-                active.error(failed(&error) + &not_replaced(new_path));
-                return None;
-            }
-        },
+    let replace = match overwrite.map(|granted| (granted, look_again(granted, new_path))) {
+        None | Some((_, Ok((Holds::Free, _)))) => None,
+        Some((granted, Ok((Holds::Granted, _)))) => Some(granted),
+        Some((_, Ok((Holds::Changed, _)))) => {
+            active.error(changed_refusal(settings.is_move, old_path, new_path));
+            return None;
+        }
+        Some((_, Err(error))) => {
+            active.error(failed(true, &error));
+            return None;
+        }
     };
     let source = if unix_mode::is_file(source_mode) {
         let name = c_name(old_path).ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput));
         match open_parent(old_path).and_then(|parent| open_source_file(&parent, &name?)) {
             Ok(file) => Some(file),
-            Err(error) if replace.is_some() => {
-                active.error(failed(&error) + &not_replaced(new_path));
-                return None;
-            }
             Err(error) => {
-                active.error(failed(&error));
+                active.error(failed(replace.is_some(), &error));
                 return None;
             }
         }
@@ -2021,17 +1998,14 @@ mod tests {
     use super::{
         super::sys::CWD,
         super::test_support::{
-            KINDS, Kind, STANDING, answered, assert_made, copy_task, destination, every_case,
-            finished_task, make, mode_of, no_paste, paste_after, paste_after_unless, paste_over,
-            seen, staging_left, within_deadline,
+            Kind, answered, assert_made, copy_task, copy_task_with, destination, every_case,
+            finished_task, kind_matrix, make, mode_of, no_paste, paste_after, paste_after_unless,
+            paste_over, seen, src_and_dest, staging_left, within_deadline,
         },
         *,
     };
     use crate::{
-        command::{
-            Command, ConflictChoice,
-            progress::{Progress, TaskKind, Transfer},
-        },
+        command::{Command, ConflictChoice, progress::Progress},
         test_support::TempDir,
     };
 
@@ -2251,14 +2225,7 @@ mod tests {
     /// Every kind of source against every kind of occupant, under every
     /// standing answer, for a copy and for a move's copy stage.
     fn raced_cases() -> Vec<(Kind, Kind, Option<ConflictChoice>, bool)> {
-        KINDS
-            .into_iter()
-            .flat_map(|kind| KINDS.into_iter().map(move |occupant| (kind, occupant)))
-            .flat_map(|(kind, occupant)| {
-                STANDING
-                    .into_iter()
-                    .map(move |standing| (kind, occupant, standing))
-            })
+        kind_matrix()
             .flat_map(|(kind, occupant, standing)| {
                 [false, true]
                     .into_iter()
@@ -2323,7 +2290,7 @@ mod tests {
         );
         assert_eq!(
             standing == Some(ConflictChoice::SkipAll),
-            context.top_skipped,
+            context.top_skipped(),
             "{case}"
         );
         assert_made(&case, occupant, "raced", id, &new);
@@ -2434,7 +2401,7 @@ mod tests {
             (&old, &new),
             (&outcome.errors, outcome.skipped),
         );
-        assert!(!outcome.top_skipped, "{case}");
+        assert!(!outcome.top_skipped(), "{case}");
         assert_made(&case, occupant, "raced", None, &new);
     }
 
@@ -2615,14 +2582,7 @@ mod tests {
     fn cancelled_copy_task() -> ActiveTask {
         let (tx, rx) = mpsc::channel();
         std::mem::forget(rx);
-        let (active, _, token) = ActiveTask::new(
-            tx,
-            TaskKind::Copy(Transfer {
-                source: String::new(),
-                destination: String::new(),
-            }),
-            1,
-        );
+        let (active, token) = copy_task_with(tx, 1);
         token.cancel();
         active
     }
@@ -2925,10 +2885,7 @@ mod tests {
     #[test_case(false ; "a copy")]
     #[test_case(true ; "a move")]
     fn a_replacement_that_lands_leaves_no_staging_behind(is_move: bool) {
-        let fx = TempDir::new("tasks_replace_lands");
-        let (src, dest) = (fx.join("src"), fx.join("dest"));
-        fs::create_dir(&src).unwrap();
-        fs::create_dir(&dest).unwrap();
+        let (_fx, src, dest) = src_and_dest("tasks_replace_lands");
         fs::write(src.join("one"), b"source").unwrap();
         fs::write(dest.join("one"), b"dest").unwrap();
 
@@ -3030,7 +2987,7 @@ mod tests {
                 compact(Path::new("/src/one")),
                 compact(Path::new("/dest/one"))
             ),
-            refused_or_failed(true, &paths, &StagingReplaced::error())
+            refused_or_failed(true, &transfer_object(&paths), &StagingReplaced::error())
         );
     }
 
@@ -3053,7 +3010,7 @@ mod tests {
         }
         // Past any timestamp granularity, then a change to the parent, so
         // the floor is later than `theirs` was born.
-        thread::sleep(Duration::from_millis(20));
+        crate::test_support::tick();
         fs::write(fx.join("later"), b"").unwrap();
         let floor = changed(&fstat(&parent).unwrap());
         fs::create_dir(fx.join("s")).unwrap();
@@ -3523,7 +3480,9 @@ mod tests {
         let (target, mode) = if to_directory {
             let target = fx.join("dir");
             fs::create_dir(&target).unwrap();
-            (target, 0o755)
+            // Without owner write, so owner access given through the link
+            // would show.
+            (target, 0o555)
         } else {
             let target = fx.join("file");
             fs::write(&target, b"f").unwrap();
@@ -3533,8 +3492,8 @@ mod tests {
         std::os::unix::fs::symlink(&target, fx.join("link")).unwrap();
         let parent = File::open(fx.path()).unwrap();
 
-        let opened = open_unreadable(&parent, c"link", |_| Ok(()), |_| 0o777);
-        let set = set_mode_by_name(&parent, c"link", 0o777);
+        let opened = open_unreadable(&parent, c"link", |_| Ok(()));
+        let set = set_mode_at(&parent, c"link", 0o777);
 
         assert!(opened.is_err());
         // Linux refuses a mode change on a symlink; macOS changes the link's
@@ -3572,7 +3531,7 @@ mod tests {
             Ok(())
         };
 
-        let opened = open_unreadable(&parent, c"dir", exchange, |had| had | 0o700);
+        let opened = open_unreadable(&parent, c"dir", exchange);
 
         let (opened, had) = opened.unwrap();
         assert_eq!(0o000, had);
@@ -3772,14 +3731,7 @@ mod tests {
         let src = fx.join("src.bin");
         fs::write(&src, [7u8; 200]).unwrap();
         let (tx, rx) = mpsc::channel();
-        let (mut active, _, _) = ActiveTask::new(
-            tx,
-            TaskKind::Copy(Transfer {
-                source: String::new(),
-                destination: String::new(),
-            }),
-            200,
-        );
+        let (mut active, _) = copy_task_with(tx, 200);
         let mut errors = Vec::new();
 
         assert!(copy_path(
@@ -3823,7 +3775,7 @@ mod tests {
         let start = Instant::now();
         let (active, outcome) = copy_with_progress(
             settings(false),
-            Prepared::default(),
+            None,
             &PathInfo::try_from(src.as_path()).unwrap(),
             active,
             &src,
@@ -4145,7 +4097,7 @@ mod tests {
         fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
         // Past any timestamp granularity, then a change to the parent, so the
         // floor the copy takes is later than `private` was born.
-        thread::sleep(Duration::from_millis(20));
+        crate::test_support::tick();
         fs::write(dst_dir.join("later"), b"").unwrap();
         let dst = dst_dir.join("tree");
         let mut buffer = [0u8; 64];
@@ -4156,8 +4108,20 @@ mod tests {
             fs::rename(&private, made).unwrap();
         }));
         let mut errors = Vec::new();
-        let (src_parent, dst_parent) = (open_parent(&src).unwrap(), open_parent(&dst).unwrap());
-        let (src_name, dst_name) = (c_name(&src).unwrap(), c_name(&dst).unwrap());
+        let (entered, _) = enter_top(&mut context, &mut errors, &src, &dst);
+        (entered.is_some(), errors)
+    }
+
+    /// Enters the top-level directory `src`, copied to `dst`, as `copy_path`
+    /// does, and returns what the walk starts from.
+    fn enter_top(
+        context: &mut CopyContext<'_>,
+        errors: &mut Vec<String>,
+        src: &Path,
+        dst: &Path,
+    ) -> (Option<CopyLevel>, Paths) {
+        let (src_parent, dst_parent) = (open_parent(src).unwrap(), open_parent(dst).unwrap());
+        let (src_name, dst_name) = (c_name(src).unwrap(), c_name(dst).unwrap());
         let stat = fstatat(
             &src_parent,
             src_name.as_c_str(),
@@ -4171,12 +4135,11 @@ mod tests {
             dst_name: &dst_name,
         };
         let paths = Paths {
-            old: src,
-            new: dst,
+            old: src.to_path_buf(),
+            new: dst.to_path_buf(),
             depth: 0,
         };
-        let entered = enter_directory(&at, &paths, &mut errors, &mut context, &stat).is_some();
-        (entered, errors)
+        (enter_directory(&at, &paths, errors, context, &stat), paths)
     }
 
     /// The refusal of a directory swapped in where the copy made one.
@@ -4244,27 +4207,8 @@ mod tests {
         let mut context = CopyContext::new(settings(false), &mut buffer, None, 0);
         context.on_leave = Some(on_leave);
         let mut errors = Vec::new();
-        let (src_parent, dst_parent) = (open_parent(src).unwrap(), open_parent(dst).unwrap());
-        let (src_name, dst_name) = (c_name(src).unwrap(), c_name(dst).unwrap());
-        let stat = fstatat(
-            &src_parent,
-            src_name.as_c_str(),
-            AtFlags::AT_SYMLINK_NOFOLLOW,
-        )
-        .unwrap();
-        let at = At {
-            src: &src_parent,
-            dst: &dst_parent,
-            src_name: &src_name,
-            dst_name: &dst_name,
-        };
-        let mut paths = Paths {
-            old: src.to_path_buf(),
-            new: dst.to_path_buf(),
-            depth: 0,
-        };
-        let level = enter_directory(&at, &paths, &mut errors, &mut context, &stat)
-            .expect("the directory should be entered");
+        let (level, mut paths) = enter_top(&mut context, &mut errors, src, dst);
+        let level = level.expect("the directory should be entered");
         let finished = copy_tree(level, &mut paths, active, &mut errors, &mut context);
         (finished, errors)
     }
@@ -4368,14 +4312,7 @@ mod tests {
             fx.join("elsewhere"),
         );
         let (tx, _rx) = mpsc::channel();
-        let (mut active, _, token) = ActiveTask::new(
-            tx,
-            TaskKind::Copy(Transfer {
-                source: String::new(),
-                destination: String::new(),
-            }),
-            1,
-        );
+        let (mut active, token) = copy_task_with(tx, 1);
 
         let (finished, errors) = copy_tree_leaving(
             &tree,

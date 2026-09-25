@@ -8,6 +8,12 @@ use std::{
 
 use crate::file_system::path_info::PathInfo;
 
+/// Waits past any timestamp granularity a filesystem might round to, so what
+/// happens next gets later times.
+pub(crate) fn tick() {
+    std::thread::sleep(std::time::Duration::from_millis(20));
+}
+
 /// Writes `contents` to `path` as an executable script, from a child process.
 ///
 /// Written here, the file would be open for writing in this process for a

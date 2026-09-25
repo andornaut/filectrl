@@ -31,12 +31,9 @@ pub(super) struct PendingPaste {
     /// How many tasks actually started, which decides whether the clipboard is
     /// cleared, reduced, or left alone.
     pub(super) started: usize,
-    /// The standing `*All` answer, which the queue applies to each collision
-    /// it meets from then on (though "overwrite all" still asks about a
-    /// directory, which is never replaced), shared with the workers running
-    /// this paste's sources, so a standing "skip all" also skips a name taken
-    /// at a destination after the queue saw it free, in sources handed out
-    /// before it was given.
+    /// The standing `*All` answer, shared with the workers running this
+    /// paste's sources (`Conflicts`). "Overwrite all" still asks about a
+    /// directory, which is never replaced.
     pub(super) conflicts: Conflicts,
     /// The folded names (`fold_keys`) of the sources started earlier in this
     /// paste. Two marked sources can share a basename (search results make it
@@ -64,10 +61,8 @@ pub(super) enum Occupant {
 }
 
 /// What a paste should do with the source at the front of its queue.
-/// `Entry` is what `Run` may replace: the entry found at the destination
-/// (`Seen`), and anything standing in for it where the matrix is tested alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PasteStep<Entry = Seen> {
+pub(super) enum PasteStep {
     /// Stop and ask. `can_overwrite` is false for an irreplaceable occupant,
     /// whose replacement is never offered.
     Ask { can_overwrite: bool },
@@ -75,7 +70,7 @@ pub(super) enum PasteStep<Entry = Seen> {
     Skip,
     /// Run the source, replacing `replace`, the entry found at its
     /// destination, when that is given.
-    Run { replace: Option<Entry> },
+    Run { replace: Option<Seen> },
 }
 
 impl PendingPaste {
@@ -113,9 +108,11 @@ impl PendingPaste {
     /// source yet (its work is only queued) and cannot say which names it
     /// folds together.
     pub(super) fn is_claimed(&self, src: &PathInfo) -> bool {
-        src.path
-            .file_name()
-            .is_some_and(|name| fold_keys(name).iter().any(|key| self.claimed.contains(key)))
+        !self.claimed.is_empty()
+            && src
+                .path
+                .file_name()
+                .is_some_and(|name| fold_keys(name).iter().any(|key| self.claimed.contains(key)))
     }
 
     /// Records that `src`'s destination name is taken, once its work is
@@ -256,8 +253,9 @@ fn fold_text(text: &str) -> String {
         .map(|c| if c == '?' { UNREADABLE } else { c })
         .map(nuskhuri_to_mkhedruli)
         .collect();
-    let ordered: String = order_marks(folded).into_iter().collect();
-    ordered.trim_end_matches(['.', ' ']).to_string()
+    let mut ordered: String = order_marks(folded).into_iter().collect();
+    ordered.truncate(ordered.trim_end_matches(['.', ' ']).len());
+    ordered
 }
 
 /// What `fold_keys` puts for `?` and for a byte of a name that is not UTF-8.
@@ -357,11 +355,8 @@ fn nuskhuri_to_mkhedruli(c: char) -> char {
 
 /// What to do with a source, given the paste's standing answer and what already
 /// holds its destination name, if anything, with the entry it is. Pure, so the
-/// whole answer matrix can be exercised without a filesystem or a worker.
-fn step<Entry>(
-    standing: Option<ConflictChoice>,
-    found: Option<(Occupant, Entry)>,
-) -> PasteStep<Entry> {
+/// whole answer matrix can be exercised without a worker.
+fn step(standing: Option<ConflictChoice>, found: Option<(Occupant, Seen)>) -> PasteStep {
     let Some((occupant, entry)) = found else {
         return PasteStep::Run { replace: None };
     };
@@ -414,6 +409,13 @@ mod tests {
     use super::*;
     use crate::file_system::tests::CopyFixture;
 
+    /// A source that is only a path, for what is decided from names alone.
+    fn source(path: impl Into<PathBuf>) -> PathInfo {
+        let mut info = PathInfo::try_from(Path::new("/")).unwrap();
+        info.path = path.into();
+        info
+    }
+
     fn pending(standing: Option<ConflictChoice>) -> PendingPaste {
         let mut pending =
             PendingPaste::new(false, &PathInfo::try_from(Path::new("/")).unwrap(), &[]);
@@ -423,20 +425,39 @@ mod tests {
         pending
     }
 
-    #[test_case(None, None => PasteStep::Run { replace: None } ; "a free name just runs")]
-    #[test_case(None, Some(Occupant::Replaceable) => PasteStep::Ask { can_overwrite: true } ; "a file asks, offering overwrite")]
-    #[test_case(None, Some(Occupant::Irreplaceable) => PasteStep::Ask { can_overwrite: false } ; "a directory asks, withholding overwrite")]
-    #[test_case(Some(ConflictChoice::SkipAll), None => PasteStep::Run { replace: None } ; "skip all does not skip a free name")]
-    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Replaceable) => PasteStep::Skip ; "skip all skips a file")]
-    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Irreplaceable) => PasteStep::Skip ; "skip all skips a directory")]
-    #[test_case(Some(ConflictChoice::OverwriteAll), None => PasteStep::Run { replace: None } ; "overwrite all does not force a free name")]
-    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Replaceable) => PasteStep::Run { replace: Some("found") } ; "overwrite all replaces the file found")]
-    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Irreplaceable) => PasteStep::Ask { can_overwrite: false } ; "overwrite all still asks about a directory")]
+    #[test_case(None, None => "run" ; "a free name just runs")]
+    #[test_case(None, Some(Occupant::Replaceable) => "ask, offering overwrite" ; "a file asks, offering overwrite")]
+    #[test_case(None, Some(Occupant::Irreplaceable) => "ask, withholding overwrite" ; "a directory asks, withholding overwrite")]
+    #[test_case(Some(ConflictChoice::SkipAll), None => "run" ; "skip all does not skip a free name")]
+    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Replaceable) => "skip" ; "skip all skips a file")]
+    #[test_case(Some(ConflictChoice::SkipAll), Some(Occupant::Irreplaceable) => "skip" ; "skip all skips a directory")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), None => "run" ; "overwrite all does not force a free name")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Replaceable) => "run, replacing the entry found" ; "overwrite all replaces the file found")]
+    #[test_case(Some(ConflictChoice::OverwriteAll), Some(Occupant::Irreplaceable) => "ask, withholding overwrite" ; "overwrite all still asks about a directory")]
     fn the_paste_step_matrix(
         standing: Option<ConflictChoice>,
         occupant: Option<Occupant>,
-    ) -> PasteStep<&'static str> {
-        step(standing, occupant.map(|occupant| (occupant, "found")))
+    ) -> &'static str {
+        let fx = crate::test_support::TempDir::new("paste_step");
+        fs::write(fx.join("found"), b"found").unwrap();
+        let found = crate::file_system::entry_id::seen(&fx.join("found")).unwrap();
+
+        match step(standing, occupant.map(|occupant| (occupant, found))) {
+            PasteStep::Ask {
+                can_overwrite: true,
+            } => "ask, offering overwrite",
+            PasteStep::Ask {
+                can_overwrite: false,
+            } => "ask, withholding overwrite",
+            PasteStep::Skip => "skip",
+            PasteStep::Run { replace: None } => "run",
+            PasteStep::Run {
+                replace: Some(entry),
+            } => {
+                assert_eq!(found, entry);
+                "run, replacing the entry found"
+            }
+        }
     }
 
     #[test]
@@ -635,11 +656,6 @@ mod tests {
     /// read from the disk.
     #[test]
     fn a_claim_takes_every_name_that_folds_onto_it() {
-        let source = |path: &str| {
-            let mut info = PathInfo::try_from(Path::new("/")).unwrap();
-            info.path = PathBuf::from(path);
-            info
-        };
         let mut pending = pending(None);
 
         pending.claim(&source("/nowhere/one/Notes.txt"));
@@ -656,11 +672,7 @@ mod tests {
     #[test]
     fn a_claim_takes_a_name_matching_any_of_its_keys() {
         use std::os::unix::ffi::OsStrExt;
-        let source = |name: &[u8]| {
-            let mut info = PathInfo::try_from(Path::new("/")).unwrap();
-            info.path = Path::new("/nowhere").join(OsStr::from_bytes(name));
-            info
-        };
+        let source = |name: &[u8]| source(Path::new("/nowhere").join(OsStr::from_bytes(name)));
         let (first, second) = (b"\xc3\xa9\x80\xff", b"\xe3\xa9\x80\xff");
         assert_eq!(
             fold_keys(OsStr::from_bytes(first))[1],

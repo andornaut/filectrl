@@ -393,7 +393,7 @@ mod tests {
     use super::{
         super::{
             TaskCommand,
-            test_support::{copy_task, id_of, run_to_end},
+            test_support::{copy_task, run_to_end},
         },
         *,
     };
@@ -494,7 +494,7 @@ mod tests {
             fs::write(&entry, b"copied").unwrap();
             fs::write(&replacement, b"keep").unwrap();
         }
-        let copied = id_of(&entry);
+        let copied = EntryId::of_path(&entry).unwrap();
         // Renamed away rather than removed, so the replacement cannot reuse
         // the inode.
         fs::rename(&entry, fx.join("renamed")).unwrap();
@@ -592,7 +592,7 @@ mod tests {
         let fx = TempDir::new("tasks_moved_unopenable");
         let entry = fx.join("entry");
         fs::create_dir(&entry).unwrap();
-        let copied = id_of(&entry);
+        let copied = EntryId::of_path(&entry).unwrap();
         fs::rename(&entry, fx.join("renamed")).unwrap();
         fs::create_dir(&entry).unwrap();
         fs::set_permissions(&entry, fs::Permissions::from_mode(0o000)).unwrap();

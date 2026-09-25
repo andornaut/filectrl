@@ -12,6 +12,13 @@ use nix::{
     sys::stat::{FileStat, fstat, lstat},
 };
 
+/// When `stat`'s entry last changed, with nanoseconds.
+// The field types vary by target, and on some they already are these.
+#[allow(clippy::useless_conversion)]
+pub(super) fn changed(stat: &FileStat) -> (i64, i64) {
+    (i64::from(stat.st_ctime), i64::from(stat.st_ctime_nsec))
+}
+
 /// The device and inode of an entry, to tell whether a name still holds the
 /// entry it held, or whether two names hold one entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -37,6 +44,17 @@ impl EntryId {
     /// it cannot be read.
     pub(super) fn of_path(path: &Path) -> Option<Self> {
         lstat(path).ok().map(|stat| Self::of_stat(&stat))
+    }
+
+    /// The entry `name` names in the open directory `dir`, without following a
+    /// symlink there.
+    pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Self> {
+        use nix::{fcntl::AtFlags, sys::stat::fstatat};
+        Ok(Self::of_stat(&fstatat(
+            dir,
+            name,
+            AtFlags::AT_SYMLINK_NOFOLLOW,
+        )?))
     }
 }
 
@@ -91,50 +109,63 @@ impl Seen {
     }
 
     /// The entry `name` names in the open directory `dir`, without following
-    /// a symlink there, or `None` when the name is free: through `statx` on
-    /// Linux, for the birth time `fstatat` does not give. A kernel without
-    /// `statx`, or a sandbox that refuses it (EPERM, EACCES), gets `fstatat`.
-    #[cfg(target_os = "linux")]
+    /// a symlink there, or `None` when the name is free.
     pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
-        use rustix::{
-            fs::{AtFlags, StatxFlags, statx},
-            io::Errno,
-        };
-        let mask = StatxFlags::BASIC_STATS | StatxFlags::BTIME;
-        // No automount, as `fstatat` never triggers one: a look is not a use.
-        let flags = AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT;
-        match statx(&dir, name, flags, mask) {
-            Ok(stat) => Ok(Some(Self::of_statx(&stat))),
-            Err(Errno::NOENT) => Ok(None),
-            Err(Errno::NOSYS | Errno::PERM | Errno::ACCESS) => Self::by_stat(dir, name),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
-        Self::by_stat(dir, name)
+        Self::look(dir, name, false)
     }
 
     /// The entry the open handle `file` refers to, with the same times `at`
     /// gives.
-    #[cfg(target_os = "linux")]
     pub(super) fn of_handle(file: impl AsFd) -> std::io::Result<Self> {
+        Self::look(file, c"", true)?
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+    }
+
+    /// `at`, or with `handle` the entry `dir` itself refers to: through
+    /// `statx` on Linux, for the birth time `fstatat` does not give. A kernel
+    /// without `statx`, or a sandbox that refuses it (EPERM, EACCES), gets
+    /// `fstatat`, and one that has refused it for good (ENOSYS, EPERM) is not
+    /// asked again.
+    #[cfg(target_os = "linux")]
+    fn look(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
         use rustix::{
             fs::{AtFlags, StatxFlags, statx},
             io::Errno,
         };
-        let mask = StatxFlags::BASIC_STATS | StatxFlags::BTIME;
-        match statx(&file, c"", AtFlags::EMPTY_PATH, mask) {
-            Ok(stat) => Ok(Self::of_statx(&stat)),
-            Err(Errno::NOSYS | Errno::PERM | Errno::ACCESS) => Ok(Self::of_stat(&fstat(file)?)),
+        static REFUSED: AtomicBool = AtomicBool::new(false);
+        if REFUSED.load(Ordering::Relaxed) {
+            return Self::by_stat(dir, name, handle);
+        }
+        let mask = StatxFlags::TYPE
+            | StatxFlags::INO
+            | StatxFlags::MTIME
+            | StatxFlags::CTIME
+            | StatxFlags::SIZE
+            | StatxFlags::BTIME;
+        // No automount, as `fstatat` never triggers one: a look is not a use.
+        let flags = if handle {
+            AtFlags::EMPTY_PATH
+        } else {
+            AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT
+        };
+        match statx(&dir, name, flags, mask) {
+            Ok(stat) => Ok(Some(Self::of_statx(&stat))),
+            Err(Errno::NOENT) if !handle => Ok(None),
+            Err(errno @ (Errno::NOSYS | Errno::PERM | Errno::ACCESS)) => {
+                if errno != Errno::ACCESS {
+                    REFUSED.store(true, Ordering::Relaxed);
+                }
+                Self::by_stat(dir, name, handle)
+            }
             Err(error) => Err(error.into()),
         }
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(super) fn of_handle(file: impl AsFd) -> std::io::Result<Self> {
-        Ok(Self::of_stat(&fstat(file)?))
+    fn look(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
+        Self::by_stat(dir, name, handle)
     }
 
     /// Which entry it is.
@@ -147,8 +178,11 @@ impl Seen {
         self.born
     }
 
-    fn by_stat(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
+    fn by_stat(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
         use nix::{errno::Errno, fcntl::AtFlags, sys::stat::fstatat};
+        if handle {
+            return Ok(Some(Self::of_stat(&fstat(dir)?)));
+        }
         match fstatat(dir, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
             Ok(stat) => Ok(Some(Self::of_stat(&stat))),
             Err(Errno::ENOENT) => Ok(None),
@@ -159,7 +193,6 @@ impl Seen {
     // The field types vary by target, and on some they already are these.
     #[allow(clippy::useless_conversion)]
     fn of_stat(stat: &FileStat) -> Self {
-        let changed = (i64::from(stat.st_ctime), i64::from(stat.st_ctime_nsec));
         #[cfg(target_os = "macos")]
         let born = born(
             true,
@@ -167,10 +200,10 @@ impl Seen {
                 i64::from(stat.st_birthtime),
                 i64::from(stat.st_birthtime_nsec),
             ),
-            changed,
+            changed(stat),
         );
         #[cfg(not(target_os = "macos"))]
-        let born = born(false, (0, 0), changed);
+        let born = changed(stat);
         Self {
             id: EntryId::of_stat(stat),
             kind: u32::from(stat.st_mode) & u32::from(libc::S_IFMT),
@@ -210,11 +243,13 @@ impl Seen {
 /// on a filesystem without one (NFS, most FUSE), and a Linux filesystem can
 /// report it for an entry it never recorded one for.
 fn born(has_birth: bool, birth: (i64, i64), change: (i64, i64)) -> (i64, i64) {
-    if has_birth && birth != (0, 0) {
-        birth
-    } else {
-        change
-    }
+    recorded_birth(has_birth, birth).unwrap_or(change)
+}
+
+/// The `birth` time the filesystem recorded, when it gave one (`has_birth`)
+/// and it is not zero, which is none.
+fn recorded_birth(has_birth: bool, birth: (i64, i64)) -> Option<(i64, i64)> {
+    (has_birth && birth != (0, 0)).then_some(birth)
 }
 
 /// The entry `path` names now, as the paste queue would see it.
@@ -237,13 +272,26 @@ pub(super) fn records_birth_time(path: &Path) -> bool {
             StatxFlags::BTIME,
         )
         .is_ok_and(|stat| {
-            StatxFlags::from_bits_retain(stat.stx_mask).contains(StatxFlags::BTIME)
-                && (stat.stx_btime.tv_sec, stat.stx_btime.tv_nsec) != (0, 0)
+            recorded_birth(
+                StatxFlags::from_bits_retain(stat.stx_mask).contains(StatxFlags::BTIME),
+                (stat.stx_btime.tv_sec, i64::from(stat.stx_btime.tv_nsec)),
+            )
+            .is_some()
         })
     }
     #[cfg(target_os = "macos")]
     {
-        lstat(path).is_ok_and(|stat| (stat.st_birthtime, stat.st_birthtime_nsec) != (0, 0))
+        #[allow(clippy::useless_conversion)]
+        lstat(path).is_ok_and(|stat| {
+            recorded_birth(
+                true,
+                (
+                    i64::from(stat.st_birthtime),
+                    i64::from(stat.st_birthtime_nsec),
+                ),
+            )
+            .is_some()
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -255,15 +303,10 @@ pub(super) fn records_birth_time(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::test_support::{TempDir, tick};
 
     fn seen(path: &Path) -> Seen {
         super::seen(path).expect("the entry exists")
-    }
-
-    /// Past any timestamp granularity the filesystem might round to.
-    fn tick() {
-        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
     /// Writing to an entry makes it another as far as a paste is concerned:

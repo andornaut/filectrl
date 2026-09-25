@@ -116,11 +116,11 @@ pub(super) fn same_name_refusal(is_move: bool, source: &Path, dest_dir: &Path) -
 }
 
 /// The refusal of `source`, whose destination `destination` is another name of
-/// the same file, which replacing would delete or leave as it was. `operation`
-/// is the verb the task names itself by.
-pub(super) fn same_file_refusal(operation: &str, source: &Path, destination: &Path) -> String {
+/// the same file, which replacing would delete or leave as it was.
+pub(super) fn same_file_refusal(is_move: bool, source: &Path, destination: &Path) -> String {
     format!(
-        "Cannot {operation} {} to {}: they are the same file",
+        "Cannot {} {} to {}: they are the same file",
+        verb(is_move),
         compact(source),
         compact(destination)
     )
@@ -146,6 +146,53 @@ pub(super) fn failed_transfer(
         compact(source),
         compact(destination)
     )
+}
+
+/// `failed_transfer` for a replacement: when `kept`, the entry the paste was
+/// to replace is still at `destination`, which the message then says
+/// (`not_replaced`).
+pub(super) fn failed_replacement(
+    kept: bool,
+    is_move: bool,
+    source: &Path,
+    destination: &Path,
+    error: &dyn std::fmt::Display,
+) -> String {
+    let failed = failed_transfer(is_move, source, destination, error);
+    if kept {
+        failed + &not_replaced(destination)
+    } else {
+        failed
+    }
+}
+
+/// What a failed rename of `source` onto `destination` means, for a move and
+/// for landing a staged replacement alike: a name taken since the queue saw
+/// it free (`AlreadyExists`, which only a rename that replaces nothing can
+/// find) is skipped under a standing "skip all" (`None`) and refused as raced
+/// otherwise; any other failure is one, and says the entry granted was left
+/// when the rename was the one that `replaces` it.
+pub(super) fn rename_failure(
+    conflicts: &Conflicts,
+    is_move: bool,
+    replaces: bool,
+    source: &Path,
+    destination: &Path,
+    error: &std::io::Error,
+) -> Option<String> {
+    if error.kind() != std::io::ErrorKind::AlreadyExists {
+        Some(failed_replacement(
+            replaces,
+            is_move,
+            source,
+            destination,
+            error,
+        ))
+    } else if conflicts.skips_raced() {
+        None
+    } else {
+        Some(raced_refusal(is_move, source, destination))
+    }
 }
 
 /// The verb a copy or a move names itself by in its messages.

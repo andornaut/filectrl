@@ -277,6 +277,16 @@ mod tests {
             .collect()
     }
 
+    fn errors(commands: &[Command]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::AlertError(message) => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn exits(commands: &[Command]) -> usize {
         commands
             .iter()
@@ -509,17 +519,10 @@ mod tests {
             );
             drop(tx);
             let commands: Vec<Command> = rx.into_iter().collect();
-            let errors: Vec<&String> = commands
-                .iter()
-                .filter_map(|command| match command {
-                    Command::AlertError(message) => Some(message),
-                    _ => None,
-                })
-                .collect();
             let cause = std::fs::read_dir(&gone).unwrap_err();
             assert_eq!(
-                vec![&format!("Failed to search {}: {cause}", compact(&gone))],
-                errors,
+                vec![format!("Failed to search {}: {cause}", compact(&gone))],
+                errors(&commands),
                 "{gone:?}"
             );
             assert!(warnings(&commands).is_empty(), "{commands:?}");

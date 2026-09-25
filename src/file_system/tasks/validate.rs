@@ -33,9 +33,8 @@ pub(super) fn start_transfer(
     overwrite: bool,
     path: &PathInfo,
 ) -> Result<(PathInfo, PathBuf, PathBuf, TaskKind), CommandResult> {
-    let operation = verb(is_move);
-    let path = restat(path, operation)?;
-    let (old_path, new_path) = validate_paths(&path, dir, operation, overwrite)?;
+    let path = restat(path, verb(is_move))?;
+    let (old_path, new_path) = validate_paths(&path, dir, is_move, overwrite)?;
     let transfer = Transfer {
         source: display_path(&old_path),
         destination: display_path(&new_path),
@@ -224,9 +223,10 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 pub(super) fn validate_paths(
     source: &PathInfo,
     destination_directory: &PathInfo,
-    operation: &str,
+    is_move: bool,
     overwrite: bool,
 ) -> Result<(PathBuf, PathBuf), CommandResult> {
+    let operation = verb(is_move);
     let old_path = source.path.clone();
     // Join the source's raw `OsStr` file name rather than its display name:
     // the display name is lossy UTF-8, which would silently mangle a non-UTF8
@@ -253,7 +253,7 @@ pub(super) fn validate_paths(
                 "Cannot {operation} {} into its own directory",
                 compact(&old_path)
             ),
-            OntoItself::SameFile => anyhow!(same_file_refusal(operation, &old_path, &new_path)),
+            OntoItself::SameFile => anyhow!(same_file_refusal(is_move, &old_path, &new_path)),
             OntoItself::LinksTo => anyhow!(
                 "Cannot {operation} {}: it links to {}, the entry it would replace",
                 compact(&old_path),
@@ -332,6 +332,14 @@ pub(super) fn still_holds(granted: Seen, found: Option<Seen>) -> Holds {
     }
 }
 
+/// What the name `path`, for which an overwrite was granted for `granted`,
+/// holds now (`still_holds`), with the entry found there: looked at once, just
+/// before the paste acts on it.
+pub(super) fn look_again(granted: Seen, path: &Path) -> std::io::Result<(Holds, Option<Seen>)> {
+    let found = Seen::of_path(path)?;
+    Ok((still_holds(granted, found), found))
+}
+
 /// How `rename_for_move` ended.
 #[derive(Debug)]
 pub(super) enum Renamed {
@@ -368,15 +376,14 @@ pub(super) fn rename_for_move(
     old_path: &Path,
     new_path: &Path,
 ) -> Renamed {
-    let replace = match overwrite {
-        None => false,
-        Some(_) if is_same_file(old_path, new_path) => return Renamed::SameFile,
-        Some(granted) => match Seen::of_path(new_path).map(|found| still_holds(granted, found)) {
-            Ok(Holds::Granted) => true,
-            Ok(Holds::Free) => false,
-            Ok(Holds::Changed) => return Renamed::Changed,
-            Err(error) => return Renamed::Failed { error, kept: true },
-        },
+    let replace = match overwrite.map(|granted| look_again(granted, new_path)) {
+        Some(Err(error)) => return Renamed::Failed { error, kept: true },
+        Some(Ok((_, Some(found)))) if EntryId::of_path(old_path) == Some(found.id()) => {
+            return Renamed::SameFile;
+        }
+        Some(Ok((Holds::Granted, _))) => true,
+        None | Some(Ok((Holds::Free, _))) => false,
+        Some(Ok((Holds::Changed, _))) => return Renamed::Changed,
     };
     let renamed = if replace {
         fs::rename(old_path, new_path)
@@ -428,7 +435,7 @@ mod tests {
     fn validate_paths_rejects_identical_source_and_destination() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a", "a");
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.ends_with("into its own directory"), "{message}");
     }
 
@@ -436,7 +443,7 @@ mod tests {
     fn validate_paths_rejects_destination_inside_source() {
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/b/c", "c");
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
@@ -446,7 +453,7 @@ mod tests {
         // component-wise prefix check on the path as written would not catch.
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/c/../b/d", "d");
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
@@ -463,7 +470,7 @@ mod tests {
 
         let source = path_info(src.to_str().unwrap(), "src");
         let dest = path_info(link.to_str().unwrap(), "link");
-        let message = rejection(validate_paths(&source, &dest, "copy", false));
+        let message = rejection(validate_paths(&source, &dest, false, false));
         assert!(message.contains("into its own subdirectory"), "{message}");
     }
 
@@ -480,7 +487,7 @@ mod tests {
         // no subtree to recurse into and nothing to reject.
         let source = PathInfo::try_from(link.as_path()).unwrap();
         let dest = PathInfo::try_from(target.as_path()).unwrap();
-        assert!(validate_paths(&source, &dest, "copy", false).is_ok());
+        assert!(validate_paths(&source, &dest, false, false).is_ok());
     }
 
     #[test_case(true  ; "overwrite granted")]
@@ -501,7 +508,7 @@ mod tests {
         // replace the source with itself. Without a granted overwrite the
         // existing-destination rule refuses the same paste, so the message is
         // what says the alias check is the one that fired.
-        let message = rejection(validate_paths(&src, &dest, "copy", overwrite));
+        let message = rejection(validate_paths(&src, &dest, false, overwrite));
         assert!(message.ends_with("into its own directory"), "{message}");
         assert!(real.join("f.txt").exists());
     }
@@ -529,7 +536,7 @@ mod tests {
 
         // Even with the overwrite granted: replacing `b/foo` with the link
         // would leave a link to itself and lose the only copy of the data.
-        let message = rejection(validate_paths(&src, &dest, "copy", true));
+        let message = rejection(validate_paths(&src, &dest, false, true));
 
         assert!(message.ends_with("the entry it would replace"), "{message}");
         assert_eq!(
@@ -538,9 +545,9 @@ mod tests {
         );
     }
 
-    #[test_case("copy" ; "a copy")]
-    #[test_case("move" ; "a move")]
-    fn validate_paths_refuses_a_hard_link_of_the_source(operation: &str) {
+    #[test_case(false ; "a copy")]
+    #[test_case(true ; "a move")]
+    fn validate_paths_refuses_a_hard_link_of_the_source(is_move: bool) {
         let fx = TempDir::new("tasks_hard_link");
         let (a, b) = (fx.join("a"), fx.join("b"));
         std::fs::create_dir_all(&a).unwrap();
@@ -550,7 +557,7 @@ mod tests {
         let src = PathInfo::try_from(a.join("f").as_path()).unwrap();
         let dest = PathInfo::try_from(b.as_path()).unwrap();
 
-        let message = rejection(validate_paths(&src, &dest, operation, true));
+        let message = rejection(validate_paths(&src, &dest, is_move, true));
 
         assert!(message.ends_with("they are the same file"), "{message}");
     }
@@ -559,7 +566,7 @@ mod tests {
     fn validate_paths_treats_a_symlink_to_another_file_as_an_ordinary_collision() {
         let (_fx, src, dest) = link_pasted_into("tasks_link_elsewhere", "c");
 
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
 
         assert!(message.ends_with("already exists there"), "{message}");
     }
@@ -569,7 +576,7 @@ mod tests {
         let src = path_info("/a/b", "b");
         let dest = path_info("/x", "x");
         let (old_path, new_path) =
-            validate_paths(&src, &dest, "copy", false).expect("should be allowed");
+            validate_paths(&src, &dest, false, false).expect("should be allowed");
         assert_eq!(PathBuf::from("/a/b"), old_path);
         assert_eq!(PathBuf::from("/x/b"), new_path);
     }
@@ -579,7 +586,7 @@ mod tests {
         // "/a/bb" must not be treated as inside "/a/b".
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
-        assert!(validate_paths(&src, &dest, "copy", false).is_ok());
+        assert!(validate_paths(&src, &dest, false, false).is_ok());
     }
 
     #[test]
@@ -591,7 +598,7 @@ mod tests {
         let mut src = path_info("/a/placeholder", "placeholder");
         src.path = PathBuf::from("/a").join(name);
         let dest = path_info("/x", "x");
-        let (_, new_path) = validate_paths(&src, &dest, "copy", false).expect("should be allowed");
+        let (_, new_path) = validate_paths(&src, &dest, false, false).expect("should be allowed");
         assert_eq!(PathBuf::from("/x").join(name), new_path);
     }
 
@@ -609,7 +616,7 @@ mod tests {
     fn validate_paths_rejects_source_without_file_name() {
         let src = path_info("/", "");
         let dest = path_info("/x", "x");
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.ends_with("path has no file name"), "{message}");
     }
 
@@ -619,7 +626,7 @@ mod tests {
         std::fs::write(fx.join("existing.txt"), b"x").unwrap();
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.ends_with("it already exists there"), "{message}");
     }
 
@@ -633,7 +640,7 @@ mod tests {
         // A directory is refused whatever the answer: removing it would take
         // its contents with it, and merging is not supported.
         for overwrite in [false, true] {
-            let message = rejection(validate_paths(&src, &dest, "copy", overwrite));
+            let message = rejection(validate_paths(&src, &dest, false, overwrite));
             assert!(
                 message.ends_with("a directory of that name is already there"),
                 "{message}"
@@ -651,7 +658,7 @@ mod tests {
 
         // `symlink_metadata` rather than `exists`, which follows the link and
         // reports a dangling one as absent, silently overwriting it.
-        let message = rejection(validate_paths(&src, &dest, "copy", false));
+        let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.ends_with("it already exists there"), "{message}");
     }
 
@@ -707,9 +714,9 @@ mod tests {
         assert!(src.join("inner.txt").exists());
     }
 
-    #[test_case("copy" ; "a copy")]
-    #[test_case("move" ; "a move")]
-    fn validate_paths_refuses_a_directory_granted_an_overwrite(operation: &str) {
+    #[test_case(false ; "a copy")]
+    #[test_case(true ; "a move")]
+    fn validate_paths_refuses_a_directory_granted_an_overwrite(is_move: bool) {
         let fx = TempDir::new("tasks_validate_dir_over_file");
         let src = fx.join("src").join("name");
         std::fs::create_dir_all(&src).unwrap();
@@ -720,7 +727,7 @@ mod tests {
         let dest = PathInfo::try_from(dest.as_path()).unwrap();
 
         // The paste never offers it, so only a granted overwrite reaches this.
-        let message = rejection(validate_paths(&src, &dest, operation, true));
+        let message = rejection(validate_paths(&src, &dest, is_move, true));
 
         assert!(
             message.ends_with("never replaces what holds its name"),
@@ -835,29 +842,6 @@ mod tests {
         }
     }
 
-    /// The check and the rename of the fallback both go through the directory
-    /// handles they are given, not the current directory.
-    #[test]
-    fn the_checked_rename_between_open_directories_refuses_a_taken_name() {
-        let fx = TempDir::new("tasks_checked_rename_at");
-        let (from, to) = (fx.join("from"), fx.join("to"));
-        fs::create_dir(&from).unwrap();
-        fs::create_dir(&to).unwrap();
-        fs::write(from.join("a"), b"a").unwrap();
-        fs::write(from.join("b"), b"b").unwrap();
-        fs::write(to.join("a"), b"taken").unwrap();
-        let (from_dir, to_dir) = (File::open(&from).unwrap(), File::open(&to).unwrap());
-
-        let taken = checked_rename_at(&from_dir, "a", &to_dir, "a").unwrap_err();
-        checked_rename_at(&from_dir, "b", &to_dir, "b").unwrap();
-
-        assert_eq!(ErrorKind::AlreadyExists, taken.kind());
-        assert_eq!(b"taken".to_vec(), fs::read(to.join("a")).unwrap());
-        assert!(from.join("a").exists());
-        assert_eq!(b"b".to_vec(), fs::read(to.join("b")).unwrap());
-        assert!(!from.join("b").exists());
-    }
-
     /// The move itself: an entry that took the granted one's place is left
     /// alone, and so is the source.
     #[test]
@@ -922,10 +906,14 @@ mod tests {
         assert!(!src.exists());
     }
 
-    /// Relative to open directories, as a replacement staged in a directory
-    /// of its own lands.
-    #[test]
-    fn a_rename_between_open_directories_refuses_a_taken_name() {
+    /// Relative to the directory handles given, not the current directory, as
+    /// a replacement staged in a directory of its own lands: the rename, and
+    /// the check and rename of its fallback alike.
+    #[test_case(|a, b, c, d| rename_no_replace_at(a, b, c, d) ; "the rename")]
+    #[test_case(|a, b, c, d| checked_rename_at(a, b, c, d) ; "its fallback")]
+    fn a_rename_between_open_directories_refuses_a_taken_name(
+        rename: fn(&File, &str, &File, &str) -> std::io::Result<()>,
+    ) {
         let fx = TempDir::new("tasks_rename_at");
         let (from, to) = (fx.join("from"), fx.join("to"));
         fs::create_dir(&from).unwrap();
@@ -933,15 +921,16 @@ mod tests {
         fs::write(from.join("a"), b"a").unwrap();
         fs::write(to.join("a"), b"taken").unwrap();
         fs::write(from.join("b"), b"b").unwrap();
-        let open = |dir: &Path| File::open(dir).unwrap();
+        let (from_dir, to_dir) = (File::open(&from).unwrap(), File::open(&to).unwrap());
 
-        let error = rename_no_replace_at(open(&from), c"a", open(&to), c"a").unwrap_err();
-        rename_no_replace_at(open(&from), c"b", open(&to), c"b").unwrap();
+        let error = rename(&from_dir, "a", &to_dir, "a").unwrap_err();
+        rename(&from_dir, "b", &to_dir, "b").unwrap();
 
         assert_eq!(ErrorKind::AlreadyExists, error.kind(), "{error}");
         assert_eq!(b"taken".to_vec(), fs::read(to.join("a")).unwrap());
         assert_eq!(b"a".to_vec(), fs::read(from.join("a")).unwrap());
         assert_eq!(b"b".to_vec(), fs::read(to.join("b")).unwrap());
+        assert!(!from.join("b").exists());
     }
 
     /// Refused by the kernel, not by the fallback's check: only the kernel's

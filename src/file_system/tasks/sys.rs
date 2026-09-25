@@ -77,6 +77,27 @@ pub(super) fn mode_bits(mode: u32) -> Mode {
     Mode::from_bits_truncate(raw)
 }
 
+/// Sets the mode of `name` in the open directory `dir` (the working
+/// directory through `CWD`) without following a symlink at the name.
+/// `EOPNOTSUPP` is returned as it is, never retried with a change that
+/// follows: it is what Linux answers for a symlink at the name, as well as a
+/// system that cannot change a mode without following (glibc before 2.32),
+/// and a link swapped in again before a retry would have its target changed.
+/// macOS sets the link's own mode instead, which leaves the target alone too.
+pub(in crate::file_system) fn set_mode_at(
+    dir: impl std::os::fd::AsFd,
+    name: &(impl ?Sized + nix::NixPath),
+    mode: u32,
+) -> std::io::Result<()> {
+    use nix::sys::stat::{FchmodatFlags, fchmodat};
+    Ok(fchmodat(
+        dir,
+        name,
+        mode_bits(mode),
+        FchmodatFlags::NoFollowSymlink,
+    )?)
+}
+
 #[cfg(test)]
 mod tests {
     use test_case::test_case;

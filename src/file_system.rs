@@ -95,10 +95,8 @@ pub struct FileSystem {
     open_file_template: String,
     open_filectrl_window_template: String,
     /// The paste awaiting a conflict answer, if any. The only thing that ever
-    /// asks: a worker replaces nothing but the entry this was told to replace,
-    /// and skips a name taken since this saw it free under the paste's
-    /// standing "skip all" or records it, so there is never a second prompt
-    /// to route around.
+    /// asks: a worker never does (`Conflicts`), so there is never a second
+    /// prompt to route around.
     pending_paste: Option<PendingPaste>,
     search_max_depth: u32,
     search_max_results: u32,
@@ -651,18 +649,13 @@ impl FileSystem {
         src: PathInfo,
         overwrite: Option<Seen>,
     ) -> Vec<Command> {
-        let job = PasteJob {
+        let (started, commands) = self.run_task(TaskCommand::paste(PasteJob {
+            is_move: pending.is_move,
             conflicts: pending.conflicts.clone(),
             overwrite,
             dest: pending.dest.clone(),
             source: src.clone(),
-        };
-        let task = if pending.is_move {
-            TaskCommand::Move(job)
-        } else {
-            TaskCommand::Copy(job)
-        };
-        let (started, commands) = self.run_task(task);
+        }));
         if started {
             pending.started += 1;
             pending.claim(&src);
@@ -1295,14 +1288,20 @@ mod tests {
         )
     }
 
-    /// The clipboard entry a paste leaves for `sources`, which it did not
-    /// paste.
-    fn left_over(is_move: bool, sources: Vec<PathInfo>) -> Command {
-        Command::SetClipboardEntry(Some(if is_move {
+    /// The clipboard entry of `sources`, cut when `is_move` and copied
+    /// otherwise.
+    fn entry(is_move: bool, sources: Vec<PathInfo>) -> ClipboardEntry {
+        if is_move {
             ClipboardEntry::Move(sources)
         } else {
             ClipboardEntry::Copy(sources)
-        }))
+        }
+    }
+
+    /// The clipboard entry a paste leaves for `sources`, which it did not
+    /// paste.
+    fn left_over(is_move: bool, sources: Vec<PathInfo>) -> Command {
+        Command::SetClipboardEntry(Some(entry(is_move, sources)))
     }
 
     /// The disk already shows what the first source wrote when its twin comes
@@ -1322,17 +1321,7 @@ mod tests {
         let twin = PathInfo::try_from(elsewhere.join("a.txt").as_path()).unwrap();
         fx.occupy("b.txt");
         let srcs = vec![fx.src.clone(), fx.other.clone(), twin.clone()];
-        let paste = if is_move {
-            Command::Move {
-                srcs,
-                dest: fx.dest.clone(),
-            }
-        } else {
-            Command::Copy {
-                srcs,
-                dest: fx.dest.clone(),
-            }
-        };
+        let paste = entry(is_move, srcs).into_paste(fx.dest.clone());
 
         let commands = file_system.handle_command(&paste).into_commands();
         assert_eq!(("b.txt", true), conflict_prompt(&commands));
@@ -1406,17 +1395,7 @@ mod tests {
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_prompt_changed");
         fx.occupy("a.txt");
-        let paste = if is_move {
-            Command::Move {
-                srcs: vec![fx.src.clone()],
-                dest: fx.dest.clone(),
-            }
-        } else {
-            Command::Copy {
-                srcs: vec![fx.src.clone()],
-                dest: fx.dest.clone(),
-            }
-        };
+        let paste = entry(is_move, vec![fx.src.clone()]).into_paste(fx.dest.clone());
         let commands = file_system.handle_command(&paste).into_commands();
         assert_eq!(("a.txt", true), conflict_prompt(&commands));
         let new = fx.dest.path.join("a.txt");
@@ -1531,11 +1510,7 @@ mod tests {
         let second = PathInfo::try_from(two.join(second_name).as_path()).unwrap();
         let srcs = vec![first.clone(), second.clone()];
         let dest = fx.dest.clone();
-        let paste = if is_move {
-            Command::Move { srcs, dest }
-        } else {
-            Command::Copy { srcs, dest }
-        };
+        let paste = entry(is_move, srcs).into_paste(dest);
 
         let commands = file_system.handle_command(&paste).into_commands();
         tasks::await_end(&rx);

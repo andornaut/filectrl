@@ -9,10 +9,7 @@ use std::{
 };
 
 use super::{
-    PasteJob, TaskCommand, await_end,
-    copy::CopySettings,
-    hold_worker, move_across_devices,
-    sys::{AtFlags, CWD, fstatat},
+    PasteJob, TaskCommand, await_end, copy::CopySettings, hold_worker, move_across_devices,
     validate::validate_paths,
 };
 use crate::{
@@ -25,15 +22,24 @@ use crate::{
 };
 
 pub(super) fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {
-    let (active, _, _) = ActiveTask::new(
+    copy_task_with(tx, 1).0
+}
+
+/// A copy task of `total` bytes sending to `tx`, with the token that cancels
+/// it.
+pub(super) fn copy_task_with(
+    tx: std::sync::mpsc::Sender<Command>,
+    total: u64,
+) -> (ActiveTask, crate::command::progress::CancellationToken) {
+    let (active, _, token) = ActiveTask::new(
         tx,
         TaskKind::Copy(Transfer {
             source: String::new(),
             destination: String::new(),
         }),
-        1,
+        total,
     );
-    active
+    (active, token)
 }
 
 /// Runs `task` on the shared worker and waits for how it finished. `Err`
@@ -63,10 +69,6 @@ pub(super) fn finished_task(rx: &mpsc::Receiver<Command>) -> Task {
 }
 
 /// The identity of the entry `path` names now.
-pub(super) fn id_of(path: &Path) -> EntryId {
-    EntryId::of_stat(&fstatat(CWD, path, AtFlags::AT_SYMLINK_NOFOLLOW).unwrap())
-}
-
 /// A source file holding "src", a destination file holding "dest", and an
 /// `ActiveTask` for the operation that would replace one with the other.
 /// The receiver is leaked: nothing reads it, and it only has to outlive the
@@ -81,14 +83,7 @@ pub(super) fn destination(
     std::fs::write(&dst, b"dest").unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     std::mem::forget(rx);
-    let (active, _, token) = ActiveTask::new(
-        tx,
-        TaskKind::Copy(Transfer {
-            source: String::new(),
-            destination: String::new(),
-        }),
-        1,
-    );
+    let (active, token) = copy_task_with(tx, 1);
     (fx, src, dst, active, token)
 }
 
@@ -98,7 +93,7 @@ pub(super) fn staging_left(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with(".filectrl-"))
+        .filter(|name| name.starts_with(super::copy::STAGING_PREFIX))
         .collect()
 }
 
@@ -156,9 +151,7 @@ fn transfer(
     // The entry the replacement is granted for, as the paste finds it.
     let granted = if overwrite { seen(&new_path) } else { None };
     if is_move {
-        let (old_path, moved_to) = validate_paths(&path, &dest, "move", overwrite)
-            .ok()
-            .unwrap();
+        let (old_path, moved_to) = validate_paths(&path, &dest, true, overwrite).ok().unwrap();
         change();
         let task = on_a_thread(runaway, move |active| {
             let conflicts = Conflicts::default();
@@ -174,7 +167,8 @@ fn transfer(
     // once the worker is let go.
     let gate = hold_worker();
     let (tx, rx) = mpsc::channel();
-    let started = TaskCommand::Copy(PasteJob {
+    let started = TaskCommand::paste(PasteJob {
+        is_move: false,
         conflicts: Conflicts::default(),
         overwrite: granted,
         dest,
@@ -222,14 +216,7 @@ fn watched(
 /// watches one, and returns how the task ended.
 fn on_a_thread(runaway: impl Fn() -> bool, run: impl FnOnce(ActiveTask) + Send + 'static) -> Task {
     let (tx, rx) = mpsc::channel();
-    let (active, _, token) = ActiveTask::new(
-        tx,
-        TaskKind::Copy(Transfer {
-            source: String::new(),
-            destination: String::new(),
-        }),
-        1,
-    );
+    let (active, token) = copy_task_with(tx, 1);
     let worker = std::thread::spawn(move || run(active));
     let task = watched(&rx, &token, runaway);
     worker.join().unwrap();
@@ -262,6 +249,28 @@ pub(super) enum Kind {
 }
 
 pub(super) const KINDS: [Kind; 4] = [Kind::File, Kind::Symlink, Kind::Fifo, Kind::Directory];
+
+/// Every kind of source onto every kind of occupant, under every standing
+/// answer.
+pub(super) fn kind_matrix() -> impl Iterator<Item = (Kind, Kind, Option<ConflictChoice>)> {
+    KINDS.into_iter().flat_map(|kind| {
+        KINDS.into_iter().flat_map(move |occupant| {
+            STANDING
+                .into_iter()
+                .map(move |standing| (kind, occupant, standing))
+        })
+    })
+}
+
+/// A temporary directory labelled `label` holding the directories `src` and
+/// `dest`, returned with their paths.
+pub(super) fn src_and_dest(label: &str) -> (TempDir, PathBuf, PathBuf) {
+    let fx = TempDir::new(label);
+    let (src, dest) = (fx.join("src"), fx.join("dest"));
+    fs::create_dir(&src).unwrap();
+    fs::create_dir(&dest).unwrap();
+    (fx, src, dest)
+}
 
 /// Makes an entry of `kind` at `path`, its contents marked with `mark`: a
 /// file's bytes, a symlink's target, or the one file a directory holds.

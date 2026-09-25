@@ -17,7 +17,7 @@ use super::{
     path_info::{PathInfo, compact, visible_name},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
-    tasks::{is_same_file, rename_no_replace, restat},
+    tasks::{is_same_file, rename_no_replace, restat, set_mode_at},
 };
 use crate::{
     command::{Command, progress::CancellationToken},
@@ -255,29 +255,18 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     set_mode_without_following(p, mode)
 }
 
-/// Sets the mode with `fchmodat(AT_SYMLINK_NOFOLLOW)`, which the C library
-/// implements without following the final component and refuses on Linux with
-/// `EOPNOTSUPP` for a symlink, so a path swapped for one after `chmod` checked
-/// it is refused rather than followed. macOS sets the link's own mode instead,
-/// which leaves the target alone too.
-///
-/// An `EOPNOTSUPP` is never retried with a chmod that follows links: a link
-/// swapped in again before the retry would have its target changed.
+/// Sets the mode without following a symlink at `p` (`tasks::set_mode_at`),
+/// so a path swapped for one after `chmod` checked it is refused rather than
+/// followed.
 fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
-    use nix::{
-        errno::Errno,
-        fcntl::AT_FDCWD,
-        sys::stat::{FchmodatFlags, Mode, fchmodat},
-    };
-
-    // `mode_t` is u32 on Linux but u16 on macOS; the permission bits
-    // `from_bits_truncate` keeps fit in either.
-    #[allow(clippy::cast_possible_truncation)]
-    let bits = Mode::from_bits_truncate(mode as nix::libc::mode_t);
-    match fchmodat(AT_FDCWD, p, bits, FchmodatFlags::NoFollowSymlink) {
+    match set_mode_at(nix::fcntl::AT_FDCWD, p, mode) {
         Ok(()) => Ok(()),
-        Err(Errno::EOPNOTSUPP) if is_symlink(p, mode)? => Err(symlink_refusal(p)),
-        Err(errno) => Err(chmod_failure(p, mode, &std::io::Error::from(errno))),
+        Err(error)
+            if error.raw_os_error() == Some(nix::libc::EOPNOTSUPP) && is_symlink(p, mode)? =>
+        {
+            Err(symlink_refusal(p))
+        }
+        Err(error) => Err(chmod_failure(p, mode, &error)),
     }
 }
 

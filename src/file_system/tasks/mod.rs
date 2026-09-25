@@ -21,17 +21,17 @@ use std::{
 
 use log::{info, warn};
 
-pub(super) use self::validate::{is_same_file, onto_itself, rename_no_replace, restat};
 use self::{
-    copy::{CopyOutcome, CopySettings, copy_with_progress, prepare_destination},
+    copy::{CopyOutcome, CopySettings, copy_with_progress},
     remove::{Removal, dir_total_entries, remove_path, replaced_after_copy},
     validate::{Renamed, display_path, rename_for_move, start_transfer},
 };
+pub(super) use self::{
+    sys::set_mode_at,
+    validate::{is_same_file, onto_itself, rename_no_replace, restat},
+};
 use super::{
-    conflicts::{
-        Conflicts, changed_refusal, failed_transfer, not_replaced, raced_refusal,
-        same_file_refusal, verb,
-    },
+    conflicts::{Conflicts, changed_refusal, rename_failure, same_file_refusal},
     entry_id::Seen,
     path_info::{PathInfo, compact},
 };
@@ -145,13 +145,12 @@ impl TaskRunResult {
 
 /// A file operation to run.
 pub(in crate::file_system) enum TaskCommand {
-    Copy(PasteJob),
     Delete(PathInfo),
-    Move(PasteJob),
+    Paste(Box<PasteJob>),
 }
 
-/// One source of a paste: `source` copied or moved into the directory
-/// `dest`. `overwrite` is the queue's answer to a destination it saw taken:
+/// One source of a paste: `source` moved into the directory `dest` when
+/// `is_move`, and copied into it otherwise. `overwrite` is the queue's answer to a destination it saw taken:
 /// the entry it may replace, as it saw it, or `None` when it saw the name
 /// free. Only that entry is replaced: one that has taken its place since, or
 /// the same one written since, is refused (`conflicts::changed_refusal`), and
@@ -159,6 +158,7 @@ pub(in crate::file_system) enum TaskCommand {
 /// inside a directory the copy creates, is never replaced (`paste`'s standing
 /// "skip all" skips it).
 pub(in crate::file_system) struct PasteJob {
+    pub(in crate::file_system) is_move: bool,
     pub(in crate::file_system) conflicts: Conflicts,
     pub(in crate::file_system) overwrite: Option<Seen>,
     pub(in crate::file_system) dest: PathInfo,
@@ -166,19 +166,24 @@ pub(in crate::file_system) struct PasteJob {
 }
 
 impl TaskCommand {
+    /// The task for one source of a paste.
+    pub(in crate::file_system) fn paste(job: PasteJob) -> Self {
+        Self::Paste(Box::new(job))
+    }
+
     pub(in crate::file_system) fn run(self, tx: Sender<Command>) -> TaskRunResult {
         match self {
-            TaskCommand::Copy(job) => run_paste_task(false, tx, job),
             TaskCommand::Delete(path) => run_delete_task(tx, &path),
-            TaskCommand::Move(job) => run_paste_task(true, tx, job),
+            TaskCommand::Paste(job) => run_paste_task(tx, *job),
         }
     }
 }
 
-/// Starts one source of a paste, a move when `is_move` and a copy otherwise:
-/// validated and registered here, then run on the worker.
-fn run_paste_task(is_move: bool, tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
+/// Starts one source of a paste: validated and registered here, then run on
+/// the worker.
+fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
     let PasteJob {
+        is_move,
         conflicts,
         overwrite,
         dest,
@@ -232,12 +237,9 @@ fn run_paste_task(is_move: bool, tx: Sender<Command>, job: PasteJob) -> TaskRunR
     TaskRunResult::started(&initial, token, uncancellable)
 }
 
-/// The worker side of a move whose paths are validated: a rename, replacing
-/// the entry `overwrite` names if it still holds the destination, or a copy
-/// and removal when the rename crosses devices (`move_across_devices`). A name
-/// taken since the paste saw it free is never replaced: skipped under a
-/// standing "skip all", which leaves the source where it is, and refused
-/// otherwise; so is one whose entry changed since.
+/// The worker side of a move whose paths are validated: a rename, over the
+/// entry `overwrite` names as `PasteJob` allows, or a copy and removal when
+/// the rename crosses devices (`move_across_devices`).
 fn move_to(
     settings: CopySettings<'_>,
     overwrite: Option<Seen>,
@@ -252,21 +254,20 @@ fn move_to(
             active.done();
         }
         Renamed::Changed => active.error(changed_refusal(true, old_path, new_path)),
-        Renamed::SameFile => active.error(same_file_refusal(verb(true), old_path, new_path)),
-        Renamed::Failed { error, kept } => match error.kind() {
-            ErrorKind::AlreadyExists if settings.conflicts.skips_raced() => active.done(),
-            ErrorKind::AlreadyExists => active.error(raced_refusal(true, old_path, new_path)),
-            // A rename cannot cross devices, so the move falls back to a copy
-            // and a removal of the source.
-            ErrorKind::CrossesDevices => {
-                move_across_devices(settings, overwrite, active, old_path, new_path, path);
+        Renamed::SameFile => active.error(same_file_refusal(true, old_path, new_path)),
+        // A rename cannot cross devices, so the move falls back to a copy and
+        // a removal of the source.
+        Renamed::Failed { error, .. } if error.kind() == ErrorKind::CrossesDevices => {
+            move_across_devices(settings, overwrite, active, old_path, new_path, path);
+        }
+        // The rename replaces atomically or not at all, so a replacing one
+        // that fails leaves what it was to replace (`kept`).
+        Renamed::Failed { error, kept } => {
+            match rename_failure(settings.conflicts, true, kept, old_path, new_path, &error) {
+                None => active.done(),
+                Some(message) => active.error(message),
             }
-            // The rename replaces atomically or not at all, so a replacing one
-            // that fails leaves what it was to replace.
-            _ if kept => active
-                .error(failed_transfer(true, old_path, new_path, &error) + &not_replaced(new_path)),
-            _ => active.error(failed_transfer(true, old_path, new_path, &error)),
-        },
+        }
     }
 }
 
@@ -327,7 +328,7 @@ fn copy_to(
     path: &PathInfo,
 ) {
     if let Some((active, outcome)) =
-        copy_stage(settings, overwrite, active, old_path, new_path, path)
+        copy_with_progress(settings, overwrite, path, active, old_path, new_path)
     {
         // A skipped entry needs no mention here: nothing is left behind by a
         // copy that did not make it, and the standing "skip all" that settled
@@ -347,26 +348,10 @@ fn move_across_devices(
     path: &PathInfo,
 ) {
     if let Some((active, outcome)) =
-        copy_stage(settings, overwrite, active, old_path, new_path, path)
+        copy_with_progress(settings, overwrite, path, active, old_path, new_path)
     {
         finish_cross_device_move(active, outcome, old_path, path.is_directory());
     }
-}
-
-/// What a copy and the copy a move across devices (`settings.is_move`) share:
-/// checks the destination and opens the source (`prepare_destination`), then
-/// copies `path`. `None` when the task was finalized on the way.
-fn copy_stage(
-    settings: CopySettings<'_>,
-    overwrite: Option<Seen>,
-    active: ActiveTask,
-    old_path: &Path,
-    new_path: &Path,
-    path: &PathInfo,
-) -> Option<(ActiveTask, CopyOutcome)> {
-    let (active, prepared) =
-        prepare_destination(active, settings, overwrite, old_path, new_path, path.mode())?;
-    copy_with_progress(settings, prepared, path, active, old_path, new_path)
 }
 
 /// Finishes a cross-device move once the copy stage is done, removing the
@@ -384,6 +369,7 @@ fn finish_cross_device_move(
     old_path: &Path,
     is_directory: bool,
 ) {
+    let top_skipped = outcome.top_skipped();
     if let Some(summary) = summarize(outcome.errors) {
         if outcome.wrote {
             active.error(format!(
@@ -395,7 +381,7 @@ fn finish_cross_device_move(
         }
         return;
     }
-    if outcome.top_skipped {
+    if top_skipped {
         active.done();
         return;
     }
@@ -486,8 +472,9 @@ mod tests {
 
     use super::{
         test_support::{
-            KINDS, Kind, STANDING, answered, assert_made, copy_task, every_case, finished_task,
-            id_of, make, other_device, paste_after, paste_over, run_to_end, seen, staging_left,
+            Kind, STANDING, answered, assert_made, copy_task, every_case, finished_task,
+            kind_matrix, make, other_device, paste_after, paste_over, run_to_end, seen,
+            src_and_dest, staging_left,
         },
         *,
     };
@@ -517,7 +504,8 @@ mod tests {
 
         // `cp` does not preserve timestamps without `-p`, so a copy must not
         // start doing it just because the move path needs to.
-        let task = run_to_end(TaskCommand::Copy(PasteJob {
+        let task = run_to_end(TaskCommand::paste(PasteJob {
+            is_move: false,
             conflicts: Conflicts::default(),
             overwrite: None,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
@@ -544,7 +532,8 @@ mod tests {
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
 
-        let result = run_to_end(TaskCommand::Copy(PasteJob {
+        let result = run_to_end(TaskCommand::paste(PasteJob {
+            is_move: false,
             conflicts: Conflicts::default(),
             overwrite: None,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
@@ -590,7 +579,8 @@ mod tests {
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
 
-        let result = run_to_end(TaskCommand::Move(PasteJob {
+        let result = run_to_end(TaskCommand::paste(PasteJob {
+            is_move: true,
             conflicts: Conflicts::default(),
             overwrite: None,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
@@ -647,15 +637,15 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let path = PathInfo::try_from(source).unwrap();
         let dir = PathInfo::try_from(dest).unwrap();
-        let job = PasteJob {
-            conflicts: conflicts.clone(),
-            overwrite,
-            dest: dir.clone(),
-            source: path.clone(),
-        };
         let result = match op {
-            Op::Copy => TaskCommand::Copy(job).run(tx),
-            Op::Move => TaskCommand::Move(job).run(tx),
+            Op::Copy | Op::Move => TaskCommand::paste(PasteJob {
+                is_move: op == Op::Move,
+                conflicts: conflicts.clone(),
+                overwrite,
+                dest: dir,
+                source: path,
+            })
+            .run(tx),
             Op::Across => {
                 let (path, old_path, new_path, kind) =
                     match start_transfer(true, &dir, overwrite.is_some(), &path) {
@@ -713,26 +703,16 @@ mod tests {
     fn a_name_taken_after_the_paste_saw_it_free_is_never_replaced() {
         let cases: Vec<_> = OPS
             .into_iter()
-            .flat_map(|op| KINDS.into_iter().map(move |source| (op, source)))
-            .flat_map(|(op, source)| {
-                KINDS
-                    .into_iter()
-                    .map(move |occupant| (op, source, occupant))
-            })
-            .flat_map(|(op, source, occupant)| {
-                STANDING
-                    .into_iter()
-                    .map(move |standing| (op, source, occupant, standing))
+            .flat_map(|op| {
+                kind_matrix()
+                    .map(move |(source, occupant, standing)| (op, source, occupant, standing))
             })
             .collect();
         assert_eq!(144, cases.len());
 
         every_case(cases, |&(op, source_kind, occupant, standing)| {
             let case = format!("{op:?}, {source_kind:?} onto {occupant:?}, {standing:?}");
-            let fx = TempDir::new("tasks_raced");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_raced");
             let (old, new) = (src.join("one"), dest.join("one"));
             make(source_kind, "source", &old);
             let conflicts = answered(standing);
@@ -858,8 +838,7 @@ mod tests {
                 make(kind, "since", new);
             }
             Since::Written => {
-                // Past any timestamp granularity the filesystem might round to.
-                std::thread::sleep(Duration::from_millis(20));
+                crate::test_support::tick();
                 fs::write(new, b"SEEN").unwrap();
             }
         }
@@ -878,10 +857,7 @@ mod tests {
 
         every_case(cases, |&(op, since)| {
             let case = format!("{op:?}, {since:?}");
-            let fx = TempDir::new("tasks_granted");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (fx, src, dest) = src_and_dest("tasks_granted");
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
@@ -938,10 +914,7 @@ mod tests {
 
         every_case(cases, |&(op, kind, occupant_gone)| {
             let case = format!("{op:?}, {kind:?}, occupant gone: {occupant_gone}");
-            let fx = TempDir::new("tasks_granted_source_gone");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_source_gone");
             let (old, new) = (src.join("one"), dest.join("one"));
             make(kind, "source", &old);
             fs::write(&new, b"seen").unwrap();
@@ -986,10 +959,7 @@ mod tests {
 
         every_case(cases, |&(op, kind)| {
             let case = format!("{op:?}, {kind:?}");
-            let fx = TempDir::new("tasks_granted_kinds");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_kinds");
             let (old, new) = (src.join("one"), dest.join("one"));
             make(kind, "source", &old);
             fs::write(&new, b"seen").unwrap();
@@ -1011,10 +981,7 @@ mod tests {
     fn a_granted_overwrite_of_a_symlink_replaces_the_link() {
         every_case(OPS, |&op| {
             let case = format!("{op:?}");
-            let fx = TempDir::new("tasks_granted_link");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_link");
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(dest.join("target"), b"target").unwrap();
@@ -1044,10 +1011,7 @@ mod tests {
     fn two_granted_links_of_one_file_are_both_replaced() {
         every_case(OPS, |&op| {
             let case = format!("{op:?}");
-            let fx = TempDir::new("tasks_granted_links");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_links");
             fs::write(src.join("a"), b"new a").unwrap();
             fs::write(src.join("b"), b"new b").unwrap();
             fs::write(dest.join("a"), b"shared").unwrap();
@@ -1058,7 +1022,7 @@ mod tests {
             let gate = hold_worker();
             let first = start(&conflicts, op, granted_a, &dest, &src.join("a")).unwrap();
             let second = start(&conflicts, op, granted_b, &dest, &src.join("b")).unwrap();
-            std::thread::sleep(Duration::from_millis(20));
+            crate::test_support::tick();
             drop(gate);
             assert_eq!(None, await_end(&first).error_message(), "{case}");
             let second = await_end(&second);
@@ -1161,10 +1125,7 @@ mod tests {
     fn a_granted_overwrite_cancelled_while_queued_does_nothing() {
         every_case([Op::Copy, Op::Move], |&op| {
             let case = format!("{op:?}");
-            let fx = TempDir::new("tasks_granted_cancelled");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_cancelled");
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
@@ -1224,10 +1185,7 @@ mod tests {
     fn a_granted_overwrite_that_cannot_write_beside_the_entry_reports_it() {
         every_case([Op::Copy, Op::Across], |&op| {
             let case = format!("{op:?}");
-            let fx = TempDir::new("tasks_granted_locked");
-            let (src, dest) = (fx.join("src"), fx.join("dest"));
-            fs::create_dir(&src).unwrap();
-            fs::create_dir(&dest).unwrap();
+            let (_fx, src, dest) = src_and_dest("tasks_granted_locked");
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
@@ -1268,10 +1226,7 @@ mod tests {
     /// report success, so the move is refused and both names stay.
     #[test]
     fn a_granted_move_onto_a_link_to_its_source_is_refused_as_the_same_file() {
-        let fx = TempDir::new("tasks_granted_same_file");
-        let (src, dest) = (fx.join("src"), fx.join("dest"));
-        fs::create_dir(&src).unwrap();
-        fs::create_dir(&dest).unwrap();
+        let (_fx, src, dest) = src_and_dest("tasks_granted_same_file");
         let (old, new) = (src.join("one"), dest.join("one"));
         fs::write(&old, b"source").unwrap();
         fs::write(&new, b"seen").unwrap();
@@ -1299,10 +1254,7 @@ mod tests {
     /// the message says: the rename replaces atomically or not at all.
     #[test]
     fn a_granted_move_that_fails_says_what_it_left() {
-        let fx = TempDir::new("tasks_granted_move_fails");
-        let (src, dest) = (fx.join("src"), fx.join("dest"));
-        fs::create_dir(&src).unwrap();
-        fs::create_dir(&dest).unwrap();
+        let (_fx, src, dest) = src_and_dest("tasks_granted_move_fails");
         let (old, new) = (src.join("one"), dest.join("one"));
         fs::write(&old, b"source").unwrap();
         fs::write(&new, b"seen").unwrap();
@@ -1383,7 +1335,7 @@ mod tests {
     /// A clean outcome of copying the entry `path` names now.
     fn copied(path: &Path) -> CopyOutcome {
         CopyOutcome {
-            root: Some(id_of(path)),
+            root: EntryId::of_path(path),
             ..CopyOutcome::default()
         }
     }
@@ -1498,10 +1450,12 @@ mod tests {
     ) {
         let (_fx, src, rx, active) = moved("tasks_move_skipped");
 
+        // A skip below the top means the copy made the top directory.
         finish_cross_device_move(
             active,
             CopyOutcome {
                 skipped,
+                wrote: true,
                 ..CopyOutcome::default()
             },
             &src,
@@ -1528,7 +1482,6 @@ mod tests {
             active,
             CopyOutcome {
                 skipped: 1,
-                top_skipped: true,
                 ..CopyOutcome::default()
             },
             &src,

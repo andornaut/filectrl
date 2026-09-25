@@ -256,7 +256,7 @@ pub(super) fn list_names(dir: &File) -> std::io::Result<Vec<CString>> {
 
 /// Whether a directory entry read names an entry to copy, count or remove:
 /// "." and ".." do not. An error is kept for the caller to report.
-fn is_named(entry: &nix::Result<Entry>) -> bool {
+pub(super) fn is_named(entry: &nix::Result<Entry>) -> bool {
     entry.as_ref().map_or(true, |entry| {
         entry.file_name() != c"." && entry.file_name() != c".."
     })
