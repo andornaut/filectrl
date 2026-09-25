@@ -86,6 +86,11 @@ struct CopyContext<'a> {
     /// to the parent through it: where a test moves or locks the tree.
     #[cfg(test)]
     on_leave: Option<OnLeave<'a>>,
+    /// The deepest level the walk may enter, for a test whose failure would
+    /// otherwise nest directories without end: past it the walk stops as if
+    /// cancelled, whatever the cancel token says.
+    #[cfg(test)]
+    max_depth: Option<usize>,
 }
 
 /// What `CopyContext::on_leave` calls.
@@ -120,6 +125,8 @@ impl<'a> CopyContext<'a> {
             ),
             #[cfg(test)]
             on_leave: None,
+            #[cfg(test)]
+            max_depth: None,
         }
     }
 

@@ -114,21 +114,7 @@ pub(super) fn paste_after(
     old: &Path,
     change: impl FnOnce(),
 ) -> (PathBuf, Task) {
-    paste_after_unless(is_move, dest, old, change, || false)
-}
-
-/// `paste_after`, cancelled and failed as soon as `runaway` holds. A copy
-/// descending into its own output grows a tree deeper with every level, and
-/// one left to the deadline is too deep for `TempDir` to remove, so a test
-/// that can recognize that shape early stops it at a depth that can be.
-pub(super) fn paste_after_unless(
-    is_move: bool,
-    dest: &Path,
-    old: &Path,
-    change: impl FnOnce(),
-    runaway: impl Fn() -> bool,
-) -> (PathBuf, Task) {
-    transfer(is_move, false, dest, old, change, runaway)
+    transfer(is_move, false, dest, old, change, || false)
 }
 
 /// `paste_after` with the replacement of what holds the name already granted,

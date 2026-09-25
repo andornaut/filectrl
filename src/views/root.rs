@@ -117,6 +117,17 @@ impl RootView {
         self.is_help_visible || self.open_with.is_visible()
     }
 
+    /// Marks where the alerts stand before a batch of input is handled.
+    pub fn alerts_mark(&self) -> u64 {
+        self.alerts.mark()
+    }
+
+    /// Clears the info and warning alerts raised before `mark`, once a key
+    /// after them was claimed. See `AlertsView::expire_before`.
+    pub fn expire_alerts_before(&mut self, mark: u64) {
+        self.alerts.expire_before(mark);
+    }
+
     fn views(&mut self) -> Vec<&mut dyn View> {
         // The order is significant for layout
         if self.is_help_visible {

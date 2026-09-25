@@ -13,8 +13,8 @@ use test_case::test_case;
 use super::{
     super::test_support::{
         Kind, answered, assert_made, copy_task, copy_task_with, destination, every_case,
-        finished_task, kind_matrix, make, mode_of, no_paste, paste_after, paste_after_unless,
-        paste_over, seen, src_and_dest, staging_left, within_deadline,
+        finished_task, kind_matrix, make, mode_of, no_paste, paste_after, paste_over, seen,
+        src_and_dest, staging_left, within_deadline,
     },
     super::{
         sys::{CWD, *},
@@ -2682,25 +2682,25 @@ fn a_copy_never_descends_into_a_directory_it_created() {
     fs::create_dir_all(src.join("sub")).unwrap();
     let dest = fx.join("dest");
     fs::create_dir(&dest).unwrap();
+    // The swap lands after the paste was validated and before the copy runs.
+    fs::remove_dir(&dest).unwrap();
+    std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
 
-    // A copy that did descend would nest `s/sub` without end; three
-    // levels of it is proof enough, and shallow enough to remove.
-    let runaway = src.join("sub/s/sub/s/sub/s/sub");
-    let (_, task) = paste_after_unless(
-        false,
-        &dest,
-        &src,
-        || {
-            fs::remove_dir(&dest).unwrap();
-            std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
-        },
-        || runaway.exists(),
-    );
+    let mut active = idle_task();
+    let mut buffer = [0u8; 64];
+    let mut context = context(false, &mut active, &mut buffer);
+    // A copy that did descend would nest `s/sub` without end; the cap stops
+    // the walk a few levels down whatever the timing, so the tree stays
+    // small enough for the fixture to remove.
+    context.max_depth = Some(8);
+    copy_path(&mut context, None, &listed(&src), &src, &dest.join("s"));
+    let errors = context.into_outcome().errors;
+    active.done();
 
-    let message = task.error_message().expect("the copy reports the refusal");
+    assert_eq!(1, errors.len(), "{errors:?}");
     assert!(
-        message.ends_with("it is inside the destination being written"),
-        "{message}"
+        errors[0].ends_with("it is inside the destination being written"),
+        "{errors:?}"
     );
     assert!(src.join("sub/s/sub").is_dir());
     assert!(!src.join("sub/s/sub/s").exists());

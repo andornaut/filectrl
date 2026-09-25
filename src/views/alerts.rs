@@ -45,10 +45,15 @@ impl AlertKind {
     }
 }
 
+/// One alert, with the sequence number it was raised under
+/// (`AlertsView::mark`).
+type Alert = (AlertKind, String, u64);
+
 pub(super) struct AlertsView {
-    alerts: VecDeque<(AlertKind, String)>,
+    alerts: VecDeque<Alert>,
     area: Rect,
     hint: String,
+    next_seq: u64,
 }
 
 impl AlertsView {
@@ -61,6 +66,7 @@ impl AlertsView {
             alerts: VecDeque::new(),
             area: Rect::default(),
             hint,
+            next_seq: 0,
         }
     }
 }
@@ -79,8 +85,23 @@ impl AlertsView {
         if self.alerts.len() == MAX_NUMBER_ALERTS {
             self.alerts.pop_back();
         }
-        self.alerts.push_front((kind, message));
+        self.alerts.push_front((kind, message, self.next_seq));
+        self.next_seq += 1;
         CommandResult::Handled
+    }
+
+    /// Where the next alert will be numbered from: every alert raised before
+    /// this call is below it.
+    pub(super) fn mark(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// Removes the info and warning alerts raised before `mark`, which a
+    /// claimed key has now followed: they have been on screen, and the user
+    /// has moved on. Errors stay until cleared.
+    pub(super) fn expire_before(&mut self, mark: u64) {
+        self.alerts
+            .retain(|(kind, _, seq)| *kind == AlertKind::Error || *seq >= mark);
     }
 
     fn clear_alerts(&mut self) -> CommandResult {
@@ -108,7 +129,7 @@ impl AlertsView {
 
         self.alerts
             .iter()
-            .flat_map(|(kind, message)| {
+            .flat_map(|(kind, message, _)| {
                 let mut lines = split_with_ellipsis(message, width_without_prefix as usize);
                 if lines.len() > MAX_ALERT_LINES {
                     lines.truncate(MAX_ALERT_LINES);
@@ -136,6 +157,7 @@ impl CommandHandler for AlertsView {
             Command::AlertInfo(message) => self.add_alert(AlertKind::Info, message.clone()),
             Command::AlertWarn(message) => self.add_alert(AlertKind::Warn, message.clone()),
             Command::AlertError(message) => self.add_alert(AlertKind::Error, message.clone()),
+            Command::ResetView => self.clear_alerts(),
             _ => CommandResult::NotHandled,
         }
     }
@@ -295,6 +317,34 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::NONE,
         });
+
+        assert!(v.alerts.is_empty());
+    }
+
+    /// A claimed key clears what was on screen before it, but not what the
+    /// key itself raised, and never an error.
+    #[test]
+    fn a_key_expires_the_info_and_warnings_raised_before_it() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "earlier info".into());
+        v.add_alert(AlertKind::Warn, "earlier warning".into());
+        v.add_alert(AlertKind::Error, "earlier error".into());
+        let mark = v.mark();
+        v.add_alert(AlertKind::Info, "raised by the key".into());
+
+        v.expire_before(mark);
+
+        let left: Vec<&str> = v.alerts.iter().map(|(_, m, _)| m.as_str()).collect();
+        assert_eq!(vec!["raised by the key", "earlier error"], left);
+    }
+
+    #[test]
+    fn a_reset_clears_every_alert_errors_included() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "info".into());
+        v.add_alert(AlertKind::Error, "boom".into());
+
+        v.handle_command(&Command::ResetView);
 
         assert!(v.alerts.is_empty());
     }

@@ -182,8 +182,16 @@ impl App {
         loop {
             let commands = receive_commands(&self.rx);
             let received = commands.len();
+            let keys = commands
+                .iter()
+                .filter(|command| is_key_input(command))
+                .count();
+            let alerts_mark = self.handlers.root.alerts_mark();
 
             let remaining_commands = broadcast_commands(&mut self.handlers, commands)?;
+            if claimed_a_key(keys, &remaining_commands) {
+                self.handlers.root.expire_alerts_before(alerts_mark);
+            }
 
             if should_quit(&remaining_commands) {
                 return Ok(());
@@ -371,6 +379,21 @@ fn changed_nothing_visible(received: usize, remaining: &[Command]) -> bool {
                 Command::Key(_, _) | Command::PasteText(_) | Command::Mouse(_)
             )
         })
+}
+
+fn is_key_input(command: &Command) -> bool {
+    matches!(command, Command::Key(_, _) | Command::PasteText(_))
+}
+
+/// Whether a handler claimed any of the `keys` key inputs a batch held: fewer
+/// came back unclaimed than went out. An unclaimed key changes nothing on
+/// screen and is not redrawn, so it leaves the alerts alone too.
+fn claimed_a_key(keys: usize, remaining: &[Command]) -> bool {
+    remaining
+        .iter()
+        .filter(|command| is_key_input(command))
+        .count()
+        < keys
 }
 
 fn should_quit(commands: &[Command]) -> bool {
@@ -758,6 +781,20 @@ mod tests {
         );
         assert!(must_not_contain_unhandled(&[]).is_ok());
         assert!(must_not_contain_unhandled(&[Command::AlertInfo("x".into())]).is_err());
+    }
+
+    /// Alerts expire only when a key was claimed: an unclaimed key is not
+    /// redrawn, and a click or a command from a task is not a key.
+    #[test]
+    fn only_a_claimed_key_counts() {
+        let key = Command::Key(KeyCode::Char('~'), KeyModifiers::NONE);
+        let click = Command::Mouse(mouse(MouseEventKind::Down(MouseButton::Left)));
+
+        assert!(claimed_a_key(1, &[]));
+        assert!(claimed_a_key(2, std::slice::from_ref(&key)));
+        assert!(!claimed_a_key(1, std::slice::from_ref(&key)));
+        assert!(!claimed_a_key(0, &[click]));
+        assert!(!claimed_a_key(0, &[]));
     }
 
     #[test]

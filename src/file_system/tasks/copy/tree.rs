@@ -78,6 +78,16 @@ pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &
             dst_name: &name,
         };
         if FileType::of(&stat) == FileType::Directory {
+            #[cfg(test)]
+            if context.max_depth.is_some_and(|max| paths.depth > max) {
+                context.errors.push(format!(
+                    "Stopped at the test depth cap: {}",
+                    compact(&paths.old)
+                ));
+                paths.pop();
+                cancelled = true;
+                continue;
+            }
             let id = EntryId::of_stat(&stat);
             if lineage.holds(|level| level.src == id) {
                 context.errors.push(format!(

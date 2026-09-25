@@ -77,6 +77,8 @@ Anything else is reported rather than ignored. Both write flags print the path t
 
 Signal handling and exit statuses are described under [Signals](#signals).
 
+Info and warning alerts clear on the next key that does something; errors stay until you clear them (<kbd>Ctrl</kbd>+<kbd>l</kbd> or a click). <kbd>Esc</kbd> clears every alert.
+
 ### Default keybindings
 
 All keybindings can be [customized](#customizing-keybindings).
