@@ -24,8 +24,10 @@ impl CommandHandler for FileSystem {
             Command::CancelPrompt => self.cancel_paste(),
             Command::Delete(paths) => {
                 let mut commands = Vec::new();
+                let batch = self.next_batch();
                 for path in paths {
-                    let (_, task_commands) = self.run_task(TaskCommand::Delete(path.clone()));
+                    let (_, task_commands) =
+                        self.run_task(batch, TaskCommand::Delete(path.clone()));
                     commands.extend(task_commands);
                 }
                 commands.into()

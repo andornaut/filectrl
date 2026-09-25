@@ -56,7 +56,10 @@ const SEARCH_TICK_INTERVAL: Duration = Duration::from_millis(150);
 /// in registration order; `cancel_target` decides which entry a cancel keypress
 /// aims at.
 enum Cancellable {
-    Task(CancelInfo),
+    /// A file operation and the batch it belongs to: every source of one
+    /// paste, or every entry of one delete, which one keypress cancels
+    /// together.
+    Task(CancelInfo, u64),
     Search(CancellationToken),
 }
 
@@ -72,14 +75,14 @@ enum Shown {
 
 /// A file operation already told to stop, waiting for its terminal progress.
 fn is_cancelled_task(cancellable: &Cancellable) -> bool {
-    matches!(cancellable, Cancellable::Task(info) if info.token.is_cancelled())
+    matches!(cancellable, Cancellable::Task(info, _) if info.token.is_cancelled())
 }
 
 /// A task in a stage that cannot be interrupted (a move removing its
 /// original), which the cancel key passes over to reach the work queued behind
 /// it.
 fn is_uncancellable_task(cancellable: &Cancellable) -> bool {
-    matches!(cancellable, Cancellable::Task(info) if info.uncancellable.load(Ordering::Relaxed))
+    matches!(cancellable, Cancellable::Task(info, _) if info.uncancellable.load(Ordering::Relaxed))
 }
 
 pub struct FileSystem {
@@ -87,6 +90,10 @@ pub struct FileSystem {
     /// so bookmark reads do not depend on the process-global `Config`.
     bookmarks_dir: PathBuf,
     cancellables: Vec<Cancellable>,
+    /// The number the last batch of file operations was given.
+    last_batch: u64,
+    /// The batch the paste in progress starts its tasks in.
+    paste_batch: u64,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     previous_directory: Option<PathInfo>,
@@ -136,6 +143,8 @@ impl FileSystem {
         Self {
             bookmarks_dir: config.bookmarks_dir(),
             cancellables: Vec::new(),
+            last_batch: 0,
+            paste_batch: 0,
             command_tx,
             directory: None,
             previous_directory: None,
@@ -405,7 +414,7 @@ impl FileSystem {
                 token.cancel();
                 false
             }
-            Cancellable::Task(_) => true,
+            Cancellable::Task(..) => true,
         });
     }
 
@@ -424,47 +433,56 @@ impl FileSystem {
     pub(crate) fn task_count(&self) -> usize {
         self.cancellables
             .iter()
-            .filter(|cancellable| matches!(cancellable, Cancellable::Task(_)))
+            .filter(|cancellable| matches!(cancellable, Cancellable::Task(..)))
             .count()
     }
 
     /// The entry a cancel keypress targets, so it always aims at work that is
-    /// actually running rather than at whatever was registered last.
+    /// actually running or queued rather than at whatever finished last.
     ///
     /// A search runs alongside everything else, so the most recent one started
-    /// is what the keypress means. File operations share a single worker and run
-    /// in queue order, so the *oldest* registered one is the one running:
-    /// cancelling the newest of a batch would stop work that has not started
-    /// while the copy the user is watching carries on.
+    /// is what the keypress means. File operations are grouped in batches (one
+    /// paste, one delete of marked entries), and the keypress cancels a whole
+    /// batch: the most recent one that still holds a task it can cancel. The
+    /// entry returned is that batch's oldest such task, which is the one
+    /// running when the batch has started.
     ///
     /// A cancelled task stays registered until its terminal progress arrives,
-    /// but is never targeted again, so the next keypress reaches the work after
-    /// it.
+    /// but is never targeted again. A task in an uninterruptible stage is passed
+    /// over; when nothing else is left, the oldest such task is returned so the
+    /// key can say why nothing was cancelled.
     fn cancel_target(&self) -> Option<usize> {
         let newest = self
             .cancellables
             .iter()
             .rposition(|cancellable| !is_cancelled_task(cancellable))?;
-        match self.cancellables[newest] {
-            Cancellable::Search(_) => Some(newest),
-            Cancellable::Task(_) => {
-                let live = |cancellable: &&Cancellable| {
-                    matches!(cancellable, Cancellable::Task(_)) && !is_cancelled_task(cancellable)
-                };
-                // Only uncancellable tasks left: the oldest, so the key says
-                // why nothing was cancelled.
-                let tasks = || {
-                    self.cancellables
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, c)| live(c))
-                };
-                tasks()
-                    .find(|(_, cancellable)| !is_uncancellable_task(cancellable))
-                    .or_else(|| tasks().next())
-                    .map(|(index, _)| index)
-            }
+        if let Cancellable::Search(_) = self.cancellables[newest] {
+            return Some(newest);
         }
+        let live = |cancellable: &Cancellable| {
+            matches!(cancellable, Cancellable::Task(..)) && !is_cancelled_task(cancellable)
+        };
+        let cancellable_batch =
+            self.cancellables
+                .iter()
+                .rev()
+                .find_map(|cancellable| match cancellable {
+                    Cancellable::Task(_, batch)
+                        if live(cancellable) && !is_uncancellable_task(cancellable) =>
+                    {
+                        Some(*batch)
+                    }
+                    _ => None,
+                });
+        self.cancellables
+            .iter()
+            .position(|cancellable| match (cancellable, cancellable_batch) {
+                (Cancellable::Task(_, batch), Some(target)) => {
+                    *batch == target && live(cancellable) && !is_uncancellable_task(cancellable)
+                }
+                (Cancellable::Task(..), None) => live(cancellable),
+                (Cancellable::Search(_), _) => false,
+            })
     }
 
     fn cancel_most_recent_task(&mut self) -> CommandResult {
@@ -472,19 +490,37 @@ impl FileSystem {
             return Command::AlertWarn("No active task to cancel".into()).into();
         };
         match &self.cancellables[index] {
-            Cancellable::Task(info) => {
-                // Either way the task stays on the stack until its terminal
-                // Progress prunes it: a cancelled one is still unwinding, and
-                // quit counts it. `uncancellable` covers both a task in an
-                // uninterruptible stage and one already finished whose terminal
-                // Progress is in flight; the wording fits the first and is
-                // momentarily imprecise for the second.
+            Cancellable::Task(info, batch) => {
+                // Every task stays on the stack until its terminal Progress
+                // prunes it: a cancelled one is still unwinding, or has yet to
+                // be reached by the worker, and quit counts it. `uncancellable`
+                // covers both a task in an uninterruptible stage and one already
+                // finished whose terminal Progress is in flight; the wording
+                // fits the first and is momentarily imprecise for the second.
                 if info.uncancellable.load(Ordering::Relaxed) {
                     return Command::AlertInfo(format!("Cannot cancel: {}", info.kind.message()))
                         .into();
                 }
-                info.token.cancel();
-                Command::AlertInfo(format!("Cancelled: {}", info.kind.message())).into()
+                let (batch, message) = (*batch, info.kind.message());
+                // A queued task whose token is cancelled ends as cancelled
+                // when the worker reaches it, without running.
+                let mut cancelled = 0;
+                for cancellable in &self.cancellables {
+                    if let Cancellable::Task(info, of) = cancellable
+                        && *of == batch
+                        && !info.token.is_cancelled()
+                        && !info.uncancellable.load(Ordering::Relaxed)
+                    {
+                        info.token.cancel();
+                        cancelled += 1;
+                    }
+                }
+                let more = match cancelled - 1 {
+                    0 => String::new(),
+                    1 => " and 1 more task".to_string(),
+                    n => format!(" and {n} more tasks"),
+                };
+                Command::AlertInfo(format!("Cancelled: {message}{more}")).into()
             }
             Cancellable::Search(token) => {
                 // A search that already finished cancels its own token on
@@ -506,7 +542,7 @@ impl FileSystem {
     fn check_progress_for_error(&mut self, task: &Task) -> CommandResult {
         if task.is_terminal() {
             self.cancellables.retain(|c| match c {
-                Cancellable::Task(info) => info.id != task.id(),
+                Cancellable::Task(info, _) => info.id != task.id(),
                 Cancellable::Search(_) => true,
             });
             // The watcher sees only the directory searched, not the results
@@ -647,15 +683,23 @@ impl FileSystem {
         commands.into()
     }
 
-    /// Runs a task, registering it on the cancel stack when it starts. Returns
+    /// A new batch number, for the tasks one paste or one delete starts, which
+    /// one cancel keypress stops together.
+    fn next_batch(&mut self) -> u64 {
+        self.last_batch += 1;
+        self.last_batch
+    }
+
+    /// Runs a task in `batch`, registering it on the cancel stack when it starts. Returns
     /// whether it started, together with the alerts it produced (a task that
     /// fails validation produces one and starts nothing). Started tasks send
     /// their initial progress snapshot themselves, before queueing their work.
-    fn run_task(&mut self, task: TaskCommand) -> (bool, Vec<Command>) {
+    fn run_task(&mut self, batch: u64, task: TaskCommand) -> (bool, Vec<Command>) {
         let result = task.run(self.command_tx.clone());
         let started = result.cancel_info.is_some();
         if let Some(cancel_info) = result.cancel_info {
-            self.cancellables.push(Cancellable::Task(cancel_info));
+            self.cancellables
+                .push(Cancellable::Task(cancel_info, batch));
         }
         (started, result.command_result.into_commands())
     }
@@ -667,6 +711,7 @@ impl FileSystem {
         // prompt captures while it is open, so none is waiting on an answer.
         debug_assert!(self.pending_paste.is_none(), "a paste is still asking");
         self.pending_paste = Some(PendingPaste::new(is_move, dest, srcs));
+        self.paste_batch = self.next_batch();
         self.advance_paste()
     }
 
@@ -777,13 +822,16 @@ impl FileSystem {
         src: PathInfo,
         overwrite: Option<Seen>,
     ) -> Vec<Command> {
-        let (started, commands) = self.run_task(TaskCommand::paste(PasteJob {
-            is_move: pending.is_move,
-            conflicts: pending.conflicts.clone(),
-            overwrite,
-            dest: pending.dest.clone(),
-            source: src.clone(),
-        }));
+        let (started, commands) = self.run_task(
+            self.paste_batch,
+            TaskCommand::paste(PasteJob {
+                is_move: pending.is_move,
+                conflicts: pending.conflicts.clone(),
+                overwrite,
+                dest: pending.dest.clone(),
+                source: src.clone(),
+            }),
+        );
         if started {
             pending.started += 1;
             pending.claim(&src);
@@ -938,6 +986,8 @@ mod tests {
             // A temp path, so bookmark reads never touch the real config dir.
             bookmarks_dir: bookmarks.path().to_path_buf(),
             cancellables: Vec::new(),
+            last_batch: 0,
+            paste_batch: 0,
             command_tx,
             directory: None,
             previous_directory: None,
@@ -1321,18 +1371,21 @@ mod tests {
     }
 
     /// Builds a cancel stack from a compact description: `t` is a file
-    /// operation, `x` one already cancelled and still unwinding, `s` a search,
-    /// in registration order.
+    /// operation, `x` one already cancelled and still unwinding, `u` one that
+    /// can no longer be cancelled, `s` a search, in registration order; `|`
+    /// starts the next batch of file operations.
     fn cancellables(kinds: &str) -> Vec<Cancellable> {
-        kinds
-            .chars()
-            .map(|kind| match kind {
+        let mut batch = 0;
+        let mut stack = Vec::new();
+        for kind in kinds.chars() {
+            match kind {
+                '|' => batch += 1,
                 't' | 'x' | 'u' => {
                     let token = CancellationToken::new();
                     if kind == 'x' {
                         token.cancel();
                     }
-                    Cancellable::Task(CancelInfo {
+                    let info = CancelInfo {
                         id: 0,
                         token,
                         kind: crate::command::progress::TaskKind::Delete {
@@ -1341,11 +1394,13 @@ mod tests {
                         uncancellable: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                             kind == 'u',
                         )),
-                    })
+                    };
+                    stack.push(Cancellable::Task(info, batch));
                 }
-                _ => Cancellable::Search(CancellationToken::new()),
-            })
-            .collect()
+                _ => stack.push(Cancellable::Search(CancellationToken::new())),
+            }
+        }
+        stack
     }
 
     #[test_case("" => None ; "nothing running")]
@@ -1360,6 +1415,10 @@ mod tests {
     #[test_case("x" => None ; "only a cancelled task")]
     #[test_case("ut" => Some(1) ; "the task queued behind one that cannot be cancelled")]
     #[test_case("uu" => Some(0) ; "the oldest when none can be cancelled")]
+    #[test_case("tt|tt" => Some(2) ; "the newer batch, from its oldest task")]
+    #[test_case("tt|x" => Some(0) ; "the older batch once the newer is cancelled")]
+    #[test_case("t|u" => Some(0) ; "past a batch that can no longer be cancelled")]
+    #[test_case("ut|t" => Some(2) ; "the newer batch, not the one running")]
     fn the_cancel_key_targets(kinds: &str) -> Option<usize> {
         // File operations share one worker and run in queue order, so the
         // oldest is the one actually running. Cancelling the newest would stop
@@ -2061,7 +2120,7 @@ mod tests {
         };
         // `cancellables` gives every entry id 0, so the second takes the real
         // one and the first stands for an unrelated operation still running.
-        let Cancellable::Task(second) = &mut file_system.cancellables[1] else {
+        let Cancellable::Task(second, _) = &mut file_system.cancellables[1] else {
             panic!("expected a task")
         };
         second.id = finished_id;
@@ -2074,7 +2133,7 @@ mod tests {
         assert_eq!(2, file_system.cancellables.len());
         assert!(matches!(
             file_system.cancellables[0],
-            Cancellable::Task(CancelInfo { id: 0, .. })
+            Cancellable::Task(CancelInfo { id: 0, .. }, _)
         ));
         assert!(matches!(
             file_system.cancellables[1],
@@ -2099,13 +2158,13 @@ mod tests {
         file_system.on_search_exited(4);
         assert!(matches!(
             file_system.cancellables.as_slice(),
-            [Cancellable::Task(_)]
+            [Cancellable::Task(..)]
         ));
     }
 
     fn task_info(file_system: &FileSystem, index: usize) -> &CancelInfo {
         match &file_system.cancellables[index] {
-            Cancellable::Task(info) => info,
+            Cancellable::Task(info, _) => info,
             Cancellable::Search(_) => panic!("expected a task at {index}"),
         }
     }
@@ -2124,7 +2183,7 @@ mod tests {
             },
             1,
         );
-        let Cancellable::Task(info) = &mut file_system.cancellables[0] else {
+        let Cancellable::Task(info, _) = &mut file_system.cancellables[0] else {
             panic!("expected a task")
         };
         info.id = initial.id();
@@ -2160,9 +2219,94 @@ mod tests {
             panic!("expected one notice, got {commands:?}");
         };
         assert!(message.starts_with("Cancelled: "), "{message}");
+        assert!(message.ends_with(" and 1 more task"), "{message}");
         assert!(running.is_cancelled());
-        assert!(!queued.is_cancelled());
+        assert!(queued.is_cancelled());
         assert_eq!(2, file_system.cancellables.len());
+    }
+
+    /// One keypress cancels only the newest batch: an earlier paste or delete
+    /// carries on.
+    #[test]
+    fn the_cancel_key_cancels_only_the_newest_batch() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("tt|tt");
+        let tokens: Vec<_> = (0..4)
+            .map(|index| task_info(&file_system, index).token.clone())
+            .collect();
+
+        file_system.handle_command(&Command::CancelTask);
+
+        assert_eq!(
+            vec![false, false, true, true],
+            tokens
+                .iter()
+                .map(CancellationToken::is_cancelled)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A task of the batch that can no longer be cancelled (a move removing its
+    /// original) does not keep the rest of its batch from being cancelled.
+    #[test]
+    fn an_uncancellable_task_does_not_hold_back_its_batch() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        file_system.cancellables = cancellables("utt");
+        let tokens: Vec<_> = (0..3)
+            .map(|index| task_info(&file_system, index).token.clone())
+            .collect();
+
+        let commands = file_system
+            .handle_command(&Command::CancelTask)
+            .into_commands();
+
+        assert_eq!(
+            vec![false, true, true],
+            tokens
+                .iter()
+                .map(CancellationToken::is_cancelled)
+                .collect::<Vec<_>>()
+        );
+        let [Command::AlertInfo(message)] = commands.as_slice() else {
+            panic!("expected one notice, got {commands:?}");
+        };
+        assert!(message.ends_with(" and 1 more task"), "{message}");
+    }
+
+    /// A delete of three marked entries is one batch: one keypress while the
+    /// worker is still busy ends all three as cancelled, and none of them
+    /// removes anything.
+    #[test]
+    fn one_keypress_cancels_a_whole_delete() {
+        let fx = TempDir::new("fs_cancel_batch");
+        let paths: Vec<PathInfo> = ["a", "b", "c"]
+            .iter()
+            .map(|name| {
+                let path = fx.join(name);
+                std::fs::write(&path, b"keep").unwrap();
+                PathInfo::try_from(path.as_path()).unwrap()
+            })
+            .collect();
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let gate = tasks::hold_worker();
+
+        file_system.handle_command(&Command::Delete(paths.clone()));
+        file_system.handle_command(&Command::CancelTask);
+        drop(gate);
+
+        for _ in 0..3 {
+            let task = tasks::await_end(&rx);
+            assert!(task.is_cancelled(), "{task:?}");
+        }
+        for path in &paths {
+            assert!(path.path.exists(), "{:?} was removed", path.path);
+        }
     }
 
     #[test]
@@ -2448,7 +2592,7 @@ mod tests {
         assert!(search.is_cancelled());
         assert!(matches!(
             file_system.cancellables.as_slice(),
-            [Cancellable::Task(_)]
+            [Cancellable::Task(..)]
         ));
         file_system.cancel_current_load();
     }

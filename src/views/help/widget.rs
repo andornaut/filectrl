@@ -257,7 +257,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         ),
         kb_entry("Toggle show hidden files", s(Action::ToggleShowHidden)),
         // Application
-        kb_entry("Cancel file or search operations", s(Action::CancelTask)),
+        kb_entry("Cancel paste, delete or search", s(Action::CancelTask)),
         kb_entry(
             "Clear alerts, progress",
             p(Action::ClearAlerts, Action::ClearProgress),
