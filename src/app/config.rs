@@ -53,9 +53,15 @@ struct PlatformOpeners {
     macos: Openers,
 }
 
+// Independent toggles, each its own setting in `[ui]`.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
+    /// Whether colors from `$LS_COLORS` (if set) are applied on top of the
+    /// theme's file type colors. Here rather than in a theme, so that
+    /// including a theme cannot turn it off.
+    pub ls_colors_take_precedence: bool,
     pub natural_sort: bool,
     pub show_hidden_files: bool,
     pub sort_directories_first: bool,
@@ -349,15 +355,16 @@ impl Config {
         // read, but the RGB warning is about how this run will actually
         // render: an RGB entry cannot misrender on a truecolor terminal, whose
         // `theme256` is never consulted.
-        let warn_on_rgb = !env.is_truecolor;
-        config
-            .theme
-            .file_type
-            .maybe_apply_ls_colors(env.ls_colors, false);
-        config
-            .theme256
-            .file_type
-            .maybe_apply_ls_colors(env.ls_colors, warn_on_rgb);
+        if config.ui.ls_colors_take_precedence
+            && let Some(ls_colors) = env.ls_colors
+        {
+            let warn_on_rgb = !env.is_truecolor;
+            config.theme.file_type.apply_ls_colors(ls_colors, false);
+            config
+                .theme256
+                .file_type
+                .apply_ls_colors(ls_colors, warn_on_rgb);
+        }
         Ok(config)
     }
 }
@@ -373,8 +380,12 @@ fn parse_toml(file: Option<&Path>, content: &str) -> Result<Value> {
 
 /// Absolutizes without requiring the path to exist, which `canonicalize` does.
 fn absolute_path(path: &Path) -> Result<PathBuf> {
-    std::path::absolute(path)
-        .map_err(|error| anyhow!("Failed to resolve {}: {error}", path.display()))
+    std::path::absolute(path).map_err(|error| {
+        anyhow!(
+            "Failed to resolve {}: {error}",
+            crate::file_system::path_info::quoted(path)
+        )
+    })
 }
 
 const CONFIG_FILE: &str = "config file";
@@ -447,16 +458,21 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
     // A failed lookup leaves the path to `create_new`, which reports whatever
     // is there.
     let existing = path.symlink_metadata().ok();
-    // Refused with or without `force`, so the message never suggests a flag
-    // that would be refused too.
-    if existing
-        .as_ref()
-        .is_some_and(|metadata| metadata.file_type().is_symlink())
-    {
-        return Err(anyhow!(
-            "Cannot write {}: it is a symbolic link",
-            path.display()
-        ));
+    // Anything but a regular file is refused with or without `force`, so the
+    // message never suggests a flag that would be refused too: a symlink, a
+    // directory, or a device `--force` would otherwise rename over.
+    if let Some(metadata) = &existing {
+        let file_type = metadata.file_type();
+        if !file_type.is_file() {
+            let what = if file_type.is_symlink() {
+                "a symbolic link"
+            } else if file_type.is_dir() {
+                "a directory"
+            } else {
+                "not a regular file"
+            };
+            return Err(anyhow!("Cannot write {}: it is {what}", path.display()));
+        }
     }
     let Some(metadata) = existing.filter(|_| force) else {
         return create_and_write(path, content).map_err(|error| {
@@ -626,7 +642,7 @@ fn is_theme_path(path: &str) -> bool {
 /// in the merged config.
 fn validate_file(file: Option<&Path>, value: &Value, defaults: &Value) -> Result<()> {
     let located = |error: anyhow::Error| match file {
-        Some(file) => anyhow!("{error} in {}", file.display()),
+        Some(file) => anyhow!("{error:#} in {}", file.display()),
         None => error,
     };
     // Unknown keys first, so a typo fails loudly instead of falling back to
@@ -635,10 +651,68 @@ fn validate_file(file: Option<&Path>, value: &Value, defaults: &Value) -> Result
     if let Some(theme256) = value.get("theme256") {
         reject_unindexed_colors(theme256, "theme256").map_err(located)?;
     }
-    merge_toml_values(defaults.clone(), value.clone())
+    let raw = merge_toml_values(defaults.clone(), value.clone())
         .try_into::<RawConfig>()
         .map_err(|error| deserialize_error(file, &error))?;
+    // Checked again on the merged config, but here a mistake names its file.
+    // Keys are only parsed: a conflict can be resolved by a later file, so
+    // conflicts are checked on the merged config alone.
+    validate_file_system(&raw.file_system).map_err(located)?;
+    validate_openers(&raw.openers).map_err(located)?;
+    KeyBindings::check(&raw.keybindings).map_err(located)?;
     Ok(())
+}
+
+/// Rejects a non-empty opener template without `%s` written as its own
+/// unquoted word, the only placement that passes the path as one argument
+/// (see `file_system::shell`). Without it the path is never passed at all.
+fn validate_openers(openers: &PlatformOpeners) -> Result<()> {
+    for (platform, openers) in [("linux", &openers.linux), ("macos", &openers.macos)] {
+        for (name, template) in [
+            ("open_directory", &openers.open_directory),
+            ("open_file", &openers.open_file),
+            ("open_filectrl_window", &openers.open_filectrl_window),
+            ("run_in_terminal", &openers.run_in_terminal),
+        ] {
+            if !template.trim().is_empty() && !has_unquoted_placeholder(template) {
+                return Err(anyhow!(
+                    "openers.{platform}.{name} ({template:?}) must contain %s as its own unquoted word"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `template` holds `%s` outside any quotes, with a word boundary (the
+/// start or end, whitespace, or a shell operator) on both sides.
+fn has_unquoted_placeholder(template: &str) -> bool {
+    let is_boundary = |c: Option<char>| {
+        c.is_none_or(|c| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>'))
+    };
+    let chars: Vec<char> = template.chars().collect();
+    let (mut single, mut double, mut escaped) = (false, false, false);
+    for (i, &c) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if !single => escaped = true,
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
+            '%' if !single
+                && !double
+                && chars.get(i + 1) == Some(&'s')
+                && is_boundary(i.checked_sub(1).map(|j| chars[j]))
+                && is_boundary(chars.get(i + 2).copied()) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// A deserialization failure, naming the file it came from when there is one.
@@ -989,9 +1063,8 @@ open_directory = "alacritty --working-directory %s"
             ls_colors: Some("di=31"),
         };
         let toml = format!(
-            "[theme.file_type]\nls_colors_take_precedence = {take_precedence}\n\
+            "[ui]\nls_colors_take_precedence = {take_precedence}\n\
              [theme.file_type.directory]\nfg = \"#010203\"\n\
-             [theme256.file_type]\nls_colors_take_precedence = {take_precedence}\n\
              [theme256.file_type.directory]\nfg = \"5\"\n"
         );
         let config = Config::parse(env, None, &toml, &inert_dir(), &[]).unwrap();
@@ -1149,6 +1222,42 @@ open_directory = "alacritty --working-directory %s"
         );
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
         assert!(!target.exists());
+    }
+
+    /// A directory or a FIFO at the path is refused with or without
+    /// `--force`, never suggesting it, and left as it was.
+    #[test_case(false, false ; "a directory")]
+    #[test_case(true, false ; "a directory with force")]
+    #[test_case(false, true ; "a fifo")]
+    #[test_case(true, true ; "a fifo with force")]
+    fn writing_a_default_refuses_what_is_not_a_regular_file(force: bool, fifo: bool) {
+        let dir = TempDir::new("config_not_a_file");
+        let path = dir.join("config.toml");
+        if fifo {
+            nix::unistd::mkfifo(&path, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+        } else {
+            fs::create_dir(&path).unwrap();
+        }
+
+        let error = Config::write_default(Some(path.clone()), force)
+            .expect_err("only a regular file is replaced")
+            .to_string();
+
+        let what = if fifo {
+            "not a regular file"
+        } else {
+            "a directory"
+        };
+        assert_eq!(
+            format!("Cannot write {}: it is {what}", path.display()),
+            error
+        );
+        let file_type = path.symlink_metadata().unwrap().file_type();
+        assert!(if fifo {
+            !file_type.is_file() && !file_type.is_dir()
+        } else {
+            file_type.is_dir()
+        });
     }
 
     /// Nothing to replace is not an error: `--force` permits a replacement
@@ -1543,12 +1652,39 @@ open_directory = "alacritty --working-directory %s"
         assert!(error.starts_with(&expected), "{error}");
     }
 
+    /// `%s` passes the path as one argument only unquoted and as its own
+    /// word; anywhere else it is refused at load.
+    #[test_case("xdg-open %s" => true ; "a word of its own")]
+    #[test_case("%s" => true ; "the whole template")]
+    #[test_case("cd %s && exec xterm" => true ; "before an operator")]
+    #[test_case("(cd %s)" => true ; "inside a subshell")]
+    #[test_case("xdg-open" => false ; "absent")]
+    #[test_case("xdg-open \"%s\"" => false ; "in double quotes")]
+    #[test_case("xdg-open '%s'" => false ; "in single quotes")]
+    #[test_case("xdg-open --file=%s" => false ; "part of a word")]
+    #[test_case("xdg-open %sx" => false ; "followed by more of its word")]
+    #[test_case("echo \\%s" => false ; "escaped")]
+    #[test_case("echo '\"' %s" => true ; "after a quoted double quote")]
+    fn an_opener_needs_an_unquoted_placeholder(template: &str) -> bool {
+        has_unquoted_placeholder(template)
+    }
+
+    #[test]
+    fn a_blank_opener_needs_no_placeholder() {
+        let toml = "[openers.linux]\nrun_in_terminal = \"\"\n[openers.macos]\nopen_file = \" \"\n";
+        assert!(Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]).is_ok());
+    }
+
     /// Each file is validated before the merge, so a mistake names the file
     /// it is in: the config itself, or the second of two includes.
     #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in the config")]
     #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in an include")]
     #[test_case(false, "[theme256.table.body]\nfg = \"#ff0000\"\n" => "theme256.table.body.fg: \"#ff0000\" is not a 256-color index (0-255) in {}" ; "a hex color under theme256 in an include")]
     #[test_case(false, "[file_system]\nsearch_max_depth = \"deep\"\n" => "Failed to deserialize {}: " ; "a type error in an include")]
+    #[test_case(false, "[file_system]\nrefresh_debounce_milliseconds = 50\n" => "file_system.refresh_debounce_milliseconds (50) must be at least 100 in {}" ; "a value out of range in an include")]
+    #[test_case(false, "[keybindings]\nquit = \"Nope\"\n" => "Invalid keybinding for quit: Unknown key: 'Nope' in {}" ; "an invalid key in an include")]
+    #[test_case(false, "[keybindings]\nquit = []\n" => "Invalid keybinding for quit: no key given in {}" ; "an empty key list in an include")]
+    #[test_case(false, "[openers.linux]\nopen_file = \"xdg-open\"\n" => "openers.linux.open_file (\"xdg-open\") must contain %s as its own unquoted word in {}" ; "an opener without its placeholder in an include")]
     fn a_mistake_names_the_file_it_is_in(in_config: bool, mistake: &str) -> String {
         let dir = TempDir::new("config_mistake_names_file");
         let config = dir.join("config.toml");
@@ -1580,6 +1716,17 @@ open_directory = "alacritty --working-directory %s"
             }
             _ => error,
         }
+    }
+
+    /// An empty path is quoted, so the message still shows what was given.
+    #[test]
+    fn an_empty_config_path_is_quoted_in_its_error() {
+        let error = load_err(Some(PathBuf::new()), &[]);
+
+        assert_eq!(
+            "Failed to resolve \"\": cannot make an empty path absolute",
+            error
+        );
     }
 
     #[test]

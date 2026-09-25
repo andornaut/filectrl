@@ -2,6 +2,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, RecvTimeoutError, Sender, channel},
     },
     thread,
@@ -19,13 +20,43 @@ use crate::{command::Command, file_system::debounce};
 /// takes at most a fifth of the time while something keeps writing to it.
 const LISTING_COST_FACTOR: u32 = 4;
 
+/// The watched directory, shared with the watcher thread: an event on the
+/// directory itself (removed, renamed away) leaves the watch on an inode the
+/// path may no longer name, so the next watch of that path renews it.
+#[derive(Default)]
+struct Watched {
+    path: Mutex<Option<PathBuf>>,
+    stale: AtomicBool,
+}
+
+impl Watched {
+    fn path(&self) -> Option<PathBuf> {
+        self.path.lock().unwrap().clone()
+    }
+
+    fn set(&self, path: Option<PathBuf>) {
+        *self.path.lock().unwrap() = path;
+    }
+
+    /// Marks the watch stale when `event` names the watched directory itself.
+    fn note(&self, event: &Event) {
+        let path = self.path.lock().unwrap();
+        if path
+            .as_ref()
+            .is_some_and(|watched| event.paths.iter().any(|named| named == watched))
+        {
+            self.stale.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,
     /// Shared with the watcher thread, which reads the current window from it.
     debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
     handle: Option<thread::JoinHandle<()>>,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
-    watched_directory: Option<PathBuf>,
+    watched: Arc<Watched>,
     /// Option so `Drop` can `.take()` it before joining the watcher thread.
     /// Dropping the watcher closes the notify channel sender, which unblocks
     /// the thread waiting on the receiver so it can exit.
@@ -43,7 +74,7 @@ impl DirectoryWatcher {
             handle: None,
             notify_rx: Some(notify_rx),
             watcher: Some(watcher),
-            watched_directory: None,
+            watched: Arc::default(),
         })
     }
 
@@ -55,8 +86,9 @@ impl DirectoryWatcher {
 
         let command_tx = command_tx.clone();
         let debouncer = Arc::clone(&self.debouncer);
+        let watched = Arc::clone(&self.watched);
         self.handle = Some(thread::spawn(move || {
-            watch_for_notify_events(&command_tx, &notify_rx, &debouncer);
+            watch_for_notify_events(&command_tx, &notify_rx, &debouncer, &watched);
         }));
     }
 
@@ -69,18 +101,25 @@ impl DirectoryWatcher {
         self.debouncer.lock().unwrap().set_threshold(threshold);
     }
 
+    /// Watches `path`, keeping the watch already on it unless an event on the
+    /// directory itself marked it stale: an external delete and recreate
+    /// leaves the watch on the old inode. Re-registering on every refresh
+    /// would restart the watch (on macOS the whole FSEvents stream) for
+    /// nothing. The path is cleared before unwatching and set only after a
+    /// successful watch, so it never names a path without an active watch.
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
-        // Rewatch even when the path is unchanged: an external delete and
-        // recreate invalidates the watch on the old inode, and a refresh has to
-        // re-register on the new one. The bookkeeping is cleared before
-        // unwatching and set only after a successful watch, so
-        // `watched_directory` never names a path without an active watch.
+        if self.watched.path().as_ref() == Some(&path)
+            && !self.watched.stale.swap(false, Ordering::Relaxed)
+        {
+            return Ok(());
+        }
         self.unwatch();
         let Some(watcher) = &mut self.watcher else {
             return Ok(());
         };
         watcher.watch(path.as_path(), notify::RecursiveMode::NonRecursive)?;
-        self.watched_directory = Some(path);
+        self.watched.stale.store(false, Ordering::Relaxed);
+        self.watched.set(Some(path));
         Ok(())
     }
 }
@@ -88,8 +127,9 @@ impl DirectoryWatcher {
 impl DirectoryWatcher {
     /// Drops the watch on the watched directory, if there is one.
     pub(super) fn unwatch(&mut self) {
+        let path = self.watched.path.lock().unwrap().take();
         if let Some(watcher) = &mut self.watcher
-            && let Some(path) = self.watched_directory.take()
+            && let Some(path) = path
             && let Err(e) = watcher.unwatch(path.as_path())
         {
             warn!("Failed to unwatch directory: {e}");
@@ -97,8 +137,8 @@ impl DirectoryWatcher {
     }
 
     #[cfg(test)]
-    pub(super) fn watched_directory(&self) -> Option<&std::path::Path> {
-        self.watched_directory.as_deref()
+    pub(super) fn watched_directory(&self) -> Option<PathBuf> {
+        self.watched.path()
     }
 }
 
@@ -128,6 +168,7 @@ fn watch_for_notify_events(
     command_tx: &Sender<Command>,
     notify_rx: &Receiver<std::result::Result<Event, notify::Error>>,
     debouncer: &Mutex<debounce::TimeDebouncer>,
+    watched: &Watched,
 ) {
     let mut pending = false;
     loop {
@@ -138,14 +179,21 @@ fn watch_for_notify_events(
             notify_rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
         };
         match received {
-            Ok(Ok(event)) => match event.kind {
-                notify::EventKind::Create(_)
-                | notify::EventKind::Modify(_)
-                | notify::EventKind::Remove(_) => {
+            Ok(Ok(event)) => {
+                watched.note(&event);
+                // A rescan (an overflowed inotify queue, dropped FSEvents) means
+                // changes went unreported, whatever the event's kind.
+                if event.need_rescan()
+                    || matches!(
+                        event.kind,
+                        notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(_)
+                            | notify::EventKind::Remove(_)
+                    )
+                {
                     pending = !refresh(command_tx, debouncer);
                 }
-                _ => (),
-            },
+            }
             Ok(Err(e)) => {
                 error!("File system watcher error: {e}");
                 let error_command = Command::AlertError(format!(
@@ -215,7 +263,7 @@ mod tests {
         let (notify_tx, notify_rx) = channel();
         let shared = Arc::clone(&debouncer);
         let handle = thread::spawn(move || {
-            watch_for_notify_events(&command_tx, &notify_rx, &shared);
+            watch_for_notify_events(&command_tx, &notify_rx, &shared, &Watched::default());
         });
         let start = Instant::now();
 
@@ -254,9 +302,49 @@ mod tests {
         }
         drop(notify_tx);
 
-        watch_for_notify_events(&command_tx, &notify_rx, &debouncer);
+        watch_for_notify_events(&command_tx, &notify_rx, &debouncer, &Watched::default());
 
         assert_eq!(0, command_rx.try_iter().count());
+    }
+
+    /// An overflowed event queue reports only that changes went unseen.
+    #[test]
+    fn a_rescan_refreshes() {
+        use notify::event::Flag;
+        let debouncer = Mutex::new(debounce::TimeDebouncer::new(Duration::ZERO));
+        let (command_tx, command_rx) = channel();
+        let (notify_tx, notify_rx) = channel();
+        notify_tx
+            .send(Ok(
+                Event::new(notify::EventKind::Other).set_flag(Flag::Rescan)
+            ))
+            .unwrap();
+        drop(notify_tx);
+
+        watch_for_notify_events(&command_tx, &notify_rx, &debouncer, &Watched::default());
+
+        assert!(matches!(
+            command_rx.try_iter().collect::<Vec<_>>().as_slice(),
+            [Command::RefreshDirectory]
+        ));
+    }
+
+    /// An event on the watched directory itself marks the watch stale, and
+    /// one on an entry inside it does not.
+    #[test]
+    fn only_an_event_on_the_directory_itself_marks_the_watch_stale() {
+        let watched = Watched::default();
+        watched.set(Some(PathBuf::from("/d")));
+        let removed = |path: &str| {
+            Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Any))
+                .add_path(PathBuf::from(path))
+        };
+
+        watched.note(&removed("/d/entry"));
+        assert!(!watched.stale.load(Ordering::Relaxed));
+
+        watched.note(&removed("/d"));
+        assert!(watched.stale.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -266,20 +354,38 @@ mod tests {
         let mut watcher = DirectoryWatcher::try_new(100).unwrap();
 
         watcher.watch_directory(dir.clone()).unwrap();
-        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+        assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
 
-        // Re-watching the unchanged path unwatches and watches again, so it
-        // must not fail on the second registration.
+        // A stale watch of the unchanged path is renewed, so the second
+        // registration must not fail.
+        watcher.watched.stale.store(true, Ordering::Relaxed);
         watcher.watch_directory(dir.clone()).unwrap();
-        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+        assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
+        assert!(!watcher.watched.stale.load(Ordering::Relaxed));
 
         // A failed watch must not record its path: there is no active watch,
         // so a later return to the previous directory must re-register.
         let missing = dir.join("missing");
         assert!(watcher.watch_directory(missing).is_err());
-        assert!(watcher.watched_directory.is_none());
+        assert!(watcher.watched_directory().is_none());
 
         watcher.watch_directory(dir.clone()).unwrap();
-        assert_eq!(Some(&dir), watcher.watched_directory.as_ref());
+        assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
+    }
+
+    /// A refresh of the directory already watched keeps the watch, rather
+    /// than restarting it (on macOS the whole FSEvents stream) each time.
+    #[test]
+    fn watching_the_watched_directory_again_keeps_its_watch() {
+        let temp = TempDir::new("watch_again");
+        let dir = temp.path().to_path_buf();
+        let mut watcher = DirectoryWatcher::try_new(100).unwrap();
+        watcher.watch_directory(dir.clone()).unwrap();
+        // Without a notify watcher a re-registration clears the path and sets
+        // nothing, so only keeping the existing watch leaves it recorded.
+        watcher.watcher = None;
+
+        assert!(watcher.watch_directory(dir.clone()).is_ok());
+        assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
     }
 }

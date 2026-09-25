@@ -179,6 +179,12 @@ pub enum Command {
         // Result: the streamed listing finished; TableView sorts and restores selection.
         generation: u64,
     },
+    // Result: of a refresh while ended search results are shown. The results
+    // read again by path, replacing the listing of search `generation`.
+    SearchResultsRefreshed {
+        items: Vec<PathInfo>,
+        generation: u64,
+    },
 
     // File operations
     Chmod {

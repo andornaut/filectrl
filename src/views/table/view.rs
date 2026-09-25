@@ -118,12 +118,20 @@ impl TableView {
         // Own the scroll offset (rather than letting ratatui derive it from all
         // rows) so we can build Row widgets for only the visible window.
         let selected = self.table_state.selected();
-        let (start, end) = visible_window(
-            &self.cached_heights,
-            visible_lines_count,
-            selected.unwrap_or(0),
-            self.first_visible_item,
-        );
+        let (start, end) = if self.wheel_scrolled {
+            wheel_window(
+                &self.cached_heights,
+                visible_lines_count,
+                self.first_visible_item,
+            )
+        } else {
+            visible_window(
+                &self.cached_heights,
+                visible_lines_count,
+                selected.unwrap_or(0),
+                self.first_visible_item,
+            )
+        };
         self.first_visible_item = start;
 
         let rows: Vec<_> = items[start..end]
@@ -224,7 +232,28 @@ fn fits_from(item_heights: &[usize], start: usize, selected: usize, viewport_lin
 /// The highest (smallest-index) `start` that still shows the selected item's
 /// last line within `viewport_lines`. If the selected item is taller than the
 /// viewport, returns `selected` (its top is shown).
-fn highest_start_keeping_visible(
+/// The window the wheel left, whether or not it shows the cursor: `first`,
+/// clamped so the window never starts past the one that shows the last row.
+fn wheel_window(item_heights: &[usize], viewport_lines: usize, first: usize) -> (usize, usize) {
+    let n = item_heights.len();
+    if n == 0 || viewport_lines == 0 {
+        return (0, 0);
+    }
+    let start = first.min(highest_start_keeping_visible(
+        item_heights,
+        n - 1,
+        viewport_lines,
+    ));
+    let mut end = start;
+    let mut lines = 0;
+    while end < n && lines < viewport_lines {
+        lines += item_heights[end];
+        end += 1;
+    }
+    (start, end)
+}
+
+pub(super) fn highest_start_keeping_visible(
     item_heights: &[usize],
     selected: usize,
     viewport_lines: usize,
@@ -301,6 +330,18 @@ mod tests {
         max_position: usize,
     ) -> usize {
         scrollbar_position(drag_line, first_visible_line, max_position)
+    }
+
+    #[test_case(&[1, 1, 1, 1], 2, 0 => (0, 2) ; "a window at the top")]
+    #[test_case(&[1, 1, 1, 1], 2, 1 => (1, 3) ; "a window left where the wheel put it")]
+    #[test_case(&[1, 1, 1, 1], 2, 9 => (2, 4) ; "no further than the one showing the last row")]
+    #[test_case(&[], 2, 3 => (0, 0) ; "nothing to show")]
+    fn wheel_window_cases(
+        heights: &[usize],
+        viewport_lines: usize,
+        first: usize,
+    ) -> (usize, usize) {
+        super::wheel_window(heights, viewport_lines, first)
     }
 
     // The window is a half-open range of items. It holds still while the

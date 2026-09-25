@@ -49,6 +49,9 @@ pub(super) struct PromptView {
     cached_dir: Option<PathBuf>,
     /// Goto: every entry of `cached_dir` as `(name, is_dir)`, sorted ascending.
     cached_entries: Vec<(String, bool)>,
+    /// Delete: the display name of the one entry a delete prompt asks about,
+    /// named in the question. `None` when it asks about several.
+    delete_subject: Option<String>,
 }
 
 /// One line of a prompt's label. A path it names is kept apart from the text
@@ -96,6 +99,22 @@ fn quoted_inner(path: &Path) -> String {
 }
 
 impl PromptView {
+    pub(super) fn set_delete_subject(&mut self, name: Option<String>) {
+        self.delete_subject = name;
+    }
+
+    /// Whether the open prompt is a y/n (or conflict) question about entries
+    /// it already holds, rather than one that takes typed text.
+    pub(super) fn is_confirmation(&self) -> bool {
+        matches!(
+            self.actions,
+            PromptAction::Conflict { .. }
+                | PromptAction::ConfirmPaste { .. }
+                | PromptAction::ConfirmQuit(_)
+                | PromptAction::Delete(_)
+        )
+    }
+
     fn label(&self) -> Vec<LabelLine> {
         let plain = |text: String| vec![LabelLine::plain(text)];
         match &self.actions {
@@ -104,6 +123,10 @@ impl PromptView {
             }
             PromptAction::AddBookmark { .. } => plain(" Add bookmark ".to_string()),
             PromptAction::CreateDirectory => plain(" New directory ".to_string()),
+            // The display name is already escaped, like the conflict name.
+            PromptAction::Delete(1) if let Some(name) = &self.delete_subject => {
+                vec![LabelLine::quoting(" Delete ", name, "? (y/n) ")]
+            }
             PromptAction::Delete(count) => {
                 plain(format!(" Delete {}? (y/n) ", pluralize_items(*count)))
             }
@@ -486,6 +509,19 @@ mod tests {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    // ── delete prompt ────────────────────────────────────────────────────────
+
+    /// One entry is named, so the question says what it deletes; several are
+    /// counted.
+    #[test_case(1, Some("a.txt") => " Delete \"a.txt\"? (y/n) " ; "one named entry")]
+    #[test_case(1, None => " Delete 1 item? (y/n) " ; "one entry with no name given")]
+    #[test_case(2, None => " Delete 2 items? (y/n) " ; "several entries")]
+    fn the_delete_prompt_asks(count: usize, name: Option<&str>) -> String {
+        let mut view = prompt_with_action(PromptAction::Delete(count));
+        view.set_delete_subject(name.map(str::to_string));
+        label_text(&view)
     }
 
     // ── conflict prompt ──────────────────────────────────────────────────────

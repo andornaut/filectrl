@@ -1,7 +1,8 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Rect},
-    widgets::Widget,
+    buffer::CellWidth,
+    layout::{Constraint, Layout, Rect},
+    widgets::{Paragraph, Widget},
 };
 
 use super::{StatusView, widget::default_widget};
@@ -19,6 +20,18 @@ impl View for StatusView {
         };
         let (total, shown) = self.item_count();
         let widget = default_widget(directory, total, shown, self.selected.as_ref(), theme);
-        widget.render(area, frame.buffer_mut());
+        // The hint takes the right edge only where it leaves the fields most
+        // of the line.
+        let hint_width = self.help_hint.cell_width();
+        if hint_width == 0 || area.width < hint_width.saturating_mul(4) {
+            widget.render(area, frame.buffer_mut());
+            return;
+        }
+        let [fields, hint] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)]).areas(area);
+        widget.render(fields, frame.buffer_mut());
+        Paragraph::new(self.help_hint.as_str())
+            .style(theme.status.label())
+            .render(hint, frame.buffer_mut());
     }
 }

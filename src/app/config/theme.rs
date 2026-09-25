@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
@@ -84,25 +84,11 @@ macro_rules! file_type {
     ($($field:ident => $ls_key:literal),+ $(,)?) => {
         #[derive(Clone, Deserialize, Default)]
         pub struct FileType {
-            /// Whether to apply colors from the $LS_COLORS environment variable
-            /// (if set) on top of the colors configured below.
-            ls_colors_take_precedence: bool,
-
             $($field: StyleConfig,)+
 
-            // Pattern-based styles
+            // `*` patterns, in `LS_COLORS` order (see `pattern_styles`).
             #[serde(skip)]
-            extension_styles: HashMap<String, StyleConfig>,
-            // `extension_styles` keyed by the ASCII-lowercased extension, for
-            // a name that matches no entry exactly: `ls` matches extensions
-            // without regard to case.
-            #[serde(skip)]
-            folded_extension_styles: HashMap<String, StyleConfig>,
-            // Insertion-ordered (LS_COLORS order). Lookup picks the longest
-            // matching pattern so results are deterministic and the most
-            // specific pattern wins.
-            #[serde(skip)]
-            name_styles: Vec<(String, StyleConfig)>,
+            suffix_styles: Vec<SuffixStyle>,
             // Keys in `FALLTHROUGH_KEYS` that `LS_COLORS` reset. `ls` treats
             // those as uncolored and classifies the entry by the next rule, so
             // a reset there is not "render plain".
@@ -145,24 +131,22 @@ file_type! {
     symlink_broken => "or",
 }
 
+/// An `LS_COLORS` `*` pattern: the suffix after the `*`, and whether it
+/// compares with regard to case.
+#[derive(Clone)]
+struct SuffixStyle {
+    suffix: String,
+    exact: bool,
+    style: StyleConfig,
+}
+
 /// Keys `ls` consults only while they are colored: reset, the entry is
 /// classified by the next rule (`ow` falls back to `di`, `ex` to the patterns
 /// and `fi`, `or` to `ln`) rather than rendered plain.
 const FALLTHROUGH_KEYS: [&str; 7] = ["ex", "or", "ow", "sg", "st", "su", "tw"];
 
 impl FileType {
-    /// Applies `LS_COLORS` (passed in by the caller, not read from the
-    /// environment here, so config parsing stays pure) on top of the
-    /// configured colors when `ls_colors_take_precedence` is set.
-    pub(super) fn maybe_apply_ls_colors(&mut self, ls_colors: Option<&str>, warn_on_rgb: bool) {
-        if self.ls_colors_take_precedence
-            && let Some(ls_colors) = ls_colors
-        {
-            self.apply_ls_colors(ls_colors, warn_on_rgb);
-        }
-    }
-
-    /// This theme with `ls_colors` applied on top, as `ls_colors_take_precedence`
+    /// This theme with `ls_colors` applied on top, as `ui.ls_colors_take_precedence`
     /// would apply it.
     #[cfg(test)]
     #[must_use]
@@ -178,7 +162,10 @@ impl FileType {
         !self.uncolored.contains(key)
     }
 
-    fn apply_ls_colors(&mut self, ls_colors: &str, warn_on_rgb: bool) {
+    /// Applies `LS_COLORS` (passed in by the caller, not read from the
+    /// environment here, so config parsing stays pure) on top of the
+    /// configured colors.
+    pub(super) fn apply_ls_colors(&mut self, ls_colors: &str, warn_on_rgb: bool) {
         let mut found_rgb = false;
         for entry in ls_colors.split(':') {
             let Some((key, value)) = entry.split_once('=') else {
@@ -218,14 +205,26 @@ impl FileType {
             let style = StyleConfig::new(fg, bg, attrs);
             if self.set_ls_color(key, style) {
                 // Recognized file-type key, handled by set_ls_color.
-            } else if let Some(ext) = key.strip_prefix("*.") {
-                self.extension_styles.insert(ext.to_string(), style);
-                self.folded_extension_styles
-                    .insert(ext.to_ascii_lowercase(), style);
-            } else if let Some(name) = key.strip_prefix('*') {
-                self.name_styles.push((name.to_string(), style));
+            } else if let Some(suffix) = key.strip_prefix('*') {
+                self.suffix_styles.push(SuffixStyle {
+                    suffix: suffix.to_string(),
+                    exact: false,
+                    style,
+                });
             }
             // Otherwise unrecognized (e.g. "ca" capabilities), ignored.
+        }
+        // As in `ls`, a pattern compares with regard to case only when
+        // another one differs from it in case alone.
+        let suffixes: Vec<String> = self
+            .suffix_styles
+            .iter()
+            .map(|pattern| pattern.suffix.clone())
+            .collect();
+        for pattern in &mut self.suffix_styles {
+            pattern.exact = suffixes.iter().any(|other| {
+                *other != pattern.suffix && other.eq_ignore_ascii_case(&pattern.suffix)
+            });
         }
         if found_rgb {
             log::warn!(
@@ -234,31 +233,27 @@ impl FileType {
         }
     }
 
+    /// The style of the last `*` pattern that `name` ends with, as `ls`
+    /// matches them: a suffix of the whole name (so `*.gitignore` colors the
+    /// dotfile `.gitignore`), without regard to ASCII case unless the pattern
+    /// has a case variant listed too, the last listed match winning.
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
-        // Extension patterns: try every dot-separated suffix, longest first,
-        // so a multi-dot pattern like "tar.gz" wins over "gz". A leading dot
-        // does not count, so dotfiles like ".bashrc" are not treated as
-        // having extension "bashrc". An exact-case entry wins over one that
-        // differs only in case, as in `ls`.
-        for (i, _) in name.match_indices('.') {
-            if i == 0 {
-                continue;
-            }
-            let extension = &name[i + 1..];
-            if let Some(&style) = self.extension_styles.get(extension).or_else(|| {
-                self.folded_extension_styles
-                    .get(&extension.to_ascii_lowercase())
-            }) {
-                return Some(style.into());
-            }
-        }
-
-        // Name pattern: longest matching suffix wins (most specific).
-        self.name_styles
+        let name = name.as_bytes();
+        self.suffix_styles
             .iter()
-            .filter(|(pattern, _)| name.ends_with(pattern.as_str()))
-            .max_by_key(|(pattern, _)| pattern.len())
-            .map(|(_, style)| (*style).into())
+            .rev()
+            .find(|pattern| {
+                let suffix = pattern.suffix.as_bytes();
+                name.len() >= suffix.len() && {
+                    let tail = &name[name.len() - suffix.len()..];
+                    if pattern.exact {
+                        tail == suffix
+                    } else {
+                        tail.eq_ignore_ascii_case(suffix)
+                    }
+                }
+            })
+            .map(|pattern| pattern.style.into())
     }
 }
 
@@ -406,66 +401,48 @@ mod tests {
         StyleConfig::new(Some(Color::Red), None, Modifier::empty())
     }
 
-    // --- pattern_styles: extension branch ---
+    // --- pattern_styles: `*` patterns, matched as GNU `ls` matches them ---
 
-    #[test_case("foo.rs", "rs", true ; "normal extension matches")]
-    #[test_case("foo.tar.gz", "gz", true ; "last segment of compound name matches")]
-    #[test_case(".bashrc", "bashrc", false ; "leading-dot file does not match extension pattern")]
-    #[test_case("Makefile", "rs", false ; "file with no extension returns no match")]
-    #[test_case("foo", "foo", false ; "extensionless file does not match")]
-    fn extension_pattern(filename: &str, ext: &str, should_match: bool) {
-        let mut ft = FileType::default();
-        ft.extension_styles.insert(ext.to_string(), red());
-        assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
-    }
-
-    #[test_case("a.JPG" ; "an upper-case extension")]
-    #[test_case("a.Jpg" ; "a mixed-case extension")]
-    fn an_extension_matches_without_regard_to_case(name: &str) {
-        let mut ft = FileType::default();
-        ft.apply_ls_colors("*.jpg=31", false);
-        assert_eq!(ft.pattern_styles(name).unwrap().fg, Some(Color::Red));
-    }
-
-    #[test]
-    fn an_exact_case_extension_wins_over_a_case_variant() {
-        let mut ft = FileType::default();
-        ft.apply_ls_colors("*.JPG=34:*.jpg=31", false);
-        assert_eq!(ft.pattern_styles("a.JPG").unwrap().fg, Some(Color::Blue));
-        assert_eq!(ft.pattern_styles("a.jpg").unwrap().fg, Some(Color::Red));
-    }
-
-    #[test]
-    fn multi_dot_extension_pattern_wins_over_shorter_suffix() {
-        let mut ft = FileType::default();
-        ft.apply_ls_colors("*.tar.gz=34:*.gz=31", false);
-        assert_eq!(
-            ft.pattern_styles("foo.tar.gz").unwrap().fg,
-            Some(Color::Blue)
-        );
-        assert_eq!(ft.pattern_styles("foo.gz").unwrap().fg, Some(Color::Red));
-    }
-
-    // --- pattern_styles: name branch ---
-
-    #[test_case("Makefile", "Makefile", true ; "exact suffix match")]
-    #[test_case("OldMakefile", "Makefile", true ; "longer name ending with pattern matches")]
-    #[test_case("Makefile.bak", "Makefile", false ; "name with trailing suffix does not match")]
-    #[test_case(".bashrc", "bashrc", true ; "dotfile matches name pattern by suffix")]
-    fn name_pattern(filename: &str, pattern: &str, should_match: bool) {
-        let mut ft = FileType::default();
-        ft.name_styles.push((pattern.to_string(), red()));
-        assert_eq!(ft.pattern_styles(filename).is_some(), should_match);
-    }
-
-    // Both orders, so neither the first nor the last pattern listed can pass
-    // for the longest.
-    #[test_case("*file=31:*Makefile=34" ; "longest listed last")]
-    #[test_case("*Makefile=34:*file=31" ; "longest listed first")]
-    fn the_longest_matching_name_pattern_wins(ls_colors: &str) {
+    fn fg_of(ls_colors: &str, name: &str) -> Option<Color> {
         let mut ft = FileType::default();
         ft.apply_ls_colors(ls_colors, false);
-        assert_eq!(ft.pattern_styles("Makefile").unwrap().fg, Some(Color::Blue));
+        ft.pattern_styles(name).and_then(|style| style.fg)
+    }
+
+    #[test_case("*.rs=31", "foo.rs", true ; "an extension")]
+    #[test_case("*.gz=31", "foo.tar.gz", true ; "the last extension of several")]
+    #[test_case("*.rs=31", "Makefile", false ; "another name")]
+    #[test_case("*.foo=31", "foo", false ; "a name shorter than the suffix")]
+    #[test_case("*Makefile=31", "OldMakefile", true ; "a longer name ending with it")]
+    #[test_case("*Makefile=31", "Makefile.bak", false ; "a name that only contains it")]
+    #[test_case("*bashrc=31", ".bashrc", true ; "a dotfile by a name pattern")]
+    #[test_case("*.gitignore=31", ".gitignore", true ; "a dotfile that is the whole pattern")]
+    fn a_pattern_is_a_suffix_of_the_whole_name(ls_colors: &str, name: &str, matches: bool) {
+        assert_eq!(matches, fg_of(ls_colors, name).is_some());
+    }
+
+    #[test_case("*.jpg=31", "a.JPG" ; "an upper-case extension")]
+    #[test_case("*.jpg=31", "a.Jpg" ; "a mixed-case extension")]
+    #[test_case("*README=31", "readme" ; "a name pattern")]
+    fn a_pattern_matches_without_regard_to_case(ls_colors: &str, name: &str) {
+        assert_eq!(Some(Color::Red), fg_of(ls_colors, name));
+    }
+
+    /// `ls` compares case only among patterns that differ in case alone, so
+    /// each of them colors its own spelling and a third spelling gets neither.
+    #[test_case("a.JPG" => Some(Color::Blue) ; "one spelling")]
+    #[test_case("a.jpg" => Some(Color::Red) ; "the other")]
+    #[test_case("a.Jpg" => None ; "a third")]
+    fn case_variants_match_their_own_case(name: &str) -> Option<Color> {
+        fg_of("*.JPG=34:*.jpg=31", name)
+    }
+
+    /// The last listed match wins, not the longest, as in `ls`: both orders,
+    /// so neither the first nor the longest pattern can pass for the rule.
+    #[test_case("*.tar.gz=34:*.gz=31" => Some(Color::Red) ; "the shorter listed last")]
+    #[test_case("*.gz=31:*.tar.gz=34" => Some(Color::Blue) ; "the longer listed last")]
+    fn the_last_listed_match_wins(ls_colors: &str) -> Option<Color> {
+        fg_of(ls_colors, "foo.tar.gz")
     }
 
     /// An empty value, `0` or `00` renders the entry plain, as `ls` does, for

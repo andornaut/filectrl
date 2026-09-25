@@ -88,6 +88,9 @@ pub(super) struct Seen {
     /// The file type bits of its mode.
     kind: u32,
     born: (i64, i64),
+    /// `born` is a birth time the filesystem recorded, not a change time
+    /// standing in for one.
+    recorded: bool,
     modified: (i64, i64),
     size: u64,
 }
@@ -111,23 +114,15 @@ impl Seen {
     /// The entry `name` names in the open directory `dir`, without following
     /// a symlink there, or `None` when the name is free.
     pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
-        Self::look(dir, name, false)
+        Self::look(dir, name)
     }
 
-    /// The entry the open handle `file` refers to, with the same times `at`
-    /// gives.
-    pub(super) fn of_handle(file: impl AsFd) -> std::io::Result<Self> {
-        Self::look(file, c"", true)?
-            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-    }
-
-    /// `at`, or with `handle` the entry `dir` itself refers to: through
-    /// `statx` on Linux, for the birth time `fstatat` does not give. A kernel
-    /// without `statx`, or a sandbox that refuses it (EPERM, EACCES), gets
-    /// `fstatat`, and one that has refused it for good (ENOSYS, EPERM) is not
-    /// asked again.
+    /// `at`, through `statx` on Linux, for the birth time `fstatat` does not
+    /// give. A kernel without `statx`, or a sandbox that refuses it (EPERM,
+    /// EACCES), gets `fstatat`, and one that has refused it for good (ENOSYS,
+    /// EPERM) is not asked again.
     #[cfg(target_os = "linux")]
-    fn look(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
+    fn look(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
         use std::sync::atomic::{AtomicBool, Ordering};
 
         use rustix::{
@@ -136,7 +131,7 @@ impl Seen {
         };
         static REFUSED: AtomicBool = AtomicBool::new(false);
         if REFUSED.load(Ordering::Relaxed) {
-            return Self::by_stat(dir, name, handle);
+            return Self::by_stat(dir, name);
         }
         let mask = StatxFlags::TYPE
             | StatxFlags::INO
@@ -145,27 +140,23 @@ impl Seen {
             | StatxFlags::SIZE
             | StatxFlags::BTIME;
         // No automount, as `fstatat` never triggers one: a look is not a use.
-        let flags = if handle {
-            AtFlags::EMPTY_PATH
-        } else {
-            AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT
-        };
+        let flags = AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT;
         match statx(&dir, name, flags, mask) {
             Ok(stat) => Ok(Some(Self::of_statx(&stat))),
-            Err(Errno::NOENT) if !handle => Ok(None),
+            Err(Errno::NOENT) => Ok(None),
             Err(errno @ (Errno::NOSYS | Errno::PERM | Errno::ACCESS)) => {
                 if errno != Errno::ACCESS {
                     REFUSED.store(true, Ordering::Relaxed);
                 }
-                Self::by_stat(dir, name, handle)
+                Self::by_stat(dir, name)
             }
             Err(error) => Err(error.into()),
         }
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn look(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
-        Self::by_stat(dir, name, handle)
+    fn look(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
+        Self::by_stat(dir, name)
     }
 
     /// Which entry it is.
@@ -173,16 +164,14 @@ impl Seen {
         self.id
     }
 
-    /// When it was created, as `born` gives it.
-    pub(super) fn created(&self) -> (i64, i64) {
-        self.born
+    /// When it was created, where the filesystem recorded that: never a change
+    /// time standing in for one, which a write or a mode change moves.
+    pub(super) fn birth(&self) -> Option<(i64, i64)> {
+        self.recorded.then_some(self.born)
     }
 
-    fn by_stat(dir: impl AsFd, name: &CStr, handle: bool) -> std::io::Result<Option<Self>> {
+    fn by_stat(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
         use nix::{errno::Errno, fcntl::AtFlags, sys::stat::fstatat};
-        if handle {
-            return Ok(Some(Self::of_stat(&fstat(dir)?)));
-        }
         match fstatat(dir, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
             Ok(stat) => Ok(Some(Self::of_stat(&stat))),
             Err(Errno::ENOENT) => Ok(None),
@@ -194,20 +183,23 @@ impl Seen {
     #[allow(clippy::useless_conversion)]
     fn of_stat(stat: &FileStat) -> Self {
         #[cfg(target_os = "macos")]
-        let born = born(
+        let (born, recorded) = match recorded_birth(
             true,
             (
                 i64::from(stat.st_birthtime),
                 i64::from(stat.st_birthtime_nsec),
             ),
-            changed(stat),
-        );
+        ) {
+            Some(birth) => (birth, true),
+            None => (changed(stat), false),
+        };
         #[cfg(not(target_os = "macos"))]
-        let born = changed(stat);
+        let (born, recorded) = (changed(stat), false);
         Self {
             id: EntryId::of_stat(stat),
             kind: u32::from(stat.st_mode) & u32::from(libc::S_IFMT),
             born,
+            recorded,
             modified: (i64::from(stat.st_mtime), i64::from(stat.st_mtime_nsec)),
             size: u64::try_from(stat.st_size).unwrap_or(0),
         }
@@ -219,10 +211,9 @@ impl Seen {
     fn of_statx(stat: &rustix::fs::Statx) -> Self {
         use rustix::fs::StatxFlags;
         let time = |t: rustix::fs::StatxTimestamp| (t.tv_sec, i64::from(t.tv_nsec));
-        let born = born(
+        let birth = recorded_birth(
             StatxFlags::from_bits_retain(stat.stx_mask).contains(StatxFlags::BTIME),
             time(stat.stx_btime),
-            time(stat.stx_ctime),
         );
         Self {
             id: EntryId {
@@ -230,24 +221,19 @@ impl Seen {
                 ino: stat.stx_ino,
             },
             kind: u32::from(stat.stx_mode) & u32::from(libc::S_IFMT),
-            born,
+            born: birth.unwrap_or_else(|| time(stat.stx_ctime)),
+            recorded: birth.is_some(),
             modified: time(stat.stx_mtime),
             size: stat.stx_size,
         }
     }
 }
 
-/// When an entry was created, as `Seen` compares it: its `birth` time when
-/// the filesystem gave one (`has_birth`), and otherwise its `change` time,
-/// which only moves forward. A birth time of zero is none: macOS reports that
-/// on a filesystem without one (NFS, most FUSE), and a Linux filesystem can
-/// report it for an entry it never recorded one for.
-fn born(has_birth: bool, birth: (i64, i64), change: (i64, i64)) -> (i64, i64) {
-    recorded_birth(has_birth, birth).unwrap_or(change)
-}
-
 /// The `birth` time the filesystem recorded, when it gave one (`has_birth`)
-/// and it is not zero, which is none.
+/// and it is not zero, which is none: macOS reports that on a filesystem
+/// without one (NFS, most FUSE), and a Linux filesystem can report it for an
+/// entry it never recorded one for. `Seen` compares the change time, which
+/// only moves forward, where there is none.
 fn recorded_birth(has_birth: bool, birth: (i64, i64)) -> Option<(i64, i64)> {
     (has_birth && birth != (0, 0)).then_some(birth)
 }
@@ -504,21 +490,22 @@ mod tests {
 
         stat.stx_mask = (StatxFlags::BASIC_STATS | StatxFlags::BTIME).bits();
         assert_eq!(birth, Seen::of_statx(&stat).born);
+        assert_eq!(Some(birth), Seen::of_statx(&stat).birth());
         stat.stx_mask = StatxFlags::BASIC_STATS.bits();
         let seen = Seen::of_statx(&stat);
         assert_eq!(changed, seen.born);
+        assert_eq!(None, seen.birth());
         stat.stx_dev_major += 1;
         assert_ne!(seen, Seen::of_statx(&stat));
     }
 
-    /// When an entry was created: its birth time when there is one, its change
-    /// time when there is none, and when the one given is zero.
+    /// A birth time counts only when one is reported and it is not zero.
     #[test]
-    fn born_is_the_birth_time_when_there_is_one() {
-        assert_eq!((5, 6), born(true, (5, 6), (7, 8)));
-        assert_eq!((7, 8), born(false, (5, 6), (7, 8)));
-        assert_eq!((7, 8), born(true, (0, 0), (7, 8)));
-        assert_eq!((0, 1), born(true, (0, 1), (7, 8)));
+    fn a_birth_time_is_recorded_only_when_reported_and_not_zero() {
+        assert_eq!(Some((5, 6)), recorded_birth(true, (5, 6)));
+        assert_eq!(None, recorded_birth(false, (5, 6)));
+        assert_eq!(None, recorded_birth(true, (0, 0)));
+        assert_eq!(Some((0, 1)), recorded_birth(true, (0, 1)));
     }
 
     // `S_IFREG` is already a `u32` on Linux.
@@ -531,6 +518,7 @@ mod tests {
             },
             kind: u32::from(libc::S_IFREG),
             born,
+            recorded: true,
             modified: (1, 2),
             size: 3,
         }

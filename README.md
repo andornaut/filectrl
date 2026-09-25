@@ -38,6 +38,8 @@ xattr -d com.apple.quarantine filectrl
 
 ## Building
 
+Requires Rust 1.97 or later.
+
 ```bash
 cargo build --release && sudo cp target/release/filectrl /usr/local/bin/
 ```
@@ -94,7 +96,7 @@ Names must be unique, cannot be empty, and cannot contain a path separator. A na
 
 Copying or cutting puts `${operation} ${path}` on the system clipboard, where `operation` is `cp` or `mv`. Pasting in another FileCTRL window performs the equivalent of `${operation} ${path} ${current_directory}`, e.g. `cp filectrl.desktop ~/.local/share/applications/`. Clipboard text is pasted only when every path in it is absolute, so a shell line such as `cp build dist` copied from elsewhere is ignored. An entry the pasting window did not write itself, including one from another FileCTRL window, asks for confirmation first (<kbd>y</kbd> pastes, any other key cancels), since any program can put such text on the clipboard. The confirmation shows each path in full, except that where the terminal is too narrow a path loses its start to `…`, so the file name and the question stay visible. An entry from elsewhere with a `.` or `..` component in a path is refused.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the original's setuid, setgid and sticky bits are dropped (a directory created inside a setgid directory keeps the setgid bit it inherits when you belong to that directory's group; Linux clears the bit on a mode change by anyone else, as it does for `cp -R`). A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the modification times of files and directories and their access times (on macOS, a directory's access time becomes the time of the move; symlinks and special files keep neither), the extended attributes of files and directories (including the POSIX ACLs on Linux) where the destination accepts them (symlinks and special files keep none), and the group when you belong to it, except on a symlink (setuid and setgid only when the copy has the original's owner and group; a special file keeps only its permission bits). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do. Like `cp -R`, a directory the copy created and another process swapped for one of its own before it is filled is written into.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the original's setuid, setgid and sticky bits are dropped (a directory created inside a setgid directory keeps the setgid bit it inherits when you belong to that directory's group; Linux clears the bit on a mode change by anyone else, as it does for `cp -R`). A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the modification times of files and directories and their access times (on macOS, a directory's access time becomes the time of the move; symlinks and special files keep neither), the extended attributes of files and directories (including the POSIX ACLs on Linux) where the destination accepts them (symlinks and special files keep none), and the group when you belong to it, except on a symlink (setuid and setgid only when the copy has the original's owner and group; a special file keeps only its permission bits). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do.
 
 Without a system clipboard (e.g. over SSH or on a bare console), copy and paste still work within a single window. Pasting with nothing to paste shows a warning, which without a system clipboard says so, since an entry copied in another window would be unreachable. A confirmed delete clears the clipboard; declining it leaves the clipboard as it was.
 
@@ -103,14 +105,14 @@ When the destination already contains an entry with the same name, the paste sto
 Key | Action
 --- | ---
 <kbd>s</kbd> | Skip this entry
-<kbd>S</kbd> | Skip this and every later collision, also in sources already running
+<kbd>S</kbd> | Skip every collision, also in sources already running
 <kbd>o</kbd> | Replace the existing entry
-<kbd>O</kbd> | Replace this and every later collision the paste meets
+<kbd>O</kbd> | Replace every collision the paste meets
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
 - An existing **directory** is never replaced, and a directory never replaces anything (like `cp -R` and `mv`), so pasting onto one of the same name asks with only the skip choices, as does pasting a directory onto any entry. Modifier chords are not choices: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
-- Two pasted entries whose names could land on one entry never collide: like `mv a/x b/x dest/`, the first takes the name and the second is refused without asking, and stays on the clipboard. Names count as one when they differ only in letter case, Unicode normalization (`é` precomposed or decomposed, `ﬁ` or `fi`, `？` or `?`), invisible characters such as an emoji's variation selector, trailing dots and spaces, the private-use characters an SMB mount writes for characters Windows forbids (such as `: * ? < > |`), or where one holds `?` or a byte that is not UTF-8 and the other another such character (in a name that is not all UTF-8, every byte outside ASCII, and `i` and `I`, also count as such a character), since macOS, Windows and SMB shares, FAT and exFAT drives, and Linux case-insensitive directories treat such names as one entry; the second is refused on every filesystem, including one that keeps them apart. Aliases no such rule captures are not detected, and under <kbd>O</kbd> such an alias of an entry this paste already wrote can replace it: FAT and NTFS short names (`LONGFI~1.TXT`); on a drive or share mounted with an 8-bit character set rather than UTF-8 (vfat, exfat, ntfs3, CIFS), a name that is all UTF-8 against one that is not; and under some of those character sets (ISO 8859-2, -3 and -15, the Windows code pages, KOI8-R), two different UTF-8 names, which vfat folds through the character set even when mounted with `utf8`.
-- A paste replaces an entry only where it found it when it reached that source and you answered <kbd>o</kbd> or <kbd>O</kbd>, and only that entry as it was: if it has changed or another has taken its place by the time the source is copied or moved, it is left alone and reported. A replacement lands whole or not at all. A move within one filesystem is a single rename. A copy, or a cut across filesystems, is written into a hidden directory beside the entry, `.filectrl-<pid>-<n>`, which must be the empty one filectrl just made (another directory swapped in at that name is refused, and removed only if empty), and takes the entry's name only once complete: one that fails leaves the old entry as it was and the message says so, and one that is cancelled leaves it as it was without an error. That directory is visible to anything listing hidden files while the replacement is written, and is removed when it ends, or reported if it cannot be; one left behind by a process that was killed or quit part way can be deleted. A directory a copy or cut makes is checked the same way before anything is written into it: another swapped in at its name is refused, left as it was, and removed only if empty. Such a replacement needs room for both entries at once, until it takes the name. A name that was free when the paste reached it and is taken by then (by another program, another paste, or a name the filesystem treats as one this paste already used) is never replaced either: <kbd>S</kbd>, given at any point before that source's copy or move writes the name, skips it, and otherwise it is reported when that source finishes. The same holds for every name inside a directory being copied. So of two pastes into one directory at once, the later never replaces what the earlier wrote without asking, unless you answered <kbd>O</kbd> in it. Another program replacing the entry in the moment between the last check and the rename that replaces it is not detected, and on a filesystem that cannot refuse a taken name in the rename itself, neither is a name taken in that moment.
+- Two pasted entries of the same name never collide: like `mv a/x b/x dest/`, the first takes the name and the second is refused without asking, and stays on the clipboard. On a destination that treats two names as one (letter case, Unicode normalization: macOS, Windows and SMB shares, FAT and exFAT drives, Linux case-insensitive directories), an entry made since the paste began is never offered for replacement either: it is refused the same way, since it is most likely what an earlier source of the paste wrote under the other name. That needs a filesystem that records when an entry was created; where none does (NFS, most FUSE mounts, ext4 with small inodes), only identical names are refused.
+- A paste replaces an entry only where it found it when it reached that source and you answered <kbd>o</kbd> or <kbd>O</kbd>, and only that entry as it was: if it has changed or another has taken its place by the time the source is copied or moved, it is left alone and reported. A replacement lands whole or not at all. A move within one filesystem is a single rename. A copy, or a cut across filesystems, is written into a hidden owner-only directory beside the entry, `.filectrl-<pid>-<n>`, and takes the entry's name only once complete: one that fails leaves the old entry as it was and the message says so, and one that is cancelled leaves it as it was without an error. That directory is removed when the replacement ends, or reported if it cannot be; one left behind by a process that was killed or quit part way can be deleted. A replacement needs room for both entries at once. Under a umask or default ACL that leaves new directories unreadable to their owner (`0o477`, `u::---`), the replacement, and a directory copy, fails and is reported: nothing is given a mode by name. A name that was free when the paste reached it and is taken by then (by another program or another paste) is never replaced either: <kbd>S</kbd>, given at any point before that source's copy or move writes the name, skips it, and otherwise it is reported when that source finishes. The same holds for every name inside a directory being copied. So of two pastes into one directory at once, the later never replaces what the earlier wrote without asking, unless you answered <kbd>O</kbd> in it. Another program replacing the entry in the moment between the last check and the rename that replaces it is not detected, and on a filesystem that cannot refuse a taken name in the rename itself, neither is a name taken in that moment.
 - A cut that skipped an entry inside a directory, or failed to copy one, keeps its whole original: that entry is not at the destination, so removing the source would take the only copy of it. A cut whose entry itself was skipped leaves its original where it was, with nothing to report.
 - A paste consumes the clipboard as its entries start. What never started stays on it (collisions you abandon, entries refused before starting), so pasting again retries exactly those; entries you skip deliberately do not. If nothing started at all, the clipboard is unchanged. An entry that fails or is cancelled after it started, including while it waits behind other operations, is reported and is not put back on the clipboard; its original is left where it was.
 
@@ -124,7 +126,7 @@ Rename, chmod, delete, copy and cut act on whatever the path names when they run
 
 A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed, and an entry already gone counts as removed, so deleting marked entries that include both a directory and something inside it succeeds.
 
-When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>R</kbd> tries again.
+When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>R</kbd> tries again. The bookmarks view watches the bookmarks directory instead, so one added or removed elsewhere shows up.
 
 ### Multi-select
 
@@ -136,7 +138,7 @@ Key | Action
 <kbd>V</kbd> | Enter range mode: the current row becomes the anchor. Press again to exit, keeping the marks
 <kbd>Esc</kbd> | Clear all marks and exit range mode
 
-In range mode, moving the cursor or clicking extends the marked range from the anchor to the cursor. Marks made before entering range mode are kept, so ranges and single marks combine. Outside range mode, clicking only moves the cursor. Marking clears the clipboard. The notices bar shows the mark count as `[Selected] N items`, or `[Range] N items` while range mode is on.
+In range mode, moving the cursor or clicking extends the marked range from the anchor to the cursor. Marks made before entering range mode are kept, so ranges and single marks combine. Outside range mode, clicking only moves the cursor. The mouse wheel scrolls the list three rows at a time without moving the cursor, so it never extends a range; the next key acts on the cursor and brings it back into view. Marking clears the clipboard. The notices bar shows the mark count as `[Selected] N items`, or `[Range] N items` while range mode is on.
 
 Marks name entries but are stored as row positions, so what becomes of them depends on why the listing changed:
 
@@ -166,7 +168,7 @@ While a filter or hidden files leave entries out of a directory listing, the sta
 
 Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so. Directories below the one searched that the walk cannot read are skipped and counted in one warning when it ends; a directory that cannot be searched at all is reported as an error.
 
-Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. The cursor then goes to the top row, unless you moved it or marked a row while the results streamed in, in which case it stays on that entry. Navigating to another directory stops the walk; a reload does not. A finished search keeps its notice, with the query and how many results it found (`[Search: 42 results] query`), and the status bar's `# Items` counts the results while they are listed.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. The cursor then goes to the top row, unless you moved it or marked a row while the results streamed in, in which case it stays on that entry. Navigating to another directory stops the walk; a reload does not. Once the walk has ended, a reload (<kbd>Ctrl</kbd>+<kbd>R</kbd>, an operation finishing, or a watcher refresh) reads the results again by path: one deleted or renamed since drops out, and the rest show what they hold now. A finished search keeps its notice, with the query and how many results it found (`[Search: 42 results] query`), and the status bar's `# Items` counts the results while they are listed.
 
 ### Sorting
 
@@ -190,7 +192,7 @@ Actions | Keys
 --- | ---
 Select next, previous row | <kbd>↓</kbd>/<kbd>j</kbd>, <kbd>↑</kbd>/<kbd>k</kbd>
 Select first, middle, last row | <kbd>Home</kbd>/<kbd>g</kbd>/<kbd>^</kbd>, <kbd>z</kbd>, <kbd>End</kbd>/<kbd>G</kbd> (Uppercase)/<kbd>$</kbd>
-Select top, middle, bottom visible row | <kbd>H</kbd> (Uppercase), <kbd>M</kbd> (Uppercase), <kbd>L</kbd> (Uppercase)
+Select top, middle, bottom row | <kbd>H</kbd> (Uppercase), <kbd>M</kbd> (Uppercase), <kbd>L</kbd> (Uppercase)
 Page down, up | <kbd>PgDn</kbd>/<kbd>Ctrl</kbd>+<kbd>d</kbd>/<kbd>Ctrl</kbd>+<kbd>f</kbd>, <kbd>PgUp</kbd>/<kbd>Ctrl</kbd>+<kbd>u</kbd>/<kbd>Ctrl</kbd>+<kbd>b</kbd>
 Go to parent dir | <kbd>←</kbd>/<kbd>h</kbd>/<kbd>b</kbd>/<kbd>Backspace</kbd>
 Go to previous dir | <kbd>-</kbd>
@@ -285,7 +287,7 @@ sort_directories_first = false
 
 Logs are written to stderr only when it is redirected (e.g. `filectrl 2>filectrl.log`), since otherwise it is the terminal the interface is drawn on. `log_level` sets the level, and `$RUST_LOG` overrides it.
 
-Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as a `refresh_debounce_milliseconds` below 100) makes FileCTRL exit with an error rather than ignore it.
+Validation is strict: an unrecognized key (a misspelled setting or theme property), an unknown modifier name, or an invalid value (such as a `refresh_debounce_milliseconds` below 100, an empty key list, or an opener without `%s` as its own unquoted word) makes FileCTRL exit with an error naming the file, rather than ignore it.
 
 ### Opening in other applications
 
@@ -305,7 +307,7 @@ Key | Opens with
 
 Each template runs with `sh -c`. The path is never written into the command: `%s` becomes a reference to it (`"$@"`), and the path is passed to the shell as an argument, so the shell expands it but never parses it. A file name therefore cannot run as a command wherever `%s` sits. Only a template that hands the text to another parser can still run it: `eval`, a nested `sh -c`, `ssh`, bash arithmetic such as `$(( %s ))`, or AppleScript's `do script`, which types a command line into Terminal's login shell. That is why the macOS default opens a Terminal window in the directory rather than starting `filectrl` in it.
 
-Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$@"`. Neither is supported, and neither runs the name.
+Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference carries its own quotes, so a `%s` inside double quotes is split into words and one inside single quotes stays the literal text `"$@"`. Neither is supported, and neither runs the name; a non-empty template without an unquoted `%s` word is refused when the config loads.
 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
@@ -413,15 +415,10 @@ Section | Description
 
 #### LS_COLORS integration
 
-With `ls_colors_take_precedence`, colors from `$LS_COLORS` are applied on top of the configured file type colors, including extension patterns such as `*.tar=01;31`. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key. A reset clears the colors and attributes before it, so `31;00` renders plain too.
-
-The setting belongs to each theme, so set it in both, or a 256-color terminal ignores `$LS_COLORS`:
+Off by default. With `ls_colors_take_precedence` in `[ui]`, colors from `$LS_COLORS` are applied on top of both themes' file type colors, whichever theme is included, including patterns such as `*.tar=01;31`. A pattern matches the end of the whole name as `ls` does: `*.gitignore` colors the dotfile `.gitignore`, case is ignored unless the same pattern is listed in two cases, and the last listed match wins. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key. A reset clears the colors and attributes before it, so `31;00` renders plain too.
 
 ```toml
-[theme.file_type]
-ls_colors_take_precedence = true
-
-[theme256.file_type]
+[ui]
 ls_colors_take_precedence = true
 ```
 

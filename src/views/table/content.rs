@@ -366,6 +366,15 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
+    /// Replaces the search results with the same ones read again. The
+    /// visible listing is left for `sort` to rebuild, so the cursor and the
+    /// marks can be read from it first.
+    pub(super) fn replace_search_results(&mut self, items: Vec<PathInfo>) {
+        self.items = items;
+        self.sorted_by = None;
+        self.revision += 1;
+    }
+
     #[cfg(test)]
     pub(super) fn clear_search(&mut self) {
         self.set_mode(ListingMode::Normal);

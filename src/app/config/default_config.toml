@@ -58,6 +58,9 @@ sort_directories_first = true
 # Whether the Name column reads runs of digits as numbers, so file2 sorts
 # before file10. When false, names compare character by character.
 natural_sort = true
+# Whether colors from the $LS_COLORS environment variable (if set) are applied
+# on top of the theme's file type colors
+ls_colors_take_precedence = false
 
 # Keybindings for normal mode and prompt mode.
 # Arrow keys, Home/End, PageUp/PageDown, and Esc are always hardcoded.

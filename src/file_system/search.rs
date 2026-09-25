@@ -407,6 +407,25 @@ mod tests {
         assert_eq!(1, exits(&commands));
     }
 
+    /// Exactly as many matches as the limit is not a truncated search: the
+    /// limit is only reported when a match beyond it was turned away.
+    #[test]
+    fn exactly_the_result_limit_is_not_reported() {
+        let root = TempDir::new("search_result_limit_exact");
+        for i in 0..2 {
+            std::fs::write(root.join(format!("hit{i}")), b"").unwrap();
+        }
+        let limits = Limits {
+            max_results: 2,
+            ..default_limits()
+        };
+
+        let (commands, _) = run(&limits, &root, "hit");
+
+        assert_eq!(2, matched_names(&commands).len());
+        assert_eq!(Vec::<String>::new(), warnings(&commands));
+    }
+
     /// The shipped bounds are 20 and 10,000, so the singular reads only under
     /// a configured limit of one, which is where a hardcoded plural shows.
     #[test]

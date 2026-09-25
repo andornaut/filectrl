@@ -3,7 +3,11 @@ mod view;
 mod widget;
 
 use super::ListingCount;
-use crate::{command::result::CommandResult, file_system::path_info::PathInfo};
+use crate::{
+    app::config::keybindings::{Action, KeyBindings},
+    command::result::CommandResult,
+    file_system::path_info::PathInfo,
+};
 
 #[derive(Default)]
 pub(super) struct StatusView {
@@ -18,9 +22,19 @@ pub(super) struct StatusView {
     /// navigation loads, which counts straight into `directory_len` because
     /// the listing it described is gone.
     staged_len: Option<usize>,
+    /// Right-aligned text naming the help key, so a new user can find it.
+    /// Empty when the key is unbound.
+    help_hint: String,
 }
 
 impl StatusView {
+    pub(super) fn new(keybindings: &KeyBindings) -> Self {
+        Self {
+            help_hint: help_hint(keybindings),
+            ..Self::default()
+        }
+    }
+
     fn begin_directory(&mut self, directory: PathInfo, generation: u64) -> CommandResult {
         self.directory = Some(directory);
         self.directory_len = 0;
@@ -64,14 +78,13 @@ impl StatusView {
         self.listing_count = listing_count;
     }
 
-    /// The `# Items` count as `(total, shown)`. Search results are counted by
-    /// the table, since they are not the directory's entries; the bookmarks
-    /// view shows no count of its own, so the directory's stands.
+    /// The `# Items` count as `(total, shown)`. Search results and bookmarks
+    /// are counted by the table, since they are not the directory's entries.
     fn item_count(&self) -> (usize, Option<usize>) {
         match self.listing_count {
             ListingCount::Directory { shown } => (self.directory_len, Some(shown)),
             ListingCount::Results { shown, total } => (total, Some(shown)),
-            ListingCount::Bookmarks => (self.directory_len, None),
+            ListingCount::Bookmarks { shown } => (shown, None),
         }
     }
 
@@ -81,12 +94,30 @@ impl StatusView {
     }
 }
 
+/// The first key bound to help, with what it does.
+fn help_hint(keybindings: &KeyBindings) -> String {
+    keybindings
+        .keys_for(Action::ToggleHelp)
+        .first()
+        .map_or_else(String::new, |key| format!(" {key} Help "))
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
     use crate::command::{Command, handler::CommandHandler};
+
+    #[test]
+    fn the_help_hint_names_the_help_key() {
+        crate::app::config::Config::init_test();
+
+        assert_eq!(
+            " ? Help ",
+            help_hint(&crate::app::config::Config::global().keybindings)
+        );
+    }
 
     fn path(name: &str) -> PathInfo {
         let mut info = PathInfo::try_from(Path::new(".")).unwrap();
@@ -109,8 +140,8 @@ mod tests {
             total: 42,
         });
         assert_eq!((42, Some(3)), view.item_count());
-        view.set_listing_count(ListingCount::Bookmarks);
-        assert_eq!((5, None), view.item_count());
+        view.set_listing_count(ListingCount::Bookmarks { shown: 3 });
+        assert_eq!((3, None), view.item_count());
     }
 
     fn navigated(view: &mut StatusView, generation: u64) {

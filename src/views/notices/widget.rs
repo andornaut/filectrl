@@ -143,10 +143,9 @@ pub(super) fn progress_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
     tasks: &'a HashSet<Task>,
+    finished: usize,
 ) -> Block<'a> {
-    let progress = tasks
-        .iter()
-        .fold(Progress::default(), |acc, task| task.combine_progress(&acc));
+    let progress = batch_progress(tasks, finished);
 
     let percentage = progress.percentage();
     let percentage_text = format!(" {percentage}%");
@@ -165,6 +164,36 @@ pub(super) fn progress_widget<'a>(
         .title(left)
         .title(right)
         .style(theme.progress())
+}
+
+/// Parts of one task in the batch's bar.
+const TASK_PARTS: u64 = 1000;
+
+/// The batch's progress as the average of each task's own fraction, with the
+/// tasks that already ended counted as complete. Averaging keeps a copy's bytes
+/// and a delete's entries from being added together, and counting ended tasks
+/// keeps the bar from falling back when one finishes. A running task stops one
+/// part short of complete, so only an ended batch reads 100%.
+pub(super) fn batch_progress(tasks: &HashSet<Task>, finished: usize) -> Progress {
+    let running: u64 = tasks
+        .iter()
+        .map(|task| {
+            let own = task.combine_progress(&Progress::default());
+            if own.total == 0 {
+                return 0;
+            }
+            let parts = u128::from(own.completed) * u128::from(TASK_PARTS) / u128::from(own.total);
+            u64::try_from(parts)
+                .unwrap_or(TASK_PARTS)
+                .min(TASK_PARTS - 1)
+        })
+        .sum();
+    let finished = u64::try_from(finished).unwrap_or(u64::MAX / (2 * TASK_PARTS));
+    let count = finished + u64::try_from(tasks.len()).unwrap_or(0);
+    Progress {
+        completed: finished * TASK_PARTS + running,
+        total: count * TASK_PARTS,
+    }
 }
 
 /// The detail text after `prefix`, fitted by `fit_left` into whatever width the

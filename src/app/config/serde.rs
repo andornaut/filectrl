@@ -11,8 +11,15 @@ where
         return Ok(None);
     }
 
-    // For non-empty strings, use the built-in Color deserialization
-    Color::deserialize(StringDeserializer::<D::Error>::new(color_str)).map(Some)
+    // For non-empty strings, use the built-in Color deserialization, whose
+    // own error names the type rather than the forms it accepts.
+    Color::deserialize(StringDeserializer::<D::Error>::new(color_str.clone()))
+        .map(Some)
+        .map_err(|_| {
+            D::Error::custom(format!(
+                "invalid color {color_str:?}: expected \"#RRGGBB\", a name such as \"Red\", or a 256-color index"
+            ))
+        })
 }
 
 /// Deserializes a list of modifier names (e.g. `["bold", "italic"]`) into a `Modifier`.
@@ -50,6 +57,21 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+
+    #[test]
+    fn an_invalid_color_names_the_forms_it_accepts() {
+        let error = toml::from_str::<ColorHolder>("color = \"#FFF\"")
+            .err()
+            .expect("the color is refused")
+            .to_string();
+
+        assert!(
+            error.contains(
+                "invalid color \"#FFF\": expected \"#RRGGBB\", a name such as \"Red\", or a 256-color index"
+            ),
+            "{error}"
+        );
+    }
 
     #[derive(Deserialize)]
     struct ColorHolder {

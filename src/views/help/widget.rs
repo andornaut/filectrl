@@ -22,11 +22,11 @@ pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
     ]
 }
 
-/// The widest label across every section, so their key columns line up.
-pub(super) fn max_label_width(sections: &[Section]) -> usize {
-    sections
-        .iter()
-        .flat_map(|(_, rows)| rows)
+/// The widest label in one section. Each section lines up its own key column,
+/// so one long label does not push every other section's keys off a narrow
+/// terminal.
+pub(super) fn label_width(rows: &[(String, String)]) -> usize {
+    rows.iter()
         .map(|(label, _)| label.cell_width() as usize)
         .max()
         .unwrap_or(0)
@@ -114,14 +114,13 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
     }
 
     let sections = build_sections(kb);
-    let max_width = max_label_width(&sections);
 
     let mut out = String::new();
     for (index, (title, rows)) in sections.iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        append_section(&mut out, title, rows, max_width, bold);
+        append_section(&mut out, title, rows, label_width(rows), bold);
     }
     out
 }
@@ -150,12 +149,12 @@ fn build_conflict_keybindings() -> Vec<(String, String)> {
     vec![
         kb_entry("Skip this entry", "s".into()),
         kb_entry(
-            "Skip this and every later collision, also in sources already running",
+            "Skip every collision, also in sources already running",
             "S (Uppercase)".into(),
         ),
         kb_entry("Replace the existing entry", "o".into()),
         kb_entry(
-            "Replace this and every later collision the paste meets",
+            "Replace every collision the paste meets",
             "O (Uppercase)".into(),
         ),
         kb_entry("Abandon the rest of the paste", "Esc".into()),
@@ -208,7 +207,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             ),
         ),
         kb_entry(
-            "Select top, middle, bottom visible row",
+            "Select top, middle, bottom row",
             t(
                 Action::SelectFirstVisible,
                 Action::SelectMiddleVisible,
@@ -226,7 +225,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
         kb_entry("Open new window", s(Action::OpenNewWindow)),
         kb_entry("Open with...", s(Action::OpenWith)),
         kb_entry(
-            "Edit ($VISUAL/$EDITOR), page ($PAGER)",
+            "Edit ($EDITOR), page ($PAGER)",
             p(Action::Edit, Action::Page),
         ),
         // Marking
@@ -263,10 +262,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
             "Clear alerts, progress",
             p(Action::ClearAlerts, Action::ClearProgress),
         ),
-        kb_entry(
-            "Clear clipboard/filter/marks/search, exit bookmarks",
-            s(Action::ResetView),
-        ),
+        kb_entry("Reset view, leave bookmarks", s(Action::ResetView)),
         kb_entry("Toggle help", s(Action::ToggleHelp)),
         kb_entry("Quit", s(Action::Quit)),
     ]
@@ -348,24 +344,36 @@ mod tests {
         assert!(text.contains("\u{2193}/j"), "{text}");
     }
 
-    /// Every key column starts where the header's "Keybindings" does, in both
-    /// sections, so the printed list reads as two columns.
+    /// Every key column starts where its section's "Keybindings" header does,
+    /// so each section reads as two columns.
     #[test]
-    fn the_printed_keys_line_up_under_the_header() {
+    fn the_printed_keys_line_up_under_their_header() {
         let text = help_text(false);
-        let header_column = text.find("Keybindings").expect("a header");
+        let mut header_column = None;
 
-        for line in text.lines().filter(|line| line.contains(": ")) {
-            let after_label = line.find(": ").unwrap() + 2;
-            let keys_column =
-                after_label + line[after_label..].len() - line[after_label..].trim_start().len();
-            assert_eq!(header_column, keys_column, "{line:?}");
+        for line in text.lines() {
+            if line.ends_with("Keybindings") {
+                header_column = line.find("Keybindings");
+            } else if let Some(after_label) = line.find(": ").map(|at| at + 2) {
+                let keys_column = after_label + line[after_label..].len()
+                    - line[after_label..].trim_start().len();
+                assert_eq!(header_column, Some(keys_column), "{line:?}");
+            }
         }
-        for header in text.lines().filter(|line| line.ends_with("Keybindings")) {
-            assert_eq!(
-                header_column,
-                header.find("Keybindings").unwrap(),
-                "{header:?}"
+    }
+
+    /// Each section sizes its own label column, so on an 80-column terminal
+    /// no key is cut off by one long label elsewhere.
+    #[test]
+    fn every_printed_line_fits_80_columns() {
+        use ratatui::buffer::CellWidth;
+        let text = help_text(false);
+
+        for line in text.lines() {
+            assert!(
+                line.cell_width() <= 78,
+                "{} columns: {line:?}",
+                line.cell_width()
             );
         }
     }
@@ -374,8 +382,8 @@ mod tests {
     /// mode section lists, and the bookmarks view's use of the normal ones.
     #[test_case("Bookmarks View", "Go to the linked folder", "\u{2192}/l/Enter" ; "following a bookmark")]
     #[test_case("Bookmarks View", "Rename, delete the bookmark", "r/F2, d/Delete" ; "renaming and deleting a bookmark")]
-    #[test_case("Paste Conflict", "Skip this and every later collision, also in sources already running", "S (Uppercase)" ; "a conflict answer")]
-    #[test_case("Paste Conflict", "Replace this and every later collision the paste meets", "O (Uppercase)" ; "overwrite all")]
+    #[test_case("Paste Conflict", "Skip every collision, also in sources already running", "S (Uppercase)" ; "a conflict answer")]
+    #[test_case("Paste Conflict", "Replace every collision the paste meets", "O (Uppercase)" ; "overwrite all")]
     #[test_case("Paste Conflict", "Abandon the rest of the paste", "Esc" ; "abandoning a paste")]
     #[test_case("Open With", "Open with a numbered application", "1-9" ; "the row numbers")]
     #[test_case("Open With", "Close the picker", "o" ; "closing the picker")]

@@ -14,7 +14,7 @@ use super::{
 use crate::app::config::theme::Theme;
 use crate::{
     app::config::{Config, keybindings::Action},
-    command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
+    command::{Command, InputMode, PromptAction, handler::CommandHandler, result::CommandResult},
 };
 
 const MIN_WIDTH: u16 = 14;
@@ -102,7 +102,7 @@ impl RootView {
             notices: NoticesView::new(keybindings),
             open_with: OpenWithView::new(keybindings),
             prompt: PromptView::default(),
-            status: StatusView::default(),
+            status: StatusView::new(keybindings),
             table: TableView::new(config.ui, &config.keybindings),
         }
     }
@@ -111,8 +111,10 @@ impl RootView {
         self.mode
     }
 
-    pub fn is_help_visible(&self) -> bool {
-        self.is_help_visible
+    /// Whether help or the "Open with" picker covers the table. Quit and reset
+    /// close it rather than acting on what it covers.
+    pub fn is_overlay_visible(&self) -> bool {
+        self.is_help_visible || self.open_with.is_visible()
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
@@ -169,10 +171,12 @@ impl CommandHandler for RootView {
             | Command::StartSearch(_) => self
                 .close_prompt()
                 .map_or(CommandResult::NotHandled, Into::into),
-            // The conflict prompt's own answer. The paste is waiting on it and
-            // may reopen the prompt for the next collision, so this must not be
-            // announced as the prompt being abandoned.
-            Command::ResolveConflict(_) => {
+            // An answer that resolves the prompt and starts work: the conflict
+            // prompt's own answer (the paste may reopen it for the next
+            // collision), or the paste a "clipboard from elsewhere" prompt
+            // confirmed (which may open a conflict prompt in the same cycle).
+            // Neither is announced as the prompt being abandoned.
+            Command::ResolveConflict(_) | Command::Copy { .. } | Command::Move { .. } => {
                 self.mode = InputMode::Normal;
                 CommandResult::NotHandled
             }
@@ -180,7 +184,13 @@ impl CommandHandler for RootView {
                 self.mode = InputMode::Normal;
                 CommandResult::Handled
             }
-            Command::OpenPrompt(_) => {
+            Command::OpenPrompt(action) => {
+                // The table has stashed what a delete asks about; the prompt
+                // names it when it is a single entry.
+                self.prompt.set_delete_subject(match action {
+                    PromptAction::Delete(_) => self.table.pending_delete_name(),
+                    _ => None,
+                });
                 self.mode = InputMode::Prompt;
                 CommandResult::Handled
             }
@@ -212,8 +222,12 @@ impl CommandHandler for RootView {
                 }
                 CommandResult::Handled
             }
-            Some(Action::ResetView) if self.is_help_visible => {
+            Some(Action::ResetView | Action::Quit) if self.is_help_visible => {
                 self.is_help_visible = false;
+                CommandResult::Handled
+            }
+            Some(Action::ResetView | Action::Quit) if self.open_with.is_visible() => {
+                self.open_with.hide();
                 CommandResult::Handled
             }
             _ => CommandResult::NotHandled,
@@ -231,6 +245,9 @@ impl CommandHandler for RootView {
 
 impl RootView {
     fn visit_views(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
+        self.table.set_ignores_mouse(
+            matches!(self.mode, InputMode::Prompt) && self.prompt.is_confirmation(),
+        );
         if !self.is_help_visible && !self.open_with.is_visible() {
             for view in self.views() {
                 visitor(view);
@@ -316,6 +333,8 @@ fn render_resize_message(theme: &Theme, buf: &mut Buffer, area: Rect) {
 #[cfg(test)]
 mod tests {
     use test_case::test_case;
+
+    use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
 
     use super::*;
     use crate::{
@@ -417,6 +436,14 @@ mod tests {
     }), InputMode::Prompt ; "opening the conflict prompt takes keys")]
     #[test_case(&Command::ResolveConflict(ConflictChoice::Skip), InputMode::Normal ; "answering it gives them back")]
     #[test_case(&Command::CancelPrompt, InputMode::Normal ; "dismissing it gives them back")]
+    #[test_case(&Command::Copy {
+        srcs: vec![],
+        dest: PathInfo::try_from("/tmp").unwrap(),
+    }, InputMode::Normal ; "confirming a copy from elsewhere gives them back")]
+    #[test_case(&Command::Move {
+        srcs: vec![],
+        dest: PathInfo::try_from("/tmp").unwrap(),
+    }, InputMode::Normal ; "confirming a cut from elsewhere gives them back")]
     fn a_command_leaves_the_root_in_mode(command: &Command, expected: InputMode) {
         let mut root = view();
         // Start from the opposite mode so a no-op arm cannot pass by accident.
@@ -625,5 +652,55 @@ mod tests {
         );
 
         assert!(!root.open_with.is_visible());
+    }
+
+    /// A y/n prompt already holds what it asks about: a wheel over the table
+    /// must not move the cursor under it. A prompt that takes text leaves the
+    /// table alone.
+    #[test_case(PromptAction::Delete(1) => false ; "a delete confirmation")]
+    #[test_case(PromptAction::ConfirmQuit(2) => false ; "a quit confirmation")]
+    #[test_case(PromptAction::CreateDirectory => true ; "a prompt that takes text")]
+    fn the_table_takes_the_wheel_under(action: PromptAction) -> bool {
+        let mut root = view();
+        root.handle_command(&Command::OpenPrompt(action.clone()));
+        root.prompt.handle_command(&Command::OpenPrompt(action));
+        root.visit_views(&mut |_| {});
+
+        root.table.should_handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// `q` and `Esc` close an overlay, as in a pager, rather than acting on
+    /// the view it covers.
+    #[test_case(KeyCode::Char('q') ; "the quit key")]
+    #[test_case(KeyCode::Esc ; "the reset key")]
+    fn a_closing_key_closes_help(code: KeyCode) {
+        let mut root = view();
+        root.handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert!(root.is_overlay_visible());
+
+        assert_eq!(
+            CommandResult::Handled,
+            root.handle_key(code, KeyModifiers::NONE)
+        );
+
+        assert!(!root.is_overlay_visible());
+    }
+
+    #[test_case(KeyCode::Char('q') ; "the quit key")]
+    #[test_case(KeyCode::Esc ; "the reset key")]
+    fn a_closing_key_closes_the_open_with_picker(code: KeyCode) {
+        let mut root = showing_open_with();
+
+        assert_eq!(
+            CommandResult::Handled,
+            root.handle_key(code, KeyModifiers::NONE)
+        );
+
+        assert!(!root.is_overlay_visible());
     }
 }

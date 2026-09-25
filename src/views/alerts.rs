@@ -22,6 +22,9 @@ const MAX_NUMBER_ALERTS: usize = 5;
 /// (a clipboard entry, a path), and every frame wraps each alert again, so an
 /// unbounded one would slow every redraw until the alerts are cleared.
 const MAX_ALERT_CHARS: usize = 1000;
+/// Most wrapped lines one alert is drawn on, so a few long messages cannot
+/// push the table down to its minimum. The full text is in the log.
+const MAX_ALERT_LINES: usize = 3;
 const MIN_HEIGHT_BORDERED: u16 = 3; // border(2) + 1 alert line
 const MIN_HEIGHT_BORDERLESS: u16 = MIN_HEIGHT_BORDERED - 2; // 1 alert line
 
@@ -106,13 +109,18 @@ impl AlertsView {
         self.alerts
             .iter()
             .flat_map(|(kind, message)| {
-                split_with_ellipsis(message, width_without_prefix as usize)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, line)| {
-                        let prefix = if i == 0 { " •" } else { "  " };
-                        (kind.clone(), Line::from(format!("{prefix} {line}")))
-                    })
+                let mut lines = split_with_ellipsis(message, width_without_prefix as usize);
+                if lines.len() > MAX_ALERT_LINES {
+                    lines.truncate(MAX_ALERT_LINES);
+                    if let Some(last) = lines.last_mut() {
+                        last.pop();
+                        last.push('…');
+                    }
+                }
+                lines.into_iter().enumerate().map(|(i, line)| {
+                    let prefix = if i == 0 { " •" } else { "  " };
+                    (kind.clone(), Line::from(format!("{prefix} {line}")))
+                })
             })
             .collect()
     }
@@ -197,6 +205,31 @@ mod tests {
         assert_eq!(v.alerts.len(), 2);
         assert_eq!(v.alerts.front().unwrap().1, "second");
         assert_eq!(v.alerts.back().unwrap().1, "first");
+    }
+
+    /// A long alert is cut to a few lines, so five of them cannot squeeze the
+    /// table down to its minimum.
+    #[test]
+    fn a_long_alert_is_drawn_on_at_most_three_lines() {
+        let mut v = view();
+        v.add_alert(AlertKind::Error, "x".repeat(500));
+
+        let lines = v.alerts(40);
+
+        assert_eq!(MAX_ALERT_LINES, lines.len());
+        assert!(lines[2].1.to_string().ends_with('…'), "{:?}", lines[2].1);
+        assert_eq!(
+            as_dimension(MAX_ALERT_LINES) + 2,
+            v.height(Rect::new(0, 0, 42, 24))
+        );
+    }
+
+    #[test]
+    fn a_short_alert_keeps_its_lines() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "short".into());
+
+        assert_eq!(1, v.alerts(40).len());
     }
 
     #[test]

@@ -50,6 +50,9 @@ pub(super) struct NoticesView {
     /// ignore `ExitedSearch` from superseded searches.
     search_generation: u64,
     tasks: HashSet<Task>,
+    /// Tasks that ended since `tasks` was last empty, counted as complete in
+    /// the batch's bar so it does not fall back when one of them finishes.
+    finished_in_batch: usize,
     /// Cached notice list, rebuilt by the command handler whenever
     /// notice-relevant state changes. Both `constraint` and `render` read this
     /// instead of rebuilding per frame, and the mouse handler uses it to map a
@@ -82,6 +85,7 @@ impl NoticesView {
             result_count: None,
             search_generation: 0,
             tasks: HashSet::new(),
+            finished_in_batch: 0,
             notices: Vec::new(),
         }
     }
@@ -102,7 +106,9 @@ impl NoticesView {
             None
         };
         [
-            (!self.tasks.is_empty()).then_some(Notice::Progress),
+            (!self.tasks.is_empty()).then_some(Notice::Progress {
+                finished: self.finished_in_batch,
+            }),
             (!self.tasks.is_empty()).then_some(Notice::Operations),
             self.search_query
                 .as_ref()
@@ -135,6 +141,7 @@ impl NoticesView {
 
     fn clear_progress(&mut self) -> CommandResult {
         self.tasks.clear();
+        self.finished_in_batch = 0;
         CommandResult::Handled
     }
 
@@ -170,7 +177,12 @@ impl NoticesView {
         }
 
         if task.is_terminal() {
-            self.tasks.remove(&task);
+            if self.tasks.remove(&task) {
+                self.finished_in_batch += 1;
+            }
+            if self.tasks.is_empty() {
+                self.finished_in_batch = 0;
+            }
         } else {
             self.tasks.replace(task); // upsert
         }
@@ -202,7 +214,7 @@ mod tests {
         notices
             .iter()
             .map(|n| match n {
-                Notice::Progress => "progress",
+                Notice::Progress { .. } => "progress",
                 Notice::Operations => "operations",
                 Notice::Search(_) => "search",
                 Notice::SearchFinished { .. } => "search_finished",
@@ -295,6 +307,94 @@ mod tests {
         at.done(); // sends a terminal snapshot of the same task
         v.update_tasks(recv_task(&rx));
         assert!(v.build_notices().is_empty());
+    }
+
+    /// The bar's percentage for the tasks `v` tracks.
+    fn batch_percentage(v: &NoticesView) -> u32 {
+        match v.build_notices().first() {
+            Some(Notice::Progress { finished }) => {
+                super::widget::batch_progress(&v.tasks, *finished).percentage()
+            }
+            other => panic!("expected the progress notice, got {other:?}"),
+        }
+    }
+
+    /// Latest snapshot `active` sends, forced past the debounce.
+    fn snapshot(active: &ActiveTask, rx: &mpsc::Receiver<Command>) -> Task {
+        active.send_progress();
+        let mut last = recv_task(rx);
+        while let Ok(Command::Progress(task)) = rx.try_recv() {
+            last = task;
+        }
+        last
+    }
+
+    /// A finished task counts as complete until the batch ends, so the bar
+    /// does not fall back when one of two copies finishes.
+    #[test]
+    fn the_bar_does_not_fall_back_when_a_task_of_the_batch_ends() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (mut first, initial, _c1) = ActiveTask::new(tx.clone(), copy_kind(), 100);
+        v.update_tasks(initial);
+        let (_second, initial, _c2) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+        first.increment(90);
+        v.update_tasks(snapshot(&first, &rx));
+        let before = batch_percentage(&v);
+
+        first.done();
+        v.update_tasks(recv_task(&rx));
+
+        assert_eq!(45, before);
+        assert_eq!(50, batch_percentage(&v));
+    }
+
+    /// Each task counts by its own fraction: a delete's entries are not
+    /// swamped by a copy's bytes.
+    #[test]
+    fn a_task_counted_in_entries_is_not_swamped_by_one_counted_in_bytes() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let delete = TaskKind::Delete {
+            path: "/d".to_string(),
+        };
+        let (mut removing, initial, _c1) = ActiveTask::new(tx.clone(), delete, 50_000);
+        v.update_tasks(initial);
+        let (_copy, initial, _c2) = ActiveTask::new(tx, copy_kind(), 2_000_000_000);
+        v.update_tasks(initial);
+        removing.increment(49_000);
+        v.update_tasks(snapshot(&removing, &rx));
+
+        assert_eq!(49, batch_percentage(&v));
+    }
+
+    /// A task that has counted everything but not ended stops short of
+    /// complete: only an ended batch reads 100%.
+    #[test]
+    fn a_task_not_yet_ended_stops_short_of_complete() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (mut copying, initial, _c) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+        copying.increment(100);
+        v.update_tasks(snapshot(&copying, &rx));
+
+        assert_eq!(99, batch_percentage(&v));
+    }
+
+    #[test]
+    fn a_batch_that_ends_starts_the_next_one_afresh() {
+        let mut v = view();
+        let (tx, rx) = mpsc::channel();
+        let (first, initial, _c1) = ActiveTask::new(tx.clone(), copy_kind(), 100);
+        v.update_tasks(initial);
+        first.done();
+        v.update_tasks(recv_task(&rx));
+        let (_next, initial, _c2) = ActiveTask::new(tx, copy_kind(), 100);
+        v.update_tasks(initial);
+
+        assert_eq!(0, batch_percentage(&v));
     }
 
     #[test]

@@ -28,7 +28,7 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
-    conflicts::same_name_refusal,
+    conflicts::{made_since_refusal, same_name_refusal},
     entry_id::Seen,
     operations::{open_in, spawn_argv},
     paste::{PasteStep, PendingPaste},
@@ -60,9 +60,26 @@ enum Cancellable {
     Search(CancellationToken),
 }
 
+/// What the table lists, which decides what a refresh re-reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Shown {
+    Directory,
+    /// Search results, re-read by path once the walk has ended.
+    Search,
+    /// The bookmarks directory, watched in place of the current one.
+    Bookmarks,
+}
+
 /// A file operation already told to stop, waiting for its terminal progress.
 fn is_cancelled_task(cancellable: &Cancellable) -> bool {
     matches!(cancellable, Cancellable::Task(info) if info.token.is_cancelled())
+}
+
+/// A task in a stage that cannot be interrupted (a move removing its
+/// original), which the cancel key passes over to reach the work queued behind
+/// it.
+fn is_uncancellable_task(cancellable: &Cancellable) -> bool {
+    matches!(cancellable, Cancellable::Task(info) if info.uncancellable.load(Ordering::Relaxed))
 }
 
 pub struct FileSystem {
@@ -100,6 +117,9 @@ pub struct FileSystem {
     pending_paste: Option<PendingPaste>,
     search_max_depth: u32,
     search_max_results: u32,
+    /// The current search's results, by path, for a refresh to re-read.
+    search_results: Vec<PathBuf>,
+    shown: Shown,
     watcher: Option<DirectoryWatcher>,
 }
 
@@ -130,6 +150,8 @@ impl FileSystem {
             pending_paste: None,
             search_max_depth: config.file_system.search_max_depth,
             search_max_results: config.file_system.search_max_results,
+            search_results: Vec::new(),
+            shown: Shown::Directory,
             watcher,
         }
     }
@@ -202,8 +224,9 @@ impl FileSystem {
         // cannot open (e.g. permission denied). The full per-entry read happens
         // asynchronously in `stream_cd` below.
         if let Err(error) = fs::read_dir(&directory.path) {
+            let verb = if navigate { "change to" } else { "read" };
             return anyhow!(
-                "Failed to change to directory {}: {error}",
+                "Failed to {verb} directory {}: {error}",
                 compact(&directory.path)
             )
             .into();
@@ -219,19 +242,10 @@ impl FileSystem {
         // work is wasted. A reload leaves the listing, and any search, alone.
         if navigate {
             self.cancel_search();
+            self.shown = Shown::Directory;
         }
         self.directory = Some(directory.clone());
-        let path_buf = directory.path.clone();
-        if let Some(watcher) = &mut self.watcher
-            && let Err(e) = watcher.watch_directory(path_buf.clone())
-        {
-            // The listing itself may load fine: only the automatic refresh is
-            // lost.
-            let _ = self.command_tx.send(Command::AlertWarn(format!(
-                "Failed to watch directory {}: {e}",
-                compact(&path_buf)
-            )));
-        }
+        self.watch(&directory.path);
 
         // Cancel any in-flight load so its batches don't bleed into this one,
         // then start streaming the new directory's entries.
@@ -259,6 +273,87 @@ impl FileSystem {
             }
         }
         .into()
+    }
+
+    /// Watches `path` for changes, alerting when it cannot: the listing itself
+    /// may load fine, and only the automatic refresh is lost.
+    fn watch(&mut self, path: &Path) {
+        if let Some(watcher) = &mut self.watcher
+            && let Err(e) = watcher.watch_directory(path.to_path_buf())
+        {
+            let _ = self.command_tx.send(Command::AlertWarn(format!(
+                "Failed to watch directory {}: {e}",
+                compact(path)
+            )));
+        }
+    }
+
+    /// Reads the bookmarks and watches their directory while they are shown,
+    /// so one added or removed elsewhere reloads the view.
+    fn show_bookmarks(&mut self) -> CommandResult {
+        match read_bookmarks(&self.bookmarks_dir) {
+            // The bookmarks view replaces any in-flight search; cancel it
+            // so its walk stops and its final ExitedSearch clears the
+            // search notice. The in-flight directory load is cancelled
+            // too, so its batches cannot stream into the bookmarks
+            // listing. Both are no-ops when nothing is running.
+            //
+            // Cancel only once the listing is known to replace them: a
+            // failed read broadcasts no Bookmarks command, so nothing
+            // would clear the table's loading flag, and a load cancelled
+            // mid-drain returns without sending DirectoryListingComplete
+            // to clear it instead. The table would be stranded on a
+            // truncated, unsorted listing.
+            Ok(bookmarks) => {
+                self.cancel_search();
+                self.cancel_current_load();
+                self.shown = Shown::Bookmarks;
+                let dir = self.bookmarks_dir.clone();
+                self.watch(&dir);
+                Command::Bookmarks { bookmarks }.into()
+            }
+            Err(message) => Command::AlertError(message).into(),
+        }
+    }
+
+    /// Starts tracking a new search's results.
+    fn searching(&mut self) {
+        self.shown = Shown::Search;
+        self.search_results.clear();
+    }
+
+    /// Records a batch of the current search's results.
+    fn search_batch(&mut self, items: &[PathInfo], generation: u64) {
+        if self.shown == Shown::Search && generation == self.current_search_generation {
+            self.search_results
+                .extend(items.iter().map(|item| item.path.clone()));
+        }
+    }
+
+    /// Re-reads the results of a search that has ended, by path, off the
+    /// calling thread: one that is gone (deleted, or renamed, which a path
+    /// cannot follow) is dropped, and one that changed is read again. The
+    /// current directory is not listed, since the table would discard it.
+    /// While the walk is still running its results are current anyway.
+    fn refresh_search(&mut self) -> CommandResult {
+        if self
+            .cancellables
+            .iter()
+            .any(|c| matches!(c, Cancellable::Search(_)))
+        {
+            return CommandResult::Handled;
+        }
+        let paths = self.search_results.clone();
+        let generation = self.current_search_generation;
+        let tx = self.command_tx.clone();
+        thread::spawn(move || {
+            let items = paths
+                .iter()
+                .filter_map(|path| PathInfo::try_from(path).ok())
+                .collect();
+            let _ = tx.send(Command::SearchResultsRefreshed { items, generation });
+        });
+        CommandResult::Handled
     }
 
     /// The next stream generation. Shared by directory loads and searches so
@@ -352,9 +447,23 @@ impl FileSystem {
             .rposition(|cancellable| !is_cancelled_task(cancellable))?;
         match self.cancellables[newest] {
             Cancellable::Search(_) => Some(newest),
-            Cancellable::Task(_) => self.cancellables.iter().position(|cancellable| {
-                matches!(cancellable, Cancellable::Task(_)) && !is_cancelled_task(cancellable)
-            }),
+            Cancellable::Task(_) => {
+                let live = |cancellable: &&Cancellable| {
+                    matches!(cancellable, Cancellable::Task(_)) && !is_cancelled_task(cancellable)
+                };
+                // Only uncancellable tasks left: the oldest, so the key says
+                // why nothing was cancelled.
+                let tasks = || {
+                    self.cancellables
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| live(c))
+                };
+                tasks()
+                    .find(|(_, cancellable)| !is_uncancellable_task(cancellable))
+                    .or_else(|| tasks().next())
+                    .map(|(index, _)| index)
+            }
         }
     }
 
@@ -400,6 +509,11 @@ impl FileSystem {
                 Cancellable::Task(info) => info.id != task.id(),
                 Cancellable::Search(_) => true,
             });
+            // The watcher sees only the directory searched, not the results
+            // below it that the task may have removed, renamed or changed.
+            if self.shown == Shown::Search {
+                self.refresh_search();
+            }
         }
         if task.is_cancelled() {
             return CommandResult::Handled;
@@ -504,6 +618,11 @@ impl FileSystem {
     }
 
     fn refresh(&mut self) -> CommandResult {
+        match self.shown {
+            Shown::Search => return self.refresh_search(),
+            Shown::Bookmarks => return self.show_bookmarks(),
+            Shown::Directory => {}
+        }
         // A load for this directory is already streaming and will pick the
         // change up. Restarting it would cancel it before it can finalize, and
         // under sustained churn (a build writing into the viewed directory) it
@@ -584,6 +703,15 @@ impl FileSystem {
                 }
                 PasteStep::Skip => {
                     pending.remaining.pop_front();
+                }
+                PasteStep::Taken => {
+                    pending.remaining.pop_front();
+                    commands.push(Command::AlertError(made_since_refusal(
+                        pending.is_move,
+                        &src.path,
+                        &pending.dest.path,
+                    )));
+                    pending.failed.push(src);
                 }
                 PasteStep::Run { replace } => {
                     pending.remaining.pop_front();
@@ -678,6 +806,7 @@ impl FileSystem {
         // other generation is ignored by `on_search_exited`.
         let generation = self.bump_generation();
         self.current_search_generation = generation;
+        self.searching();
 
         let token = CancellationToken::new();
         self.cancellables.push(Cancellable::Search(token.clone()));
@@ -823,6 +952,8 @@ mod tests {
             pending_paste: None,
             search_max_depth: 20,
             search_max_results: 10_000,
+            search_results: Vec::new(),
+            shown: Shown::Directory,
             watcher: None,
         }
     }
@@ -1196,7 +1327,7 @@ mod tests {
         kinds
             .chars()
             .map(|kind| match kind {
-                't' | 'x' => {
+                't' | 'x' | 'u' => {
                     let token = CancellationToken::new();
                     if kind == 'x' {
                         token.cancel();
@@ -1208,7 +1339,7 @@ mod tests {
                             path: String::new(),
                         },
                         uncancellable: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-                            false,
+                            kind == 'u',
                         )),
                     })
                 }
@@ -1227,6 +1358,8 @@ mod tests {
     #[test_case("xt" => Some(1) ; "the task queued behind a cancelled one")]
     #[test_case("sx" => Some(0) ; "the search, not a cancelled task above it")]
     #[test_case("x" => None ; "only a cancelled task")]
+    #[test_case("ut" => Some(1) ; "the task queued behind one that cannot be cancelled")]
+    #[test_case("uu" => Some(0) ; "the oldest when none can be cancelled")]
     fn the_cancel_key_targets(kinds: &str) -> Option<usize> {
         // File operations share one worker and run in queue order, so the
         // oldest is the one actually running. Cancelling the newest would stop
@@ -1277,12 +1410,12 @@ mod tests {
         assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
     }
 
-    /// The refusal of a source whose name folds onto one this paste started.
+    /// The refusal of a source whose name this paste already started.
     fn same_name(is_move: bool, source: &Path, dest: &Path) -> String {
         let operation = if is_move { "move" } else { "copy" };
         format!(
             "Cannot {operation} {} into {}: another source in this paste already takes that name \
-             there, or one the destination may treat as the same",
+             there",
             compact(source),
             compact(dest)
         )
@@ -1452,6 +1585,53 @@ mod tests {
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
     }
 
+    /// A source whose name holds an entry made since the paste began is
+    /// refused before it starts, without a prompt, and stays on the clipboard,
+    /// whatever the standing answer: on a destination that treats two names
+    /// as one, that entry is what an earlier source of the paste wrote under
+    /// the other. Stood in for here by an entry written while the prompt was
+    /// open. Needs a filesystem that records birth times; skipped otherwise.
+    #[test_case(true ; "a cut")]
+    #[test_case(false ; "a copy")]
+    fn a_source_meeting_an_entry_made_since_the_paste_began_is_refused(is_move: bool) {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_made_since");
+        if !crate::file_system::entry_id::records_birth_time(&fx.dest.path) {
+            eprintln!("skipped: this filesystem records no birth time");
+            return;
+        }
+        fx.occupy("b.txt");
+        let paste =
+            entry(is_move, vec![fx.other.clone(), fx.src.clone()]).into_paste(fx.dest.clone());
+        let commands = file_system.handle_command(&paste).into_commands();
+        assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        crate::test_support::tick();
+        fs::write(fx.dest.path.join("a.txt"), b"since").unwrap();
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
+            .into_commands();
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+
+        let verb = if is_move { "move" } else { "copy" };
+        assert_eq!(
+            vec![
+                Command::AlertError(format!(
+                    "Cannot {verb} {} into {}: an entry made since this paste began holds that \
+                     name",
+                    compact(&fx.src.path),
+                    compact(&fx.dest.path)
+                )),
+                left_over(is_move, vec![fx.src.clone()]),
+            ],
+            commands
+        );
+        assert_eq!(b"since".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
+    }
+
     /// A standing "skip all" given at a prompt also reaches a source the queue
     /// handed to the worker before it, whose name was free then and is taken
     /// by the time it runs: the paste's own answer travels with its work.
@@ -1478,93 +1658,6 @@ mod tests {
         assert_eq!(None, tasks::await_end(&rx).error_message());
         assert_eq!(b"raced".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
-    }
-
-    /// A source whose name differs from a started one only in case, Unicode
-    /// normalization, or a trailing dot is refused before it starts, without a
-    /// prompt, and stays on the clipboard: a destination that folds names
-    /// would give the two one entry, and nothing on disk can tell before the
-    /// first has run. Refused on a filesystem that keeps them apart as well.
-    /// The two sources sit in different directories, which every filesystem
-    /// can hold.
-    #[test_case(true, "Notes.txt", "notes.txt" ; "a cut, differing in case")]
-    #[test_case(false, "Notes.txt", "notes.txt" ; "a copy, differing in case")]
-    #[test_case(false, "Notes.txt", "Notes.txt." ; "a trailing dot")]
-    #[test_case(false, "Caf\u{e9}.txt", "Cafe\u{301}.txt" ; "precomposed and decomposed")]
-    fn a_source_whose_name_folds_onto_a_started_one_is_refused(
-        is_move: bool,
-        first_name: &str,
-        second_name: &str,
-    ) {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_folded_twin");
-        let root = fx.dest.path.parent().expect("a parent");
-        let (one, two) = (root.join("one"), root.join("two"));
-        fs::create_dir_all(&one).unwrap();
-        fs::create_dir_all(&two).unwrap();
-        fs::write(one.join(first_name), b"first").unwrap();
-        fs::write(two.join(second_name), b"second").unwrap();
-        let first = PathInfo::try_from(one.join(first_name).as_path()).unwrap();
-        let second = PathInfo::try_from(two.join(second_name).as_path()).unwrap();
-        let srcs = vec![first.clone(), second.clone()];
-        let dest = fx.dest.clone();
-        let paste = entry(is_move, srcs).into_paste(dest);
-
-        let commands = file_system.handle_command(&paste).into_commands();
-        tasks::await_end(&rx);
-
-        assert_eq!(
-            vec![
-                Command::AlertError(same_name(is_move, &second.path, &fx.dest.path)),
-                left_over(is_move, vec![second.clone()]),
-            ],
-            commands
-        );
-        let names: Vec<_> = fs::read_dir(&fx.dest.path)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(vec![std::ffi::OsString::from(first_name)], names);
-        assert_eq!(b"first".to_vec(), fx.pasted(first_name));
-        assert_eq!(b"second".to_vec(), fs::read(&second.path).unwrap());
-        assert_eq!(is_move, !first.path.exists());
-    }
-
-    /// A directory whose name folds onto a file started earlier is refused the
-    /// same way: on a destination that folds names, the two would be one
-    /// entry.
-    #[test]
-    fn a_directory_whose_name_folds_onto_a_started_file_is_refused() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_folded_directory");
-        let root = fx.dest.path.parent().expect("a parent");
-        let (one, two) = (root.join("one"), root.join("two"));
-        fs::create_dir_all(&one).unwrap();
-        fs::create_dir_all(two.join("NOTES")).unwrap();
-        fs::write(one.join("notes"), b"first").unwrap();
-        let file = PathInfo::try_from(one.join("notes").as_path()).unwrap();
-        let directory = PathInfo::try_from(two.join("NOTES").as_path()).unwrap();
-
-        let commands = file_system
-            .handle_command(&Command::Copy {
-                srcs: vec![file, directory.clone()],
-                dest: fx.dest.clone(),
-            })
-            .into_commands();
-        tasks::await_end(&rx);
-
-        assert_eq!(
-            vec![
-                Command::AlertError(same_name(false, &directory.path, &fx.dest.path)),
-                left_over(false, vec![directory]),
-            ],
-            commands
-        );
-        assert_eq!(b"first".to_vec(), fx.pasted("notes"));
     }
 
     #[test]
@@ -1659,6 +1752,159 @@ mod tests {
         drop(rx);
     }
 
+    /// After a search ends, a refresh re-reads its results by path instead of
+    /// listing the current directory, which the table would discard.
+    #[test]
+    fn a_refresh_after_a_search_rereads_its_results_without_listing_the_directory() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_search_refresh");
+        let gone = root.file("gone", 1);
+        let changed = root.file("changed", 1);
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.current_search_generation = 5;
+        file_system.searching();
+        file_system.handle_command(&Command::ListingBatch {
+            items: vec![gone.clone(), changed.clone()],
+            generation: 5,
+        });
+        fs::remove_file(&gone.path).unwrap();
+        fs::write(&changed.path, b"longer").unwrap();
+
+        let result = file_system.handle_command(&Command::RefreshDirectory);
+
+        assert!(matches!(result, CommandResult::Handled));
+        assert!(file_system.current_load.is_none());
+        let Ok(Command::SearchResultsRefreshed { items, generation }) =
+            rx.recv_timeout(Duration::from_secs(5))
+        else {
+            panic!("expected the results read again");
+        };
+        assert_eq!(5, generation);
+        let read: Vec<_> = items
+            .iter()
+            .map(|item| (item.path.clone(), item.size))
+            .collect();
+        assert_eq!(vec![(changed.path.clone(), 6)], read);
+    }
+
+    /// A file operation finishing re-reads the results, since the watcher sees
+    /// only the directory searched, not a result below it the task removed.
+    #[test]
+    fn a_task_finishing_after_a_search_rereads_its_results() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_search_task");
+        let hit = root.file("hit", 1);
+        file_system.current_search_generation = 4;
+        file_system.searching();
+        file_system.search_batch(std::slice::from_ref(&hit), 4);
+        let (task_tx, task_rx) = std::sync::mpsc::channel();
+        let (active, _, _) = crate::command::progress::ActiveTask::new(
+            task_tx,
+            crate::command::progress::TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        active.done();
+        let finished = task_rx
+            .try_iter()
+            .find_map(|command| match command {
+                Command::Progress(task) if task.is_terminal() => Some(task),
+                _ => None,
+            })
+            .expect("a terminal progress");
+        fs::remove_file(&hit.path).unwrap();
+
+        file_system.handle_command(&Command::Progress(finished));
+
+        let Ok(Command::SearchResultsRefreshed { items, generation }) =
+            rx.recv_timeout(Duration::from_secs(5))
+        else {
+            panic!("expected the results read again");
+        };
+        assert_eq!(4, generation);
+        assert!(items.is_empty());
+    }
+
+    /// While the walk runs its results are current, so a refresh reads nothing.
+    #[test]
+    fn a_refresh_during_a_search_reads_nothing() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_search_running");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.searching();
+        file_system
+            .cancellables
+            .push(Cancellable::Search(CancellationToken::new()));
+
+        let result = file_system.handle_command(&Command::RefreshDirectory);
+
+        assert!(matches!(result, CommandResult::Handled));
+        assert!(file_system.current_load.is_none());
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    /// Only the current search's batches are its results.
+    #[test]
+    fn only_the_current_searchs_batches_are_recorded() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_search_batches");
+        let hit = root.file("hit", 1);
+        file_system.current_search_generation = 3;
+        file_system.searching();
+
+        file_system.handle_command(&Command::ListingBatch {
+            items: vec![hit.clone()],
+            generation: 2,
+        });
+        file_system.handle_command(&Command::ListingBatch {
+            items: vec![hit.clone()],
+            generation: 3,
+        });
+
+        assert_eq!(vec![hit.path], file_system.search_results);
+    }
+
+    /// The bookmarks view watches the bookmarks directory, and a refresh while
+    /// it is shown reads the bookmarks rather than the current directory.
+    #[test]
+    fn the_bookmarks_view_watches_and_reloads_the_bookmarks() {
+        let bookmarks = TempDir::new("fs_bookmarks_view");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let root = TempDir::new("fs_bookmarks_cwd");
+        file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
+        file_system.watcher = Some(DirectoryWatcher::try_new(100).unwrap());
+        file_system.handle_command(&Command::GetBookmarks);
+        let watched = file_system.watcher.as_ref().unwrap().watched_directory();
+        assert_eq!(Some(bookmarks.path().to_path_buf()), watched);
+
+        std::os::unix::fs::symlink(root.path(), bookmarks.join("added")).unwrap();
+        let result = file_system.handle_command(&Command::RefreshDirectory);
+
+        let command = Command::try_from(result).expect("expected a derived command");
+        let Command::Bookmarks { bookmarks: listed } = command else {
+            panic!("expected Bookmarks, got {command:?}");
+        };
+        assert_eq!(1, listed.len());
+        assert!(file_system.current_load.is_none());
+
+        // Leaving the view lists the directory again, and watches it.
+        file_system.handle_command(&Command::ResetView);
+        let _ = file_system.handle_command(&Command::RefreshDirectory);
+        let watched = file_system.watcher.as_ref().unwrap().watched_directory();
+        assert_eq!(Some(root.path().to_path_buf()), watched);
+        file_system.cancel_current_load();
+    }
+
     #[test]
     fn a_refresh_during_a_load_waits_for_it_instead_of_restarting_it() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1736,10 +1982,11 @@ mod tests {
             .handle_command(&Command::RefreshDirectory)
             .into_commands();
 
-        assert!(
-            matches!(commands.as_slice(), [Command::AlertError(_)]),
-            "{commands:?}"
-        );
+        let [Command::AlertError(message)] = commands.as_slice() else {
+            panic!("expected one alert, got {commands:?}");
+        };
+        // A reload, not a navigation: nothing was changed to.
+        assert!(message.starts_with("Failed to read directory"), "{message}");
         // Otherwise every change to the directory, wherever it went, would
         // repeat the error.
         let watcher = file_system.watcher.as_ref().unwrap();

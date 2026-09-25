@@ -82,6 +82,21 @@ impl<H: Handles, P> Walk<H, P> {
         Some((handles, &mut level.payload))
     }
 
+    /// `top`, with the identities of every directory on the walk, for a
+    /// `holds` asked while the directory being worked in is borrowed.
+    pub(super) fn top_and_lineage(&mut self) -> Option<(&H, &mut P, Lineage<'_, H, P>)> {
+        let (level, above) = self.levels.split_last_mut()?;
+        let handles = level
+            .handles
+            .as_ref()
+            .expect("the level being worked in holds its handles");
+        let lineage = Lineage {
+            above,
+            own: level.id,
+        };
+        Some((handles, &mut level.payload, lineage))
+    }
+
     /// Enters `child`, a directory in the one being worked in, whose handles
     /// are closed until `reopen`.
     pub(super) fn descend(&mut self, child: Level<H, P>) {
@@ -115,9 +130,32 @@ impl<H: Handles, P> Walk<H, P> {
         self.levels.is_empty()
     }
 
+    /// Whether a directory already on the walk, from the root down to the one
+    /// being worked in, is one `matches` accepts. A child that is one of them
+    /// leads back above itself (a bind mount of an ancestor inside the tree),
+    /// and descending into it would never end, so each walk refuses it, as
+    /// `rm` and `cp` do.
+    pub(super) fn holds(&self, matches: impl Fn(&H::Id) -> bool) -> bool {
+        self.levels.iter().any(|level| matches(&level.id))
+    }
+
     /// Each directory's state, from the root down.
     pub(super) fn payloads(&self) -> impl Iterator<Item = &P> {
         self.levels.iter().map(|level| &level.payload)
+    }
+}
+
+/// The identities of every directory on a walk, beside the one being worked
+/// in (`Walk::top_and_lineage`).
+pub(super) struct Lineage<'a, H: Handles, P> {
+    above: &'a [Level<H, P>],
+    own: H::Id,
+}
+
+impl<H: Handles, P> Lineage<'_, H, P> {
+    /// `Walk::holds`.
+    pub(super) fn holds(&self, matches: impl Fn(&H::Id) -> bool) -> bool {
+        matches(&self.own) || self.above.iter().any(|level| matches(&level.id))
     }
 }
 
@@ -158,7 +196,10 @@ pub(super) fn scan_tree(
             continue;
         };
         visit(dir, &name, is_directory);
-        if is_directory && let Some(child) = listed(open_unread(dir, name.as_c_str())) {
+        if is_directory
+            && let Some(child) = listed(open_unread(dir, name.as_c_str()))
+            && !walk.holds(|id| *id == child.id)
+        {
             walk.descend(child);
         }
     }
@@ -372,6 +413,34 @@ mod tests {
         let error = child.reopen_parent(expected, "moved").unwrap_err();
 
         assert_eq!("moved", error.to_string());
+    }
+
+    /// Every directory on the walk counts, the one being worked in included,
+    /// and nothing else does, so a child that is any of them is refused.
+    #[test]
+    fn a_walk_holds_every_directory_it_is_in() {
+        let fx = TempDir::new("tasks_walk_holds");
+        fs::create_dir_all(fx.join("root").join("child")).unwrap();
+        fs::create_dir(fx.join("other")).unwrap();
+        let id = |path: &Path| EntryId::of(open_directory(CWD, path).unwrap()).unwrap();
+        let level = |path: &Path| Level::open(open_directory(CWD, path).unwrap(), id(path), ());
+        let (root, child, other) = (
+            id(&fx.join("root")),
+            id(&fx.join("root").join("child")),
+            id(&fx.join("other")),
+        );
+        let mut walk = Walk::new(level(&fx.join("root")));
+        walk.descend(level(&fx.join("root").join("child")));
+
+        let held = |walk: &mut Walk<File, ()>, wanted: EntryId| {
+            let by_walk = walk.holds(|id| *id == wanted);
+            let (_, (), lineage) = walk.top_and_lineage().unwrap();
+            assert_eq!(by_walk, lineage.holds(|id| *id == wanted));
+            by_walk
+        };
+        assert!(held(&mut walk, root));
+        assert!(held(&mut walk, child));
+        assert!(!held(&mut walk, other));
     }
 
     /// A walk reopens the parent it returns to, and stops at a parent that

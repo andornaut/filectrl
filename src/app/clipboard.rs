@@ -16,6 +16,10 @@ pub struct Clipboard {
     /// What this window last wrote. `None` once `clear` has run, or before
     /// anything was written.
     last_written: Option<Written>,
+    /// The text of an entry another window wrote that a paste here started
+    /// from. A paste consumes the clipboard whoever wrote it, so `clear`
+    /// blanks this too while the clipboard still holds it.
+    adopted: Option<String>,
 }
 
 /// Text this window wrote to the clipboard, and the entry it serializes when
@@ -50,6 +54,7 @@ impl Default for Clipboard {
         Self {
             backend,
             last_written: None,
+            adopted: None,
         }
     }
 }
@@ -72,22 +77,43 @@ impl Clipboard {
         Self {
             backend: None,
             last_written: None,
+            adopted: None,
         }
     }
 
-    /// Clears the entry this window copied or cut. Text copied from a prompt
-    /// is not an entry, so it stays for other applications to paste.
+    /// Clears the entry this window copied or cut, and one written elsewhere
+    /// that a paste here started from (`adopt`). Text copied from a prompt is
+    /// not an entry, so it stays for other applications to paste.
     pub fn clear(&mut self) -> Result<(), Error> {
-        let Some(written) = self.last_written.take_if(|written| written.entry.is_some()) else {
-            return Ok(());
-        };
+        let adopted = self.adopted.take();
         let Some(backend) = &mut self.backend else {
+            // Without a system clipboard the record is the storage.
+            if self.last_written.as_ref().is_some_and(|written| {
+                written.entry.is_some() || adopted.as_ref() == Some(&written.text)
+            }) {
+                self.last_written = None;
+            }
             return Ok(());
         };
-        if should_clear(&written.text, || backend.get_string().ok()) {
-            return backend.set_string("");
+        let owned = self
+            .last_written
+            .take_if(|written| written.entry.is_some())
+            .map(|written| written.text);
+        for text in owned.iter().chain(adopted.iter()) {
+            if should_clear(text, || backend.get_string().ok()) {
+                return backend.set_string("");
+            }
         }
         Ok(())
+    }
+
+    /// Records that a paste of `entry` started, so `clear` consumes it even
+    /// when another window wrote it. An entry this window wrote needs nothing.
+    pub fn adopt(&mut self, entry: &ClipboardEntry) {
+        if self.last_entry().is_some_and(|(_, own)| own == entry) {
+            return;
+        }
+        self.adopted = Some(entry.to_string());
     }
 
     /// Reads the system clipboard as a `ClipboardEntry`.
@@ -130,6 +156,7 @@ impl Clipboard {
     }
 
     pub fn set_text(&mut self, text: &str) {
+        self.adopted = None;
         self.last_written = Some(Written {
             text: text.to_string(),
             entry: None,
@@ -147,6 +174,7 @@ impl Clipboard {
             Some(backend) => backend.set_string(&text),
             None => Ok(()),
         };
+        self.adopted = None;
         self.last_written = Some(Written {
             text,
             entry: Some(entry.clone()),

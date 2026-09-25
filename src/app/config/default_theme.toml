@@ -80,10 +80,6 @@ fg = "#FF00FF" # Magenta
 [theme.file_size.pib]
 fg = "#FF0000" # Red
 
-[theme.file_type]
-# Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
-ls_colors_take_precedence = false
-
 [theme.file_type.block_device]
 bg = "#FFFFD7" # 230
 fg = "#808080" # 244
@@ -352,9 +348,6 @@ fg = "201" # #ff00ff - magenta
 
 [theme256.file_size.pib]
 fg = "196" # #ff0000 - red
-
-[theme256.file_type]
-ls_colors_take_precedence = false
 
 [theme256.file_type.block_device]
 bg = "230" # #ffffd7

@@ -16,6 +16,14 @@ pub(super) struct PendingDelete {
 }
 
 impl PendingDelete {
+    /// The display name of the one entry pending, or `None` for several.
+    pub(super) fn only_name(&self) -> Option<String> {
+        match self.paths.as_slice() {
+            [path] => Some(path.display_name.clone()),
+            _ => None,
+        }
+    }
+
     fn set(&mut self, paths: Vec<PathInfo>) {
         self.index = PathSet::new(&paths);
         self.paths = paths;

@@ -2,7 +2,10 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::Handlers;
 use crate::{
-    app::config::{Config, keybindings::Action},
+    app::{
+        clipboard::ClipboardEntry,
+        config::{Config, keybindings::Action},
+    },
     command::{Command, PromptAction, handler::CommandHandler, result::CommandResult},
 };
 
@@ -43,6 +46,16 @@ impl CommandHandler for Handlers {
                     Command::AlertWarn(format!("Failed to read the clipboard: {error:#}")).into()
                 }
             },
+            // A paste has started from the clipboard: it consumes the entry
+            // even when another window wrote it. Left for the file system.
+            Command::Copy { srcs, .. } => {
+                self.clipboard.adopt(&ClipboardEntry::Copy(srcs.clone()));
+                CommandResult::NotHandled
+            }
+            Command::Move { srcs, .. } => {
+                self.clipboard.adopt(&ClipboardEntry::Move(srcs.clone()));
+                CommandResult::NotHandled
+            }
             Command::SetClipboardEntry(Some(entry)) => {
                 match self.clipboard.set_clipboard_entry(entry) {
                     Ok(()) => CommandResult::Handled,
@@ -70,6 +83,13 @@ impl CommandHandler for Handlers {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::CancelTask) => Command::CancelTask.into(),
+            // Over help or the picker, quit and reset close the overlay, which
+            // RootView handles: a reset would also drop the marks, filter and
+            // clipboard entry the overlay was covering, and `q` closes a
+            // viewer rather than the application.
+            Some(Action::Quit | Action::ResetView) if self.root.is_overlay_visible() => {
+                CommandResult::NotHandled
+            }
             // Quitting ends the worker, and with it any file operation part
             // way through, so that is confirmed first. A signal still quits
             // at once: it does not come through here.
@@ -77,10 +97,6 @@ impl CommandHandler for Handlers {
                 0 => Command::Quit.into(),
                 tasks => Command::OpenPrompt(PromptAction::ConfirmQuit(tasks)).into(),
             },
-            // Closing help is all the key does there, which RootView handles:
-            // a reset would also drop the marks, filter and clipboard entry
-            // the help screen was covering.
-            Some(Action::ResetView) if self.root.is_help_visible() => CommandResult::NotHandled,
             Some(Action::ResetView) => Command::ResetView.into(),
             _ => CommandResult::NotHandled,
         }
@@ -140,6 +156,23 @@ mod tests {
         );
     }
 
+    /// Over help, quit and reset are left to RootView, which closes the
+    /// overlay: neither ends the session nor resets what it covers.
+    #[test_case(KeyCode::Char('q') ; "the quit key")]
+    #[test_case(KeyCode::Esc ; "the reset key")]
+    fn a_closing_key_over_help_is_left_to_the_overlay(code: KeyCode) {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        handlers
+            .root
+            .handle_key(KeyCode::Char('?'), KeyModifiers::NONE);
+
+        assert_eq!(
+            CommandResult::NotHandled,
+            handlers.handle_key(code, KeyModifiers::NONE)
+        );
+    }
+
     #[test]
     fn a_paste_becomes_the_operation_the_clipboard_entry_names() {
         let fixture = Fixture::new();
@@ -184,6 +217,47 @@ mod tests {
                 entry: ClipboardEntry::Move(vec![file]),
                 dest: dest.clone(),
             })),
+            handlers.handle_command(&Command::Paste(dest))
+        );
+    }
+
+    /// Confirming a paste from elsewhere hands the keys back: a second `y`
+    /// reaches the table, not the prompt, so it cannot start the paste again.
+    #[test]
+    fn confirming_a_paste_from_elsewhere_closes_its_prompt() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let (file, dest) = (fixture.file(), fixture.directory());
+        let text = format!("cp {}", shell_words::quote(&file.path.to_string_lossy()));
+        handlers.handle_command(&Command::SetClipboardText(text));
+        let key = |c| Command::Key(KeyCode::Char(c), KeyModifiers::NONE);
+        crate::app::broadcast_command(&mut handlers, Command::Paste(dest)).unwrap();
+        assert_eq!(crate::command::InputMode::Prompt, handlers.root.mode());
+
+        crate::app::broadcast_command(&mut handlers, key('y')).unwrap();
+
+        assert_eq!(crate::command::InputMode::Normal, handlers.root.mode());
+    }
+
+    /// A paste consumes the clipboard whoever wrote it: once a paste of an
+    /// entry from elsewhere has started and finished cleanly, nothing is left
+    /// to paste again.
+    #[test]
+    fn a_clean_paste_of_an_entry_from_elsewhere_consumes_it() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let (file, dest) = (fixture.file(), fixture.directory());
+        let text = format!("mv {}", shell_words::quote(&file.path.to_string_lossy()));
+        handlers.handle_command(&Command::SetClipboardText(text));
+        let paste = ClipboardEntry::Move(vec![file]).into_paste(dest.clone());
+
+        assert_eq!(CommandResult::NotHandled, handlers.handle_command(&paste));
+        handlers.handle_command(&Command::SetClipboardEntry(None));
+
+        assert_eq!(
+            CommandResult::from(Command::AlertWarn(
+                "Cannot paste: no system clipboard available".into()
+            )),
             handlers.handle_command(&Command::Paste(dest))
         );
     }

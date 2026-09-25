@@ -58,6 +58,9 @@ impl CommandHandler for TableView {
                 generation,
             } => self.refreshed_directory(directory, *generation),
             Command::ListingBatch { items, generation } => self.listing_batch(items, *generation),
+            Command::SearchResultsRefreshed { items, generation } => {
+                self.search_results_refreshed(items, *generation)
+            }
             Command::DirectoryListingComplete { generation } => {
                 // A cancelled load that had already drained the directory still
                 // reports completion, and the bookmarks view does not bump the
@@ -117,6 +120,9 @@ impl CommandHandler for TableView {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         let (before, marks_before) = (self.table_state.selected(), self.marks.len());
         let result = self.dispatch_key(code, modifiers);
+        if !matches!(result, CommandResult::NotHandled) {
+            self.wheel_scrolled = false;
+        }
         self.note_cursor_move(before, marks_before);
         result
     }
@@ -129,6 +135,9 @@ impl CommandHandler for TableView {
     }
 
     fn should_handle_mouse(&self, event: MouseEvent) -> bool {
+        if self.ignores_mouse {
+            return false;
+        }
         let is_scroll = matches!(
             event.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
@@ -235,8 +244,8 @@ impl TableView {
                 }
                 CommandResult::Handled
             }
-            MouseEventKind::ScrollUp => self.select_previous(),
-            MouseEventKind::ScrollDown => self.select_next(),
+            MouseEventKind::ScrollUp => self.scroll_window_up(),
+            MouseEventKind::ScrollDown => self.scroll_window_down(),
             _ => CommandResult::Handled,
         }
     }
@@ -290,6 +299,17 @@ impl TableView {
         } else {
             CommandResult::Handled
         }
+    }
+
+    /// Replaces the ended search's results with the same ones read again,
+    /// keeping the marks and the cursor found by path, as a directory reload
+    /// does.
+    fn search_results_refreshed(&mut self, items: &[PathInfo], generation: u64) -> CommandResult {
+        if generation != self.stream_generation || !self.content.is_searching() {
+            return CommandResult::Handled;
+        }
+        self.content.replace_search_results(items.to_vec());
+        self.sort_keeping_marks()
     }
 
     fn exited_search(&mut self, generation: u64) -> CommandResult {

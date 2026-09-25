@@ -15,8 +15,13 @@ impl TableView {
     /// and the key (a filter or a reload drained in the same batch).
     pub(super) fn select(&mut self, item: usize) -> CommandResult {
         let len = self.content.len();
-        self.table_state
-            .select((len != 0).then(|| item.min(len - 1)));
+        let selected = (len != 0).then(|| item.min(len - 1));
+        // A reload that keeps the cursor on its row leaves a scrolled window
+        // alone; a move brings the cursor back into view.
+        if selected != self.table_state.selected() {
+            self.wheel_scrolled = false;
+        }
+        self.table_state.select(selected);
         self.update_range_marks();
         self.selection_snapshot()
     }
@@ -30,7 +35,7 @@ impl TableView {
                 total: self.content.total_len(),
             }
         } else if self.content.is_showing_bookmarks() {
-            ListingCount::Bookmarks
+            ListingCount::Bookmarks { shown }
         } else {
             ListingCount::Directory { shown }
         }
@@ -147,7 +152,11 @@ mod tests {
         table.content.set_bookmarks(vec![
             crate::file_system::path_info::PathInfo::try_from(dir.path()).unwrap(),
         ]);
-        assert_eq!(ListingCount::Bookmarks, table.listing_count());
+        table.content.sort(
+            super::super::columns::SortColumn::Name,
+            super::super::columns::SortDirection::Ascending,
+        );
+        assert_eq!(ListingCount::Bookmarks { shown: 1 }, table.listing_count());
     }
 
     fn selected(table: &TableView) -> Option<String> {

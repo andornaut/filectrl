@@ -33,24 +33,23 @@ use crate::{
 };
 
 /// Maximum number of broadcast cycles per input command. Each resolves one link
-/// in an intent → result chain, the longest of which is the 6 below, from
-/// renaming a bookmark while the bookmarks view is showing (`Chmod` and
-/// `CreateDirectory` from that view take the same shape):
+/// in an intent → result chain, such as the 4 below, from renaming a bookmark
+/// while the bookmarks view is showing (`Chmod` and `CreateDirectory` from that
+/// view take the same shape):
 ///
 ///   1. `Key`                - terminal input
 ///   2. `Rename`             - submitted by the prompt
-///   3. `RefreshedDirectory` - `FileSystem` renames, then refreshes the CWD
-///   4. `GetBookmarks`       - `TableView` reloads the shown bookmarks list
-///   5. `Bookmarks`          - result emitted by `FileSystem`
-///   6. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
+///   3. `Bookmarks`          - `FileSystem` renames, then reads the bookmarks
+///   4. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
 ///
 /// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
 /// entries stream in afterwards as `ListingBatch`/`DirectoryListingComplete`,
 /// fresh channel sends that each start their own short chain rather than
 /// extending this one.
 ///
-/// The bound keeps one cycle of headroom over that, and guards against a handler
-/// stuck deriving forever; see `broadcast_command` for what exceeding it does.
+/// The bound keeps headroom over the chains that exist, and guards against a
+/// handler stuck deriving forever; see `broadcast_command` for what exceeding
+/// it does.
 const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
 
 /// The command-handling half of the app: the whole tree a broadcast visits.
@@ -851,7 +850,7 @@ mod tests {
             "the bookmark was not renamed, so the chain under test did not run"
         );
         assert_eq!(
-            6,
+            4,
             counting.cycles.get(),
             "update the chain documented on MAX_BROADCAST_CHAIN_LENGTH"
         );

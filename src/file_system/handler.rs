@@ -1,4 +1,4 @@
-use super::{FileSystem, read_bookmarks, tasks::TaskCommand};
+use super::{FileSystem, Shown, tasks::TaskCommand};
 use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
 impl CommandHandler for FileSystem {
@@ -9,29 +9,11 @@ impl CommandHandler for FileSystem {
             Command::CancelTask => self.cancel_most_recent_task(),
             Command::ResetView => {
                 self.cancel_search();
+                self.shown = Shown::Directory;
                 CommandResult::NotHandled
             }
             Command::AddBookmark { directory, name } => self.add_bookmark(directory, name),
-            Command::GetBookmarks => match read_bookmarks(&self.bookmarks_dir) {
-                // The bookmarks view replaces any in-flight search; cancel it
-                // so its walk stops and its final ExitedSearch clears the
-                // search notice. The in-flight directory load is cancelled
-                // too, so its batches cannot stream into the bookmarks
-                // listing. Both are no-ops when nothing is running.
-                //
-                // Cancel only once the listing is known to replace them: a
-                // failed read broadcasts no Bookmarks command, so nothing
-                // would clear the table's loading flag, and a load cancelled
-                // mid-drain returns without sending DirectoryListingComplete
-                // to clear it instead. The table would be stranded on a
-                // truncated, unsorted listing.
-                Ok(bookmarks) => {
-                    self.cancel_search();
-                    self.cancel_current_load();
-                    Command::Bookmarks { bookmarks }.into()
-                }
-                Err(message) => Command::AlertError(message).into(),
-            },
+            Command::GetBookmarks => self.show_bookmarks(),
             Command::Chmod { paths, mode } => self.chmod(paths, mode),
             Command::CreateDirectory(name) => self.create_directory(name),
             Command::Copy { srcs, dest } => self.start_paste(false, srcs, dest),
@@ -68,6 +50,16 @@ impl CommandHandler for FileSystem {
                 CommandResult::NotHandled
             }
             Command::StartSearch(query) => self.search(query),
+            Command::ListingBatch { items, generation } => {
+                self.search_batch(items, *generation);
+                CommandResult::NotHandled
+            }
+            Command::SearchResultsRefreshed { items, generation } => {
+                if *generation == self.current_search_generation {
+                    self.search_results = items.iter().map(|item| item.path.clone()).collect();
+                }
+                CommandResult::NotHandled
+            }
             _ => CommandResult::NotHandled,
         }
     }

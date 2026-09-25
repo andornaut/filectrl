@@ -37,7 +37,7 @@ use crate::{
             raced_in_copy_refusal, raced_refusal, rename_failure, verb,
         },
         debounce,
-        entry_id::{EntryId, Seen, changed},
+        entry_id::{EntryId, Seen},
         path_info::{PathInfo, compact},
     },
 };
@@ -56,10 +56,10 @@ struct CopyContext<'a> {
     /// a move. A copy takes the umask and drops the special bits instead, as
     /// `cp` does.
     is_move: bool,
-    /// The top-level source file, already opened by `prepare_destination`.
-    /// `copy_file` takes it in place of opening the path again. `None` for any
-    /// other source.
-    source: Option<File>,
+    /// The top-level source file, already opened by `prepare_destination`,
+    /// with its metadata. `copy_file` takes it in place of opening the path
+    /// again. `None` for any other source.
+    source: Option<(File, Stat)>,
     /// The staging directory the top-level entry is being written into while
     /// it replaces another (`replace_entry`), for what is made by path.
     staging: Option<PathBuf>,
@@ -87,10 +87,6 @@ struct CopyContext<'a> {
     /// to the parent through it: where a test moves or locks the tree.
     #[cfg(test)]
     on_leave: Option<OnLeave<'a>>,
-    /// Called with each directory the copy has just made, before it opens
-    /// it: where a test swaps another in at its name.
-    #[cfg(test)]
-    on_made: Option<OnLeave<'a>>,
 }
 
 /// What `CopyContext::on_leave` calls.
@@ -101,7 +97,7 @@ impl<'a> CopyContext<'a> {
     fn new(
         settings: CopySettings<'a>,
         buffer: &'a mut [u8],
-        source: Option<File>,
+        source: Option<(File, Stat)>,
         total_size: u64,
     ) -> Self {
         Self {
@@ -122,8 +118,6 @@ impl<'a> CopyContext<'a> {
             ),
             #[cfg(test)]
             on_leave: None,
-            #[cfg(test)]
-            on_made: None,
         }
     }
 
@@ -194,7 +188,7 @@ impl<'a> CopyContext<'a> {
 /// opened, and the entry a granted overwrite lets the copy replace, if it
 /// still held the name.
 pub(super) struct Prepared {
-    pub(super) source: Option<File>,
+    pub(super) source: Option<(File, Stat)>,
     pub(super) replace: Option<Seen>,
 }
 
@@ -368,7 +362,7 @@ fn copy_path(
         // The file `prepare_destination` opened is the one copied, so its
         // metadata is the one that counts.
         let stat = match &context.source {
-            Some(file) => fstat(file)?,
+            Some((_, stat)) => *stat,
             None => fstatat(&src, src_name.as_c_str(), AtFlags::AT_SYMLINK_NOFOLLOW)?,
         };
         Ok((src, open_parent(new_path)?, stat))
@@ -428,7 +422,7 @@ fn copy_tree(
 ) -> bool {
     let mut walk = Walk::new(root);
     let mut cancelled = false;
-    while let Some((Pair { src, dst }, level)) = walk.top() {
+    while let Some((Pair { src, dst }, level, lineage)) = walk.top_and_lineage() {
         cancelled |= active.is_cancelled();
         let next = if cancelled { None } else { level.names.next() };
         let Some(name) = next else {
@@ -486,7 +480,14 @@ fn copy_tree(
             dst_name: &name,
         };
         if FileType::of(&stat) == FileType::Directory {
-            if let Some(child) = enter_directory(&at, paths, errors, context, &stat) {
+            let id = EntryId::of_stat(&stat);
+            if lineage.holds(|level| level.src == id) {
+                errors.push(format!(
+                    "Cannot {} {}: it leads back to a directory above it",
+                    verb(context.is_move),
+                    compact(&paths.old)
+                ));
+            } else if let Some(child) = enter_directory(&at, paths, errors, context, &stat) {
                 walk.descend(child);
                 // The child's path stays pushed until it is finished.
                 continue;
@@ -579,10 +580,13 @@ fn enter_directory(
 }
 
 /// Makes the destination directory `at` names for the source `stat`
-/// describes and opens it, once it proves to be the one just made
-/// (`open_created`). Returns it, which entry it is, and the mode the umask
-/// left when owner access had to be added; `None` when it cannot be used,
-/// having recorded why.
+/// describes and opens it (`open_created`). Returns it, which entry it is,
+/// and the mode the umask left when owner access had to be added; `None` when
+/// it cannot be used, having recorded why.
+///
+/// Like `cp -R`, the directory opened is whatever holds the name once it is
+/// made, without following a symlink there: another user who can write the
+/// parent and swaps a directory in at the name gets it written into.
 fn make_directory(
     at: &At<'_>,
     paths: &Paths,
@@ -595,46 +599,19 @@ fn make_directory(
     } else {
         (stat_mode(stat) & 0o777) | 0o700
     };
-    // What is created in the parent from here on is born no earlier than its
-    // last change now (`floor_across`).
-    let before = fstat(at.dst).map(|stat| changed(&stat));
-    let created: std::io::Result<(i64, i64)> = match before {
-        Err(errno) => Err(errno.into()),
-        Ok(before) => match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
-            // Taken since the name was free, which is never replaced
-            // (`resolve_raced`); skipping drops the subtree.
-            Err(Errno::EEXIST) => {
-                resolve_raced(context, errors, paths);
-                return None;
-            }
-            result => result.map(|()| before).map_err(Into::into),
-        },
-    };
-    #[cfg(test)]
-    if created.is_ok()
-        && let Some(on_made) = context.on_made.as_mut()
-    {
-        on_made(&paths.new);
-    }
-    let opened = created.and_then(|before| {
-        let floor = floor_across(before, changed(&fstat(at.dst)?));
-        open_created(at.dst, at.dst_name, floor)
-    });
-    match opened {
-        Ok(opened) => Some(opened),
-        // Another directory swapped in at the name: nothing is written into
-        // it and its mode is left as it was. An empty one is removed, as
-        // anyone who can write the parent could remove it; one with entries
-        // is not this copy's to touch.
-        Err(error) if NotNew::is(&error) => {
-            let _ = unlink_at(at.dst, at.dst_name, UnlinkatFlags::RemoveDir);
-            errors.push(refused_or_failed(
-                context.is_move,
-                &transfer_object(paths),
-                &error,
-            ));
-            None
+    let made = match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
+        // Taken since the name was free, which is never replaced
+        // (`resolve_raced`); skipping drops the subtree.
+        Err(Errno::EEXIST) => {
+            resolve_raced(context, errors, paths);
+            return None;
         }
+        result => result
+            .map_err(std::io::Error::from)
+            .and_then(|()| open_created(at.dst, at.dst_name)),
+    };
+    match made {
+        Ok(made) => Some(made),
         Err(error) => {
             // The subtree cannot be copied at all; skip it and continue with
             // the siblings.
@@ -647,107 +624,20 @@ fn make_directory(
     }
 }
 
-/// Opens the directory `name` a copy just created in `parent`, once it proves
-/// to be that directory (`open_new_directory`, against `floor`), with owner
+/// Opens the directory `name` a copy just created in `parent`, with owner
 /// access added when the umask or a default ACL took it away: a umask such as
 /// `0o277` leaves it unwritable, and no child could be created in it. `cp`
 /// does the same. Returns it, which entry it is, and the mode the umask left
 /// when access was added, which `finish_directory` puts back before computing
-/// the final mode from it.
-fn open_created(
-    parent: &File,
-    name: &CStr,
-    floor: Option<(i64, i64)>,
-) -> std::io::Result<(File, EntryId, Option<u32>)> {
-    let (dir, id, had) = open_new_directory(parent, name, floor)?;
-    let left = had.or_else(|| grant_owner_access(&dir));
+/// the final mode from it. One left without owner read (a umask of `0o477`, a
+/// default ACL of `u::---`) cannot be opened, and is reported: nothing is ever
+/// given a mode by name.
+fn open_created(parent: &File, name: &CStr) -> std::io::Result<(File, EntryId, Option<u32>)> {
+    let dir = open_directory(parent, name)?;
+    let id = EntryId::of(&dir)?;
+    let left = grant_owner_access(&dir);
     Ok((dir, id, left))
 }
-
-/// Opens the directory `name` just made in `parent` and checks that it is
-/// that directory (`is_new_empty_directory`, against `floor`): another user
-/// who can write `parent` could otherwise swap one of this user's own
-/// directories in at the name, which the copy would then write into and
-/// change the mode of. Returns it, which entry it is, and the mode it had
-/// when that was changed to open it.
-///
-/// A directory left without owner read or search (a umask of `0o477`, a
-/// default ACL of `u::---`) cannot be opened to check it, so it is held
-/// through a handle that needs no permission, checked there, and given owner
-/// access over the mode it has (`open_unreadable`); that mode is put back if
-/// it then proves not to be empty.
-fn open_new_directory(
-    parent: &File,
-    name: &CStr,
-    floor: Option<(i64, i64)>,
-) -> std::io::Result<(File, EntryId, Option<u32>)> {
-    let (dir, had) = match open_directory(parent, name) {
-        Err(error) if error.raw_os_error() == Some(nix::libc::EACCES) => {
-            let admit = |held: &std::os::fd::OwnedFd| {
-                if is_new_empty_directory(Seen::of_handle(held)?.created(), floor, true) {
-                    Ok(())
-                } else {
-                    Err(NotNew::error())
-                }
-            };
-            let (dir, had) = open_unreadable(parent, name, admit)
-                .map_err(|refused| if NotNew::is(&refused) { refused } else { error })?;
-            (dir, Some(had))
-        }
-        opened => (opened?, None),
-    };
-    let seen = Seen::of_handle(&dir)?;
-    if !is_new_empty_directory(seen.created(), floor, is_empty_directory(&dir)?) {
-        if let Some(had) = had {
-            let _ = nix::sys::stat::fchmod(&dir, mode_bits(had));
-        }
-        return Err(NotNew::error());
-    }
-    Ok((dir, seen.id(), had))
-}
-
-/// A refusal of filectrl's own, an error with no errno that reads `$message`
-/// and is told apart from others by its type.
-macro_rules! refusal {
-    ($(#[$doc:meta])* $name:ident, $message:literal) => {
-        $(#[$doc])*
-        #[derive(Debug)]
-        struct $name;
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str($message)
-            }
-        }
-
-        impl std::error::Error for $name {}
-
-        impl $name {
-            fn error() -> std::io::Error {
-                std::io::Error::other(Self)
-            }
-
-            #[cfg_attr(not(test), allow(dead_code))]
-            fn is(error: &std::io::Error) -> bool {
-                matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
-            }
-        }
-    };
-}
-
-refusal!(
-    /// The refusal of a directory found where one was just made that proves
-    /// not to be it (`is_new_empty_directory`): another swapped in at its name.
-    NotNew,
-    "the directory it was creating was replaced"
-);
-
-refusal!(
-    /// The refusal of a staging directory that proves not to be the one just
-    /// made: another directory swapped in at its name.
-    StagingReplaced,
-    "its staging directory was replaced"
-);
 
 /// Adds owner access to the open directory `dst` when it lacks it, returning
 /// the mode it had.
@@ -758,49 +648,6 @@ fn grant_owner_access(dst: &File) -> Option<u32> {
     }
     nix::sys::stat::fchmod(dst, mode_bits(mode | 0o700)).ok()?;
     Some(mode)
-}
-
-/// Opens the directory `name` in `parent` that its owner cannot read, by
-/// adding owner access to the mode it has, and returns it with the mode it
-/// had. Nothing is changed by name: the directory is held first
-/// through an `O_PATH` handle, which needs no permission on it and does not
-/// follow a symlink at the name, `admit` sees it through that handle, the
-/// mode is set on the entry that handle holds (through `/proc/self/fd`,
-/// which names the entry rather than a path another process could swap),
-/// and the open is of that same entry (`.` below the handle). Linux only:
-/// elsewhere there is no such handle, and the directory stays unreadable
-/// (`EACCES`), as it does where `/proc` is not mounted.
-#[cfg(target_os = "linux")]
-fn open_unreadable(
-    parent: &File,
-    name: &CStr,
-    admit: impl FnOnce(&std::os::fd::OwnedFd) -> std::io::Result<()>,
-) -> std::io::Result<(File, u32)> {
-    use std::os::fd::AsRawFd;
-    let held = openat(
-        parent,
-        name,
-        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-        Mode::empty(),
-    )?;
-    admit(&held)?;
-    let had = stat_mode(&fstat(&held)?) & 0o7777;
-    let by_handle = format!("/proc/self/fd/{}", held.as_raw_fd());
-    fs::set_permissions(&by_handle, fs::Permissions::from_mode(had | 0o700))?;
-    let dir = open_directory(&held, c".")?;
-    if EntryId::of(&dir)? != EntryId::of(&held)? {
-        return Err(std::io::Error::from(Errno::EACCES));
-    }
-    Ok((dir, had))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn open_unreadable(
-    _parent: &File,
-    _name: &CStr,
-    _admit: impl FnOnce(&std::os::fd::OwnedFd) -> std::io::Result<()>,
-) -> std::io::Result<(File, u32)> {
-    Err(std::io::Error::from(Errno::EACCES))
 }
 
 /// Gives a copied directory its final mode, and for a move the source's
@@ -894,16 +741,19 @@ fn copy_file(
     context: &mut CopyContext<'_>,
 ) -> bool {
     let failed = |error: &dyn std::fmt::Display| {
-        failed_transfer(context.is_move, &paths.old, &paths.new, error)
+        format!(
+            "Failed to {} {}: {error}",
+            verb(context.is_move),
+            transfer_object(paths)
+        )
     };
     // Opened before the destination is created, so a source that cannot be
     // read leaves nothing behind.
     let opened = match context.source.take() {
-        Some(file) => Ok(file),
+        Some(opened) => Ok(opened),
         None => open_source_file(at.src, at.src_name),
     };
-    let opened = opened.and_then(|file| Ok((fstat(&file)?, file)));
-    let (stat, mut old_file) = match opened {
+    let (mut old_file, stat) = match opened {
         Ok(opened) => opened,
         Err(error) => {
             errors.push(failed(&error));
@@ -1128,18 +978,20 @@ fn type_bits(mode: u32) -> u32 {
 /// from blocking the open (and with it the worker every operation shares);
 /// anything that is not a regular file is then refused before a byte is read,
 /// so a device such as `/dev/zero` cannot be read without end either.
-fn open_source_file(dir: impl AsFd, name: &CStr) -> std::io::Result<File> {
+fn open_source_file(dir: impl AsFd, name: &CStr) -> std::io::Result<(File, Stat)> {
     let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
     let fd = openat(dir, name, flags, Mode::empty())?;
-    if FileType::of(&fstat(&fd)?) != FileType::RegularFile {
+    let stat = fstat(&fd)?;
+    if FileType::of(&stat) != FileType::RegularFile {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
             "it is no longer a regular file",
         ));
     }
-    let status = OFlag::from_bits_retain(fcntl(&fd, FcntlArg::F_GETFL)?);
-    fcntl(&fd, FcntlArg::F_SETFL(status - OFlag::O_NONBLOCK))?;
-    Ok(File::from(fd))
+    // `O_NONBLOCK` was only for the open. None of the other flags `F_SETFL`
+    // changes was asked for, so clearing them all clears only it.
+    fcntl(&fd, FcntlArg::F_SETFL(OFlag::empty()))?;
+    Ok((File::from(fd), stat))
 }
 
 /// Creates the destination of a file copy. `O_EXCL` fails atomically if the
@@ -1230,6 +1082,10 @@ fn apply_final_mode(context: &CopyContext<'_>, paths: &Paths, file: &File, sourc
         };
         (created_mode & 0o077) | (source.mode & created_mode & 0o700) | inherited
     };
+    // A copy usually already has the mode it was created with.
+    if stat_mode(&created) & 0o7777 == mode {
+        return;
+    }
     if let Err(error) = file.set_permissions(fs::Permissions::from_mode(mode)) {
         warn!("Failed to set the mode of {}: {error}", compact(&paths.new));
     }
@@ -1602,9 +1458,26 @@ fn refused_or_failed(
     format!("{shape} {} {object}: {error}", verb(is_move))
 }
 
-/// The object of a transfer's message: its source and destination.
+/// The object of a transfer's message: its source and destination. Below the
+/// top-level entry it names the entry relative to both, since `compact` keeps
+/// only the last components of a path, which are the same on either side.
 fn transfer_object(paths: &Paths) -> String {
-    format!("{} to {}", compact(&paths.old), compact(&paths.new))
+    let roots = (paths.depth > 0).then(|| {
+        (
+            paths.old.ancestors().nth(paths.depth),
+            paths.new.ancestors().nth(paths.depth),
+        )
+    });
+    let Some((Some(old_root), Some(new_root))) = roots else {
+        return format!("{} to {}", compact(&paths.old), compact(&paths.new));
+    };
+    let entry = paths.old.strip_prefix(old_root).unwrap_or(&paths.old);
+    format!(
+        "{} from {} to {}",
+        compact(entry),
+        compact(old_root),
+        compact(new_root)
+    )
 }
 
 /// The refusal of an entry whose staging directory holds something the copy
@@ -1752,17 +1625,13 @@ impl<'a> Staging<'a> {
         entry: &CStr,
     ) -> std::io::Result<Self> {
         for name in names {
-            // What is created in `parent` from here on is born no earlier than
-            // its last change now (`floor_across`).
-            let before = changed(&fstat(parent)?);
             match mkdirat(parent, name.as_c_str(), mode_bits(0o700)) {
                 Ok(()) => {}
                 Err(Errno::EEXIST) => continue,
                 Err(errno) => return Err(errno.into()),
             }
-            let floor = floor_across(before, changed(&fstat(parent)?));
             let path = parent_path.join(OsStr::from_bytes(name.to_bytes()));
-            return Self::adopt(parent, name, path, floor, entry);
+            return Self::adopt(parent, name, path, entry);
         }
         Err(std::io::Error::new(
             ErrorKind::AlreadyExists,
@@ -1771,19 +1640,16 @@ impl<'a> Staging<'a> {
     }
 
     /// Takes the directory just made at `name` in `parent` (at `path`) as the
-    /// staging directory, once it proves to be that directory (`open_owned`,
-    /// against `floor`). Whatever holds the name is removed if it is an empty
-    /// directory, which anyone who can write `parent` could remove as well,
-    /// and otherwise left where it is: a directory swapped in at the name,
-    /// with entries, is not this copy's to touch.
+    /// staging directory (`open_owned`). When it cannot be opened, whatever
+    /// holds the name is removed if it is an empty directory, which anyone who
+    /// can write `parent` could remove as well, and otherwise left where it is.
     fn adopt(
         parent: &'a File,
         name: CString,
         path: PathBuf,
-        floor: Option<(i64, i64)>,
         entry: &CStr,
     ) -> std::io::Result<Self> {
-        match open_owned(parent, &name, &path, floor) {
+        match open_owned(parent, &name, &path) {
             Ok((dir, id)) => Ok(Self {
                 parent,
                 name,
@@ -1829,94 +1695,32 @@ impl<'a> Staging<'a> {
     }
 }
 
-/// Whether a directory found at the name a directory was just made at can be
-/// that directory: `empty`, and born no earlier than `floor` where there is
-/// one. Another user who can write the parent could otherwise swap one of
-/// this user's own directories in at the name, which the copy would then
-/// change the mode of, write into, and remove from. Its owner is not
-/// compared: a mount without per-user ownership (vfat or exfat with `uid=`,
-/// CIFS, sshfs, NFS with `root_squash`) shows a new directory as another
-/// user's, and a directory another user owns and swaps in gives them nothing
-/// they lack, since they can write the parent and the copy acts only on
-/// entries it made.
-///
-/// The birth time is what tells an old directory from the new one; where the
-/// filesystem records none, the change time stands in, which a rename moves
-/// forward, so there only emptiness is checked in effect, as it is where
-/// there is no floor.
-fn is_new_empty_directory(born: (i64, i64), floor: Option<(i64, i64)>, empty: bool) -> bool {
-    empty && floor.is_none_or(|floor| born >= floor)
-}
-
-/// The floor a directory made in a parent between two looks at the parent's
-/// change time (`before` and `after`) is born no earlier than: `before`, by
-/// the filesystem's own clock, which a server's clock differing from this
-/// machine's cannot upset, and which nobody can set where it is a real change
-/// time. Where it went backwards across the creation it is not one: sshfs,
-/// vfat and exfat report the modification time, which a user or an archive
-/// can put in the future, as the change time. There nothing bounds the birth
-/// time (`None`).
-fn floor_across(before: (i64, i64), after: (i64, i64)) -> Option<(i64, i64)> {
-    (before <= after).then_some(before)
-}
-
-/// Whether the open directory `dir` has no entries, read straight from its
-/// handle, which needs only the read permission it was opened with. The
-/// handle's position moves to the end, which nothing else reads it by: the
-/// copy only ever uses it to name entries relative to it.
-#[cfg(target_os = "linux")]
-fn is_empty_directory(dir: &File) -> std::io::Result<bool> {
-    let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 1024];
-    let mut entries = rustix::fs::RawDir::new(dir, &mut buffer);
-    while let Some(entry) = entries.next() {
-        let entry = entry?;
-        if entry.file_name() != c"." && entry.file_name() != c".." {
-            return Ok(false);
+/// Opens the directory `name` just created in `parent`, at `path`, without
+/// following a symlink there, and gives it owner access when a umask
+/// (`0o277`) or a default ACL took that away: without it nothing could be
+/// written into it. Returns it and which directory it is. It is not checked to
+/// be the one just made: the copy acts in it only on the entry it creates
+/// there, by identity (`land`, `unlink_all`), so a directory another user
+/// swaps in at the name loses nothing but, at most, the owner access given
+/// to it. One left without owner read (a umask of `0o477`) cannot be opened,
+/// and the replacement fails. A mount that refuses a mode change to the user
+/// who created the directory (vfat or exfat without `uid=`, CIFS without unix
+/// extensions) has no per-user permissions to keep, so that refusal is only
+/// logged: a directory that really cannot be written still fails the write
+/// into it.
+fn open_owned(parent: &File, name: &CStr, path: &Path) -> std::io::Result<(File, EntryId)> {
+    let dir = open_directory(parent, name)?;
+    let id = EntryId::of(&dir)?;
+    let mode = stat_mode(&fstat(&dir)?) & 0o7777;
+    if mode & 0o700 != 0o700 {
+        match nix::sys::stat::fchmod(&dir, mode_bits(mode | 0o700)) {
+            Err(Errno::EPERM) => warn!(
+                "Failed to give the staging directory {} owner access: {}",
+                compact(path),
+                std::io::Error::from(Errno::EPERM)
+            ),
+            result => result?,
         }
-    }
-    Ok(true)
-}
-
-/// Whether the open directory `dir` has no entries, read through a duplicate
-/// of its handle, which needs only the read permission it was opened with.
-#[cfg(not(target_os = "linux"))]
-fn is_empty_directory(dir: &File) -> std::io::Result<bool> {
-    use super::walk::is_named;
-    let mut stream = nix::dir::Dir::from_fd(dir.try_clone()?.into())?;
-    Ok(stream.iter().find(is_named).transpose()?.is_none())
-}
-
-/// Opens the directory `name` just created in `parent`, at `path`, once it
-/// proves to be that directory (`open_new_directory`, against `floor`), and
-/// makes it owner-only, which a umask (`0o277`) or a default ACL can keep it
-/// from being: without owner access nothing could be written into it.
-/// Returns it and which directory it is. A mount that refuses a mode change
-/// to the user who created the directory (vfat or exfat without `uid=`, CIFS
-/// without unix extensions) has no per-user permissions to keep, so that
-/// refusal is only logged: a directory that really cannot be written still
-/// fails the write into it.
-fn open_owned(
-    parent: &File,
-    name: &CStr,
-    path: &Path,
-    floor: Option<(i64, i64)>,
-) -> std::io::Result<(File, EntryId)> {
-    // Made with `0o700`, so owner access over what the umask left is exactly
-    // owner-only.
-    let (dir, id, _) = open_new_directory(parent, name, floor).map_err(|error| {
-        if NotNew::is(&error) {
-            StagingReplaced::error()
-        } else {
-            error
-        }
-    })?;
-    match nix::sys::stat::fchmod(&dir, mode_bits(0o700)) {
-        Err(Errno::EPERM) => warn!(
-            "Failed to make the staging directory {} owner-only: {}",
-            compact(path),
-            std::io::Error::from(Errno::EPERM)
-        ),
-        result => result?,
     }
     Ok((dir, id))
 }
@@ -2101,8 +1905,17 @@ mod tests {
 
         if is_unreadable {
             // Like cp -R: the unreadable entry is recorded, not fatal.
-            assert_eq!(1, errors.len(), "expected one error: {errors:?}");
-            assert!(errors[0].contains("bad"), "unexpected error: {}", errors[0]);
+            // Named relative to both trees: `compact` keeps only the last
+            // components, which would read the same on either side.
+            assert_eq!(
+                vec![format!(
+                    "Failed to copy {} from {} to {}: Permission denied (os error 13)",
+                    compact(Path::new("bad")),
+                    compact(&src),
+                    compact(&dst)
+                )],
+                errors
+            );
             assert!(!dst.join("bad").exists());
         } else {
             // Nothing was unreadable here, so this is a plain full copy.
@@ -2414,7 +2227,7 @@ mod tests {
         let tree = fx.join("src").join("tree");
         let (tx, rx) = mpsc::channel();
 
-        super::super::finish_cross_device_move(copy_task(tx), outcome, &tree, true);
+        super::super::finish_cross_device_move(copy_task(tx), outcome, &tree, &tree, true);
 
         assert_eq!(
             Some(format!(
@@ -2942,175 +2755,6 @@ mod tests {
         assert_eq!(b"keep".to_vec(), fs::read(fx.join("taken")).unwrap());
     }
 
-    /// A directory found where one was just made is taken for it only when
-    /// it is empty and, where there is a floor, was born no earlier than it.
-    /// Its owner is not asked about: a mount without per-user ownership shows
-    /// the one just made as another user's.
-    #[test_case((5, 0), Some((5, 0)), true => true ; "the one just made")]
-    #[test_case((6, 1), Some((5, 0)), true => true ; "born after the floor")]
-    #[test_case((4, 999_999_999), Some((5, 0)), true => false ; "born before the floor")]
-    #[test_case((5, 0), Some((5, 0)), false => false ; "not empty")]
-    #[test_case((4, 0), None, true => true ; "no floor, empty")]
-    #[test_case((6, 0), None, false => false ; "no floor, not empty")]
-    fn what_can_be_a_new_directory(
-        born: (i64, i64),
-        floor: Option<(i64, i64)>,
-        empty: bool,
-    ) -> bool {
-        is_new_empty_directory(born, floor, empty)
-    }
-
-    /// The change time read before a directory is made bounds its birth time
-    /// only when the change time read after is no earlier: one that went
-    /// backwards is a modification time a user can set (sshfs, vfat, exfat).
-    #[test_case((5, 0), (5, 0) => Some((5, 0)) ; "unchanged")]
-    #[test_case((5, 0), (6, 3) => Some((5, 0)) ; "moved forward")]
-    #[test_case((9, 0), (5, 0) => None ; "went backwards")]
-    #[test_case((5, 7), (5, 6) => None ; "went back by a nanosecond")]
-    fn what_bounds_a_new_directory(before: (i64, i64), after: (i64, i64)) -> Option<(i64, i64)> {
-        floor_across(before, after)
-    }
-
-    /// Filectrl's own refusal to use a staging directory reads in the
-    /// `Cannot` form.
-    #[test]
-    fn a_replaced_staging_directory_is_refused_in_filectrls_words() {
-        let paths = Paths {
-            old: PathBuf::from("/src/one"),
-            new: PathBuf::from("/dest/one"),
-            depth: 0,
-        };
-
-        assert_eq!(
-            format!(
-                "Cannot move {} to {}: its staging directory was replaced",
-                compact(Path::new("/src/one")),
-                compact(Path::new("/dest/one"))
-            ),
-            refused_or_failed(true, &transfer_object(&paths), &StagingReplaced::error())
-        );
-    }
-
-    /// A directory of this user's swapped in at the staging name between its
-    /// creation and its opening: `theirs`, made before the floor, then renamed
-    /// over the empty directory just made. It is refused; one with an entry
-    /// is left as it was (its mode, its entries, and its name), and an empty
-    /// one is removed, as anyone who can write the parent could remove it.
-    fn swap_in_at_the_staging_name(
-        label: &str,
-        mode: u32,
-        entry: bool,
-    ) -> (TempDir, std::io::Error) {
-        let fx = TempDir::new(label);
-        let parent = File::open(fx.path()).unwrap();
-        let theirs = fx.join("theirs");
-        fs::create_dir(&theirs).unwrap();
-        if entry {
-            fs::write(theirs.join("one"), b"keep").unwrap();
-        }
-        // Past any timestamp granularity, then a change to the parent, so
-        // the floor is later than `theirs` was born.
-        crate::test_support::tick();
-        fs::write(fx.join("later"), b"").unwrap();
-        let floor = changed(&fstat(&parent).unwrap());
-        fs::create_dir(fx.join("s")).unwrap();
-        // Renamed before its mode is set: macOS refuses to rename a directory
-        // its owner cannot write.
-        fs::rename(&theirs, fx.join("s")).unwrap();
-        fs::set_permissions(fx.join("s"), fs::Permissions::from_mode(mode)).unwrap();
-
-        let error = Staging::adopt(
-            &parent,
-            c"s".to_owned(),
-            fx.join("s"),
-            Some(floor),
-            c"entry",
-        )
-        .err()
-        .expect("the swapped directory is refused");
-
-        // Only Linux can hold a directory its owner cannot read to look
-        // inside it; elsewhere it is refused as unreadable.
-        if cfg!(target_os = "linux") || mode & 0o500 == 0o500 {
-            assert!(StagingReplaced::is(&error), "{error}");
-        } else {
-            assert_eq!(
-                Some(nix::errno::Errno::EACCES as i32),
-                error.raw_os_error(),
-                "{error}"
-            );
-        }
-        if !entry {
-            assert!(fs::symlink_metadata(fx.join("s")).is_err());
-            return (fx, error);
-        }
-        assert_eq!(mode, mode_of(&fx.join("s")) & 0o7777);
-        fs::set_permissions(fx.join("s"), fs::Permissions::from_mode(0o755)).unwrap();
-        {
-            assert_eq!(
-                b"keep".to_vec(),
-                fs::read(fx.join("s").join("one")).unwrap()
-            );
-        }
-        (fx, error)
-    }
-
-    /// A staging directory made just now and this user's, which holds an
-    /// entry by the time it is opened, is refused by its entry alone.
-    #[test]
-    fn a_new_staging_directory_holding_an_entry_is_refused() {
-        let fx = TempDir::new("tasks_staging_not_empty");
-        let parent = File::open(fx.path()).unwrap();
-        let floor = changed(&fstat(&parent).unwrap());
-        fs::create_dir(fx.join("s")).unwrap();
-        fs::write(fx.join("s").join("one"), b"keep").unwrap();
-
-        let error = Staging::adopt(
-            &parent,
-            c"s".to_owned(),
-            fx.join("s"),
-            Some(floor),
-            c"entry",
-        )
-        .err()
-        .expect("a staging directory holding an entry is refused");
-
-        assert!(StagingReplaced::is(&error), "{error}");
-        assert_eq!(
-            b"keep".to_vec(),
-            fs::read(fx.join("s").join("one")).unwrap()
-        );
-    }
-
-    /// One holding an entry is refused by its entries, whatever its times.
-    #[test]
-    fn a_directory_with_entries_swapped_in_at_the_staging_name_is_refused() {
-        let (_fx, error) = swap_in_at_the_staging_name("tasks_staging_swap_full", 0o555, true);
-
-        assert_eq!(None, error.raw_os_error());
-        assert_eq!("its staging directory was replaced", error.to_string());
-    }
-
-    /// One the umask would have left unreadable is refused too, and its mode
-    /// is left as it was, whether it is refused before or after it is given
-    /// access to be read.
-    #[test]
-    fn an_unreadable_directory_swapped_in_at_the_staging_name_keeps_its_mode() {
-        swap_in_at_the_staging_name("tasks_staging_swap_locked", 0o000, true);
-    }
-
-    /// An empty one is refused by its birth time, where the filesystem
-    /// records one: it was born before the staging directory was made.
-    #[test]
-    fn an_empty_directory_swapped_in_at_the_staging_name_is_refused_by_its_birth() {
-        let probe = TempDir::new("tasks_staging_swap_probe");
-        if !crate::file_system::entry_id::records_birth_time(probe.path()) {
-            eprintln!("skipped: this filesystem records no birth time");
-            return;
-        }
-        swap_in_at_the_staging_name("tasks_staging_swap_empty", 0o755, false);
-    }
-
     /// An entry in the staging directory the copy did not put there is never
     /// taken for the copy, landed, or removed, whatever the standing answer:
     /// the copy is refused, and the entry granted is left as it was.
@@ -3470,7 +3114,7 @@ mod tests {
     }
 
     /// A symlink at the name of a directory being given access is never
-    /// followed: the handle is refused, the link's target keeps its mode,
+    /// followed: the open is refused, the link's target keeps its mode,
     /// whether it is a directory or a file, and so does a mode change by name
     /// (which only ever acts on a node the copy just made).
     #[test_case(true ; "a link to a directory")]
@@ -3492,7 +3136,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, fx.join("link")).unwrap();
         let parent = File::open(fx.path()).unwrap();
 
-        let opened = open_unreadable(&parent, c"link", |_| Ok(()));
+        let opened = open_created(&parent, c"link");
         let set = set_mode_at(&parent, c"link", 0o777);
 
         assert!(opened.is_err());
@@ -3505,55 +3149,21 @@ mod tests {
         assert_eq!(mode, mode_of(&target) & 0o7777);
     }
 
-    /// Another entry exchanged in at the name of an unreadable directory once
-    /// it is held (the `admit` step, between holding it and changing its
-    /// mode) never has its mode changed: the change goes to the directory the
-    /// handle holds, wherever it now is, and that is the one opened.
-    #[cfg(target_os = "linux")]
+    /// A new directory the owner cannot read stays unreadable: it is
+    /// reported, and nothing is changed by name.
     #[test]
-    fn an_entry_exchanged_in_at_an_unreadable_directory_keeps_its_mode() {
-        let fx = TempDir::new("tasks_access_exchange");
-        let (dir, victim) = (fx.join("dir"), fx.join("victim"));
-        fs::create_dir(&dir).unwrap();
-        fs::write(&victim, b"private").unwrap();
-        fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
-        let expected = EntryId::of_path(&dir).unwrap();
-        let parent = File::open(fx.path()).unwrap();
-        let exchange = |_: &std::os::fd::OwnedFd| {
-            rustix::fs::renameat_with(
-                &parent,
-                c"dir",
-                &parent,
-                c"victim",
-                rustix::fs::RenameFlags::EXCHANGE,
-            )?;
-            Ok(())
-        };
-
-        let opened = open_unreadable(&parent, c"dir", exchange);
-
-        let (opened, had) = opened.unwrap();
-        assert_eq!(0o000, had);
-        assert_eq!(expected, EntryId::of(&opened).unwrap());
-        // The names were exchanged: `dir` now holds the file, `victim` the
-        // directory.
-        assert_eq!(0o600, mode_of(&dir) & 0o7777);
-        assert_eq!(0o700, mode_of(&victim) & 0o7777);
-    }
-
-    /// Without a handle that needs no permission (anywhere but Linux), a new
-    /// directory the owner cannot read stays unreadable: it is reported, and
-    /// nothing is changed by name.
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn an_unreadable_new_directory_is_reported_where_it_cannot_be_held() {
+    fn an_unreadable_new_directory_is_reported() {
         let fx = TempDir::new("tasks_access_unheld");
         fs::create_dir(fx.join("dir")).unwrap();
         fs::set_permissions(fx.join("dir"), fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(fx.join("dir")).is_ok() {
+            eprintln!("skipped: a directory without permissions can be read here");
+            fs::set_permissions(fx.join("dir"), fs::Permissions::from_mode(0o700)).unwrap();
+            return;
+        }
         let parent = File::open(fx.path()).unwrap();
 
-        let opened = open_created(&parent, c"dir", None);
+        let opened = open_created(&parent, c"dir");
 
         let mode = mode_of(&fx.join("dir")) & 0o7777;
         fs::set_permissions(fx.join("dir"), fs::Permissions::from_mode(0o700)).unwrap();
@@ -4013,12 +3623,10 @@ mod tests {
         );
     }
 
-    /// A default ACL that takes the owner's search permission, or all of its
-    /// access, from every new directory: the copy still reaches the whole
-    /// tree. Needs `setfacl` and ACLs on the temporary filesystem; skipped
-    /// otherwise.
+    /// A default ACL that takes the owner's search permission from every new
+    /// directory: the copy still reaches the whole tree. Needs `setfacl` and
+    /// ACLs on the temporary filesystem; skipped otherwise.
     #[test_case("u::rw-,g::r-x,o::---", 0o600 ; "no search")]
-    #[test_case("u::---,g::r-x,o::---", 0o000 ; "no access")]
     fn a_tree_copies_whole_under_a_default_acl_taking_owner_access(acl: &str, owner: u32) {
         let fx = TempDir::new("tasks_tree_default_acl");
         let src = fx.join("src");
@@ -4055,7 +3663,7 @@ mod tests {
     }
 
     /// A directory copied into a setgid directory whose default ACL takes
-    /// all owner access from what is created there keeps the setgid bit it
+    /// owner search from what is created there keeps the setgid bit it
     /// inherits, which giving it owner access to write it must not drop.
     #[test]
     fn a_directory_copied_under_a_default_acl_taking_owner_access_keeps_its_setgid() {
@@ -4066,7 +3674,7 @@ mod tests {
         let dest = fx.join("dest");
         fs::create_dir(&dest).unwrap();
         fs::set_permissions(&dest, fs::Permissions::from_mode(0o2775)).unwrap();
-        if mode_of(&dest) & 0o2000 == 0 || !setfacl(&["-d", "-m", "u::---,g::r-x,o::---"], &dest) {
+        if mode_of(&dest) & 0o2000 == 0 || !setfacl(&["-d", "-m", "u::rw-,g::r-x,o::---"], &dest) {
             eprintln!("skipped: no setgid directory with a default ACL here");
             return;
         }
@@ -4079,37 +3687,44 @@ mod tests {
         assert_eq!(0o2000, mode & 0o2000, "{mode:o}");
     }
 
-    /// Enters `fx/src/tree` (holding `f`) for `fx/dst/tree`, as a copy or as
-    /// a move's copy stage, with a directory of this user's, `fx/dst/private`
-    /// (owner-only, holding `secret` unless `empty`), swapped in at
-    /// `dst/tree` the moment the copy made it. Returns whether the walk
-    /// entered it and the errors recorded.
-    fn enter_with_a_swap(fx: &TempDir, is_move: bool, empty: bool) -> (bool, Vec<String>) {
-        let src = fx.join("src").join("tree");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("f"), b"x").unwrap();
-        let dst_dir = fx.join("dst");
-        let private = dst_dir.join("private");
-        fs::create_dir_all(&private).unwrap();
-        if !empty {
-            fs::write(private.join("secret"), b"keep").unwrap();
+    /// A default ACL that takes all owner access from new directories leaves
+    /// the one the copy makes unreadable: it is reported rather than given
+    /// access by name, and the copy of what is below it is skipped. Needs
+    /// `setfacl` and ACLs on the temporary filesystem; skipped otherwise.
+    #[test]
+    fn a_directory_left_unreadable_by_a_default_acl_is_reported() {
+        let fx = TempDir::new("tasks_tree_default_acl_none");
+        let src = fx.join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("child"), b"x").unwrap();
+        let dest = fx.join("dest");
+        fs::create_dir(&dest).unwrap();
+        if !setfacl(&["-d", "-m", "u::---,g::r-x,o::---"], &dest) {
+            eprintln!("skipped: no default ACLs here");
+            return;
         }
-        fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
-        // Past any timestamp granularity, then a change to the parent, so the
-        // floor the copy takes is later than `private` was born.
-        crate::test_support::tick();
-        fs::write(dst_dir.join("later"), b"").unwrap();
-        let dst = dst_dir.join("tree");
-        let mut buffer = [0u8; 64];
-        let mut context = CopyContext::new(settings(is_move), &mut buffer, None, 0);
-        let expected = dst.clone();
-        context.on_made = Some(Box::new(move |made| {
-            assert_eq!(expected, made);
-            fs::rename(&private, made).unwrap();
-        }));
-        let mut errors = Vec::new();
-        let (entered, _) = enter_top(&mut context, &mut errors, &src, &dst);
-        (entered.is_some(), errors)
+        let probe = fx.join("probe");
+        fs::create_dir(&probe).unwrap();
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = fs::read_dir(&probe).is_err();
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o700)).unwrap();
+        if !unreadable {
+            eprintln!("skipped: a directory without owner access can be read here");
+            return;
+        }
+        let copied = dest.join("src");
+
+        let errors = copy_one(false, &src, &copied);
+
+        let _ = fs::set_permissions(&copied, fs::Permissions::from_mode(0o700));
+        assert_eq!(
+            vec![format!(
+                "Failed to create directory {}: Permission denied (os error 13)",
+                compact(&copied)
+            )],
+            errors
+        );
+        assert!(!copied.join("child").exists());
     }
 
     /// Enters the top-level directory `src`, copied to `dst`, as `copy_path`
@@ -4140,58 +3755,6 @@ mod tests {
             depth: 0,
         };
         (enter_directory(&at, &paths, errors, context, &stat), paths)
-    }
-
-    /// The refusal of a directory swapped in where the copy made one.
-    fn swapped(is_move: bool, fx: &TempDir) -> Vec<String> {
-        vec![format!(
-            "Cannot {} {} to {}: the directory it was creating was replaced",
-            verb(is_move),
-            compact(&fx.join("src").join("tree")),
-            compact(&fx.join("dst").join("tree"))
-        )]
-    }
-
-    /// A directory of this user's swapped in at the name a copy or a move
-    /// just made a directory at is refused: nothing is written into it and
-    /// its mode and entries are left as they were, so a move cannot give it
-    /// the source's mode.
-    #[test_case(false ; "a copy")]
-    #[test_case(true ; "a move")]
-    fn a_directory_swapped_in_where_one_was_made_is_left_alone(is_move: bool) {
-        let fx = TempDir::new("tasks_made_swapped");
-
-        let (entered, errors) = enter_with_a_swap(&fx, is_move, false);
-
-        let tree = fx.join("dst").join("tree");
-        assert!(!entered);
-        assert_eq!(swapped(is_move, &fx), errors);
-        assert_eq!(0o700, mode_of(&tree) & 0o7777);
-        let names: Vec<_> = fs::read_dir(&tree)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(vec![std::ffi::OsString::from("secret")], names);
-        assert_eq!(b"keep".to_vec(), fs::read(tree.join("secret")).unwrap());
-    }
-
-    /// An empty one is told from the new directory by its birth time, where
-    /// the filesystem records one, and is removed: anyone who can write the
-    /// parent could remove it as well.
-    #[test_case(false ; "a copy")]
-    #[test_case(true ; "a move")]
-    fn an_empty_directory_swapped_in_where_one_was_made_is_refused(is_move: bool) {
-        let fx = TempDir::new("tasks_made_swapped_empty");
-        if !crate::file_system::entry_id::records_birth_time(fx.path()) {
-            eprintln!("skipped: the filesystem records no birth time");
-            return;
-        }
-
-        let (entered, errors) = enter_with_a_swap(&fx, is_move, true);
-
-        assert!(!entered);
-        assert_eq!(swapped(is_move, &fx), errors);
-        assert!(fs::symlink_metadata(fx.join("dst").join("tree")).is_err());
     }
 
     /// Copies the directory `src` to `dst` through `copy_tree`, with
@@ -4439,10 +4002,8 @@ mod tests {
     }
 
     /// A umask that clears the owner's read bit leaves a new staging
-    /// directory impossible to open. On Linux owner access is given back
-    /// through a handle that needs none, and the replacement lands; elsewhere
-    /// there is no such handle, and the replacement is refused with the entry
-    /// left.
+    /// directory impossible to open, and nothing is given a mode by name: the
+    /// replacement is refused with the entry left.
     #[test]
     #[ignore = "run under a umask of 0o477 by the test below"]
     fn a_replacement_under_a_umask_clearing_owner_read() {
@@ -4460,37 +4021,29 @@ mod tests {
         let probe = fx.join("probe");
         fs::create_dir(&probe).unwrap();
         if fs::read_dir(&probe).is_ok() {
-            eprintln!("not exercised: a directory without owner read can be read here");
+            eprintln!("skipped: a directory without owner read can be read here");
+            return;
         }
 
         let (new, task) = paste_over(false, &dest, &src);
 
-        #[cfg(target_os = "linux")]
-        {
-            assert_eq!(None, task.error_message());
-            fs::set_permissions(&new, fs::Permissions::from_mode(0o600)).unwrap();
-            assert_eq!(b"x".to_vec(), fs::read(&new).unwrap());
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            assert_eq!(
-                Some(format!(
-                    "Failed to copy {} to {}: Permission denied (os error 13); {} was not replaced",
-                    compact(&src),
-                    compact(&new),
-                    compact(&new)
-                )),
-                task.error_message()
-            );
-            assert_eq!(b"old".to_vec(), fs::read(&new).unwrap());
-        }
+        assert_eq!(
+            Some(format!(
+                "Failed to copy {} to {}: Permission denied (os error 13); {} was not replaced",
+                compact(&src),
+                compact(&new),
+                compact(&new)
+            )),
+            task.error_message()
+        );
+        assert_eq!(b"old".to_vec(), fs::read(&new).unwrap());
         assert_eq!(Vec::<String>::new(), staging_left(&dest));
     }
 
     /// The umask is process-wide, so the replacement runs in a process of its
     /// own.
     #[test]
-    fn a_replacement_opens_its_staging_directory_whatever_the_umask() {
+    fn a_replacement_whose_staging_directory_cannot_be_read_leaves_the_entry() {
         crate::test_support::run_alone(
             "file_system::tasks::copy::tests::a_replacement_under_a_umask_clearing_owner_read",
             "",
@@ -5337,7 +4890,7 @@ mod tests {
         std::fs::write(fx.join("file"), b"x").unwrap();
         let dir = File::open(fx.path()).unwrap();
 
-        let file = open_source_file(&dir, c"file").unwrap();
+        let (file, _) = open_source_file(&dir, c"file").unwrap();
 
         let status = OFlag::from_bits_retain(fcntl(&file, FcntlArg::F_GETFL).unwrap());
         assert!(!status.contains(OFlag::O_NONBLOCK), "{status:?}");

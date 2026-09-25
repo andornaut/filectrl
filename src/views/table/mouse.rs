@@ -1,9 +1,32 @@
 use ratatui::crossterm::event::MouseEvent;
 
-use super::TableView;
+use super::{TableView, view::highest_start_keeping_visible};
 use crate::command::{Command, result::CommandResult};
 
+/// Rows one notch of the wheel scrolls the window by.
+const WHEEL_ROWS: usize = 3;
+
 impl TableView {
+    /// Scrolls the window up by [`WHEEL_ROWS`], leaving the cursor where it is.
+    pub(super) fn scroll_window_up(&mut self) -> CommandResult {
+        self.first_visible_item = self.first_visible_item.saturating_sub(WHEEL_ROWS);
+        self.wheel_scrolled = true;
+        CommandResult::Handled
+    }
+
+    /// Scrolls the window down by [`WHEEL_ROWS`], leaving the cursor where it
+    /// is, and no further than the window that shows the last row.
+    pub(super) fn scroll_window_down(&mut self) -> CommandResult {
+        let heights = &self.cached_heights;
+        let last_window = match heights.len() {
+            0 => 0,
+            n => highest_start_keeping_visible(heights, n - 1, self.mapper.visible_lines_count()),
+        };
+        self.first_visible_item = (self.first_visible_item + WHEEL_ROWS).min(last_window);
+        self.wheel_scrolled = true;
+        CommandResult::Handled
+    }
+
     pub(super) fn click_header(&mut self, x: u16) -> CommandResult {
         self.columns
             .sort_column_for_click(x)
@@ -64,7 +87,6 @@ mod tests {
         crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
         layout::Rect,
     };
-    use test_case::test_case;
 
     use super::super::{TableView, columns::SortDirection, marked_table, row_map::LineItemMap};
     use crate::command::{Command, handler::CommandHandler, result::CommandResult};
@@ -143,15 +165,69 @@ mod tests {
         assert_eq!(Some("a".to_string()), selected(&table));
     }
 
-    #[test_case(MouseEventKind::ScrollUp, "a" ; "up moves the cursor up")]
-    #[test_case(MouseEventKind::ScrollDown, "c" ; "down moves the cursor down")]
-    fn the_scroll_wheel_moves_the_cursor(kind: MouseEventKind, expected: &str) {
-        let (_dir, mut table) = table_for_clicks();
+    /// The three rows `a`, `b`, `c` in a one-line viewport, measured as a
+    /// render measures them, with the cursor on `a`: the last window starts
+    /// at `c`.
+    fn table_for_the_wheel() -> (crate::test_support::TempDir, TableView) {
+        let (dir, mut table) = table_for_clicks();
+        table.cached_heights = vec![1, 1, 1];
+        table.mapper = LineItemMap::new(&table.cached_heights, 1, 0);
+        table.select(0);
+        (dir, table)
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_window_and_leaves_the_cursor() {
+        let (_dir, mut table) = table_for_the_wheel();
+
+        table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
+
+        // Three rows down, clamped to the window that shows the last row.
+        assert_eq!(2, table.first_visible_item);
+        assert_eq!(Some("a".to_string()), selected(&table));
+        assert!(table.wheel_scrolled);
+
+        table.handle_mouse(mouse(MouseEventKind::ScrollUp, 1, 5));
+
+        assert_eq!(0, table.first_visible_item);
+        assert_eq!(Some("a".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn the_wheel_in_range_mode_marks_nothing() {
+        let (_dir, mut table) = table_for_the_wheel();
+        table.enter_range_mode();
+        let marks = table.marks.len();
+
+        table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
+
+        assert_eq!(marks, table.marks.len());
+    }
+
+    /// The next key acts on the cursor, so the window goes back to showing
+    /// it; a reload that keeps the cursor on its row leaves the window alone.
+    #[test]
+    fn a_key_brings_the_cursor_back_into_view_and_a_reload_does_not() {
+        let (_dir, mut table) = table_for_the_wheel();
+        table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
+
+        table.select(0);
+        assert!(table.wheel_scrolled);
+
+        // F5 refreshes and leaves the cursor where it is.
+        table.handle_key(ratatui::crossterm::event::KeyCode::F(5), KeyModifiers::NONE);
+        assert!(!table.wheel_scrolled);
+        assert_eq!(Some("a".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn moving_the_cursor_shows_it() {
+        let (_dir, mut table) = table_for_the_wheel();
+        table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
+
         table.select(1);
 
-        table.handle_mouse(mouse(kind, 1, 5));
-
-        assert_eq!(Some(expected.to_string()), selected(&table));
+        assert!(!table.wheel_scrolled);
     }
 
     /// Row `b` wraps to three lines, so the lines are `a`, `b` x3, `c`, and a

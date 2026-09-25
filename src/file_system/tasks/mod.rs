@@ -350,7 +350,7 @@ fn move_across_devices(
     if let Some((active, outcome)) =
         copy_with_progress(settings, overwrite, path, active, old_path, new_path)
     {
-        finish_cross_device_move(active, outcome, old_path, path.is_directory());
+        finish_cross_device_move(active, outcome, old_path, new_path, path.is_directory());
     }
 }
 
@@ -367,6 +367,7 @@ fn finish_cross_device_move(
     active: ActiveTask,
     outcome: CopyOutcome,
     old_path: &Path,
+    new_path: &Path,
     is_directory: bool,
 ) {
     let top_skipped = outcome.top_skipped();
@@ -410,7 +411,15 @@ fn finish_cross_device_move(
     // the rest still are.
     let removal = Removal::MovedSource(root);
     if let Some((active, errors)) = remove_path(old_path, is_directory, active, removal) {
-        finalize(active, errors);
+        // The destination is whole by now; what failed is only the cleanup.
+        match summarize(errors) {
+            Some(summary) => active.error(format!(
+                "Failed to remove the original {} once it was moved to {}: {summary}",
+                compact(old_path),
+                compact(new_path)
+            )),
+            None => active.done(),
+        }
     }
 }
 
@@ -1344,10 +1353,40 @@ mod tests {
     fn a_cross_device_move_removes_its_source_after_a_clean_copy() {
         let (_fx, src, rx, active) = moved("tasks_move_complete");
 
-        finish_cross_device_move(active, copied(&src), &src, true);
+        finish_cross_device_move(active, copied(&src), &src, &src, true);
 
         assert!(!src.exists());
         assert_eq!(None, finished_task(&rx).error_message());
+    }
+
+    /// A source that cannot be removed once its copy is whole: the move is
+    /// done at the destination, so the failure names only the cleanup.
+    #[test]
+    fn a_cross_device_move_that_cannot_remove_its_source_says_it_was_moved() {
+        let (fx, src, rx, active) = moved("tasks_move_unremovable");
+        fs::create_dir(src.join("sub")).unwrap();
+        fs::write(src.join("sub").join("b.txt"), b"src").unwrap();
+        fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o555)).unwrap();
+        let locked = fs::write(src.join("sub").join("probe"), b"").is_err();
+        let dest = fx.join("dest");
+
+        finish_cross_device_move(active, copied(&src), &src, &dest, true);
+
+        fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
+        if !locked {
+            eprintln!("not exercised: a read-only directory is writable here");
+            return;
+        }
+        assert_eq!(
+            Some(format!(
+                "Failed to remove the original {} once it was moved to {}: Failed to delete \
+                 {}: Permission denied (os error 13)",
+                compact(&src),
+                compact(&dest),
+                compact(&src.join("sub").join("b.txt"))
+            )),
+            finished_task(&rx).error_message()
+        );
     }
 
     /// Once the copy is complete a cancel can no longer stop the move: the
@@ -1370,7 +1409,7 @@ mod tests {
         );
         token.cancel();
 
-        finish_cross_device_move(active, copied(&src), &src, true);
+        finish_cross_device_move(active, copied(&src), &src, &src, true);
 
         assert!(src.symlink_metadata().is_err());
         let task = finished_task(&rx);
@@ -1388,7 +1427,7 @@ mod tests {
         fs::create_dir(&src).unwrap();
         fs::write(src.join("other.txt"), b"other").unwrap();
 
-        finish_cross_device_move(active, outcome, &src, true);
+        finish_cross_device_move(active, outcome, &src, &src, true);
 
         assert!(src.join("other.txt").exists());
         let message = finished_task(&rx).error_message().expect("the move fails");
@@ -1459,6 +1498,7 @@ mod tests {
                 ..CopyOutcome::default()
             },
             &src,
+            &src,
             true,
         );
 
@@ -1485,6 +1525,7 @@ mod tests {
                 ..CopyOutcome::default()
             },
             &src,
+            &src,
             true,
         );
 
@@ -1507,6 +1548,7 @@ mod tests {
                 wrote,
                 ..CopyOutcome::default()
             },
+            &src,
             &src,
             true,
         );

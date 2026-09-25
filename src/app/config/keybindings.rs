@@ -238,6 +238,12 @@ pub struct KeyBindings {
 }
 
 impl KeyBindings {
+    /// Parses every key in `toml` without building the maps, so an invalid
+    /// key is reported without checking for conflicts.
+    pub fn check(toml: &TomlKeybindings) -> Result<()> {
+        toml.to_bindings().map(|_| ())
+    }
+
     pub fn new(toml: &TomlKeybindings) -> Result<Self> {
         let (normal_bindings, prompt_bindings) = toml.to_bindings()?;
 
@@ -454,11 +460,14 @@ fn build_display_map(
 
     for (action, combos) in normal.iter().chain(prompt.iter()) {
         let hardcoded = hardcoded_keys(*action);
-        let display: Vec<String> = hardcoded
-            .iter()
-            .chain(combos.iter())
-            .map(format_key_combo)
-            .collect();
+        // A configured key may repeat a hardcoded one (`select_next =
+        // ["Down", "j"]`); each is shown once.
+        let mut display: Vec<String> = Vec::new();
+        for key in hardcoded.iter().chain(combos.iter()).map(format_key_combo) {
+            if !display.contains(&key) {
+                display.push(key);
+            }
+        }
         map.insert(*action, display);
     }
 
@@ -468,6 +477,9 @@ fn build_display_map(
 fn parse_key_spec(spec: &KeySpec) -> Result<Vec<KeyCombo>> {
     match spec {
         KeySpec::Single(s) => Ok(vec![parse_key_combo(s)?]),
+        // An empty list would leave the action with no key at all, and the
+        // help and the hints that name its key with nothing to show.
+        KeySpec::Multiple(v) if v.is_empty() => Err(anyhow!("no key given")),
         KeySpec::Multiple(v) => v.iter().map(|s| parse_key_combo(s)).collect(),
     }
 }
@@ -956,6 +968,8 @@ mod tests {
             kb.normal_action(KeyCode::Down, KeyModifiers::NONE),
             Some(Action::SelectNext)
         );
+        // Shown once, though it is both hardcoded and configured.
+        assert_eq!("↓/j", kb.display_for(Action::SelectNext));
     }
 
     #[test]

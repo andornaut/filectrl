@@ -103,12 +103,22 @@ pub(super) fn changed_refusal(is_move: bool, source: &Path, destination: &Path) 
     )
 }
 
-/// The refusal of `source`, whose name is, or folds onto, one an earlier
-/// source of the same paste took into `dest_dir` (`paste::fold_keys`).
+/// The refusal of `source`, whose name an earlier source of the same paste
+/// took into `dest_dir`.
 pub(super) fn same_name_refusal(is_move: bool, source: &Path, dest_dir: &Path) -> String {
     format!(
-        "Cannot {} {} into {}: another source in this paste already takes that name there, or \
-         one the destination may treat as the same",
+        "Cannot {} {} into {}: another source in this paste already takes that name there",
+        verb(is_move),
+        compact(source),
+        compact(dest_dir)
+    )
+}
+
+/// The refusal of `source`, whose name in `dest_dir` holds an entry made since
+/// the paste began (`PendingPaste::meet`).
+pub(super) fn made_since_refusal(is_move: bool, source: &Path, dest_dir: &Path) -> String {
+    format!(
+        "Cannot {} {} into {}: an entry made since this paste began holds that name",
         verb(is_move),
         compact(source),
         compact(dest_dir)

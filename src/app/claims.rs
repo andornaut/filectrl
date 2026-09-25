@@ -139,6 +139,10 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
             generation: 2,
         },
         Command::DirectoryListingComplete { generation: 2 },
+        Command::SearchResultsRefreshed {
+            items: vec![fixture.file()],
+            generation: 2,
+        },
         Command::Chmod {
             paths: vec![fixture.file()],
             mode: "644".to_string(),
@@ -232,6 +236,7 @@ fn every_variant_is_accounted_for(command: &Command) {
         | Command::RefreshedDirectory { .. }
         | Command::ListingBatch { .. }
         | Command::DirectoryListingComplete { .. }
+        | Command::SearchResultsRefreshed { .. }
         | Command::Chmod { .. }
         | Command::Copy { .. }
         | Command::Move { .. }

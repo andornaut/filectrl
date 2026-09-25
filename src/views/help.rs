@@ -5,7 +5,7 @@ mod widget;
 use ratatui::{layout::Rect, text::Line};
 
 use self::widget::{
-    Section, add_keybinding_lines, add_section_header, build_sections, max_label_width,
+    Section, add_keybinding_lines, add_section_header, build_sections, label_width,
 };
 use super::ScrollbarView;
 use crate::{
@@ -26,9 +26,6 @@ pub(super) struct HelpView {
     /// styled lines are built per frame from the theme the render is handed,
     /// so the body and the border it sits in cannot come from two themes.
     sections: Vec<Section>,
-    /// The width the two columns are laid out to, which the line count below
-    /// depends on and the theme does not.
-    label_width: usize,
     max_scroll: u16,
     scroll_offset: u16,
     scrollbar_view: ScrollbarView,
@@ -42,13 +39,11 @@ impl HelpView {
             kb.hint_for(&[Action::ToggleHelp, Action::ResetView])
         );
         let sections = build_sections(kb);
-        let label_width = max_label_width(&sections);
         Self {
             area: Rect::default(),
             hint,
             inner_height: 0,
             sections,
-            label_width,
             max_scroll: 0,
             scroll_offset: 0,
             scrollbar_view: ScrollbarView::default(),
@@ -63,8 +58,9 @@ impl HelpView {
             if index > 0 {
                 lines.push(Line::raw(""));
             }
-            add_section_header(&mut lines, title, self.label_width, theme);
-            add_keybinding_lines(&mut lines, rows, self.label_width, theme);
+            let width = label_width(rows);
+            add_section_header(&mut lines, title, width, theme);
+            add_keybinding_lines(&mut lines, rows, width, theme);
         }
         lines
     }
@@ -106,6 +102,18 @@ impl HelpView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each section lines its keys up by its own labels, so at 80 columns
+    /// (78 inside the border) no row runs past the edge.
+    #[test]
+    fn every_row_fits_an_80_column_terminal() {
+        Config::init_test();
+        let view = HelpView::new(Config::global());
+
+        for line in view.lines(&Config::global().theme.help) {
+            assert!(line.width() <= 78, "{} columns: {line}", line.width());
+        }
+    }
 
     /// A help view scrolled to the top of a longer document, with a viewport
     /// of 4 lines. The two fields are set by the render pass, which no unit

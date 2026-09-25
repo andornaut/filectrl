@@ -15,13 +15,22 @@ use crate::{
 /// The order of the enum variants defines the order in which notices are displayed.
 #[derive(Debug)]
 pub(super) enum Notice {
-    Progress,
+    /// The running tasks' bar; `finished` tasks of the same batch have ended.
+    Progress {
+        finished: usize,
+    },
     Operations,
     Search(String),
     SearchCancelled(String),
-    SearchFinished { query: String, results: usize },
+    SearchFinished {
+        query: String,
+        results: usize,
+    },
     SearchLoading,
-    Marked { count: usize, range: bool },
+    Marked {
+        count: usize,
+        range: bool,
+    },
     Clipboard(ClipboardEntry),
     Filter(String),
 }
@@ -46,7 +55,9 @@ impl Notice {
                 marked_widget(&theme.table, width, *count, *range, hint)
             }
             Notice::Operations => operations_widget(&theme.notice, width, tasks, cancel_hint),
-            Notice::Progress => progress_widget(&theme.notice, width, tasks),
+            Notice::Progress { finished } => {
+                progress_widget(&theme.notice, width, tasks, *finished)
+            }
             Notice::Search(query) => search_widget(&theme.notice, width, query, cancel_hint),
             Notice::SearchCancelled(query) => {
                 search_cancelled_widget(&theme.notice, width, query, hint)

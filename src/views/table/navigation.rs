@@ -1428,6 +1428,50 @@ mod tests {
         assert_eq!(Some("bat"), selected_name(&table));
     }
 
+    /// A refresh after the search ended re-reads the results by path: one gone
+    /// since drops out, one changed shows its new size, and the cursor and a
+    /// mark stay on the entries they were on.
+    #[test]
+    fn refreshed_search_results_replace_the_listing_keeping_cursor_and_marks() {
+        let fx = TempDir::new("nav");
+        let mut table = streamed_search(&fx);
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+        table.handle_key(KeyCode::Char('j'), KeyModifiers::NONE);
+        table.toggle_mark();
+        assert_eq!(Some("bat"), selected_name(&table));
+
+        table.handle_command(&Command::SearchResultsRefreshed {
+            items: vec![fx.file("bat", 7), fx.file("art", 1)],
+            generation: 1,
+        });
+
+        let listed: Vec<_> = table
+            .content
+            .items_sorted()
+            .iter()
+            .map(|item| (item.display_name.as_str(), item.size))
+            .collect();
+        assert_eq!(vec![("art", 1), ("bat", 7)], listed);
+        assert_eq!(Some("bat"), selected_name(&table));
+        assert_eq!(1, table.marked_paths().len());
+    }
+
+    /// Results read again for a search since replaced must not land in its
+    /// replacement.
+    #[test]
+    fn refreshed_results_of_another_search_are_ignored() {
+        let fx = TempDir::new("nav");
+        let mut table = streamed_search(&fx);
+        table.handle_command(&Command::ExitedSearch { generation: 1 });
+
+        table.handle_command(&Command::SearchResultsRefreshed {
+            items: vec![fx.file("art", 1)],
+            generation: 9,
+        });
+
+        assert_eq!(3, table.content.items_sorted().len());
+    }
+
     /// The flag belongs to one search: a move during the last one says
     /// nothing about where the user wants the cursor in this one.
     #[test]

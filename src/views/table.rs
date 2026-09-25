@@ -40,6 +40,11 @@ pub(super) struct TableView {
     /// so the thumb renders at the cursor even when the window top snaps
     /// across a wrapped row.
     drag_line: Option<usize>,
+    /// Set when the wheel scrolled the window away from the cursor: the render
+    /// keeps `first_visible_item` as the wheel left it instead of bringing the
+    /// cursor into view. Cleared by anything that moves the cursor and by any
+    /// key the table handles, so the next key shows the row it acts on.
+    wheel_scrolled: bool,
 
     /// Generation of the stream (directory load or search) currently feeding
     /// the listing. `ListingBatch`es stamped with a different generation are
@@ -68,9 +73,22 @@ pub(super) struct TableView {
     scrollbar_view: ScrollbarView,
     /// The sortable column headers, which name their sort keys.
     header_labels: [String; 3],
+    /// Set while a y/n confirmation prompt is open: the prompt already holds
+    /// what it asks about, so a wheel or a click that moved the cursor would
+    /// only make the status bar describe something else.
+    ignores_mouse: bool,
 }
 
 impl TableView {
+    pub(super) fn set_ignores_mouse(&mut self, ignores: bool) {
+        self.ignores_mouse = ignores;
+    }
+
+    /// The display name of the one entry a delete prompt asks about.
+    pub(super) fn pending_delete_name(&self) -> Option<String> {
+        self.pending_delete.only_name()
+    }
+
     /// The listing settings and the double-click window come from the config
     /// here, once, rather than from a global reached for during a sort or a
     /// click.
@@ -84,6 +102,7 @@ impl TableView {
             table_state: TableState::default(),
             first_visible_item: 0,
             drag_line: None,
+            wheel_scrolled: false,
             stream_generation: 0,
             pending_load: PendingLoad::default(),
             search_cursor_chosen: false,
@@ -94,6 +113,7 @@ impl TableView {
             height_cache_key: None,
             scrollbar_view: ScrollbarView::default(),
             header_labels: widget::header_labels(keybindings),
+            ignores_mouse: false,
         }
     }
 }

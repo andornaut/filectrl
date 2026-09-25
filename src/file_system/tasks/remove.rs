@@ -168,6 +168,14 @@ pub(super) fn remove_path(
         match remove_entry(dir, &name, is_dir) {
             Ok(None) => advance(&mut active, &mut debouncer, cancellable),
             // Descending is not a removal, so it advances no progress.
+            Ok(Some((_, id, _))) if walk.holds(|level| *level == id) => {
+                let looped = entry_path(path, &walk, &name);
+                errors.push(format!(
+                    "Cannot delete {}: it leads back to a directory above it",
+                    compact(&looped)
+                ));
+                walk.top().expect("the walk is not done").1.incomplete = true;
+            }
             Ok(Some((dir, id, entries))) => {
                 walk.descend(Level::open(dir, id, Removing::new(Some(name), entries)));
             }

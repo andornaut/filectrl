@@ -84,10 +84,6 @@ fg = "#ff69b4" # Hot Pink
 [theme.file_size.pib]
 fg = "#c4071c" # Red
 
-[theme.file_type]
-# Whether to apply colors defined in the $LS_COLORS environment variable (if set) on top of colors configured in this section
-ls_colors_take_precedence = false
-
 [theme.file_type.block_device]
 bg = "#404346"
 fg = "#93ada0"
@@ -356,9 +352,6 @@ fg = "205" # #ff5faf - hot pink
 
 [theme256.file_size.pib]
 fg = "160" # #d70000 - red
-
-[theme256.file_type]
-ls_colors_take_precedence = false
 
 [theme256.file_type.block_device]
 bg = "238" # #444444 (approx #404346)

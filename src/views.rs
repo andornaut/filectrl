@@ -106,16 +106,22 @@ pub(super) trait View: CommandHandler {
 }
 
 /// What the table lists, counted, for the views that report it.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ListingCount {
     /// The directory's entries, `shown` of them in the table. The directory's
     /// total is counted as it loads, by the status bar.
     Directory { shown: usize },
     /// Search results, `shown` of the `total` found.
     Results { shown: usize, total: usize },
-    /// The bookmarks, which no count describes.
-    #[default]
-    Bookmarks,
+    /// The bookmarks, all of them shown: the directory under them is hidden,
+    /// so its count would describe nothing on screen.
+    Bookmarks { shown: usize },
+}
+
+impl Default for ListingCount {
+    fn default() -> Self {
+        Self::Directory { shown: 0 }
+    }
 }
 
 /// Which listing the table is showing. Search and bookmarks are mutually

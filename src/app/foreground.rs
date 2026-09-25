@@ -49,11 +49,14 @@ pub(super) fn argv(
             let value = value
                 .into_string()
                 .map_err(|_| anyhow!("Cannot run ${name}: it is not valid UTF-8"))?;
-            shell_words::split(&value)
-                .map_err(|_| anyhow!("Cannot run ${name}: its quoting is not closed"))?
-                .into_iter()
-                .map(OsString::from)
-                .collect()
+            let words = shell_words::split(&value)
+                .map_err(|_| anyhow!("Cannot run ${name}: its quoting is not closed"))?;
+            // A value that is only a comment splits into no words, and the
+            // path appended below would then be run as the program.
+            if words.is_empty() {
+                return Err(anyhow!("Cannot run ${name}: it names no program"));
+            }
+            words.into_iter().map(OsString::from).collect()
         }
     };
     argv.push(path.as_os_str().to_os_string());
@@ -217,6 +220,20 @@ mod tests {
         .to_string();
 
         assert_eq!("Cannot run $EDITOR: its quoting is not closed", error);
+    }
+
+    #[test_case::test_case("#vim" ; "a comment")]
+    #[test_case::test_case(" # x" ; "a comment after spaces")]
+    fn a_variable_naming_no_program_is_refused(value: &str) {
+        let error = argv(
+            |name| (name == "EDITOR").then(|| OsString::from(value)),
+            Editor,
+            Path::new("/f"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!("Cannot run $EDITOR: it names no program", error);
     }
 
     /// A terminal that records whether a foreground program counted as

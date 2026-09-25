@@ -14,7 +14,7 @@ use anyhow::{Result, anyhow};
 use log::{info, warn};
 
 use super::{
-    path_info::{PathInfo, compact, visible_name},
+    path_info::{PathInfo, compact},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
     tasks::{is_same_file, rename_no_replace, restat, set_mode_at},
@@ -90,8 +90,9 @@ pub(super) fn stream_cd(
             return;
         }
         if error_count > 0 {
+            let entries = if error_count == 1 { "entry" } else { "entries" };
             let _ = tx.send(Command::AlertWarn(format!(
-                "{error_count} entries in {} could not be read",
+                "{error_count} {entries} in {} could not be read",
                 compact(&directory.path)
             )));
         }
@@ -132,7 +133,7 @@ pub(super) fn open_in(
     if template.trim().is_empty() {
         return Err(anyhow!(
             "Cannot open {}: {setting} is empty",
-            visible_name(path.path.file_name().unwrap_or(path.path.as_os_str()))
+            compact(&path.path)
         ));
     }
     let argv = shell::command(template, [path.path.as_os_str().to_os_string()]);
@@ -293,16 +294,20 @@ pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<
     validate_basename(name).map_err(|reason| refuse(&reason))?;
     fs::create_dir_all(dir).map_err(|error| fail(&error))?;
     let link = dir.join(name);
-    // Reject duplicates, including a pre-existing broken symlink.
-    if link.symlink_metadata().is_ok() {
-        return Err(refuse(&"it already exists"));
-    }
     info!(
         "Creating bookmark {} -> {}",
         link.display(),
         target.path.display()
     );
-    std::os::unix::fs::symlink(&target.path, &link).map_err(|error| fail(&error))
+    // `symlink(2)` refuses any entry already at the name, a broken symlink
+    // included, in the same call that would create the link.
+    std::os::unix::fs::symlink(&target.path, &link).map_err(|error| {
+        if error.kind() == ErrorKind::AlreadyExists {
+            refuse(&"it already exists")
+        } else {
+            fail(&error)
+        }
+    })
 }
 
 pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
@@ -874,9 +879,8 @@ mod tests {
         let base = TempDir::new("ops_bookmark_broken");
         let bookmarks = base.join("bookmarks");
         fs::create_dir_all(&bookmarks).unwrap();
-        // What a bookmark becomes once its target is removed. `exists()`
-        // follows the link and reports false, so the check has to be
-        // `symlink_metadata` or the name is silently reused.
+        // What a bookmark becomes once its target is removed: `exists()`
+        // follows the link and reports false.
         std::os::unix::fs::symlink(base.join("gone"), bookmarks.join("favs")).unwrap();
         let target = PathInfo::try_from(base.path()).unwrap();
 
@@ -884,9 +888,8 @@ mod tests {
             .expect_err("a name held by a broken symlink must be refused")
             .to_string();
 
-        // filectrl's own refusal, not the EEXIST `symlink` would raise a line
-        // later: asserting only `is_err` cannot tell the two apart, and the
-        // errno one means the duplicate check let it through.
+        // The refusal, not the bare EEXIST `symlink` raises: asserting only
+        // `is_err` cannot tell the two apart.
         assert_eq!("Cannot add bookmark \"favs\": it already exists", error);
     }
 
@@ -974,7 +977,10 @@ mod tests {
             .expect_err("an empty template must be refused")
             .to_string();
 
-        assert_eq!("Cannot open notes.txt: openers.open_file is empty", error);
+        assert_eq!(
+            format!("Cannot open {}: openers.open_file is empty", compact(&file)),
+            error
+        );
     }
 
     /// Linux only: the group is read from `/proc`.
