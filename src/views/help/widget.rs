@@ -150,12 +150,12 @@ fn build_conflict_keybindings() -> Vec<(String, String)> {
     vec![
         kb_entry("Skip this entry", "s".into()),
         kb_entry(
-            "Skip this and every later collision",
+            "Skip this and every later collision, also in sources already running",
             "S (Uppercase)".into(),
         ),
         kb_entry("Replace the existing entry", "o".into()),
         kb_entry(
-            "Replace this and every later collision",
+            "Replace this and every later collision the paste meets",
             "O (Uppercase)".into(),
         ),
         kb_entry("Abandon the rest of the paste", "Esc".into()),
@@ -374,7 +374,8 @@ mod tests {
     /// mode section lists, and the bookmarks view's use of the normal ones.
     #[test_case("Bookmarks View", "Go to the linked folder", "\u{2192}/l/Enter" ; "following a bookmark")]
     #[test_case("Bookmarks View", "Rename, delete the bookmark", "r/F2, d/Delete" ; "renaming and deleting a bookmark")]
-    #[test_case("Paste Conflict", "Skip this and every later collision", "S (Uppercase)" ; "a conflict answer")]
+    #[test_case("Paste Conflict", "Skip this and every later collision, also in sources already running", "S (Uppercase)" ; "a conflict answer")]
+    #[test_case("Paste Conflict", "Replace this and every later collision the paste meets", "O (Uppercase)" ; "overwrite all")]
     #[test_case("Paste Conflict", "Abandon the rest of the paste", "Esc" ; "abandoning a paste")]
     #[test_case("Open With", "Open with a numbered application", "1-9" ; "the row numbers")]
     #[test_case("Open With", "Close the picker", "o" ; "closing the picker")]

@@ -1,189 +1,207 @@
-//! The conflict decisions for one paste.
+//! What the workers of one paste need of its answers, and how its refusals
+//! read.
 
 use std::{
-    collections::HashSet,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
-use nix::sys::stat::{FileStat, lstat};
-
-use super::entry_id::EntryId;
+use super::path_info::compact;
 use crate::command::ConflictChoice;
 
-/// The standing `*All` answer for one paste, shared between the thread running
-/// its queue and the workers copying its sources, so a name another process
-/// takes deep inside a tree is settled the same way as one at the top level.
+/// A paste's standing `*All` answer, shared between the queue that records
+/// and applies it and the workers running its sources.
 ///
-/// Only a standing answer crosses that boundary: the queue writes it, workers
-/// read it. A worker never asks. It runs long after the queue has handed out
-/// its last source, on the one thread every operation is serialized onto, and
-/// the collision it finds is a race against another program, about a state the
-/// user never saw. Without a standing answer that covers it, the entry is
-/// recorded like any other that could not be written and the walk carries on.
-///
-/// It also holds what the paste has put into its destination, by device and
-/// inode, so that no worker replaces an entry an earlier source of the same
-/// paste wrote. The queue refuses a second source of a name it has already
-/// handed out, but it compares names byte for byte, and a filesystem that folds
-/// case or normalizes Unicode gives two different names one entry.
-/// `was_pasted_stat` is the one place that decides what such an entry is.
-#[derive(Clone, Default)]
+/// Only the queue decides to replace anything: an entry it found at a
+/// source's destination, answered for with "overwrite" or covered by a
+/// standing "overwrite all", and only while that entry still holds the name
+/// when the source's work runs (`changed_refusal`). A worker reads the
+/// standing answer only to skip. A name taken after the queue saw it free (by
+/// another program, another paste, or a name the filesystem folds onto one
+/// this paste wrote) is never replaced, since nobody decided to replace what
+/// now holds it, and a worker never asks about it either: it runs long after
+/// the queue handed out its source, about a state the user never saw. Under a
+/// standing "skip all" such a name is skipped, and otherwise it is recorded
+/// like any other entry that could not be written (`raced_refusal`).
+#[derive(Clone, Debug, Default)]
 pub(super) struct Conflicts {
-    apply_to_all: Arc<Mutex<Option<ConflictChoice>>>,
-    pasted: Arc<Mutex<HashSet<EntryId>>>,
+    /// `SKIP_ALL`, `OVERWRITE_ALL`, or zero for no standing answer.
+    standing: Arc<AtomicU8>,
 }
 
+const SKIP_ALL: u8 = 1;
+const OVERWRITE_ALL: u8 = 2;
+
 impl Conflicts {
-    /// The standing `*All` answer, if one has been given.
-    pub(super) fn standing(&self) -> Option<ConflictChoice> {
-        *self.lock()
+    /// Records `choice` as the paste's standing answer when it is an `*All`,
+    /// for the queue and for the workers, including those already handed a
+    /// source whose name they have not reached yet. Any other answer is for
+    /// one collision and leaves the standing one as it was.
+    pub(super) fn stand(&self, choice: ConflictChoice) {
+        let standing = match choice {
+            ConflictChoice::SkipAll => SKIP_ALL,
+            ConflictChoice::OverwriteAll => OVERWRITE_ALL,
+            ConflictChoice::Skip | ConflictChoice::Overwrite => return,
+        };
+        self.standing.store(standing, Ordering::SeqCst);
     }
 
-    /// Records an answer from the user. An `*All` stands for the rest of the
-    /// paste, including the parts already handed to a worker; anything else
-    /// answers only the collision in front of the user.
-    pub(super) fn answer(&self, choice: ConflictChoice) {
-        if matches!(
-            choice,
-            ConflictChoice::OverwriteAll | ConflictChoice::SkipAll
-        ) {
-            *self.lock() = Some(choice);
+    /// The standing `*All` answer, which the queue applies to each collision
+    /// it meets from then on.
+    pub(super) fn standing(&self) -> Option<ConflictChoice> {
+        match self.standing.load(Ordering::SeqCst) {
+            SKIP_ALL => Some(ConflictChoice::SkipAll),
+            OVERWRITE_ALL => Some(ConflictChoice::OverwriteAll),
+            _ => None,
         }
     }
 
-    /// Records the entry `id` as one this paste wrote.
-    pub(super) fn record_pasted(&self, id: EntryId) {
-        self.pasted
-            .lock()
-            .expect("the pasted entries are not poisoned")
-            .insert(id);
-    }
-
-    /// Whether the entry `path` names is one replacing would take from this
-    /// paste (`was_pasted_stat`).
-    pub(super) fn was_pasted(&self, path: &Path) -> bool {
-        lstat(path).is_ok_and(|stat| self.was_pasted_stat(&stat))
-    }
-
-    /// Whether the entry `stat` describes is one this paste wrote, under its
-    /// only name. An entry with another link survives a replacement under
-    /// that one, so replacing a name of it loses nothing, and a hard link
-    /// elsewhere to what a move brought in is not mistaken for it.
-    pub(super) fn was_pasted_stat(&self, stat: &FileStat) -> bool {
-        stat.st_nlink == 1
-            && self
-                .pasted
-                .lock()
-                .expect("the pasted entries are not poisoned")
-                .contains(&EntryId::of_stat(stat))
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<ConflictChoice>> {
-        // Nothing blocks while the lock is held, so a panic while it is held
-        // would have to come from the two lines above.
-        self.apply_to_all
-            .lock()
-            .expect("the conflict state is not poisoned")
+    /// Whether a worker skips a name taken at a destination after the queue
+    /// saw it free, rather than recording it: only under a standing "skip
+    /// all". Such a name is never replaced.
+    pub(super) fn skips_raced(&self) -> bool {
+        self.standing() == Some(ConflictChoice::SkipAll)
     }
 }
 
-/// Whether `path` names an entry the paste behind `conflicts` wrote, which no
-/// worker of that paste may replace. `false` outside a paste.
-pub(super) fn pasted_here(conflicts: Option<&Conflicts>, path: &Path) -> bool {
-    conflicts.is_some_and(|conflicts| conflicts.was_pasted(path))
-}
-
-/// The refusal of a source whose destination name holds what an earlier source
-/// of the same paste wrote, wherever the paste finds it.
-pub(super) fn same_name_refusal(is_move: bool, source: &Path, dest_dir: &Path) -> String {
-    let verb = if is_move { "move" } else { "copy" };
+/// The refusal of `source`, whose destination `destination` was taken after
+/// the queue saw it free.
+pub(super) fn raced_refusal(is_move: bool, source: &Path, destination: &Path) -> String {
     format!(
-        "Cannot {verb} {} into {}: another source in this paste has the same name",
-        super::path_info::compact(source),
-        super::path_info::compact(dest_dir)
+        "Cannot {} {} to {}: another entry took that name after the paste checked it",
+        verb(is_move),
+        compact(source),
+        compact(destination)
     )
 }
 
-/// True when `choice` means the entry it answered should be replaced.
-pub(super) fn replaces(choice: ConflictChoice) -> bool {
-    matches!(
-        choice,
-        ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
+/// The refusal of `source`, an entry inside a directory the copy created,
+/// whose destination `destination` is taken: by another program writing into
+/// the tree, or by an entry of the same tree whose name the destination treats
+/// as the same (`Notes` and `notes` on a case-insensitive filesystem).
+pub(super) fn raced_in_copy_refusal(is_move: bool, source: &Path, destination: &Path) -> String {
+    format!(
+        "Cannot {} {} to {}: the name is already taken there, by another entry or one the \
+         destination treats as the same",
+        verb(is_move),
+        compact(source),
+        compact(destination),
     )
+}
+
+/// The refusal of `source`, whose destination `destination` holds another
+/// entry than the one the queue was told to replace.
+pub(super) fn changed_refusal(is_move: bool, source: &Path, destination: &Path) -> String {
+    format!(
+        "Cannot {} {} to {}: the entry there changed after the paste checked it",
+        verb(is_move),
+        compact(source),
+        compact(destination)
+    )
+}
+
+/// The refusal of `source`, whose name is, or folds onto, one an earlier
+/// source of the same paste took into `dest_dir` (`paste::fold_keys`).
+pub(super) fn same_name_refusal(is_move: bool, source: &Path, dest_dir: &Path) -> String {
+    format!(
+        "Cannot {} {} into {}: another source in this paste already takes that name there, or \
+         one the destination may treat as the same",
+        verb(is_move),
+        compact(source),
+        compact(dest_dir)
+    )
+}
+
+/// The refusal of `source`, whose destination `destination` is another name of
+/// the same file, which replacing would delete or leave as it was. `operation`
+/// is the verb the task names itself by.
+pub(super) fn same_file_refusal(operation: &str, source: &Path, destination: &Path) -> String {
+    format!(
+        "Cannot {operation} {} to {}: they are the same file",
+        compact(source),
+        compact(destination)
+    )
+}
+
+/// What a failed replacement adds to its message: the entry it was to replace
+/// is still at `destination`.
+pub(super) fn not_replaced(destination: &Path) -> String {
+    format!("; {} was not replaced", compact(destination))
+}
+
+/// The failure of a copy or move of `source` to `destination` that a call
+/// outside filectrl reported as `error`.
+pub(super) fn failed_transfer(
+    is_move: bool,
+    source: &Path,
+    destination: &Path,
+    error: &dyn std::fmt::Display,
+) -> String {
+    format!(
+        "Failed to {} {} to {}: {error}",
+        verb(is_move),
+        compact(source),
+        compact(destination)
+    )
+}
+
+/// The verb a copy or a move names itself by in its messages.
+pub(super) fn verb(is_move: bool) -> &'static str {
+    if is_move { "move" } else { "copy" }
 }
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
-    fn nothing_stands_until_an_all_is_answered() {
-        let conflicts = Conflicts::default();
-
-        assert_eq!(None, conflicts.standing());
+    fn nothing_skips_until_an_answer_stands() {
+        assert!(!Conflicts::default().skips_raced());
     }
 
-    #[test]
-    fn a_one_off_answer_does_not_stand() {
+    /// Only an `*All` stands; an answer for one collision leaves the standing
+    /// one as it was.
+    #[test_case(&[] => None ; "nothing answered")]
+    #[test_case(&[ConflictChoice::Skip, ConflictChoice::Overwrite] => None ; "single answers")]
+    #[test_case(&[ConflictChoice::SkipAll, ConflictChoice::Overwrite] => Some(ConflictChoice::SkipAll) ; "skip all then overwrite")]
+    #[test_case(&[ConflictChoice::OverwriteAll, ConflictChoice::Skip] => Some(ConflictChoice::OverwriteAll) ; "overwrite all then skip")]
+    #[test_case(&[ConflictChoice::OverwriteAll, ConflictChoice::SkipAll] => Some(ConflictChoice::SkipAll) ; "a later all answer replaces an earlier one")]
+    fn what_stands(answers: &[ConflictChoice]) -> Option<ConflictChoice> {
         let conflicts = Conflicts::default();
-
-        conflicts.answer(ConflictChoice::Overwrite);
-        assert_eq!(None, conflicts.standing());
-
-        conflicts.answer(ConflictChoice::Skip);
-        assert_eq!(None, conflicts.standing());
+        for &choice in answers {
+            conflicts.stand(choice);
+        }
+        conflicts.standing()
     }
 
+    /// The answer reaches every clone: a worker holds one, and a copy already
+    /// running has to see an answer given after it started.
     #[test]
-    fn an_all_answer_stands_for_every_clone() {
+    fn a_standing_answer_reaches_every_clone() {
         let conflicts = Conflicts::default();
-        // What a worker holds: the answer has to reach a copy already running.
         let worker = conflicts.clone();
 
-        conflicts.answer(ConflictChoice::SkipAll);
+        conflicts.stand(ConflictChoice::SkipAll);
 
-        assert_eq!(Some(ConflictChoice::SkipAll), worker.standing());
+        assert!(worker.skips_raced());
     }
 
-    /// Aliasing, where a filesystem that folds case gives two names one entry,
-    /// is reproduced by giving the entry a second name and removing its first,
-    /// which leaves it one link, as an aliased entry has.
-    #[test]
-    fn an_entry_is_pasted_by_identity_rather_than_by_name() {
-        let fx = crate::test_support::TempDir::new("conflicts_pasted");
-        let pasted = fx.join("one");
-        let alias = fx.join("alias");
-        let other = fx.join("other");
-        std::fs::write(&pasted, b"first").unwrap();
-        std::fs::write(&other, b"other").unwrap();
+    /// Only a standing "skip all" skips a raced name; "overwrite all" does
+    /// not reach it, and replaces a "skip all" given before it.
+    #[test_case(&[] => false ; "no standing answer")]
+    #[test_case(&[ConflictChoice::SkipAll] => true ; "skip all")]
+    #[test_case(&[ConflictChoice::OverwriteAll] => false ; "overwrite all")]
+    #[test_case(&[ConflictChoice::SkipAll, ConflictChoice::OverwriteAll] => false ; "overwrite all after skip all")]
+    fn what_skips_a_raced_name(answers: &[ConflictChoice]) -> bool {
         let conflicts = Conflicts::default();
-        // What a worker holds: another task of the paste has to see it.
-        let worker = conflicts.clone();
-
-        conflicts.record_pasted(EntryId::of_path(&pasted).unwrap());
-        std::fs::hard_link(&pasted, &alias).unwrap();
-        std::fs::remove_file(&pasted).unwrap();
-
-        assert!(worker.was_pasted(&alias));
-        assert!(!worker.was_pasted(&other));
-        assert!(!pasted_here(None, &alias));
-    }
-
-    /// Replacing one name of an entry with another link loses nothing: what
-    /// the paste wrote survives under the other.
-    #[test]
-    fn a_pasted_entry_with_another_link_is_not_guarded() {
-        let fx = crate::test_support::TempDir::new("conflicts_linked");
-        let pasted = fx.join("one");
-        let link = fx.join("link");
-        std::fs::write(&pasted, b"first").unwrap();
-        let conflicts = Conflicts::default();
-        conflicts.record_pasted(EntryId::of_path(&pasted).unwrap());
-
-        std::fs::hard_link(&pasted, &link).unwrap();
-
-        assert!(!conflicts.was_pasted(&link));
-        assert!(!conflicts.was_pasted(&pasted));
+        for &choice in answers {
+            conflicts.stand(choice);
+        }
+        conflicts.skips_raced()
     }
 }

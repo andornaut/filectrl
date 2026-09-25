@@ -302,6 +302,13 @@ impl ActiveTask {
         }
     }
 
+    /// Raises a warning alert about the task while it runs, for something it
+    /// leaves behind that its own outcome does not report.
+    pub fn warn(&self, message: String) {
+        // Err means the receiver was dropped (the app is shutting down).
+        let _ = self.tx.send(Command::AlertWarn(message));
+    }
+
     /// Marks the task as successfully completed. Consumes `self`.
     pub fn done(mut self) {
         self.finalize(Task::done);
@@ -453,6 +460,28 @@ mod tests {
 
     fn progress(completed: u64, total: u64) -> Progress {
         Progress { completed, total }
+    }
+
+    /// A warning while the task runs is a warning alert with the message as
+    /// given, and nothing else.
+    #[test]
+    fn a_warning_is_sent_as_a_warning_alert() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (active, _, _) = ActiveTask::new(
+            tx,
+            TaskKind::Delete {
+                path: String::new(),
+            },
+            1,
+        );
+        while rx.try_recv().is_ok() {}
+
+        active.warn("left behind".to_string());
+
+        assert_eq!(
+            vec![Command::AlertWarn("left behind".to_string())],
+            rx.try_iter().collect::<Vec<_>>()
+        );
     }
 
     #[test]

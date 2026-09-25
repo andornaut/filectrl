@@ -72,12 +72,13 @@ pub(super) fn stream_cd(
                     continue;
                 }
             };
-            match PathInfo::try_from(&path) {
-                Ok(info) => {
+            match listed_entry(&path) {
+                Ok(Some(info)) => {
                     if !batcher.push(info, &send) {
                         return; // channel closed
                     }
                 }
+                Ok(None) => {}
                 Err(error) => {
                     warn!("Failed to read metadata for {}: {error}", path.display());
                     error_count += 1;
@@ -96,6 +97,24 @@ pub(super) fn stream_cd(
         }
         let _ = tx.send(Command::DirectoryListingComplete { generation });
     });
+}
+
+/// The entry a listing found at `path`, or `None` when it is gone by the time
+/// it is read, like `rm -f`: removed between the directory read and this
+/// look, as a paste's staging directory is once the replacement lands. Only
+/// an entry that is there and cannot be read counts as unreadable.
+fn listed_entry(path: &Path) -> Result<Option<PathInfo>> {
+    match PathInfo::try_from(path) {
+        Ok(info) => Ok(Some(info)),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Runs the opener `template` names on `path`. `key` is the `openers` setting
@@ -445,6 +464,33 @@ mod tests {
         // Only NotFound means vanished. Any other errno has to keep its own
         // message, so a permission problem is not reported as a missing file.
         assert!(error.contains("no longer exists"), "{error}");
+    }
+
+    /// An entry gone between the directory read and its look is left out of
+    /// the listing, not counted among the entries that could not be read; one
+    /// that is there but cannot be read still is.
+    #[test]
+    fn a_listed_entry_that_vanished_is_left_out_rather_than_unreadable() {
+        let dir = TempDir::new("ops_listed_vanished");
+        let there = dir.join("there");
+        fs::write(&there, b"x").unwrap();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("inside"), b"x").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = listed_entry(&locked.join("inside"));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            Some(there.clone()),
+            listed_entry(&there).unwrap().map(|info| info.path)
+        );
+        assert!(listed_entry(&dir.join("gone")).unwrap().is_none());
+        if nix::unistd::geteuid().is_root() {
+            eprintln!("skipped: root reads a mode-000 directory");
+        } else {
+            assert!(unreadable.is_err(), "{unreadable:?}");
+        }
     }
 
     #[test_case("/b", "/a", "b"; "a sibling of a top-level entry")]

@@ -675,6 +675,9 @@ mod tests {
     #[test]
     #[ignore = "run under a lowered open-file limit by the test below"]
     fn remove_path_under_a_low_open_file_limit() {
+        if !crate::test_support::alone() {
+            return;
+        }
         let fx = TempDir::new("tasks_delete_deep");
         let root = fx.join("doomed");
         let mut deepest = root.clone();
@@ -701,28 +704,13 @@ mod tests {
 
     /// Holding an fd per level would need 200 here, far over the limit of 64
     /// the tree is deleted under.
-    #[cfg(target_os = "linux")]
     #[test]
     fn remove_path_deletes_a_tree_deeper_than_the_open_file_limit() {
-        let output = std::process::Command::new("sh")
-            .args(["-c", r#"ulimit -Sn 64 && exec "$0" "$@""#])
-            .arg(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "file_system::tasks::remove::tests::remove_path_under_a_low_open_file_limit",
-                "--ignored",
-                "--test-threads=1",
-            ])
-            .output()
-            .unwrap();
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success(),
-            "{stdout}{}",
-            String::from_utf8_lossy(&output.stderr)
+        crate::test_support::run_alone(
+            "file_system::tasks::remove::tests::remove_path_under_a_low_open_file_limit",
+            "ulimit -Sn 64 &&",
+            &[],
         );
-        assert!(stdout.contains("1 passed"), "{stdout}");
     }
 
     #[test]

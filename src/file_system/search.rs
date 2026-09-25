@@ -9,7 +9,7 @@ use std::{
 use log::warn;
 
 use super::{
-    path_info::PathInfo,
+    path_info::{PathInfo, compact},
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
 };
 use crate::command::{Command, progress::CancellationToken};
@@ -52,17 +52,17 @@ fn plural(count: u32, noun: &str) -> String {
     }
 }
 
-/// Sends a warning about the traversal itself, unless a newer search has
-/// already superseded this one: the user would read a late warning as
+/// Sends an alert about the traversal itself, unless a newer search has
+/// already superseded this one: the user would read a late alert as
 /// describing their current search rather than the abandoned one.
 ///
 /// The token is only ever set, never cleared, so a search that observes itself
 /// cancelled here stays cancelled for the rest of its walk.
-fn warn_unless_superseded(tx: &Sender<Command>, cancel: &CancellationToken, message: String) {
+fn alert_unless_superseded(tx: &Sender<Command>, cancel: &CancellationToken, alert: Command) {
     if cancel.is_cancelled() {
         return;
     }
-    let _ = tx.send(Command::AlertWarn(message));
+    let _ = tx.send(alert);
 }
 
 /// The traversal itself, run on the caller's thread.
@@ -101,9 +101,17 @@ fn search(
 
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
+            // A root that cannot be read leaves nothing searched, which the
+            // count of skipped subdirectories would understate.
+            Err(e) if depth == 0 => {
+                let message = format!("Failed to search {}: {e}", compact(&dir));
+                warn!("{message}");
+                alert_unless_superseded(tx, cancel, Command::AlertError(message));
+                continue;
+            }
             Err(e) => {
-                warn!("Search: failed to read directory {}: {e}", dir.display());
-                if counts_as_unreadable(depth, &e) {
+                warn!("Failed to search {}: {e}", compact(&dir));
+                if counts_as_unreadable(&e) {
                     unreadable += 1;
                 }
                 continue;
@@ -124,7 +132,7 @@ fn search(
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    warn!("Search: failed to read entry in {}: {e}", dir.display());
+                    warn!("Failed to search an entry of {}: {e}", compact(&dir));
                     continue;
                 }
             };
@@ -138,10 +146,13 @@ fn search(
                 && let Ok(path_info) = PathInfo::try_from(entry_path.as_path())
             {
                 if result_count >= limits.max_results {
-                    warn_unless_superseded(
+                    alert_unless_superseded(
                         tx,
                         cancel,
-                        format!("Search stopped at {}", plural(limits.max_results, "result")),
+                        Command::AlertWarn(format!(
+                            "Search stopped at {}",
+                            plural(limits.max_results, "result")
+                        )),
                     );
                     warn_unreadable(tx, cancel, unreadable);
                     exit(&mut batcher);
@@ -167,13 +178,13 @@ fn search(
                     // Warn once however many directories are turned away, so a
                     // wide tree cannot bury the listing under repeats.
                     depth_limit_hit = true;
-                    warn_unless_superseded(
+                    alert_unless_superseded(
                         tx,
                         cancel,
-                        format!(
+                        Command::AlertWarn(format!(
                             "Search reached maximum depth of {}; some results may be missing",
                             plural(limits.max_depth, "level")
-                        ),
+                        )),
                     );
                 }
             }
@@ -184,16 +195,14 @@ fn search(
     exit(&mut batcher);
 }
 
-/// Whether a directory the walk failed to read at `depth` counts towards the
-/// unreadable warning. One below the root that was removed, or replaced by a
-/// file, after it was queued hid nothing that still exists there. The root is
-/// always counted: a search of a directory that is gone found nothing at all.
-fn counts_as_unreadable(depth: u32, error: &std::io::Error) -> bool {
-    depth == 0
-        || !matches!(
-            error.kind(),
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-        )
+/// Whether a directory below the root the walk failed to read counts towards
+/// the unreadable warning. One removed, or replaced by a file, after it was
+/// queued hid nothing that still exists there.
+fn counts_as_unreadable(error: &std::io::Error) -> bool {
+    !matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 /// Reports the directories the walk could not read, once when it ends, like
@@ -207,10 +216,12 @@ fn warn_unreadable(tx: &Sender<Command>, cancel: &CancellationToken, unreadable:
     } else {
         format!("{unreadable} directories")
     };
-    warn_unless_superseded(
+    alert_unless_superseded(
         tx,
         cancel,
-        format!("{directories} could not be read; some results may be missing"),
+        Command::AlertWarn(format!(
+            "{directories} could not be read; some results may be missing"
+        )),
     );
 }
 
@@ -459,9 +470,9 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let cancel = CancellationToken::new();
 
-        warn_unless_superseded(&tx, &cancel, "live".to_string());
+        alert_unless_superseded(&tx, &cancel, Command::AlertWarn("live".to_string()));
         cancel.cancel();
-        warn_unless_superseded(&tx, &cancel, "superseded".to_string());
+        alert_unless_superseded(&tx, &cancel, Command::AlertWarn("superseded".to_string()));
         drop(tx);
 
         let commands: Vec<Command> = rx.into_iter().collect();
@@ -471,16 +482,15 @@ mod tests {
 
     /// A directory below the root deleted or replaced after it was queued hides
     /// nothing; any other failure to read one does.
-    #[test_case::test_case(1, ErrorKind::NotFound => false ; "a subdirectory removed")]
-    #[test_case::test_case(1, ErrorKind::NotADirectory => false ; "a subdirectory replaced by a file")]
-    #[test_case::test_case(1, ErrorKind::PermissionDenied => true ; "a subdirectory that is locked")]
-    #[test_case::test_case(0, ErrorKind::NotFound => true ; "the root removed")]
-    fn a_failed_read_counts_as_unreadable(depth: u32, kind: ErrorKind) -> bool {
-        counts_as_unreadable(depth, &std::io::Error::from(kind))
+    #[test_case::test_case(ErrorKind::NotFound => false ; "a subdirectory removed")]
+    #[test_case::test_case(ErrorKind::NotADirectory => false ; "a subdirectory replaced by a file")]
+    #[test_case::test_case(ErrorKind::PermissionDenied => true ; "a subdirectory that is locked")]
+    fn a_failed_read_counts_as_unreadable(kind: ErrorKind) -> bool {
+        counts_as_unreadable(&std::io::Error::from(kind))
     }
 
     /// A search of a directory that is gone, or is not one, found nothing and
-    /// says so.
+    /// says so, naming it, rather than counting it with the subdirectories.
     #[test]
     fn a_root_that_cannot_be_read_is_reported() {
         let root = TempDir::new("search_gone");
@@ -499,12 +509,52 @@ mod tests {
             );
             drop(tx);
             let commands: Vec<Command> = rx.into_iter().collect();
+            let errors: Vec<&String> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    Command::AlertError(message) => Some(message),
+                    _ => None,
+                })
+                .collect();
+            let cause = std::fs::read_dir(&gone).unwrap_err();
             assert_eq!(
-                vec!["1 directory could not be read; some results may be missing".to_string()],
-                warnings(&commands),
+                vec![&format!("Failed to search {}: {cause}", compact(&gone))],
+                errors,
                 "{gone:?}"
             );
+            assert!(warnings(&commands).is_empty(), "{commands:?}");
+            assert_eq!(1, exits(&commands));
         }
+    }
+
+    /// A search cancelled before it starts sends only its exit, whatever its
+    /// root: it reads nothing, so it has nothing to report. The root's own
+    /// failure is checked against a cancel only in the branch after
+    /// `read_dir`, which a cancel before the walk never reaches.
+    #[test]
+    fn a_search_cancelled_before_it_starts_sends_only_its_exit() {
+        let root = TempDir::new("search_gone_superseded");
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let (tx, rx) = mpsc::channel();
+
+        search(
+            &default_limits(),
+            &tx,
+            &cancel,
+            &root.join("missing"),
+            "x",
+            GENERATION,
+        );
+        drop(tx);
+
+        let commands: Vec<Command> = rx.into_iter().collect();
+        assert_eq!(
+            vec![Command::ExitedSearch {
+                generation: GENERATION
+            }],
+            commands
+        );
     }
 
     /// Stopping at the result limit still reports what the walk skipped before

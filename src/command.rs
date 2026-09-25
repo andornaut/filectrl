@@ -76,8 +76,9 @@ pub enum PromptAction {
     /// quitting would end part way through.
     ConfirmQuit(usize),
     /// A paste found `name` already present in the destination directory.
-    /// `can_overwrite` is false when the existing entry is a directory, which
-    /// is never replaced, so the prompt offers only the skip choices.
+    /// `can_overwrite` is false when the existing entry or the source is a
+    /// directory, since a directory is never replaced and never replaces
+    /// anything, so the prompt offers only the skip choices.
     Conflict {
         name: String,
         can_overwrite: bool,

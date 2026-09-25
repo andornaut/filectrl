@@ -14,7 +14,6 @@ mod tasks;
 mod watch;
 
 use std::{
-    collections::HashSet,
     env,
     ffi::OsString,
     fmt::Display,
@@ -29,12 +28,13 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
-    conflicts::{Conflicts, same_name_refusal},
+    conflicts::same_name_refusal,
+    entry_id::Seen,
     operations::{open_in, spawn_argv},
     paste::{PasteStep, PendingPaste},
     path_info::{PathInfo, compact},
     search::Limits,
-    tasks::{CancelInfo, TaskCommand},
+    tasks::{CancelInfo, PasteJob, TaskCommand},
     watch::DirectoryWatcher,
 };
 use crate::{
@@ -95,8 +95,10 @@ pub struct FileSystem {
     open_file_template: String,
     open_filectrl_window_template: String,
     /// The paste awaiting a conflict answer, if any. The only thing that ever
-    /// asks: a worker resolves what it finds from the paste's standing answer
-    /// or records it, so there is never a second prompt to route around.
+    /// asks: a worker replaces nothing but the entry this was told to replace,
+    /// and skips a name taken since this saw it free under the paste's
+    /// standing "skip all" or records it, so there is never a second prompt
+    /// to route around.
     pending_paste: Option<PendingPaste>,
     search_max_depth: u32,
     search_max_results: u32,
@@ -532,12 +534,8 @@ impl FileSystem {
     /// whether it started, together with the alerts it produced (a task that
     /// fails validation produces one and starts nothing). Started tasks send
     /// their initial progress snapshot themselves, before queueing their work.
-    fn run_task(
-        &mut self,
-        task: TaskCommand,
-        conflicts: Option<&Conflicts>,
-    ) -> (bool, Vec<Command>) {
-        let result = task.run(self.command_tx.clone(), conflicts);
+    fn run_task(&mut self, task: TaskCommand) -> (bool, Vec<Command>) {
+        let result = task.run(self.command_tx.clone());
         let started = result.cancel_info.is_some();
         if let Some(cancel_info) = result.cancel_info {
             self.cancellables.push(Cancellable::Task(cancel_info));
@@ -548,15 +546,10 @@ impl FileSystem {
     /// Starts a paste. Sources run one at a time so that a name already taken
     /// in the destination can be answered for before the next source starts.
     fn start_paste(&mut self, is_move: bool, srcs: &[PathInfo], dest: &PathInfo) -> CommandResult {
-        self.pending_paste = Some(PendingPaste {
-            is_move,
-            dest: dest.clone(),
-            remaining: srcs.iter().cloned().collect(),
-            failed: Vec::new(),
-            started: 0,
-            conflicts: Conflicts::default(),
-            claimed: HashSet::new(),
-        });
+        // A paste starts only from a key in the table, which the conflict
+        // prompt captures while it is open, so none is waiting on an answer.
+        debug_assert!(self.pending_paste.is_none(), "a paste is still asking");
+        self.pending_paste = Some(PendingPaste::new(is_move, dest, srcs));
         self.advance_paste()
     }
 
@@ -572,11 +565,15 @@ impl FileSystem {
         while let Some(src) = pending.remaining.front().cloned() {
             if pending.is_claimed(&src) {
                 pending.remaining.pop_front();
-                commands.push(Command::AlertError(claimed_message(&pending, &src)));
+                commands.push(Command::AlertError(same_name_refusal(
+                    pending.is_move,
+                    &src.path,
+                    &pending.dest.path,
+                )));
                 pending.failed.push(src);
                 continue;
             }
-            match pending.step(pending.occupant(&src)) {
+            match pending.meet(&src) {
                 PasteStep::Ask { can_overwrite } => {
                     commands.push(Command::OpenPrompt(PromptAction::Conflict {
                         name: src.display_name.clone(),
@@ -590,9 +587,9 @@ impl FileSystem {
                 PasteStep::Skip => {
                     pending.remaining.pop_front();
                 }
-                PasteStep::Run { overwrite } => {
+                PasteStep::Run { replace } => {
                     pending.remaining.pop_front();
-                    commands.extend(self.run_paste_task(&mut pending, src, overwrite));
+                    commands.extend(self.run_paste_task(&mut pending, src, replace));
                 }
             }
         }
@@ -611,8 +608,8 @@ impl FileSystem {
             return CommandResult::Handled;
         };
         let mut commands = Vec::new();
-        if pending.answer(choice) {
-            commands.extend(self.run_paste_task(&mut pending, src, true));
+        if let Some(granted) = pending.answer(choice) {
+            commands.extend(self.run_paste_task(&mut pending, src, Some(granted)));
         }
         self.pending_paste = Some(pending);
         commands.extend(self.advance_paste().into_commands());
@@ -626,8 +623,9 @@ impl FileSystem {
     ///
     /// Every dismissed prompt arrives here, so a paste is abandoned only when
     /// one is waiting on an answer: dismissing a rename or a filter leaves a
-    /// running paste alone. The standing answer stands, so an `*All` already
-    /// given still covers the sources already handed out.
+    /// running paste alone. The standing answer stands, so a "skip all"
+    /// already given still skips a name the sources already handed out find
+    /// taken.
     fn cancel_paste(&mut self) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::NotHandled;
@@ -640,8 +638,9 @@ impl FileSystem {
             .map_or(CommandResult::NotHandled, Into::into)
     }
 
-    /// Runs one source of a paste, recording whether it started so the
-    /// clipboard follow-up can tell a clean run from a partial one.
+    /// Runs one source of a paste, allowed to replace the entry `overwrite`
+    /// names, recording whether it started so the clipboard follow-up can
+    /// tell a clean run from a partial one.
     ///
     /// The name is claimed only once the task is running: a source that failed
     /// validation writes nothing, so claiming it would make a later source of
@@ -650,14 +649,20 @@ impl FileSystem {
         &mut self,
         pending: &mut PendingPaste,
         src: PathInfo,
-        overwrite: bool,
+        overwrite: Option<Seen>,
     ) -> Vec<Command> {
-        let task = if pending.is_move {
-            TaskCommand::Move(src.clone(), pending.dest.clone(), overwrite)
-        } else {
-            TaskCommand::Copy(src.clone(), pending.dest.clone(), overwrite)
+        let job = PasteJob {
+            conflicts: pending.conflicts.clone(),
+            overwrite,
+            dest: pending.dest.clone(),
+            source: src.clone(),
         };
-        let (started, commands) = self.run_task(task, Some(&pending.conflicts));
+        let task = if pending.is_move {
+            TaskCommand::Move(job)
+        } else {
+            TaskCommand::Copy(job)
+        };
+        let (started, commands) = self.run_task(task);
         if started {
             pending.started += 1;
             pending.claim(&src);
@@ -766,12 +771,6 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
             }
         })
         .collect())
-}
-
-/// The refusal for a source whose destination name an earlier source of the
-/// same paste already took.
-fn claimed_message(pending: &PendingPaste, src: &PathInfo) -> String {
-    same_name_refusal(pending.is_move, &src.path, &pending.dest.path)
 }
 
 /// The mode a chmod of `paths` to `mode_str` sets, or the refusal naming what
@@ -887,18 +886,6 @@ mod tests {
         }
     }
 
-    /// Blocks until a task reports a terminal status, so the worker thread has
-    /// finished with the fixture directory before it is removed.
-    fn await_terminal_task(rx: &std::sync::mpsc::Receiver<Command>) {
-        loop {
-            match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Command::Progress(task)) if task.is_terminal() => return,
-                Ok(_) => {}
-                Err(error) => panic!("task did not finish: {error}"),
-            }
-        }
-    }
-
     /// The conflict prompt in `commands`, or a panic naming what was found.
     fn conflict_prompt(commands: &[Command]) -> (&str, bool) {
         commands
@@ -956,7 +943,7 @@ mod tests {
             "{commands:?}"
         );
         assert_eq!(1, file_system.cancellables.len());
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
     }
 
     #[test]
@@ -984,7 +971,7 @@ mod tests {
             panic!("expected an alert and SetClipboardEntry(Copy), got {commands:?}");
         };
         assert_eq!(&vec![fx.missing.clone()], paths);
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
     }
 
     #[test]
@@ -1032,8 +1019,38 @@ mod tests {
             matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
             "{commands:?}"
         );
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+    }
+
+    /// "Overwrite all" answered at the first collision replaces a later one
+    /// the queue finds without asking: the entry it found there is the one
+    /// its work may replace.
+    #[test]
+    fn overwrite_all_replaces_a_later_collision_without_asking() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_conflict_overwrite_all");
+        fx.occupy("a.txt");
+        fx.occupy("b.txt");
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone(), fx.other.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+        assert_eq!(("a.txt", true), conflict_prompt(&commands));
+
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
+            .into_commands();
+
+        assert_eq!(vec![Command::SetClipboardEntry(None)], commands);
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
     }
 
     #[test]
@@ -1071,9 +1088,13 @@ mod tests {
         let commands = file_system
             .handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite))
             .into_commands();
-        assert!(
-            matches!(commands.first(), Some(Command::AlertError(message)) if message.ends_with("never replaces what holds its name")),
-            "{commands:?}"
+        assert_eq!(
+            Some(&Command::AlertError(format!(
+                "Cannot move {} into {}: a directory never replaces what holds its name",
+                compact(&src_dir),
+                compact(&fx.dest.path)
+            ))),
+            commands.first()
         );
         assert_eq!(
             b"dest".to_vec(),
@@ -1104,7 +1125,7 @@ mod tests {
             matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
             "{commands:?}"
         );
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
     }
@@ -1140,7 +1161,7 @@ mod tests {
             "{commands:?}"
         );
         assert!(file_system.pending_paste.is_none());
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"src".to_vec(), fx.pasted("c.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
@@ -1171,7 +1192,7 @@ mod tests {
             panic!("expected SetClipboardEntry(Copy), got {commands:?}");
         };
         assert_eq!(&vec![fx.other.clone()], paths);
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
     }
 
@@ -1257,10 +1278,37 @@ mod tests {
         let result = file_system.handle_command(&Command::CancelPrompt);
 
         assert!(matches!(result, CommandResult::NotHandled));
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
     }
 
+    /// The refusal of a source whose name folds onto one this paste started.
+    fn same_name(is_move: bool, source: &Path, dest: &Path) -> String {
+        let operation = if is_move { "move" } else { "copy" };
+        format!(
+            "Cannot {operation} {} into {}: another source in this paste already takes that name \
+             there, or one the destination may treat as the same",
+            compact(source),
+            compact(dest)
+        )
+    }
+
+    /// The clipboard entry a paste leaves for `sources`, which it did not
+    /// paste.
+    fn left_over(is_move: bool, sources: Vec<PathInfo>) -> Command {
+        Command::SetClipboardEntry(Some(if is_move {
+            ClipboardEntry::Move(sources)
+        } else {
+            ClipboardEntry::Copy(sources)
+        }))
+    }
+
+    /// The disk already shows what the first source wrote when its twin comes
+    /// up, since the first ran while the prompt was open, and a standing
+    /// "overwrite all" would cover it: the twin is still refused, before
+    /// anything looks at the disk.
     #[test_case(true ; "a cut")]
     #[test_case(false ; "a copy")]
     fn a_second_source_of_a_taken_name_is_refused_whatever_the_standing_answer(is_move: bool) {
@@ -1273,7 +1321,7 @@ mod tests {
         fs::write(elsewhere.join("a.txt"), b"twin").unwrap();
         let twin = PathInfo::try_from(elsewhere.join("a.txt").as_path()).unwrap();
         fx.occupy("b.txt");
-        let srcs = vec![fx.other.clone(), fx.src.clone(), twin.clone()];
+        let srcs = vec![fx.src.clone(), fx.other.clone(), twin.clone()];
         let paste = if is_move {
             Command::Move {
                 srcs,
@@ -1288,86 +1336,260 @@ mod tests {
 
         let commands = file_system.handle_command(&paste).into_commands();
         assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
         let commands = file_system
             .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
             .into_commands();
-        await_terminal_task(&rx);
-        await_terminal_task(&rx);
+        assert_eq!(None, tasks::await_end(&rx).error_message());
 
-        // The standing "overwrite all" covers only what was in the destination
-        // before the paste: the twin would replace the file `src/a.txt` just
-        // put there, which for a cut is its only copy.
-        let operation = if is_move { "move" } else { "copy" };
-        let refusal = format!(
-            "Cannot {operation} {} into {}: another source in this paste has the same name",
-            compact(&twin.path),
-            compact(&fx.dest.path)
+        assert_eq!(
+            vec![
+                Command::AlertError(same_name(is_move, &twin.path, &fx.dest.path)),
+                left_over(is_move, vec![twin.clone()]),
+            ],
+            commands
         );
-        assert!(
-            commands.contains(&Command::AlertError(refusal)),
-            "{commands:?}"
-        );
+        assert_eq!(b"src".to_vec(), fx.pasted("b.txt"));
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
         assert_eq!(b"twin".to_vec(), fs::read(&twin.path).unwrap());
         assert_eq!(is_move, !fx.src.path.exists());
-        // The refused source stays on the clipboard, so it can be pasted
-        // somewhere else.
-        let entry = if is_move {
-            ClipboardEntry::Move(vec![twin])
-        } else {
-            ClipboardEntry::Copy(vec![twin])
-        };
-        assert_eq!(
-            Some(&Command::SetClipboardEntry(Some(entry))),
-            commands.last()
-        );
     }
 
-    /// A name the disk shows holding what an earlier source of the paste wrote
-    /// is refused like a repeated name, not asked about: on a filesystem that
-    /// folds case, `A.txt` and `a.txt` are one entry. A second link, then the
-    /// first name removed, reproduces that on any filesystem.
+    /// A source skipped at its prompt takes no name, so a later source of
+    /// the same name is asked about in turn rather than refused.
     #[test]
-    fn a_name_holding_what_the_paste_wrote_is_refused_without_asking() {
+    fn a_skipped_source_leaves_its_name_for_a_twin_to_be_asked_about() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_pasted_alias");
+        let fx = CopyFixture::new("fs_skipped_twin");
         let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
-        fs::write(elsewhere.join("c.txt"), b"twin").unwrap();
-        let twin = PathInfo::try_from(elsewhere.join("c.txt").as_path()).unwrap();
-        // Holds the queue at `b.txt` while `a.txt` is pasted.
+        fs::write(elsewhere.join("b.txt"), b"twin").unwrap();
+        let twin = PathInfo::try_from(elsewhere.join("b.txt").as_path()).unwrap();
         fx.occupy("b.txt");
 
         let commands = file_system
             .handle_command(&Command::Copy {
-                srcs: vec![fx.src.clone(), fx.other.clone(), twin.clone()],
+                srcs: vec![fx.other.clone(), twin.clone()],
                 dest: fx.dest.clone(),
             })
             .into_commands();
         assert_eq!(("b.txt", true), conflict_prompt(&commands));
-        await_terminal_task(&rx);
-        let dest = &fx.dest.path;
-        fs::hard_link(dest.join("a.txt"), dest.join("c.txt")).unwrap();
-        fs::remove_file(dest.join("a.txt")).unwrap();
         let commands = file_system
             .handle_command(&Command::ResolveConflict(ConflictChoice::Skip))
             .into_commands();
 
-        let refusal = format!(
-            "Cannot copy {} into {}: another source in this paste has the same name",
-            compact(&twin.path),
-            compact(dest)
+        assert_eq!(
+            vec![Command::OpenPrompt(PromptAction::Conflict {
+                name: "b.txt".to_string(),
+                can_overwrite: true,
+            })],
+            commands
         );
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::Skip))
+            .into_commands();
+        assert_eq!(Vec::<Command>::new(), commands);
+        assert_eq!(b"twin".to_vec(), fs::read(&twin.path).unwrap());
+    }
+
+    /// The entry the prompt asked about is the only one an "overwrite" answer
+    /// allows replacing: another that took its place while the prompt was
+    /// open is left alone, and so is the source.
+    #[test_case(true ; "a cut")]
+    #[test_case(false ; "a copy")]
+    fn an_entry_replaced_while_the_prompt_was_open_is_never_replaced(is_move: bool) {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_prompt_changed");
+        fx.occupy("a.txt");
+        let paste = if is_move {
+            Command::Move {
+                srcs: vec![fx.src.clone()],
+                dest: fx.dest.clone(),
+            }
+        } else {
+            Command::Copy {
+                srcs: vec![fx.src.clone()],
+                dest: fx.dest.clone(),
+            }
+        };
+        let commands = file_system.handle_command(&paste).into_commands();
+        assert_eq!(("a.txt", true), conflict_prompt(&commands));
+        let new = fx.dest.path.join("a.txt");
+        // Kept under another name, so the one written next cannot reuse its
+        // inode number.
+        fs::rename(&new, fx.dest.path.join("kept")).unwrap();
+        fs::write(&new, b"since").unwrap();
+
+        file_system.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
+
+        let verb = if is_move { "move" } else { "copy" };
+        assert_eq!(
+            Some(format!(
+                "Cannot {verb} {} to {}: the entry there changed after the paste checked it",
+                compact(&fx.src.path),
+                compact(&new)
+            )),
+            tasks::await_end(&rx).error_message()
+        );
+        assert_eq!(b"since".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
+    }
+
+    /// A source skipped by a standing "skip all" writes nothing, so it claims
+    /// no name: a later source of that name meets the entry that is really
+    /// there, and is skipped too, rather than refused as a twin.
+    #[test]
+    fn a_skipped_source_claims_no_name() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_skipped_claims_nothing");
+        let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("a.txt"), b"twin").unwrap();
+        let twin = PathInfo::try_from(elsewhere.join("a.txt").as_path()).unwrap();
+        fx.occupy("a.txt");
+        fx.occupy("b.txt");
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.other.clone(), fx.src.clone(), twin],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+        assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        let commands = file_system
+            .handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll))
+            .into_commands();
+
+        // Nothing started, so nothing is reported and the clipboard is left
+        // as it was.
+        assert_eq!(Vec::<Command>::new(), commands);
+        assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
+    }
+
+    /// A standing "skip all" given at a prompt also reaches a source the queue
+    /// handed to the worker before it, whose name was free then and is taken
+    /// by the time it runs: the paste's own answer travels with its work.
+    #[test]
+    fn a_standing_skip_all_reaches_a_source_already_handed_out() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_skip_all_reaches");
+        fx.occupy("b.txt");
+
+        let gate = tasks::hold_worker();
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![fx.src.clone(), fx.other.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+        assert_eq!(("b.txt", true), conflict_prompt(&commands));
+        fs::write(fx.dest.path.join("a.txt"), b"raced").unwrap();
+        file_system.handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll));
+        drop(gate);
+
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+        assert_eq!(b"raced".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
+    }
+
+    /// A source whose name differs from a started one only in case, Unicode
+    /// normalization, or a trailing dot is refused before it starts, without a
+    /// prompt, and stays on the clipboard: a destination that folds names
+    /// would give the two one entry, and nothing on disk can tell before the
+    /// first has run. Refused on a filesystem that keeps them apart as well.
+    /// The two sources sit in different directories, which every filesystem
+    /// can hold.
+    #[test_case(true, "Notes.txt", "notes.txt" ; "a cut, differing in case")]
+    #[test_case(false, "Notes.txt", "notes.txt" ; "a copy, differing in case")]
+    #[test_case(false, "Notes.txt", "Notes.txt." ; "a trailing dot")]
+    #[test_case(false, "Caf\u{e9}.txt", "Cafe\u{301}.txt" ; "precomposed and decomposed")]
+    fn a_source_whose_name_folds_onto_a_started_one_is_refused(
+        is_move: bool,
+        first_name: &str,
+        second_name: &str,
+    ) {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_folded_twin");
+        let root = fx.dest.path.parent().expect("a parent");
+        let (one, two) = (root.join("one"), root.join("two"));
+        fs::create_dir_all(&one).unwrap();
+        fs::create_dir_all(&two).unwrap();
+        fs::write(one.join(first_name), b"first").unwrap();
+        fs::write(two.join(second_name), b"second").unwrap();
+        let first = PathInfo::try_from(one.join(first_name).as_path()).unwrap();
+        let second = PathInfo::try_from(two.join(second_name).as_path()).unwrap();
+        let srcs = vec![first.clone(), second.clone()];
+        let dest = fx.dest.clone();
+        let paste = if is_move {
+            Command::Move { srcs, dest }
+        } else {
+            Command::Copy { srcs, dest }
+        };
+
+        let commands = file_system.handle_command(&paste).into_commands();
+        tasks::await_end(&rx);
+
         assert_eq!(
             vec![
-                Command::AlertError(refusal),
-                Command::SetClipboardEntry(Some(ClipboardEntry::Copy(vec![twin]))),
+                Command::AlertError(same_name(is_move, &second.path, &fx.dest.path)),
+                left_over(is_move, vec![second.clone()]),
             ],
             commands
         );
-        assert_eq!(b"src".to_vec(), fs::read(dest.join("c.txt")).unwrap());
+        let names: Vec<_> = fs::read_dir(&fx.dest.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(vec![std::ffi::OsString::from(first_name)], names);
+        assert_eq!(b"first".to_vec(), fx.pasted(first_name));
+        assert_eq!(b"second".to_vec(), fs::read(&second.path).unwrap());
+        assert_eq!(is_move, !first.path.exists());
+    }
+
+    /// A directory whose name folds onto a file started earlier is refused the
+    /// same way: on a destination that folds names, the two would be one
+    /// entry.
+    #[test]
+    fn a_directory_whose_name_folds_onto_a_started_file_is_refused() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+        let fx = CopyFixture::new("fs_folded_directory");
+        let root = fx.dest.path.parent().expect("a parent");
+        let (one, two) = (root.join("one"), root.join("two"));
+        fs::create_dir_all(&one).unwrap();
+        fs::create_dir_all(two.join("NOTES")).unwrap();
+        fs::write(one.join("notes"), b"first").unwrap();
+        let file = PathInfo::try_from(one.join("notes").as_path()).unwrap();
+        let directory = PathInfo::try_from(two.join("NOTES").as_path()).unwrap();
+
+        let commands = file_system
+            .handle_command(&Command::Copy {
+                srcs: vec![file, directory.clone()],
+                dest: fx.dest.clone(),
+            })
+            .into_commands();
+        tasks::await_end(&rx);
+
+        assert_eq!(
+            vec![
+                Command::AlertError(same_name(false, &directory.path, &fx.dest.path)),
+                left_over(false, vec![directory]),
+            ],
+            commands
+        );
+        assert_eq!(b"first".to_vec(), fx.pasted("notes"));
     }
 
     #[test]
@@ -1400,7 +1622,7 @@ mod tests {
             )),
             "unexpected conflict prompt: {commands:?}"
         );
-        await_terminal_task(&rx);
+        tasks::await_end(&rx);
         assert_eq!(b"twin".to_vec(), fx.pasted("missing.txt"));
     }
 

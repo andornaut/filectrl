@@ -43,7 +43,7 @@ impl CommandHandler for FileSystem {
             Command::Delete(paths) => {
                 let mut commands = Vec::new();
                 for path in paths {
-                    let (_, task_commands) = self.run_task(TaskCommand::Delete(path.clone()), None);
+                    let (_, task_commands) = self.run_task(TaskCommand::Delete(path.clone()));
                     commands.extend(task_commands);
                 }
                 commands.into()

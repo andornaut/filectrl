@@ -69,9 +69,9 @@ impl CommandHandler for PromptView {
         }
 
         // Paste conflict: single keypress, uppercase answering for the rest of
-        // the batch too. Overwrite is only bound when the existing entry is not
-        // a directory, so an unbound key cancels the paste rather than falling
-        // through to a choice the prompt did not offer.
+        // the batch too. Overwrite is offered only when neither side is a
+        // directory; `o` and `O` where it is not offered are ignored, and any
+        // other key abandons the paste.
         if let PromptAction::Conflict { can_overwrite, .. } = self.actions {
             // Shift is what produces the uppercase "all" choices, so it is the
             // only modifier the offered keys carry. A chord like Ctrl+O is a
