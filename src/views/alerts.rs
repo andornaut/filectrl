@@ -54,6 +54,9 @@ pub(super) struct AlertsView {
     area: Rect,
     hint: String,
     next_seq: u64,
+    /// Every alert numbered below this was on screen at the last frame that
+    /// drew the pane: help, the picker and a terminal too small hide it.
+    shown_to: u64,
 }
 
 impl AlertsView {
@@ -67,6 +70,7 @@ impl AlertsView {
             area: Rect::default(),
             hint,
             next_seq: 0,
+            shown_to: 0,
         }
     }
 }
@@ -96,15 +100,23 @@ impl AlertsView {
         self.next_seq
     }
 
-    /// Removes the info and warning alerts raised before `mark`, which a
-    /// claimed key has now followed: they have been on screen, and the user
-    /// has moved on. Errors stay until cleared.
+    /// Removes the info and warning alerts raised before `mark` that the pane
+    /// has drawn, which a claimed key has now followed: the user has seen them
+    /// and moved on. One raised while the pane was hidden stays until a key
+    /// follows its first frame on screen. Errors stay until cleared.
     pub(super) fn expire_before(&mut self, mark: u64) {
+        let seen = mark.min(self.shown_to);
         self.alerts
-            .retain(|(kind, _, seq)| *kind == AlertKind::Error || *seq >= mark);
+            .retain(|(kind, _, seq)| *kind == AlertKind::Error || *seq >= seen);
     }
 
-    fn clear_alerts(&mut self) -> CommandResult {
+    #[cfg(test)]
+    pub(super) fn alert_count(&self) -> usize {
+        self.alerts.len()
+    }
+
+    /// Clears every alert, errors included.
+    pub(super) fn clear_alerts(&mut self) -> CommandResult {
         self.alerts.clear();
         CommandResult::Handled
     }
@@ -157,7 +169,6 @@ impl CommandHandler for AlertsView {
             Command::AlertInfo(message) => self.add_alert(AlertKind::Info, message.clone()),
             Command::AlertWarn(message) => self.add_alert(AlertKind::Warn, message.clone()),
             Command::AlertError(message) => self.add_alert(AlertKind::Error, message.clone()),
-            Command::ResetView => self.clear_alerts(),
             _ => CommandResult::NotHandled,
         }
     }
@@ -190,6 +201,7 @@ impl View for AlertsView {
         if !self.should_show(area) {
             return;
         }
+        self.shown_to = self.next_seq;
 
         let style = theme.alert.base();
         let inner_area = if Self::has_border(area) {
@@ -330,6 +342,7 @@ mod tests {
         v.add_alert(AlertKind::Warn, "earlier warning".into());
         v.add_alert(AlertKind::Error, "earlier error".into());
         let mark = v.mark();
+        v.shown_to = mark;
         v.add_alert(AlertKind::Info, "raised by the key".into());
 
         v.expire_before(mark);
@@ -338,15 +351,28 @@ mod tests {
         assert_eq!(vec!["raised by the key", "earlier error"], left);
     }
 
+    /// A notice click resets the view too, but only Esc clears the alerts,
+    /// so an unread error survives dropping the clipboard entry.
     #[test]
-    fn a_reset_clears_every_alert_errors_included() {
+    fn a_reset_command_leaves_the_alerts() {
         let mut v = view();
-        v.add_alert(AlertKind::Info, "info".into());
         v.add_alert(AlertKind::Error, "boom".into());
 
         v.handle_command(&Command::ResetView);
 
-        assert!(v.alerts.is_empty());
+        assert_eq!(1, v.alerts.len());
+    }
+
+    /// An alert the pane never drew survives a claimed key.
+    #[test]
+    fn an_alert_never_drawn_does_not_expire() {
+        let mut v = view();
+        v.add_alert(AlertKind::Info, "hidden".into());
+        let mark = v.mark();
+
+        v.expire_before(mark);
+
+        assert_eq!(1, v.alerts.len());
     }
 
     #[test]

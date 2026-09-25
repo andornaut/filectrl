@@ -97,7 +97,12 @@ impl CommandHandler for Handlers {
                 0 => Command::Quit.into(),
                 tasks => Command::OpenPrompt(PromptAction::ConfirmQuit(tasks)).into(),
             },
-            Some(Action::ResetView) => Command::ResetView.into(),
+            // Esc clears every alert, errors included; a reset from a notice
+            // click reaches only the views, so an unread error survives it.
+            Some(Action::ResetView) => {
+                self.root.clear_alerts();
+                Command::ResetView.into()
+            }
             _ => CommandResult::NotHandled,
         }
     }
@@ -237,6 +242,26 @@ mod tests {
         crate::app::broadcast_command(&mut handlers, key('y')).unwrap();
 
         assert_eq!(crate::command::InputMode::Normal, handlers.root.mode());
+    }
+
+    /// Esc clears every alert, errors included; a reset a notice click sends
+    /// clears the view it resets but leaves an unread error.
+    #[test]
+    fn only_esc_clears_the_alerts() {
+        let fixture = Fixture::new();
+        let mut handlers = handlers(&fixture);
+        let error = Command::AlertError("boom".into());
+
+        crate::app::broadcast_command(&mut handlers, error.clone()).unwrap();
+        crate::app::broadcast_command(&mut handlers, Command::ResetView).unwrap();
+        assert_eq!(1, handlers.root.alert_count(), "a notice click");
+
+        crate::app::broadcast_command(
+            &mut handlers,
+            Command::Key(KeyCode::Esc, KeyModifiers::NONE),
+        )
+        .unwrap();
+        assert_eq!(0, handlers.root.alert_count(), "Esc");
     }
 
     /// A paste consumes the clipboard whoever wrote it: once a paste of an

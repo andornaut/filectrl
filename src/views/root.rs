@@ -128,6 +128,17 @@ impl RootView {
         self.alerts.expire_before(mark);
     }
 
+    /// Clears every alert, errors included: what Esc does to them. A reset
+    /// from a notice click does not reach here.
+    pub fn clear_alerts(&mut self) {
+        let _ = self.alerts.clear_alerts();
+    }
+
+    #[cfg(test)]
+    pub fn alert_count(&self) -> usize {
+        self.alerts.alert_count()
+    }
+
     fn views(&mut self) -> Vec<&mut dyn View> {
         // The order is significant for layout
         if self.is_help_visible {
@@ -383,6 +394,39 @@ mod tests {
         terminal
             .draw(|frame| root.render(Config::global().theme(), frame.area(), frame))
             .unwrap();
+    }
+
+    /// An alert raised while help covers the pane, or while the terminal is
+    /// too small to draw it, survives the key that uncovers it and expires on
+    /// the first claimed key after it has been drawn.
+    #[test_case(true ; "under help")]
+    #[test_case(false ; "while the terminal is too small")]
+    fn an_alert_raised_while_hidden_expires_only_once_drawn(under_help: bool) {
+        let mut root = view();
+        render(&mut root, 80, 24);
+        if under_help {
+            root.is_help_visible = true;
+            render(&mut root, 80, 24);
+        } else {
+            render(&mut root, 10, 4);
+        }
+        root.alerts
+            .handle_command(&Command::AlertInfo("hidden".into()));
+        if under_help {
+            render(&mut root, 80, 24);
+        } else {
+            render(&mut root, 10, 4);
+        }
+
+        let mark = root.alerts_mark();
+        root.is_help_visible = false;
+        root.expire_alerts_before(mark);
+        assert_eq!(1, root.alerts.alert_count(), "not yet drawn");
+
+        render(&mut root, 80, 24);
+        let mark = root.alerts_mark();
+        root.expire_alerts_before(mark);
+        assert_eq!(0, root.alerts.alert_count(), "drawn, then a key followed");
     }
 
     /// Under the "Resize window" message nothing is drawn, so a click on it
