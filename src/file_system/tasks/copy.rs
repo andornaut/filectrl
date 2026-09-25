@@ -3051,14 +3051,16 @@ mod tests {
         if entry {
             fs::write(theirs.join("one"), b"keep").unwrap();
         }
-        fs::set_permissions(&theirs, fs::Permissions::from_mode(mode)).unwrap();
         // Past any timestamp granularity, then a change to the parent, so
         // the floor is later than `theirs` was born.
         thread::sleep(Duration::from_millis(20));
         fs::write(fx.join("later"), b"").unwrap();
         let floor = changed(&fstat(&parent).unwrap());
         fs::create_dir(fx.join("s")).unwrap();
+        // Renamed before its mode is set: macOS refuses to rename a directory
+        // its owner cannot write.
         fs::rename(&theirs, fx.join("s")).unwrap();
+        fs::set_permissions(fx.join("s"), fs::Permissions::from_mode(mode)).unwrap();
 
         let error = Staging::adopt(
             &parent,
@@ -3070,7 +3072,17 @@ mod tests {
         .err()
         .expect("the swapped directory is refused");
 
-        assert!(StagingReplaced::is(&error), "{error}");
+        // Only Linux can hold a directory its owner cannot read to look
+        // inside it; elsewhere it is refused as unreadable.
+        if cfg!(target_os = "linux") || mode & 0o500 == 0o500 {
+            assert!(StagingReplaced::is(&error), "{error}");
+        } else {
+            assert_eq!(
+                Some(nix::errno::Errno::EACCES as i32),
+                error.raw_os_error(),
+                "{error}"
+            );
+        }
         if !entry {
             assert!(fs::symlink_metadata(fx.join("s")).is_err());
             return (fx, error);
