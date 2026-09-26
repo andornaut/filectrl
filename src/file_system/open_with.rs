@@ -115,7 +115,7 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
     }
     Some(AppCandidate {
         argv: shell::command(template, [path.as_os_str().to_os_string()]),
-        detail: format!("openers.{key}"),
+        detail: opener_setting(key),
         is_default: false,
         name: shown_name(template),
         setting: Some(key),

@@ -54,7 +54,7 @@ sort_directories_first = true
 natural_sort = true
 # Whether colors from the $LS_COLORS environment variable (if set) are applied
 # on top of the theme's file type colors
-ls_colors_take_precedence = false
+use_ls_colors = false
 
 # Keybindings for normal mode and prompt mode.
 # Arrow keys, Home/End, PageUp/PageDown, and Esc are always hardcoded.
@@ -66,7 +66,6 @@ ls_colors_take_precedence = false
 [keybindings]
 # Normal mode
 add_bookmark = "B"
-back = ["h", "b", "Backspace"]
 cancel_task = "K"
 chmod = "P"
 clear_alerts = "Ctrl+l"
@@ -75,16 +74,17 @@ copy = ["y", "Ctrl+c"]
 create_directory = "c"
 cut = ["x", "Ctrl+x"]
 delete = ["d", "Delete"]
-edit = "e"
 filter = ["f", "\\"]
 go_home = "~"
+go_to_parent_directory = ["h", "b", "Backspace"]
 go_to_previous_directory = "-"
 goto = [":", "Tab"]
 open = ["l", "Enter"]
 open_current_directory = "t"
+open_in_editor = "e"
+open_in_pager = "i"
 open_new_window = "w"
 open_with = "o"
-page = "i"
 page_down = ["Ctrl+d", "Ctrl+f"]
 page_up = ["Ctrl+u", "Ctrl+b"]
 paste = ["p", "Ctrl+v"]

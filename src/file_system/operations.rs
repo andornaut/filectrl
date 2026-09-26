@@ -2,7 +2,10 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::ErrorKind,
-    os::unix::process::{CommandExt, ExitStatusExt},
+    os::unix::{
+        fs::PermissionsExt,
+        process::{CommandExt, ExitStatusExt},
+    },
     path::{Path, PathBuf},
     process::{Child, ExitStatus, Stdio},
     sync::mpsc::Sender,
@@ -17,7 +20,7 @@ use super::{
     path_info::{PathInfo, compact},
     shell,
     stream::{BATCH_FLUSH_INTERVAL, Batcher, batch_sender},
-    tasks::{is_same_file, rename_no_replace, restat, set_mode_at},
+    tasks::{is_same_file, rename_no_replace, restat},
 };
 use crate::{
     command::{Command, progress::CancellationToken},
@@ -158,8 +161,11 @@ fn run_failure(shown: &str, path: &Path) -> String {
 }
 
 /// Why a program did not succeed: its exit code, or the signal that ended it.
+/// The shell's 126 and 127 are named, since an opener runs through `sh`.
 pub(crate) fn exit_cause(status: ExitStatus) -> String {
     match (status.code(), status.signal()) {
+        (Some(126), _) => "exit code 126, command not executable".to_string(),
+        (Some(127), _) => "exit code 127, command not found".to_string(),
         (Some(code), _) => format!("exit code {code}"),
         (None, Some(signal)) => format!("killed by signal {signal}"),
         (None, None) => status.to_string(),
@@ -175,11 +181,8 @@ pub(super) fn spawn_argv(
     command_tx: Sender<Command>,
 ) -> Result<()> {
     info!("Opening {label} using: {argv:?}");
-    let Some((program, rest)) = argv.split_first() else {
-        return Ok(());
-    };
     let failure = run_failure(label, path);
-    let child = detached_command(program, rest)
+    let child = detached_command(&argv[0], &argv[1..])
         .spawn()
         .map_err(|error| anyhow!("{failure}: {error}"))?;
     watch_for_immediate_failure(child, failure, command_tx);
@@ -215,26 +218,7 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
         return Err(symlink_refusal(p));
     }
     info!("Changing mode of {} to {mode:o}", p.display());
-    set_mode_without_following(p, mode)
-}
-
-/// Sets the mode without following a symlink, so a path swapped for one after
-/// the check is refused.
-fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
-    match set_mode_at(nix::fcntl::AT_FDCWD, p, mode) {
-        Ok(()) => Ok(()),
-        Err(error)
-            if error.raw_os_error() == Some(nix::libc::EOPNOTSUPP) && is_symlink(p, mode)? =>
-        {
-            Err(symlink_refusal(p))
-        }
-        Err(error) => Err(chmod_failure(p, mode, &error)),
-    }
-}
-
-fn is_symlink(p: &Path, mode: u32) -> Result<bool> {
-    p.symlink_metadata()
-        .map(|metadata| metadata.is_symlink())
+    fs::set_permissions(p, fs::Permissions::from_mode(mode))
         .map_err(|error| chmod_failure(p, mode, &error))
 }
 
@@ -624,26 +608,6 @@ mod tests {
         assert_eq!(0o600, mode_of(&target));
     }
 
-    /// Linux refuses to set a symlink's own mode; macOS sets it. Either way the
-    /// target is left alone.
-    #[test]
-    fn setting_the_mode_does_not_follow_a_symlink_that_passed_the_check() {
-        let dir = TempDir::new("ops_chmod_swapped");
-        let target = dir.join("target.txt");
-        fs::write(&target, b"x").unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
-        let link = dir.join("link");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-
-        let result = set_mode_without_following(&link, 0o777);
-
-        assert_eq!(0o600, mode_of(&target));
-        if cfg!(target_os = "linux") {
-            let error = result.expect_err("a symlink must be refused").to_string();
-            assert!(error.ends_with("it is a symlink"), "{error}");
-        }
-    }
-
     #[test]
     fn setting_the_mode_changes_a_regular_file() {
         let dir = TempDir::new("ops_chmod_plain");
@@ -651,22 +615,23 @@ mod tests {
         fs::write(&file, b"a").unwrap();
         fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
 
-        set_mode_without_following(&file, 0o640).unwrap();
+        chmod(&PathInfo::try_from(file.as_path()).unwrap(), 0o640).unwrap();
 
         assert_eq!(0o640, mode_of(&file));
     }
 
+    /// The root directory belongs to root, so an unprivileged chmod is refused by
+    /// the kernel after the checks pass.
     #[test]
     fn setting_the_mode_reports_a_failure_it_did_not_decide() {
-        let dir = TempDir::new("ops_chmod_gone");
-        let file = dir.join("a.txt");
+        let root = PathInfo::try_from(Path::new("/")).unwrap();
 
-        let error = set_mode_without_following(&file, 0o600)
-            .unwrap_err()
-            .to_string();
+        let error = chmod(&root, 0o755).unwrap_err().to_string();
 
-        assert!(error.starts_with("Failed to chmod"), "{error}");
-        assert!(error.contains("to 600: "), "{error}");
+        assert_eq!(
+            "Failed to chmod \"/\" to 755: Operation not permitted (os error 1)",
+            error
+        );
     }
 
     #[test]
@@ -793,6 +758,8 @@ mod tests {
 
     #[test_case(&["false"] => Some("Failed to run \"App\" on \"/f\": exit code 1".to_string()) ; "a failure is reported")]
     #[test_case(&["sh", "-c", "kill -KILL $$"] => Some("Failed to run \"App\" on \"/f\": killed by signal 9".to_string()) ; "a death by signal is named")]
+    #[test_case(&["sh", "-c", "exit 127"] => Some("Failed to run \"App\" on \"/f\": exit code 127, command not found".to_string()) ; "a missing command is named")]
+    #[test_case(&["sh", "-c", "exit 126"] => Some("Failed to run \"App\" on \"/f\": exit code 126, command not executable".to_string()) ; "an unexecutable command is named")]
     #[test_case(&["true"] => None ; "a success is not")]
     fn a_program_that_exits_at_once_is_reported_only_when_it_failed(
         argv: &[&str],

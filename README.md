@@ -202,7 +202,7 @@ Permissions and times, moves across filesystems, and the edge cases above are de
 
 ### Chmod
 
-Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than having its target changed. Setting a mode without following links needs glibc 2.32 or newer with `/proc` mounted, or glibc 2.39 or newer on Linux 6.6 or newer; otherwise (an old distribution, or a container without `/proc`), chmod fails with "Operation not supported".
+Chmod (<kbd>P</kbd>) refuses a symlink rather than changing its target.
 
 ### Entries that change after they are listed
 
@@ -278,6 +278,7 @@ The built-in [default configuration](./src/app/config/default_config.toml) is al
 `filectrl --print-default-config` prints the defaults to redirect into a file. It prints the configuration keys only; `--print-default-theme` prints the theme keys:
 
 ```bash
+mkdir -p ~/.config/filectrl
 filectrl --print-default-config > ~/.config/filectrl/config.toml
 ```
 
@@ -402,11 +403,11 @@ Section | Description
 
 #### LS_COLORS integration
 
-Off by default. With `ls_colors_take_precedence` in `[ui]`, colors from `$LS_COLORS` are applied on top of both themes' file type colors, whichever theme is included, including patterns such as `*.tar=01;31`. A pattern matches the end of the whole name as `ls` does: `*.gitignore` colors the dotfile `.gitignore`, case is ignored unless the same pattern is listed in two cases, and the last listed match wins. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key. A reset clears the colors and attributes before it, so `31;00` renders plain too.
+Off by default. With `use_ls_colors` in `[ui]`, colors from `$LS_COLORS` are applied on top of both themes' file type colors, whichever theme is included, including patterns such as `*.tar=01;31`. A pattern matches the end of the whole name as `ls` does: `*.gitignore` colors the dotfile `.gitignore`, case is ignored unless the same pattern is listed in two cases, and the last listed match wins. An explicit reset (a value of exactly `00`, `0`, or nothing, as in `di=00` or `*.txt=`) renders those entries plain, as `ls` does, except for the keys `ls` only consults while they are colored: `ow`, `st`, `tw`, `su`, `sg`, `ex` and `or` reset that way are skipped, so the entry takes the next rule's color (`ow=00` shows other-writable directories in the `di` color). Other values made only of reset codes, such as `0;00`, count as a color and render plain for every key. A reset clears the colors and attributes before it, so `31;00` renders plain too.
 
 ```toml
 [ui]
-ls_colors_take_precedence = true
+use_ls_colors = true
 ```
 
 #### External theme files
@@ -424,6 +425,7 @@ include_files = ["theme.toml"]
 Export the default theme, then edit it:
 
 ```bash
+mkdir -p ~/.config/filectrl
 filectrl --print-default-theme > ~/.config/filectrl/solarized.toml
 ```
 
@@ -518,7 +520,7 @@ Delete | There is no trash and no undo: a delete is permanent.
 Delete | A large delete shows 0% while it counts the entries to remove.
 Delete, copy | A tree that contains a bind mount of one of its own ancestors is walked until paths grow too long, and a delete through it removes files in that ancestor.
 All operations | Rename, chmod, delete, copy and cut act on whatever the path names when they run, not on the entry as it was listed.
-Chmod | Applies only to the selected entries, never recursively. A symlink is refused. On Linux, needs glibc 2.32 or newer with `/proc` mounted, or glibc 2.39 or newer on Linux 6.6 or newer.
+Chmod | Applies only to the selected entries, never recursively. A symlink is refused.
 Copy | Copies like `cp -R` without `-p`: the umask applies, setuid, setgid and sticky bits are dropped, and no times are kept.
 Paste | Directories are never merged, and a directory never replaces or is replaced by another entry.
 Paste | Overwrite replaces whatever holds the name when that entry is pasted, like `cp -f` and `mv -f`.

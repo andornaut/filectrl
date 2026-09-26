@@ -37,9 +37,7 @@ impl CommandHandler for Handlers {
                 })
                 .into(),
                 Ok(None) => nothing_to_paste(self.clipboard.is_available()).into(),
-                Err(error) => {
-                    Command::AlertWarn(format!("Failed to read the clipboard: {error:#}")).into()
-                }
+                Err(error) => Command::AlertWarn(format!("{error:#}")).into(),
             },
             // A paste consumes the entry even when another window wrote it.
             Command::Copy { srcs, .. } => {
@@ -265,6 +263,25 @@ mod tests {
             )),
             handlers.handle_command(&Command::Paste(fixture.directory()))
         );
+    }
+
+    /// The clipboard was read; what it names is the problem.
+    #[test]
+    fn a_paste_of_an_entry_whose_path_is_gone_names_the_path() {
+        let fixture = TempDir::new("handler");
+        let mut handlers = handlers(&fixture);
+        let file = fixture.file("file.txt", 1);
+        handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
+            vec![file.clone()],
+        ))));
+        std::fs::remove_file(&file.path).unwrap();
+
+        let Ok(Command::AlertWarn(message)) =
+            Command::try_from(handlers.handle_command(&Command::Paste(fixture.directory())))
+        else {
+            panic!("expected a warning");
+        };
+        assert!(message.starts_with("Failed to access "), "{message}");
     }
 
     #[test_case(&Command::ResetView ; "resetting the view")]

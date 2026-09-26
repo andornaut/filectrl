@@ -13,6 +13,7 @@ use std::{
     fs,
     io::{IsTerminal, Write, stdout},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -20,6 +21,10 @@ use env_logger::{Builder, DEFAULT_FILTER_ENV, Env};
 use log::{LevelFilter, info};
 
 use self::file_system::path_info::quoted;
+
+/// The floor shared by every recurring UI timer: a shorter interval spends a
+/// wakeup on a redraw no one perceives.
+pub(crate) const UI_TIMER_FLOOR: Duration = Duration::from_millis(100);
 
 use self::app::{
     App,
@@ -78,16 +83,13 @@ pub fn run(
     App::new(terminal).run(initial_directory)
 }
 
-pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: &[PathBuf]) -> Result<()> {
+/// The configured keybindings as `--print-keybindings` shows them, bold when
+/// standard output is a terminal.
+pub fn keybindings_text(config_path: Option<PathBuf>, include_paths: &[PathBuf]) -> Result<String> {
     configure_logging();
     let config = Config::load(RuntimeEnv::default(), config_path, include_paths)?;
-    let bold = std::io::stdout().is_terminal();
-    let text = views::keybindings_help_text(&config.keybindings, bold);
-    // `print!` panics on a failed write, which `panic = "abort"` makes an abort.
-    let mut out = stdout().lock();
-    out.write_all(text.as_bytes())
-        .and_then(|()| out.flush())
-        .context("Failed to write to standard output")
+    let bold = stdout().is_terminal();
+    Ok(views::keybindings_help_text(&config.keybindings, bold))
 }
 
 fn validate_initial_directory(path: &Path) -> Result<PathBuf> {

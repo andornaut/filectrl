@@ -85,7 +85,7 @@ impl Clipboard {
             .take_if(|written| written.entry.is_some())
             .map(|written| written.text);
         for text in owned.iter().chain(adopted.iter()) {
-            if should_clear(text, || backend.get_string().ok()) {
+            if should_clear(text, || backend.get_string().ok().flatten()) {
                 return backend.set_string("");
             }
         }
@@ -103,13 +103,14 @@ impl Clipboard {
 
     /// Reads the system clipboard as a `ClipboardEntry`.
     /// - `Ok(Some(_))`: valid entry
-    /// - `Ok(None)`: clipboard empty, unreadable, or holds unrelated text
-    /// - `Err(_)`: the text looks like an entry but is invalid
+    /// - `Ok(None)`: clipboard empty or holds unrelated text
+    /// - `Err(_)`: the clipboard could not be read, or the text looks like an
+    ///   entry but is invalid
     ///
     /// The flag is true when this window wrote the entry; an entry from elsewhere
     /// is confirmed before it is acted on.
     pub fn get_clipboard_entry(&mut self) -> Result<Option<(ClipboardEntry, bool)>> {
-        match self.get_text() {
+        match self.read_text()? {
             Some(text) => resolve_clipboard_text(self.last_entry(), &text),
             None => Ok(None),
         }
@@ -122,18 +123,20 @@ impl Clipboard {
     }
 
     pub fn get_text(&mut self) -> Option<String> {
-        let Some(backend) = &mut self.backend else {
-            return self
+        self.read_text().unwrap_or_else(|error| {
+            warn!("{error:#}");
+            None
+        })
+    }
+
+    /// The clipboard's text: `Ok(None)` when it is empty or holds no text.
+    fn read_text(&mut self) -> Result<Option<String>> {
+        match &mut self.backend {
+            Some(backend) => backend.get_string(),
+            None => Ok(self
                 .last_written
                 .as_ref()
-                .map(|written| written.text.clone());
-        };
-        match backend.get_string() {
-            Ok(t) => Some(t),
-            Err(e) => {
-                warn!("Failed to read clipboard: {e}");
-                None
-            }
+                .map(|written| written.text.clone())),
         }
     }
 
@@ -275,10 +278,11 @@ fn parse_clipboard_parts(parts: &[String]) -> Result<ClipboardEntry> {
         .iter()
         .map(|p| path_info(Path::new(p)))
         .collect::<Result<Vec<_>, _>>()?;
-    match command_str.as_str() {
-        "cp" => Ok(ClipboardEntry::Copy(paths)),
-        "mv" => Ok(ClipboardEntry::Move(paths)),
-        _ => Err(anyhow!("Invalid ClipboardEntry: {command_str}")),
+    // `is_entry_shaped` admitted only "cp" and "mv".
+    if command_str == "cp" {
+        Ok(ClipboardEntry::Copy(paths))
+    } else {
+        Ok(ClipboardEntry::Move(paths))
     }
 }
 
@@ -293,16 +297,24 @@ impl ClipboardBackend {
         })
     }
 
-    fn get_string(&mut self) -> Result<String, Error> {
-        self.clipboard
-            .get_text()
-            .map_err(|e| anyhow!("Failed to get clipboard contents: {e}"))
+    fn get_string(&mut self) -> Result<Option<String>, Error> {
+        text_or_none(self.clipboard.get_text())
     }
 
     fn set_string(&mut self, text: &str) -> Result<(), Error> {
         self.clipboard
             .set_text(text.to_string())
             .map_err(|e| anyhow!("Failed to set clipboard contents: {e}"))
+    }
+}
+
+/// An empty clipboard, or one holding no text, is `None`; any other failure is
+/// an error.
+fn text_or_none(read: Result<String, arboard::Error>) -> Result<Option<String>, Error> {
+    match read {
+        Ok(text) => Ok(Some(text)),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(e) => Err(anyhow!("Failed to read the clipboard: {e}")),
     }
 }
 
@@ -320,6 +332,24 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+
+    #[test]
+    fn an_empty_clipboard_is_nothing_and_a_failed_read_is_an_error() {
+        assert_eq!(
+            Some("text".to_string()),
+            text_or_none(Ok("text".to_string())).unwrap()
+        );
+        assert_eq!(
+            None,
+            text_or_none(Err(arboard::Error::ContentNotAvailable)).unwrap()
+        );
+        assert_eq!(
+            "Failed to read the clipboard: The selected clipboard is not supported with the current system configuration.",
+            text_or_none(Err(arboard::Error::ClipboardNotSupported))
+                .unwrap_err()
+                .to_string()
+        );
+    }
 
     #[test]
     fn the_clipboard_is_cleared_only_while_this_window_still_owns_it() {

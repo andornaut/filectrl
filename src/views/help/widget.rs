@@ -208,7 +208,7 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<Row> {
         ("Open with...", k(&[Action::OpenWith])),
         (
             "Edit ($EDITOR), page ($PAGER)",
-            k(&[Action::Edit, Action::Page]),
+            k(&[Action::OpenInEditor, Action::OpenInPager]),
         ),
         // Marking
         ("Mark/unmark item, end range", k(&[Action::ToggleMark])),

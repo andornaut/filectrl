@@ -16,7 +16,7 @@ use filectrl::{
         config::{DEFAULT_CONFIG_BASE, DEFAULT_THEME},
         events::quit_signal,
     },
-    escape_for_terminal, print_keybindings, run, visible_os,
+    escape_for_terminal, keybindings_text, run, visible_os,
 };
 
 #[derive(FromArgs)]
@@ -172,10 +172,7 @@ fn parse_args() -> Args {
             }
             std::process::exit(0)
         }
-        print_error(format_args!(
-            "{}\nRun {command} --help for more information.",
-            shown_argh_output(&early_exit.output)
-        ));
+        print_usage_error(&shown_argh_output(&early_exit.output));
         std::process::exit(1)
     })
 }
@@ -209,6 +206,14 @@ fn print_error(args: fmt::Arguments<'_>) {
     let _ = writeln!(io::stderr(), "{args}");
 }
 
+/// A usage error, then where to find the full usage.
+fn print_usage_error(usage: &str) {
+    print_error(format_args!(
+        "{usage}\n\nRun {} --help for more information.",
+        env!("CARGO_PKG_NAME")
+    ));
+}
+
 fn main() -> ExitCode {
     let args = parse_args();
     let result = dispatch(&args);
@@ -222,10 +227,7 @@ fn main() -> ExitCode {
         Err(error) => {
             match error.downcast_ref::<UsageError>() {
                 Some(usage) => {
-                    let usage = escape_for_terminal(&usage.to_string()).into_owned();
-                    print_error(format_args!(
-                        "{usage}\n\nRun filectrl --help for more information."
-                    ));
+                    print_usage_error(&escape_for_terminal(&usage.to_string()));
                 }
                 // `{error:#}` flattens the cause chain onto one line.
                 None => print_error(format_args!(
@@ -257,7 +259,7 @@ fn dispatch(args: &Args) -> Result<()> {
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         )),
-        Some(Action::Keybindings) => print_keybindings(config, &args.include),
+        Some(Action::Keybindings) => print(&keybindings_text(config, &args.include)?),
         None => run(
             config,
             &args.include,

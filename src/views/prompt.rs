@@ -266,16 +266,15 @@ impl PromptView {
             PromptAction::Filter(_) => Command::FilterChanged(value),
             PromptAction::Goto { .. } => {
                 let path = self.resolve_path(&value);
-                if path.exists() {
-                    match PathInfo::try_from(&path) {
-                        Ok(info) => Command::Open(info),
-                        Err(error) => Command::AlertWarn(format!(
-                            "Failed to access {}: {error}",
-                            compact(&path)
-                        )),
+                match PathInfo::try_from(&path) {
+                    Ok(info) if info.is_symlink_broken() => Command::AlertWarn(format!(
+                        "Cannot go to {}: its target does not exist",
+                        compact(&path)
+                    )),
+                    Ok(info) => Command::Open(info),
+                    Err(error) => {
+                        Command::AlertWarn(format!("Failed to access {}: {error}", compact(&path)))
                     }
-                } else {
-                    Command::AlertWarn(format!("Path does not exist: {}", compact(&path)))
                 }
             }
             // For a non-UTF-8 name the offered text is a lossy spelling that names a different
@@ -1416,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn goto_submit_missing_path_returns_alert_warn() {
+    fn goto_submit_missing_path_names_the_cause() {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Nope");
@@ -1424,7 +1423,52 @@ mod tests {
         let Ok(Command::AlertWarn(message)) = Command::try_from(result) else {
             panic!("expected Command::AlertWarn");
         };
-        assert!(message.starts_with("Path does not exist:"), "{message}");
+        assert!(message.starts_with("Failed to access "), "{message}");
+        assert!(
+            message.ends_with("No such file or directory (os error 2)"),
+            "{message}"
+        );
+    }
+
+    /// Permission denied on a parent is reported as such, not as a missing path.
+    #[test]
+    fn goto_submit_under_an_unsearchable_directory_names_the_permission_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = GotoFixture::new();
+        let locked = fixture.dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("inner"), b"x").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let mut view = goto_prompt(fixture.dir.path());
+        type_str(&mut view, "locked/inner");
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let Ok(Command::AlertWarn(message)) = Command::try_from(result) else {
+            panic!("expected Command::AlertWarn");
+        };
+        assert!(
+            message.ends_with("Permission denied (os error 13)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn goto_submit_broken_symlink_is_refused() {
+        let fixture = GotoFixture::new();
+        std::os::unix::fs::symlink("missing", fixture.dir.join("broken")).unwrap();
+        let mut view = goto_prompt(fixture.dir.path());
+        type_str(&mut view, "broken");
+        let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+        let Ok(Command::AlertWarn(message)) = Command::try_from(result) else {
+            panic!("expected Command::AlertWarn");
+        };
+        assert!(message.starts_with("Cannot go to "), "{message}");
+        assert!(
+            message.ends_with(": its target does not exist"),
+            "{message}"
+        );
     }
 
     #[test]

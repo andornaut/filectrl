@@ -185,7 +185,7 @@ impl TableView {
         };
         let reason = if path.path.is_dir() {
             Some("it is a directory")
-        } else if path.path.is_symlink() && !path.path.exists() {
+        } else if path.is_symlink_broken() {
             Some("its target does not exist")
         } else {
             None

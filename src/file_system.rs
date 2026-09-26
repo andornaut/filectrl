@@ -419,7 +419,7 @@ impl FileSystem {
 
     fn cancel_most_recent_task(&mut self) -> CommandResult {
         let Some(index) = self.cancel_target() else {
-            return Command::AlertWarn("No active task to cancel".into()).into();
+            return Command::AlertWarn("Cannot cancel: no task is running".into()).into();
         };
         match &self.cancellables[index] {
             Cancellable::Task(info, batch) => {
@@ -1879,6 +1879,20 @@ mod tests {
         };
         file_system.check_progress_for_error(&ended);
         assert_eq!(0, file_system.task_count());
+    }
+
+    #[test]
+    fn the_cancel_key_with_no_task_says_so() {
+        let bookmarks = TempDir::reserved("fs_bookmarks");
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut file_system = test_file_system(&bookmarks, tx);
+
+        assert_eq!(
+            CommandResult::from(Command::AlertWarn(
+                "Cannot cancel: no task is running".into()
+            )),
+            file_system.handle_command(&Command::CancelTask)
+        );
     }
 
     #[test]

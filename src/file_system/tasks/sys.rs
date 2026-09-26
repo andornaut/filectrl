@@ -10,23 +10,6 @@ pub(super) fn mode_bits(mode: u32) -> Mode {
     Mode::from_bits_truncate(raw)
 }
 
-/// Sets the mode of `name` in `dir` without following a symlink at the name. `EOPNOTSUPP` is
-/// returned, never retried with a following call: a link swapped in before a retry would have its
-/// target changed.
-pub(in crate::file_system) fn set_mode_at(
-    dir: impl std::os::fd::AsFd,
-    name: &(impl ?Sized + nix::NixPath),
-    mode: u32,
-) -> std::io::Result<()> {
-    use nix::sys::stat::{FchmodatFlags, fchmodat};
-    Ok(fchmodat(
-        dir,
-        name,
-        mode_bits(mode),
-        FchmodatFlags::NoFollowSymlink,
-    )?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

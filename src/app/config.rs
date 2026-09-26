@@ -9,6 +9,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::OnceLock,
+    time::Duration,
 };
 
 use ::serde::Deserialize;
@@ -28,8 +29,6 @@ const CONFIG_RELATIVE_PATH: &str = "config.toml";
 pub const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
 /// The embedded default theme (IBM1970).
 pub const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
-/// The floor shared by every recurring UI timer.
-const MIN_REFRESH_DEBOUNCE_MILLISECONDS: u64 = 100;
 
 #[derive(Debug, Deserialize)]
 pub struct FileSystemConfig {
@@ -56,9 +55,9 @@ struct PlatformOpeners {
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub struct UiConfig {
     pub double_click_interval_milliseconds: u16,
-    /// Whether `$LS_COLORS` overrides the theme's file type colors. Not a theme
+    /// Whether `$LS_COLORS` is applied over the theme's file type colors. Not a theme
     /// setting, so an included theme cannot turn it off.
-    pub ls_colors_take_precedence: bool,
+    pub use_ls_colors: bool,
     pub natural_sort: bool,
     pub show_hidden_files: bool,
     pub sort_directories_first: bool,
@@ -266,7 +265,7 @@ impl Config {
             ui: raw.ui,
         };
         // The RGB warning applies only to the theme this run renders with.
-        if config.ui.ls_colors_take_precedence
+        if config.ui.use_ls_colors
             && let Some(ls_colors) = env.ls_colors
         {
             let warn_on_rgb = !env.is_truecolor;
@@ -287,12 +286,13 @@ fn include_entries(value: &Value) -> Result<Vec<PathBuf>> {
     };
     include_value
         .as_array()
-        .ok_or_else(|| anyhow!("'include_files' must be an array of file paths"))?
+        .ok_or_else(|| anyhow!("include_files must be an array of file paths"))?
         .iter()
         .map(|entry| {
-            entry.as_str().map(PathBuf::from).ok_or_else(|| {
-                anyhow!("'include_files' entries must be strings, but found: {entry}")
-            })
+            entry
+                .as_str()
+                .map(PathBuf::from)
+                .ok_or_else(|| anyhow!("include_files entries must be strings, but found: {entry}"))
         })
         .collect()
 }
@@ -409,10 +409,11 @@ fn merge_include_file(
 
 /// Validates `file_system` invariants that deserialization cannot express.
 fn validate_file_system(fs: &FileSystemConfig) -> Result<()> {
-    if fs.refresh_debounce_milliseconds < MIN_REFRESH_DEBOUNCE_MILLISECONDS {
+    if Duration::from_millis(fs.refresh_debounce_milliseconds) < crate::UI_TIMER_FLOOR {
         return Err(anyhow!(
-            "file_system.refresh_debounce_milliseconds ({}) must be at least {MIN_REFRESH_DEBOUNCE_MILLISECONDS}",
-            fs.refresh_debounce_milliseconds
+            "file_system.refresh_debounce_milliseconds ({}) must be at least {}",
+            fs.refresh_debounce_milliseconds,
+            crate::UI_TIMER_FLOOR.as_millis()
         ));
     }
     if fs.search_max_depth == 0 {
@@ -578,7 +579,7 @@ fn reject_unknown_keys(value: &Value, schema: &Value, path: &str) -> Result<()> 
         };
         match schema_table.get(key) {
             Some(schema_child) => reject_unknown_keys(child, schema_child, &key_path)?,
-            None => return Err(anyhow!("Unknown configuration key: '{key_path}'")),
+            None => return Err(anyhow!("Unknown configuration key: {key_path:?}")),
         }
     }
     Ok(())
@@ -799,10 +800,10 @@ open_directory = "alacritty --working-directory %s"
         assert_eq!(expected, config.openers.open_file);
     }
 
-    #[test_case(true, Some(Color::Red), Some(Color::Red) ; "applied when they take precedence")]
+    #[test_case(true, Some(Color::Red), Some(Color::Red) ; "applied when enabled")]
     #[test_case(false, Some(Color::Rgb(1, 2, 3)), Some(Color::Indexed(5)) ; "ignored otherwise")]
     fn ls_colors_reach_both_themes(
-        take_precedence: bool,
+        use_ls_colors: bool,
         expected: Option<Color>,
         expected256: Option<Color>,
     ) {
@@ -811,7 +812,7 @@ open_directory = "alacritty --working-directory %s"
             ls_colors: Some("di=31"),
         };
         let toml = format!(
-            "[ui]\nls_colors_take_precedence = {take_precedence}\n\
+            "[ui]\nuse_ls_colors = {use_ls_colors}\n\
              [theme.file_type.directory]\nfg = \"#010203\"\n\
              [theme256.file_type.directory]\nfg = \"5\"\n"
         );
@@ -1194,15 +1195,15 @@ open_directory = "alacritty --working-directory %s"
         assert!(Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]).is_ok());
     }
 
-    #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: 'theme.table.bodyy'" ; "an unknown key in the config")]
-    #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: 'theme.table.bodyy'" ; "an unknown key in an include")]
+    #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: \"theme.table.bodyy\"" ; "an unknown key in the config")]
+    #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: \"theme.table.bodyy\"" ; "an unknown key in an include")]
     #[test_case(false, "[theme256.table.body]\nfg = \"#ff0000\"\n" => "Cannot load {}: theme256.table.body.fg: \"#ff0000\" is not a 256-color index (0-255)" ; "a hex color under theme256 in an include")]
     #[test_case(false, "[file_system]\nsearch_max_depth = \"deep\"\n" => "Cannot load {}: invalid type: string \"deep\", expected u32 in `file_system.search_max_depth`" ; "a type error in an include")]
     #[test_case(false, "[keybindings]\nquit = 1\n" => "Cannot load {}: expected a key string or an array of key strings in `keybindings.quit`" ; "a key that is not a string in an include")]
-    #[test_case(false, "include_files = \"c.toml\"\n" => "Cannot load {}: 'include_files' must be an array of file paths" ; "an include list that is not an array in an include")]
-    #[test_case(false, "include_files = [1]\n" => "Cannot load {}: 'include_files' entries must be strings, but found: 1" ; "an include entry that is not a string in an include")]
+    #[test_case(false, "include_files = \"c.toml\"\n" => "Cannot load {}: include_files must be an array of file paths" ; "an include list that is not an array in an include")]
+    #[test_case(false, "include_files = [1]\n" => "Cannot load {}: include_files entries must be strings, but found: 1" ; "an include entry that is not a string in an include")]
     #[test_case(false, "[file_system]\nrefresh_debounce_milliseconds = 50\n" => "Cannot load {}: file_system.refresh_debounce_milliseconds (50) must be at least 100" ; "a value out of range in an include")]
-    #[test_case(false, "[keybindings]\nquit = \"Nope\"\n" => "Cannot load {}: Invalid keybinding for quit: Unknown key: 'Nope'" ; "an invalid key in an include")]
+    #[test_case(false, "[keybindings]\nquit = \"Nope\"\n" => "Cannot load {}: Invalid keybinding for quit: Unknown key: \"Nope\"" ; "an invalid key in an include")]
     #[test_case(false, "[keybindings]\nquit = []\n" => "Cannot load {}: Invalid keybinding for quit: no key given" ; "an empty key list in an include")]
     #[test_case(false, "[openers.linux]\nopen_file = \"xdg-open\"\n" => "Cannot load {}: openers.linux.open_file (\"xdg-open\") must contain %s as its own unquoted word" ; "an opener without its placeholder in an include")]
     fn a_mistake_names_the_file_it_is_in(in_config: bool, mistake: &str) -> String {

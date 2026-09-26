@@ -23,8 +23,8 @@ pub enum Action {
     OpenCurrentDirectory,
     OpenNewWindow,
     OpenWith,
-    Edit,
-    Page,
+    OpenInEditor,
+    OpenInPager,
     Refresh,
 
     // Selection
@@ -173,7 +173,7 @@ macro_rules! keybindings {
 
 keybindings! {
     normal {
-        back => GoToParentDirectory,
+        go_to_parent_directory => GoToParentDirectory,
         go_to_previous_directory => GoToPreviousDirectory,
         add_bookmark => AddBookmark,
         cancel_task => CancelTask,
@@ -184,15 +184,15 @@ keybindings! {
         create_directory => CreateDirectory,
         cut => Cut,
         delete => Delete,
-        edit => Edit,
         filter => Filter,
         go_home => GoHome,
         goto => Goto,
         open => Open,
         open_current_directory => OpenCurrentDirectory,
+        open_in_editor => OpenInEditor,
+        open_in_pager => OpenInPager,
         open_new_window => OpenNewWindow,
         open_with => OpenWith,
-        page => Page,
         page_down => PageDown,
         page_up => PageUp,
         paste => Paste,
@@ -426,7 +426,7 @@ fn build_action_map(bindings: &[(Action, Vec<KeyCombo>)]) -> Result<HashMap<KeyC
                 && existing != *action
             {
                 return Err(anyhow!(
-                    "Key '{}' is bound to both {} and {}",
+                    "Key {:?} is bound to both {} and {}",
                     format_key_combo(combo),
                     existing.config_key(),
                     action.config_key(),
@@ -511,7 +511,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
         // Shift+Space arrives as a plain space.
         "space" if modifiers == KeyModifiers::SHIFT => {
             return Err(anyhow!(
-                "Invalid key: '{spelling}' (Shift+Space arrives as a plain Space; bind 'Space')"
+                "Invalid key: {spelling:?} (Shift+Space arrives as a plain Space; bind \"Space\")"
             ));
         }
         "space" => KeyCode::Char(' '),
@@ -532,7 +532,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
                 .parse::<u8>()
                 .ok()
                 .filter(|num| (1..=24).contains(num))
-                .ok_or_else(|| anyhow!("Invalid F-key: '{key_str}' (must be F1-F24)"))?;
+                .ok_or_else(|| anyhow!("Invalid F-key: {key_str:?} (must be F1-F24)"))?;
             KeyCode::F(num)
         }
         // Counted in chars, so "é" is one character.
@@ -541,7 +541,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             // A key that draws nothing or is a control character cannot be shown in help.
             if crate::is_disguising(ch) {
                 return Err(anyhow!(
-                    "Invalid key: '{}' (a control or invisible character cannot be bound)",
+                    "Invalid key: \"{}\" (a control or invisible character cannot be bound)",
                     crate::visible(key_str)
                 ));
             }
@@ -557,7 +557,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             // binding could never fire.
             if modifiers == KeyModifiers::SHIFT && !ch.is_uppercase() {
                 return Err(anyhow!(
-                    "Invalid key: '{spelling}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)"
+                    "Invalid key: {spelling:?} (Shift applies only to letters with a single uppercase form; bind the shifted character itself)"
                 ));
             }
             // With Ctrl or Alt the kitty protocol reports the lowercase letter plus
@@ -572,7 +572,7 @@ fn parse_key_combo(s: &str) -> Result<KeyCombo> {
             }
             KeyCode::Char(ch)
         }
-        _ => return Err(anyhow!("Unknown key: '{key_str}'")),
+        _ => return Err(anyhow!("Unknown key: {key_str:?}")),
     };
 
     // Terminals report Shift+Tab as BackTab with SHIFT, never Tab+SHIFT.
@@ -599,7 +599,7 @@ fn uppercase_with_modifier(spelling: &str, ch: char, modifiers: KeyModifiers) ->
     .map(|(_, name)| *name)
     .collect();
     anyhow!(
-        "Invalid key: '{spelling}' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as '{prefix}Shift+{lower}')"
+        "Invalid key: {spelling:?} (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as \"{prefix}Shift+{lower}\")"
     )
 }
 
@@ -719,28 +719,28 @@ mod tests {
         assert_eq!(modifiers, combo.modifiers);
     }
 
-    #[test_case("F0"              => "Invalid F-key: 'F0' (must be F1-F24)"  ; "a function key below the range")]
-    #[test_case("F25"             => "Invalid F-key: 'F25' (must be F1-F24)" ; "a function key above the range")]
-    #[test_case("F99"             => "Invalid F-key: 'F99' (must be F1-F24)" ; "a function key far above the range")]
-    #[test_case("\u{9b}"          => "Invalid key: '\\u{9b}' (a control or invisible character cannot be bound)" ; "a control character")]
-    #[test_case("Ctrl+\u{2800}"    => "Invalid key: '\\u{2800}' (a control or invisible character cannot be bound)" ; "a modifier on a character that draws nothing")]
-    #[test_case("InvalidKey"      => "Unknown key: 'InvalidKey'" ; "a name that is not a key")]
-    #[test_case("Ctrl+InvalidKey" => "Unknown key: 'InvalidKey'" ; "a modifier on a name that is not a key")]
-    #[test_case("F1000"           => "Invalid F-key: 'F1000' (must be F1-F24)" ; "a function key too large for a u8")]
-    #[test_case("Foo+c"           => "Unknown key: 'Foo+c'"      ; "a modifier that does not exist")]
-    #[test_case("Fn"              => "Unknown key: 'Fn'"         ; "a name starting with F")]
-    #[test_case("Ctrl+"           => "Unknown key: 'Ctrl+'"      ; "a modifier with no key")]
+    #[test_case("F0"              => "Invalid F-key: \"F0\" (must be F1-F24)"  ; "a function key below the range")]
+    #[test_case("F25"             => "Invalid F-key: \"F25\" (must be F1-F24)" ; "a function key above the range")]
+    #[test_case("F99"             => "Invalid F-key: \"F99\" (must be F1-F24)" ; "a function key far above the range")]
+    #[test_case("\u{9b}"          => "Invalid key: \"\\u{9b}\" (a control or invisible character cannot be bound)" ; "a control character")]
+    #[test_case("Ctrl+\u{2800}"    => "Invalid key: \"\\u{2800}\" (a control or invisible character cannot be bound)" ; "a modifier on a character that draws nothing")]
+    #[test_case("InvalidKey"      => "Unknown key: \"InvalidKey\"" ; "a name that is not a key")]
+    #[test_case("Ctrl+InvalidKey" => "Unknown key: \"InvalidKey\"" ; "a modifier on a name that is not a key")]
+    #[test_case("F1000"           => "Invalid F-key: \"F1000\" (must be F1-F24)" ; "a function key too large for a u8")]
+    #[test_case("Foo+c"           => "Unknown key: \"Foo+c\""      ; "a modifier that does not exist")]
+    #[test_case("Fn"              => "Unknown key: \"Fn\""         ; "a name starting with F")]
+    #[test_case("Ctrl+"           => "Unknown key: \"Ctrl+\""      ; "a modifier with no key")]
     // A multibyte char straddling the prefix length must not panic.
-    #[test_case("aaa\u{2713}x"     => "Unknown key: 'aaa\u{2713}x'" ; "a multibyte char straddling the prefix index")]
+    #[test_case("aaa\u{2713}x"     => "Unknown key: \"aaa\u{2713}x\"" ; "a multibyte char straddling the prefix index")]
     // "\u{df}" uppercases to two characters, so it has no shifted key.
-    #[test_case("Shift+1"         => "Invalid key: 'Shift+1' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a digit")]
-    #[test_case("Shift+/"         => "Invalid key: 'Shift+/' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a symbol")]
-    #[test_case("Shift+Space"     => "Invalid key: 'Shift+Space' (Shift+Space arrives as a plain Space; bind 'Space')" ; "shift on space")]
-    #[test_case("Shift+\u{df}"    => "Invalid key: 'Shift+\u{df}' (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a letter with no single uppercase")]
-    #[test_case("Ctrl+G"          => "Invalid key: 'Ctrl+G' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Shift+g')" ; "ctrl on an uppercase letter")]
-    #[test_case("Alt+A"           => "Invalid key: 'Alt+A' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Alt+Shift+a')" ; "alt on an uppercase letter")]
-    #[test_case("Ctrl+Shift+A"    => "Invalid key: 'Ctrl+Shift+A' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Shift+a')" ; "ctrl and shift on an uppercase letter")]
-    #[test_case("Ctrl+Alt+\u{c9}" => "Invalid key: 'Ctrl+Alt+\u{c9}' (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as 'Ctrl+Alt+Shift+\u{e9}')" ; "two modifiers on a non-ascii uppercase letter")]
+    #[test_case("Shift+1"         => "Invalid key: \"Shift+1\" (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a digit")]
+    #[test_case("Shift+/"         => "Invalid key: \"Shift+/\" (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a symbol")]
+    #[test_case("Shift+Space"     => "Invalid key: \"Shift+Space\" (Shift+Space arrives as a plain Space; bind \"Space\")" ; "shift on space")]
+    #[test_case("Shift+\u{df}"    => "Invalid key: \"Shift+\u{df}\" (Shift applies only to letters with a single uppercase form; bind the shifted character itself)" ; "shift on a letter with no single uppercase")]
+    #[test_case("Ctrl+G"          => "Invalid key: \"Ctrl+G\" (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as \"Ctrl+Shift+g\")" ; "ctrl on an uppercase letter")]
+    #[test_case("Alt+A"           => "Invalid key: \"Alt+A\" (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as \"Alt+Shift+a\")" ; "alt on an uppercase letter")]
+    #[test_case("Ctrl+Shift+A"    => "Invalid key: \"Ctrl+Shift+A\" (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as \"Ctrl+Shift+a\")" ; "ctrl and shift on an uppercase letter")]
+    #[test_case("Ctrl+Alt+\u{c9}" => "Invalid key: \"Ctrl+Alt+\u{c9}\" (write a letter with Ctrl or Alt in lowercase, adding Shift for the uppercase one, as \"Ctrl+Alt+Shift+\u{e9}\")" ; "two modifiers on a non-ascii uppercase letter")]
     fn a_spelling_that_is_not_a_key_is_an_error(spelling: &str) -> String {
         // Assert which refusal fired, not only that one did.
         parse_key_combo(spelling)
@@ -852,12 +852,15 @@ mod tests {
         let err = keybindings_with_override(
             r#"
             [keybindings]
-            back = "q"
+            go_to_parent_directory = "q"
             "#,
         )
         .unwrap_err()
         .to_string();
-        assert_eq!("Key 'q' is bound to both back and quit", err);
+        assert_eq!(
+            "Key \"q\" is bound to both go_to_parent_directory and quit",
+            err
+        );
     }
 
     #[test]
@@ -871,7 +874,7 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert_eq!(
-            "Key 'Esc' is bound to both the hardcoded reset view and quit",
+            "Key \"Esc\" is bound to both the hardcoded reset view and quit",
             err
         );
     }
@@ -882,7 +885,7 @@ mod tests {
         let err = keybindings_with_override(&format!("[keybindings]\n{key} = \"NotAKey\"\n"))
             .unwrap_err();
         assert_eq!(format!("Invalid keybinding for {key}"), err.to_string());
-        assert_eq!("Unknown key: 'NotAKey'", err.root_cause().to_string());
+        assert_eq!("Unknown key: \"NotAKey\"", err.root_cause().to_string());
     }
 
     #[test]

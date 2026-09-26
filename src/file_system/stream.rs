@@ -7,8 +7,8 @@ use super::path_info::PathInfo;
 use crate::command::Command;
 
 /// Interval after which a partial batch is flushed, so sparse results still
-/// stream. Each flush redraws, and 100 ms is the UI timer floor.
-pub(super) const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// stream. Each flush redraws.
+pub(super) const BATCH_FLUSH_INTERVAL: Duration = crate::UI_TIMER_FLOOR;
 
 /// The send closure for a `ListingBatch` stamped with `generation`; returns
 /// whether the channel is still open.

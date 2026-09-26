@@ -21,14 +21,11 @@ use std::{
 
 use log::{info, warn};
 
+pub(super) use self::validate::{is_same_file, onto_itself, rename_no_replace, restat};
 use self::{
     copy::{CopyOutcome, copy_with_progress},
     remove::{Removal, dir_total_entries, remove_path},
     validate::{display_path, start_transfer},
-};
-pub(super) use self::{
-    sys::set_mode_at,
-    validate::{is_same_file, onto_itself, rename_no_replace, restat},
 };
 use super::{
     conflicts::failed_transfer,
@@ -43,7 +40,7 @@ use crate::command::{
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
 /// Shortest gap between two progress updates for one task. The percentage bounds updates per unit
 /// of work; this bounds them per unit of time.
-const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const PROGRESS_MIN_INTERVAL: Duration = crate::UI_TIMER_FLOOR;
 
 type Job = Box<dyn FnOnce() + Send>;
 

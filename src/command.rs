@@ -113,7 +113,7 @@ pub enum Command {
     OpenCurrentDirectory,
     OpenNewWindow,
     // FileSystem spawns `argv` detached; `label` and `path` name it in a
-    // failure. An empty `argv` is a no-op.
+    // failure. `argv` is never empty.
     OpenWith {
         argv: Vec<OsString>,
         label: String,
