@@ -6,7 +6,7 @@ use std::{
     ffi::OsString,
 };
 
-use super::{conflicts::Conflicts, entry_id::Seen, path_info::PathInfo, tasks};
+use super::{path_info::PathInfo, tasks};
 use crate::{
     app::clipboard::ClipboardEntry,
     command::{Command, ConflictChoice},
@@ -24,16 +24,11 @@ pub(super) struct PendingPaste {
     pub(super) failed: Vec<PathInfo>,
     /// How many tasks started, which decides the clipboard follow-up.
     pub(super) started: usize,
-    /// The standing `*All` answer, shared with this paste's workers.
-    pub(super) conflicts: Conflicts,
+    /// The standing `*All` answer, which answers every later collision.
+    pub(super) standing: Option<ConflictChoice>,
     /// Names of the sources started earlier in this paste. A second source of the
     /// same name is refused rather than asked about, like `mv a/x b/x d/`.
     pub(super) claimed: HashSet<OsString>,
-    /// When the paste began; an entry born since is taken for this paste's output.
-    began: (i64, i64),
-    /// The entry the open conflict prompt asks about: the only one an "overwrite"
-    /// answer may replace.
-    asked: Option<Seen>,
 }
 
 /// What already holds a source's name in the destination directory.
@@ -54,12 +49,10 @@ pub(super) enum PasteStep {
         can_overwrite: bool,
     },
     Skip,
-    /// Run the source, replacing `replace` when given.
+    /// Run the source, replacing what holds its name when `overwrite`.
     Run {
-        replace: Option<Seen>,
+        overwrite: bool,
     },
-    /// Refuse the source: an entry made since the paste began holds its name.
-    Taken,
 }
 
 impl PendingPaste {
@@ -70,28 +63,15 @@ impl PendingPaste {
             remaining: sources.iter().cloned().collect(),
             failed: Vec::new(),
             started: 0,
-            conflicts: Conflicts::default(),
+            standing: None,
             claimed: HashSet::new(),
-            began: now(),
-            asked: None,
         }
     }
 
     /// What to do with `src`, given its destination name on disk and the standing
-    /// answer. When it asks, the entry found is recorded for an "overwrite" answer.
-    /// An entry born since the paste began is refused whatever the answer: on a
-    /// destination that treats two names as one it is most likely an earlier
-    /// source's output. Only a recorded birth time counts.
-    pub(super) fn meet(&mut self, src: &PathInfo) -> PasteStep {
-        let found = existing_destination(&self.dest, src);
-        if found.is_some_and(|(_, seen)| seen.birth().is_some_and(|birth| birth >= self.began)) {
-            return PasteStep::Taken;
-        }
-        let step = step(self.conflicts.standing(), found);
-        if let PasteStep::Ask { .. } = step {
-            self.asked = found.map(|(_, seen)| seen);
-        }
-        step
+    /// answer.
+    pub(super) fn meet(&self, src: &PathInfo) -> PasteStep {
+        step(self.standing, existing_destination(&self.dest, src))
     }
 
     /// Whether an earlier source of this paste took `src`'s name. Decided from
@@ -109,19 +89,17 @@ impl PendingPaste {
         }
     }
 
-    /// Records the answer to the open prompt. Returns the entry the source may
-    /// replace, or `None` when it does not run.
-    pub(super) fn answer(&mut self, choice: ConflictChoice) -> Option<Seen> {
-        self.conflicts.stand(choice);
-        let asked = self.asked.take();
-        if matches!(
+    /// Records the answer to the open prompt. Returns whether the source runs,
+    /// replacing what holds its name.
+    pub(super) fn answer(&mut self, choice: ConflictChoice) -> bool {
+        match choice {
+            ConflictChoice::SkipAll | ConflictChoice::OverwriteAll => self.standing = Some(choice),
+            ConflictChoice::Skip | ConflictChoice::Overwrite => {}
+        }
+        matches!(
             choice,
             ConflictChoice::Overwrite | ConflictChoice::OverwriteAll
-        ) {
-            asked
-        } else {
-            None
-        }
+        )
     }
 
     /// The clipboard follow-up once the paste ends: untouched if nothing started,
@@ -142,49 +120,36 @@ impl PendingPaste {
     }
 }
 
-fn now() -> (i64, i64) {
-    let since = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    (
-        i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
-        i64::from(since.subsec_nanos()),
-    )
-}
-
 /// What to do with a source, given the standing answer and what holds its
 /// destination name.
-fn step(standing: Option<ConflictChoice>, found: Option<(Occupant, Seen)>) -> PasteStep {
-    let Some((occupant, entry)) = found else {
-        return PasteStep::Run { replace: None };
+fn step(standing: Option<ConflictChoice>, found: Option<Occupant>) -> PasteStep {
+    let Some(occupant) = found else {
+        return PasteStep::Run { overwrite: false };
     };
     let can_overwrite = occupant == Occupant::Replaceable;
     match standing {
         Some(ConflictChoice::SkipAll) => PasteStep::Skip,
         // "Overwrite all" cannot answer for what is never replaced.
-        Some(ConflictChoice::OverwriteAll) if can_overwrite => PasteStep::Run {
-            replace: Some(entry),
-        },
+        Some(ConflictChoice::OverwriteAll) if can_overwrite => PasteStep::Run { overwrite: true },
         _ => PasteStep::Ask { can_overwrite },
     }
 }
 
 /// What holds `src`'s name in `dest`, or `None` when the name is free. Links are
 /// not followed: a symlink to a directory is replaced as a link.
-fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<(Occupant, Seen)> {
+fn existing_destination(dest: &PathInfo, src: &PathInfo) -> Option<Occupant> {
     let name = src.path.file_name()?;
     let destination = dest.path.join(name);
-    let seen = Seen::of_path(&destination).ok()??;
+    let metadata = destination.symlink_metadata().ok()?;
     // The paste would be refused as onto itself, so it is not a collision.
-    if tasks::onto_itself(&src.path, &destination).is_some() {
+    if tasks::onto_itself(&src.path, &destination) {
         return None;
     }
-    let occupant = if src.is_directory() || seen.is_directory() {
+    Some(if src.is_directory() || metadata.is_dir() {
         Occupant::Irreplaceable
     } else {
         Occupant::Replaceable
-    };
-    Some((occupant, seen))
+    })
 }
 
 #[cfg(test)]
@@ -227,11 +192,7 @@ mod tests {
         standing: Option<ConflictChoice>,
         occupant: Option<Occupant>,
     ) -> &'static str {
-        let fx = crate::test_support::TempDir::new("paste_step");
-        fs::write(fx.join("found"), b"found").unwrap();
-        let found = crate::file_system::entry_id::seen(&fx.join("found")).unwrap();
-
-        match step(standing, occupant.map(|occupant| (occupant, found))) {
+        match step(standing, occupant) {
             PasteStep::Ask {
                 can_overwrite: true,
             } => "ask, offering overwrite",
@@ -239,14 +200,8 @@ mod tests {
                 can_overwrite: false,
             } => "ask, withholding overwrite",
             PasteStep::Skip => "skip",
-            PasteStep::Taken => "taken",
-            PasteStep::Run { replace: None } => "run",
-            PasteStep::Run {
-                replace: Some(entry),
-            } => {
-                assert_eq!(found, entry);
-                "run, replacing the entry found"
-            }
+            PasteStep::Run { overwrite: false } => "run",
+            PasteStep::Run { overwrite: true } => "run, replacing the entry found",
         }
     }
 
@@ -268,7 +223,7 @@ mod tests {
         pending.claim(&fx.src);
 
         // The first source's work is only queued, so the disk shows the name free.
-        assert_eq!(PasteStep::Run { replace: None }, pending.meet(&twin));
+        assert_eq!(PasteStep::Run { overwrite: false }, pending.meet(&twin));
         assert!(pending.is_claimed(&twin));
         assert!(!pending.is_claimed(&fx.other));
     }
@@ -284,27 +239,6 @@ mod tests {
         assert!(!pending.is_claimed(&source("/nowhere/two/notes.txt")));
     }
 
-    /// Needs a filesystem that records birth times; skipped otherwise.
-    #[test_case(None ; "with no standing answer")]
-    #[test_case(Some(ConflictChoice::OverwriteAll) ; "under overwrite all")]
-    #[test_case(Some(ConflictChoice::SkipAll) ; "under skip all")]
-    fn an_entry_born_since_the_paste_began_is_taken(standing: Option<ConflictChoice>) {
-        let fx = CopyFixture::new("fs_born_since");
-        if !crate::file_system::entry_id::records_birth_time(&fx.dest.path) {
-            eprintln!("skipped: this filesystem records no birth time");
-            return;
-        }
-        fx.occupy("b.txt");
-        crate::test_support::tick();
-        let mut pending = pending(standing);
-        pending.dest = fx.dest.clone();
-        crate::test_support::tick();
-        fx.occupy("a.txt");
-
-        assert_eq!(PasteStep::Taken, pending.meet(&fx.src));
-        assert_ne!(PasteStep::Taken, pending.meet(&fx.other));
-    }
-
     #[test]
     fn a_later_all_answer_replaces_the_standing_one() {
         let mut pending = pending(Some(ConflictChoice::OverwriteAll));
@@ -312,10 +246,9 @@ mod tests {
         pending.answer(ConflictChoice::SkipAll);
 
         // Deliberate: "skip all" answers for the whole batch; a single `s` does not stand.
-        assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
-        assert!(pending.conflicts.skips_raced());
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.standing);
         pending.answer(ConflictChoice::Skip);
-        assert_eq!(Some(ConflictChoice::SkipAll), pending.conflicts.standing());
+        assert_eq!(Some(ConflictChoice::SkipAll), pending.standing);
     }
 
     #[test_case(ConflictChoice::Skip => (false, None) ; "skip runs nothing and does not stand")]
@@ -325,24 +258,11 @@ mod tests {
     fn an_answer_decides_the_source_and_whether_it_stands(
         choice: ConflictChoice,
     ) -> (bool, Option<ConflictChoice>) {
-        let fx = CopyFixture::new("fs_answered");
-        fx.occupy("a.txt");
         let mut pending = pending(None);
-        pending.dest = fx.dest.clone();
-        assert_eq!(
-            PasteStep::Ask {
-                can_overwrite: true
-            },
-            pending.meet(&fx.src)
-        );
-        let asked = pending.asked;
-        assert!(asked.is_some(), "the prompt records what it asks about");
 
-        let granted = pending.answer(choice);
+        let runs = pending.answer(choice);
 
-        assert!(granted.is_none() || granted == asked);
-        assert_eq!(None, pending.asked, "an answer is for one prompt");
-        (granted.is_some(), pending.conflicts.standing())
+        (runs, pending.standing)
     }
 
     fn finished(is_move: bool, started: usize, failed: Vec<PathInfo>) -> Option<Command> {
@@ -369,21 +289,18 @@ mod tests {
     #[test]
     fn a_destination_is_classified_by_what_holds_the_name() {
         let fx = CopyFixture::new("fs_occupant");
-        assert_eq!(
-            None,
-            existing_destination(&fx.dest, &fx.src).map(|(occupant, _)| occupant)
-        );
+        assert_eq!(None, existing_destination(&fx.dest, &fx.src));
 
         fx.occupy("a.txt");
         assert_eq!(
             Some(Occupant::Replaceable),
-            existing_destination(&fx.dest, &fx.src).map(|(occupant, _)| occupant)
+            existing_destination(&fx.dest, &fx.src)
         );
 
         fx.occupy_with_directory("b.txt");
         assert_eq!(
             Some(Occupant::Irreplaceable),
-            existing_destination(&fx.dest, &fx.other).map(|(occupant, _)| occupant)
+            existing_destination(&fx.dest, &fx.other)
         );
 
         let dir_source = fx.src.path.parent().unwrap().join("dirs").join("a.txt");
@@ -391,21 +308,7 @@ mod tests {
         let dir_source = PathInfo::try_from(dir_source.as_path()).unwrap();
         assert_eq!(
             Some(Occupant::Irreplaceable),
-            existing_destination(&fx.dest, &dir_source).map(|(occupant, _)| occupant)
-        );
-    }
-
-    #[test]
-    fn a_destination_is_found_with_its_identity() {
-        let fx = CopyFixture::new("fs_occupant_id");
-        fx.occupy("a.txt");
-
-        assert_eq!(
-            Some((
-                Occupant::Replaceable,
-                Seen::of_path(&fx.dest.path.join("a.txt")).unwrap().unwrap()
-            )),
-            existing_destination(&fx.dest, &fx.src)
+            existing_destination(&fx.dest, &dir_source)
         );
     }
 
@@ -414,10 +317,7 @@ mod tests {
         let fx = CopyFixture::new("fs_occupant_self");
         let src_dir = PathInfo::try_from(fx.src.path.parent().unwrap()).unwrap();
 
-        assert_eq!(
-            None,
-            existing_destination(&src_dir, &fx.src).map(|(occupant, _)| occupant)
-        );
+        assert_eq!(None, existing_destination(&src_dir, &fx.src));
     }
 
     #[test]
@@ -428,10 +328,7 @@ mod tests {
         std::os::unix::fs::symlink(src_dir, &link).unwrap();
         let aliased = PathInfo::try_from(link.as_path()).unwrap();
 
-        assert_eq!(
-            None,
-            existing_destination(&aliased, &fx.src).map(|(occupant, _)| occupant)
-        );
+        assert_eq!(None, existing_destination(&aliased, &fx.src));
     }
 
     #[test]
@@ -441,23 +338,7 @@ mod tests {
 
         assert_eq!(
             Some(Occupant::Replaceable),
-            existing_destination(&fx.dest, &fx.src).map(|(occupant, _)| occupant)
-        );
-    }
-
-    #[test]
-    fn a_symlink_source_whose_target_holds_the_name_is_not_a_collision() {
-        let fx = CopyFixture::new("fs_occupant_link_over_target");
-        fs::write(fx.dest.path.join("a.txt"), b"data").unwrap();
-        let link_dir = fx.src.path.parent().unwrap().join("links");
-        fs::create_dir(&link_dir).unwrap();
-        std::os::unix::fs::symlink(fx.dest.path.join("a.txt"), link_dir.join("a.txt")).unwrap();
-        let link = PathInfo::try_from(link_dir.join("a.txt").as_path()).unwrap();
-
-        // Validation would refuse it: it would replace the file the link points at.
-        assert_eq!(
-            None,
-            existing_destination(&fx.dest, &link).map(|(occupant, _)| occupant)
+            existing_destination(&fx.dest, &fx.src)
         );
     }
 
@@ -466,10 +347,7 @@ mod tests {
         let fx = CopyFixture::new("fs_occupant_hard_link");
         fs::hard_link(&fx.src.path, fx.dest.path.join("a.txt")).unwrap();
 
-        assert_eq!(
-            None,
-            existing_destination(&fx.dest, &fx.src).map(|(occupant, _)| occupant)
-        );
+        assert_eq!(None, existing_destination(&fx.dest, &fx.src));
     }
 
     #[test]
@@ -482,7 +360,7 @@ mod tests {
         // Replacing the link does not touch the directory it points at.
         assert_eq!(
             Some(Occupant::Replaceable),
-            existing_destination(&fx.dest, &fx.src).map(|(occupant, _)| occupant)
+            existing_destination(&fx.dest, &fx.src)
         );
     }
 }

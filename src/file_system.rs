@@ -1,6 +1,5 @@
 mod conflicts;
 mod debounce;
-mod entry_id;
 mod handler;
 pub mod open_with;
 mod operations;
@@ -28,8 +27,7 @@ use anyhow::{Result, anyhow};
 use log::warn;
 
 use self::{
-    conflicts::{made_since_refusal, same_name_refusal},
-    entry_id::Seen,
+    conflicts::same_name_refusal,
     operations::{open_in, spawn_argv},
     paste::{PasteStep, PendingPaste},
     path_info::{PathInfo, compact},
@@ -662,18 +660,9 @@ impl FileSystem {
                 PasteStep::Skip => {
                     pending.remaining.pop_front();
                 }
-                PasteStep::Taken => {
+                PasteStep::Run { overwrite } => {
                     pending.remaining.pop_front();
-                    commands.push(Command::AlertError(made_since_refusal(
-                        pending.is_move,
-                        &src.path,
-                        &pending.dest.path,
-                    )));
-                    pending.failed.push(src);
-                }
-                PasteStep::Run { replace } => {
-                    pending.remaining.pop_front();
-                    commands.extend(self.run_paste_task(&mut pending, src, replace));
+                    commands.extend(self.run_paste_task(&mut pending, src, overwrite));
                 }
             }
         }
@@ -690,8 +679,8 @@ impl FileSystem {
             return CommandResult::Handled;
         };
         let mut commands = Vec::new();
-        if let Some(granted) = pending.answer(choice) {
-            commands.extend(self.run_paste_task(&mut pending, src, Some(granted)));
+        if pending.answer(choice) {
+            commands.extend(self.run_paste_task(&mut pending, src, true));
         }
         self.pending_paste = Some(pending);
         commands.extend(self.advance_paste().into_commands());
@@ -713,20 +702,19 @@ impl FileSystem {
             .map_or(CommandResult::NotHandled, Into::into)
     }
 
-    /// Runs one source of a paste, allowed to replace `overwrite`. The name is
-    /// claimed only once the task starts, since a source that fails validation
-    /// writes nothing.
+    /// Runs one source of a paste, replacing what holds its name when
+    /// `overwrite`. The name is claimed only once the task starts, since a
+    /// source that fails validation writes nothing.
     fn run_paste_task(
         &mut self,
         pending: &mut PendingPaste,
         src: PathInfo,
-        overwrite: Option<Seen>,
+        overwrite: bool,
     ) -> Vec<Command> {
         let (started, commands) = self.run_task(
             self.paste_batch,
             TaskCommand::paste(PasteJob {
                 is_move: pending.is_move,
-                conflicts: pending.conflicts.clone(),
                 overwrite,
                 dest: pending.dest.clone(),
                 source: src.clone(),
@@ -1421,9 +1409,10 @@ mod tests {
         assert_eq!(b"twin".to_vec(), fs::read(&twin.path).unwrap());
     }
 
+    /// Like `cp -f` and `mv -f`, the answer is for the name, not the entry.
     #[test_case(true ; "a cut")]
     #[test_case(false ; "a copy")]
-    fn an_entry_replaced_while_the_prompt_was_open_is_never_replaced(is_move: bool) {
+    fn an_entry_replaced_while_the_prompt_was_open_is_replaced(is_move: bool) {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
@@ -1433,23 +1422,14 @@ mod tests {
         let commands = file_system.handle_command(&paste).into_commands();
         assert_eq!(("a.txt", true), conflict_prompt(&commands));
         let new = fx.dest.path.join("a.txt");
-        // Kept, so the new file cannot reuse its inode number.
-        fs::rename(&new, fx.dest.path.join("kept")).unwrap();
+        fs::remove_file(&new).unwrap();
         fs::write(&new, b"since").unwrap();
 
         file_system.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
 
-        let verb = if is_move { "move" } else { "copy" };
-        assert_eq!(
-            Some(format!(
-                "Cannot {verb} {} to {}: the entry there changed after the paste checked it",
-                compact(&fx.src.path),
-                compact(&new)
-            )),
-            tasks::await_end(&rx).error_message()
-        );
-        assert_eq!(b"since".to_vec(), fx.pasted("a.txt"));
-        assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
+        assert_eq!(None, tasks::await_end(&rx).error_message());
+        assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
+        assert_eq!(!is_move, fx.src.path.exists());
     }
 
     /// It meets the entry really there and is skipped too, not refused as a twin.
@@ -1479,76 +1459,6 @@ mod tests {
 
         assert_eq!(Vec::<Command>::new(), commands);
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
-    }
-
-    /// Stands in for a case-folding destination, where such an entry is an earlier
-    /// source's output. Needs a filesystem that records birth times.
-    #[test_case(true ; "a cut")]
-    #[test_case(false ; "a copy")]
-    fn a_source_meeting_an_entry_made_since_the_paste_began_is_refused(is_move: bool) {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_made_since");
-        if !crate::file_system::entry_id::records_birth_time(&fx.dest.path) {
-            eprintln!("skipped: this filesystem records no birth time");
-            return;
-        }
-        fx.occupy("b.txt");
-        let paste =
-            entry(is_move, vec![fx.other.clone(), fx.src.clone()]).into_paste(fx.dest.clone());
-        let commands = file_system.handle_command(&paste).into_commands();
-        assert_eq!(("b.txt", true), conflict_prompt(&commands));
-        crate::test_support::tick();
-        fs::write(fx.dest.path.join("a.txt"), b"since").unwrap();
-
-        let commands = file_system
-            .handle_command(&Command::ResolveConflict(ConflictChoice::OverwriteAll))
-            .into_commands();
-        assert_eq!(None, tasks::await_end(&rx).error_message());
-
-        let verb = if is_move { "move" } else { "copy" };
-        assert_eq!(
-            vec![
-                Command::AlertError(format!(
-                    "Cannot {verb} {} into {}: an entry made since this paste began holds that \
-                     name",
-                    compact(&fx.src.path),
-                    compact(&fx.dest.path)
-                )),
-                left_over(is_move, vec![fx.src.clone()]),
-            ],
-            commands
-        );
-        assert_eq!(b"since".to_vec(), fx.pasted("a.txt"));
-        assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
-    }
-
-    /// The first source is handed out before the prompt; its name is taken by the
-    /// time it runs.
-    #[test]
-    fn a_standing_skip_all_reaches_a_source_already_handed_out() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-        let fx = CopyFixture::new("fs_skip_all_reaches");
-        fx.occupy("b.txt");
-
-        let gate = tasks::hold_worker();
-        let commands = file_system
-            .handle_command(&Command::Copy {
-                srcs: vec![fx.src.clone(), fx.other.clone()],
-                dest: fx.dest.clone(),
-            })
-            .into_commands();
-        assert_eq!(("b.txt", true), conflict_prompt(&commands));
-        fs::write(fx.dest.path.join("a.txt"), b"raced").unwrap();
-        file_system.handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll));
-        drop(gate);
-
-        assert_eq!(None, tasks::await_end(&rx).error_message());
-        assert_eq!(b"raced".to_vec(), fx.pasted("a.txt"));
-        assert_eq!(b"dest".to_vec(), fx.pasted("b.txt"));
     }
 
     #[test]

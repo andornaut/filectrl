@@ -22,17 +22,16 @@ use std::{
 use log::{info, warn};
 
 use self::{
-    copy::{CopyOutcome, CopySettings, copy_with_progress},
-    remove::{Removal, dir_total_entries, remove_path, replaced_after_copy},
-    validate::{Renamed, display_path, rename_for_move, start_transfer},
+    copy::{CopyOutcome, copy_with_progress},
+    remove::{Removal, dir_total_entries, remove_path},
+    validate::{display_path, start_transfer},
 };
 pub(super) use self::{
     sys::set_mode_at,
     validate::{is_same_file, onto_itself, rename_no_replace, restat},
 };
 use super::{
-    conflicts::{Conflicts, changed_refusal, rename_failure, same_file_refusal},
-    entry_id::Seen,
+    conflicts::failed_transfer,
     path_info::{PathInfo, compact},
 };
 use crate::command::{
@@ -135,14 +134,12 @@ pub(in crate::file_system) enum TaskCommand {
     Paste(Box<PasteJob>),
 }
 
-/// One source of a paste: `source` moved (`is_move`) or copied into `dest`. `overwrite` is the
-/// entry the queue saw at the destination and may replace, `None` when it saw the name free. Any
-/// other entry found there is refused (`conflicts::changed_refusal`); a name taken after the queue
-/// saw it free is never replaced.
+/// One source of a paste: `source` moved (`is_move`) or copied into `dest`. When `overwrite`, it
+/// replaces whatever holds its name when the worker runs, like `cp -f` and `mv -f`; otherwise a
+/// taken name fails the task.
 pub(in crate::file_system) struct PasteJob {
     pub(in crate::file_system) is_move: bool,
-    pub(in crate::file_system) conflicts: Conflicts,
-    pub(in crate::file_system) overwrite: Option<Seen>,
+    pub(in crate::file_system) overwrite: bool,
     pub(in crate::file_system) dest: PathInfo,
     pub(in crate::file_system) source: PathInfo,
 }
@@ -164,32 +161,15 @@ impl TaskCommand {
 fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
     let PasteJob {
         is_move,
-        conflicts,
         overwrite,
         dest,
         source,
     } = job;
-    let (path, old_path, new_path, kind) =
-        match start_transfer(is_move, &dest, overwrite.is_some(), &source) {
-            Ok(started) => started,
-            Err(result) => return TaskRunResult::failed(result),
-        };
-
-    // Fail an unreadable directory copy before the task is registered, so it creates no progress
-    // notice. A symlink is never a directory here, and a move is a rename first, which needs no
-    // listing.
-    if !is_move
-        && path.is_directory()
-        && let Err(error) = fs::read_dir(&old_path)
+    let (path, old_path, new_path, kind) = match start_transfer(is_move, &dest, overwrite, &source)
     {
-        return TaskRunResult::failed(
-            Command::AlertError(format!(
-                "Failed to read directory {}: {error}",
-                compact(&old_path)
-            ))
-            .into(),
-        );
-    }
+        Ok(started) => started,
+        Err(result) => return TaskRunResult::failed(result),
+    };
 
     // A directory's real total is scanned in the worker and applied via `active.set_total`.
     let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
@@ -200,47 +180,39 @@ fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
         let Some(active) = check_cancelled(active) else {
             return;
         };
-        let settings = CopySettings {
-            is_move,
-            conflicts: &conflicts,
-        };
         if is_move {
-            move_to(settings, overwrite, active, &old_path, &new_path, &path);
+            move_to(overwrite, active, &old_path, &new_path, &path);
         } else {
-            copy_to(settings, overwrite, active, &old_path, &new_path, &path);
+            copy_to(overwrite, active, &old_path, &new_path, &path);
         }
     });
 
     TaskRunResult::started(&initial, token, uncancellable)
 }
 
-/// The worker side of a validated move: a rename over the entry `overwrite` names, or a copy and
-/// removal across devices (`move_across_devices`).
+/// The worker side of a validated move: a rename (over what holds the name when `overwrite`), or a
+/// copy and removal across devices (`move_across_devices`).
 fn move_to(
-    settings: CopySettings<'_>,
-    overwrite: Option<Seen>,
+    overwrite: bool,
     mut active: ActiveTask,
     old_path: &Path,
     new_path: &Path,
     path: &PathInfo,
 ) {
-    match rename_for_move(overwrite, old_path, new_path) {
-        Renamed::Moved => {
+    let renamed = if overwrite {
+        fs::rename(old_path, new_path)
+    } else {
+        rename_no_replace(old_path, new_path)
+    };
+    match renamed {
+        Ok(()) => {
             active.increment(path.size);
             active.done();
         }
-        Renamed::Changed => active.error(changed_refusal(true, old_path, new_path)),
-        Renamed::SameFile => active.error(same_file_refusal(true, old_path, new_path)),
-        Renamed::Failed { error, .. } if error.kind() == ErrorKind::CrossesDevices => {
-            move_across_devices(settings, overwrite, active, old_path, new_path, path);
+        Err(error) if error.kind() == ErrorKind::CrossesDevices => {
+            move_across_devices(overwrite, active, old_path, new_path, path);
         }
-        // The rename replaces atomically, so a failed one leaves what it was to replace (`kept`).
-        Renamed::Failed { error, kept } => {
-            match rename_failure(settings.conflicts, true, kept, old_path, new_path, &error) {
-                None => active.done(),
-                Some(message) => active.error(message),
-            }
-        }
+        Err(error) => active.error(failed_transfer(true, old_path, new_path, &error)),
     }
 }
 
@@ -285,43 +257,32 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     TaskRunResult::started(&initial, token, uncancellable)
 }
 
-/// The worker side of a validated copy, over the entry a granted overwrite names if it still holds
-/// the name.
-fn copy_to(
-    settings: CopySettings<'_>,
-    overwrite: Option<Seen>,
-    active: ActiveTask,
-    old_path: &Path,
-    new_path: &Path,
-    path: &PathInfo,
-) {
+/// The worker side of a validated copy.
+fn copy_to(overwrite: bool, active: ActiveTask, old_path: &Path, new_path: &Path, path: &PathInfo) {
     if let Some((active, outcome)) =
-        copy_with_progress(settings, overwrite, path, active, old_path, new_path)
+        copy_with_progress(false, overwrite, path, active, old_path, new_path)
     {
-        // A skip is the user's own answer and leaves nothing behind, so it is not reported.
         finalize(active, outcome.errors);
     }
 }
 
 /// A move whose rename crossed devices: copies `path`, then removes the source.
 fn move_across_devices(
-    settings: CopySettings<'_>,
-    overwrite: Option<Seen>,
+    overwrite: bool,
     active: ActiveTask,
     old_path: &Path,
     new_path: &Path,
     path: &PathInfo,
 ) {
     if let Some((active, outcome)) =
-        copy_with_progress(settings, overwrite, path, active, old_path, new_path)
+        copy_with_progress(true, overwrite, path, active, old_path, new_path)
     {
         finish_cross_device_move(active, outcome, old_path, new_path, path.is_directory());
     }
 }
 
-/// Finishes a cross-device move, removing the source only when the destination holds every entry of
-/// it, like `mv`. A failed or skipped entry keeps the whole source and the partial destination; a
-/// skipped top-level entry copied nothing and reports nothing.
+/// Finishes a cross-device move like `mv`: the source is removed only after a copy with no
+/// errors. Otherwise the whole source and the partial destination are kept.
 fn finish_cross_device_move(
     active: ActiveTask,
     outcome: CopyOutcome,
@@ -329,42 +290,16 @@ fn finish_cross_device_move(
     new_path: &Path,
     is_directory: bool,
 ) {
-    let top_skipped = outcome.top_skipped();
     if let Some(summary) = summarize(outcome.errors) {
-        if outcome.wrote {
-            active.error(format!(
-                "{summary}; the original {} was kept",
-                compact(old_path)
-            ));
-        } else {
-            active.error(summary);
-        }
-        return;
-    }
-    if top_skipped {
-        active.done();
-        return;
-    }
-    if outcome.skipped > 0 {
-        let skipped = outcome.skipped;
-        let entries = if skipped == 1 { "entry" } else { "entries" };
-        active.error(format!(
-            "Skipped {skipped} {entries}, so the original {} was kept",
-            compact(old_path)
-        ));
+        active.error(summary);
         return;
     }
     // The copy is complete, so removing the source is the only way to finish; a cancel no longer
     // applies.
     active.set_uncancellable();
-    // Remove only the entry that was copied, never another renamed onto its name since.
-    let Some(root) = outcome.root else {
-        active.error(replaced_after_copy(old_path));
-        return;
-    };
-    // Like `mv`, an entry written into the source during the copy is removed with the rest.
-    let removal = Removal::MovedSource(root);
-    if let Some((active, errors)) = remove_path(old_path, is_directory, active, removal) {
+    if let Some((active, errors)) =
+        remove_path(old_path, is_directory, active, Removal::MovedSource)
+    {
         // The destination is whole; only the cleanup failed.
         match summarize(errors) {
             Some(summary) => active.error(format!(
@@ -430,17 +365,12 @@ mod tests {
 
     use super::{
         test_support::{
-            Kind, STANDING, answered, assert_made, copy_task, every_case, finished_task,
-            kind_matrix, make, other_device, paste_after, paste_over, run_to_end, seen,
-            src_and_dest, staging_left,
+            Kind, assert_made, copy_task, every_case, finished_task, make, paste_after, paste_over,
+            run_to_end, src_and_dest,
         },
         *,
     };
-    use crate::{
-        command::{ConflictChoice, progress::Transfer},
-        file_system::entry_id::{EntryId, records_birth_time},
-        test_support::TempDir,
-    };
+    use crate::{command::progress::Transfer, test_support::TempDir};
 
     #[test]
     fn a_plain_copy_does_not_keep_the_modification_times() {
@@ -460,8 +390,7 @@ mod tests {
         // `cp` does not preserve timestamps without `-p`.
         let task = run_to_end(TaskCommand::paste(PasteJob {
             is_move: false,
-            conflicts: Conflicts::default(),
-            overwrite: None,
+            overwrite: false,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
             source: PathInfo::try_from(src.as_path()).unwrap(),
         }))
@@ -474,8 +403,9 @@ mod tests {
         );
     }
 
+    /// Like `cp -R`, the directory is made and the failure to list the source is reported.
     #[test]
-    fn a_copy_of_an_unreadable_directory_is_refused_before_it_starts() {
+    fn a_copy_of_an_unreadable_directory_reports_it() {
         let fx = TempDir::new("tasks_copy_unreadable");
         let src = fx.join("locked");
         fs::create_dir(&src).unwrap();
@@ -485,36 +415,26 @@ mod tests {
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
 
-        let result = run_to_end(TaskCommand::paste(PasteJob {
+        let task = run_to_end(TaskCommand::paste(PasteJob {
             is_move: false,
-            conflicts: Conflicts::default(),
-            overwrite: None,
+            overwrite: false,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
             source: PathInfo::try_from(src.as_path()).unwrap(),
-        }));
+        }))
+        .expect("the copy should start");
         fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
 
         if is_unreadable {
-            let Err(commands) = result else {
-                panic!("the copy should have been refused");
-            };
-            let [Command::AlertError(message)] = commands.as_slice() else {
-                panic!("expected one alert, got {commands:?}");
-            };
             assert_eq!(
-                &format!(
+                Some(format!(
                     "Failed to read directory {}: Permission denied (os error 13)",
                     compact(&src)
-                ),
-                message
+                )),
+                task.error_message()
             );
-            assert!(!dst.join("locked").exists());
         } else {
             eprintln!("skipped: a mode-000 directory can be listed here");
-            assert_eq!(
-                None,
-                result.expect("a readable copy starts").error_message()
-            );
+            assert_eq!(None, task.error_message());
         }
     }
 
@@ -530,8 +450,7 @@ mod tests {
 
         let result = run_to_end(TaskCommand::paste(PasteJob {
             is_move: true,
-            conflicts: Conflicts::default(),
-            overwrite: None,
+            overwrite: false,
             dest: PathInfo::try_from(dst.as_path()).unwrap(),
             source: PathInfo::try_from(src.as_path()).unwrap(),
         }));
@@ -558,19 +477,17 @@ mod tests {
     /// Validates and queues `source` into `dest` as the paste queue does. `Err` carries the alerts
     /// of a job refused before it was queued.
     fn start(
-        conflicts: &Conflicts,
         op: Op,
-        overwrite: Option<Seen>,
+        overwrite: bool,
         dest: &Path,
         source: &Path,
     ) -> Result<mpsc::Receiver<Command>, Vec<Command>> {
-        start_cancellable(conflicts, op, overwrite, dest, source).map(|(rx, _)| rx)
+        start_cancellable(op, overwrite, dest, source).map(|(rx, _)| rx)
     }
 
     fn start_cancellable(
-        conflicts: &Conflicts,
         op: Op,
-        overwrite: Option<Seen>,
+        overwrite: bool,
         dest: &Path,
         source: &Path,
     ) -> Result<(mpsc::Receiver<Command>, CancellationToken), Vec<Command>> {
@@ -580,7 +497,6 @@ mod tests {
         let result = match op {
             Op::Copy | Op::Move => TaskCommand::paste(PasteJob {
                 is_move: op == Op::Move,
-                conflicts: conflicts.clone(),
                 overwrite,
                 dest: dir,
                 source: path,
@@ -588,19 +504,14 @@ mod tests {
             .run(tx),
             Op::Across => {
                 let (path, old_path, new_path, kind) =
-                    match start_transfer(true, &dir, overwrite.is_some(), &path) {
+                    match start_transfer(true, &dir, overwrite, &path) {
                         Ok(started) => started,
                         Err(result) => return Err(result.into_commands()),
                     };
                 let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
                 let uncancellable = active.uncancellable_handle();
-                let conflicts = conflicts.clone();
                 queue_operation(move || {
-                    let settings = CopySettings {
-                        is_move: true,
-                        conflicts: &conflicts,
-                    };
-                    move_across_devices(settings, overwrite, active, &old_path, &new_path, &path);
+                    move_across_devices(overwrite, active, &old_path, &new_path, &path);
                 });
                 TaskRunResult::started(&initial, token, uncancellable)
             }
@@ -611,95 +522,49 @@ mod tests {
         }
     }
 
-    /// The refusal of `source`, which found `new` taken after the queue saw it free.
-    fn raced(is_move: bool, source: &Path, new: &Path) -> String {
-        let verb = if is_move { "move" } else { "copy" };
-        format!(
-            "Cannot {verb} {} to {}: another entry took that name after the paste checked it",
-            compact(source),
-            compact(new)
-        )
+    /// The names in `dir`, sorted: a replacement leaves no temporary name behind.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
     }
 
-    /// The refusal of `source`, whose granted replacement found another entry at `new`.
-    fn changed(is_move: bool, source: &Path, new: &Path) -> String {
-        let verb = if is_move { "move" } else { "copy" };
-        format!(
-            "Cannot {verb} {} to {}: the entry there changed after the paste checked it",
-            compact(source),
-            compact(new)
-        )
-    }
-
+    /// Without a granted overwrite, a name taken after the paste saw it free fails the task and
+    /// the entry there is kept, like `cp -n`.
     #[test]
-    fn a_name_taken_after_the_paste_saw_it_free_is_never_replaced() {
+    fn a_name_taken_after_the_paste_saw_it_free_is_not_replaced() {
+        const KINDS: [Kind; 4] = [Kind::File, Kind::Symlink, Kind::Fifo, Kind::Directory];
         let cases: Vec<_> = OPS
             .into_iter()
-            .flat_map(|op| {
-                kind_matrix()
-                    .map(move |(source, occupant, standing)| (op, source, occupant, standing))
-            })
+            .flat_map(|op| KINDS.map(move |source| (op, source)))
+            .flat_map(|(op, source)| KINDS.map(move |occupant| (op, source, occupant)))
             .collect();
-        assert_eq!(144, cases.len());
 
-        every_case(cases, |&(op, source_kind, occupant, standing)| {
-            let case = format!("{op:?}, {source_kind:?} onto {occupant:?}, {standing:?}");
+        every_case(cases, |&(op, source_kind, occupant)| {
+            let case = format!("{op:?}, {source_kind:?} onto {occupant:?}");
             let (_fx, src, dest) = src_and_dest("tasks_raced");
             let (old, new) = (src.join("one"), dest.join("one"));
             make(source_kind, "source", &old);
-            let conflicts = answered(standing);
 
             let gate = hold_worker();
-            let job = start(&conflicts, op, None, &dest, &old).expect("validated while free");
+            let job = start(op, false, &dest, &old).expect("validated while free");
             make(occupant, "occupant", &new);
-            let id = EntryId::of_path(&new);
             drop(gate);
             let task = await_end(&job);
 
-            let expected = match standing {
-                Some(ConflictChoice::SkipAll) => None,
-                _ => Some(raced(op != Op::Copy, &old, &new)),
-            };
-            assert_eq!(expected, task.error_message(), "{case}");
-            assert_made(&case, occupant, "occupant", id, &new);
-            assert_made(&case, source_kind, "source", None, &old);
+            let message = task.error_message().expect("the task fails");
+            assert!(message.contains("File exists"), "{case}: {message}");
+            assert_made(&case, occupant, "occupant", &new);
+            assert_made(&case, source_kind, "source", &old);
         });
     }
 
-    /// Needs a writable directory on another filesystem; skipped where there is none.
+    /// The later paste validated while the name was free, so it is not allowed to replace.
     #[test]
-    fn a_name_taken_across_devices_is_never_replaced() {
-        every_case(STANDING, |&standing| {
-            let case = format!("{standing:?}");
-            let fx = TempDir::new("tasks_raced_across");
-            let Some((_removed, dest)) = other_device(&fx) else {
-                eprintln!("skipped: no writable directory on another filesystem");
-                return;
-            };
-            let (old, new) = (fx.join("one"), dest.join("one"));
-            make(Kind::File, "source", &old);
-            let conflicts = answered(standing);
-
-            let gate = hold_worker();
-            let job = start(&conflicts, Op::Move, None, &dest, &old).expect("validated while free");
-            make(Kind::File, "occupant", &new);
-            let id = EntryId::of_path(&new);
-            drop(gate);
-
-            let expected = match standing {
-                Some(ConflictChoice::SkipAll) => None,
-                _ => Some(raced(true, &old, &new)),
-            };
-            assert_eq!(expected, await_end(&job).error_message(), "{case}");
-            assert_made(&case, Kind::File, "occupant", id, &new);
-            assert_made(&case, Kind::File, "source", None, &old);
-        });
-    }
-
-    /// The later paste validated while the name was free, so the earlier one's entry is a raced
-    /// name that "overwrite all" does not reach.
-    #[test]
-    fn a_later_paste_never_replaces_what_an_earlier_one_left() {
+    fn a_later_paste_does_not_replace_what_an_earlier_one_left() {
         let fx = TempDir::new("tasks_two_pastes");
         let (x, y, dest) = (fx.join("x"), fx.join("y"), fx.join("dest"));
         for dir in [&x, &y, &dest] {
@@ -707,19 +572,19 @@ mod tests {
         }
         fs::write(x.join("a"), b"x").unwrap();
         fs::write(y.join("a"), b"y").unwrap();
-        let (first, second) = (
-            Conflicts::default(),
-            answered(Some(ConflictChoice::OverwriteAll)),
-        );
 
         let gate = hold_worker();
-        let first_job = start(&first, Op::Move, None, &dest, &x.join("a")).unwrap();
-        let second_job = start(&second, Op::Move, None, &dest, &y.join("a")).unwrap();
+        let first_job = start(Op::Move, false, &dest, &x.join("a")).unwrap();
+        let second_job = start(Op::Move, false, &dest, &y.join("a")).unwrap();
         drop(gate);
 
         assert_eq!(None, await_end(&first_job).error_message());
         assert_eq!(
-            Some(raced(true, &y.join("a"), &dest.join("a"))),
+            Some(format!(
+                "Failed to move {} to {}: File exists (os error 17)",
+                compact(&y.join("a")),
+                compact(&dest.join("a"))
+            )),
             await_end(&second_job).error_message()
         );
         assert_eq!(b"x".to_vec(), fs::read(dest.join("a")).unwrap());
@@ -734,40 +599,21 @@ mod tests {
         Removed,
         /// Another entry of this kind, in the seen entry's place.
         Replaced(Kind),
-        /// The entry the queue saw, rewritten with as many bytes as before.
-        Written,
     }
 
-    const SINCE: [Since; 7] = [
+    const SINCE: [Since; 6] = [
         Since::Unchanged,
         Since::Removed,
-        Since::Written,
         Since::Replaced(Kind::File),
         Since::Replaced(Kind::Symlink),
         Since::Replaced(Kind::Fifo),
         Since::Replaced(Kind::Directory),
     ];
 
-    /// Puts what `since` describes at `new`, keeping the old file under another name so its inode
-    /// number is not reused. Returns the identity of what is there.
-    fn change(fx: &TempDir, since: Since, new: &Path) -> Option<EntryId> {
-        match since {
-            Since::Unchanged => {}
-            Since::Removed => fs::remove_file(new).unwrap(),
-            Since::Replaced(kind) => {
-                fs::rename(new, fx.join("kept")).unwrap();
-                make(kind, "since", new);
-            }
-            Since::Written => {
-                crate::test_support::tick();
-                fs::write(new, b"SEEN").unwrap();
-            }
-        }
-        EntryId::of_path(new)
-    }
-
+    /// Like `cp -f` and `mv -f`: the overwrite is for the name, so whatever non-directory holds it
+    /// when the job runs is replaced. A directory never is.
     #[test]
-    fn a_granted_overwrite_replaces_only_the_entry_the_queue_saw() {
+    fn a_granted_overwrite_replaces_whatever_holds_the_name() {
         let cases: Vec<_> = OPS
             .into_iter()
             .flat_map(|op| SINCE.into_iter().map(move |since| (op, since)))
@@ -775,90 +621,70 @@ mod tests {
 
         every_case(cases, |&(op, since)| {
             let case = format!("{op:?}, {since:?}");
-            let (fx, src, dest) = src_and_dest("tasks_granted");
+            let (_fx, src, dest) = src_and_dest("tasks_granted");
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
 
             let gate = hold_worker();
-            let job = start(&Conflicts::default(), op, granted, &dest, &old).unwrap();
-            let id = change(&fx, since, &new);
+            let job = start(op, true, &dest, &old).unwrap();
+            match since {
+                Since::Unchanged => {}
+                Since::Removed => fs::remove_file(&new).unwrap(),
+                Since::Replaced(kind) => {
+                    fs::remove_file(&new).unwrap();
+                    make(kind, "since", &new);
+                }
+            }
             drop(gate);
             let task = await_end(&job);
 
-            match since {
-                Since::Unchanged | Since::Removed => {
-                    assert_eq!(None, task.error_message(), "{case}");
-                    assert_eq!(b"source".to_vec(), fs::read(&new).unwrap(), "{case}");
-                    assert_eq!(op == Op::Copy, old.exists(), "{case}");
-                }
-                Since::Replaced(kind) => {
-                    assert_eq!(
-                        Some(changed(op != Op::Copy, &old, &new)),
-                        task.error_message(),
-                        "{case}"
-                    );
-                    assert_made(&case, kind, "since", id, &new);
-                    assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
-                }
-                Since::Written => {
-                    assert_eq!(
-                        Some(changed(op != Op::Copy, &old, &new)),
-                        task.error_message(),
-                        "{case}"
-                    );
-                    assert_eq!(b"SEEN".to_vec(), fs::read(&new).unwrap(), "{case}");
-                    assert_eq!(id, EntryId::of_path(&new), "{case}");
-                    assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
-                }
+            if let Since::Replaced(Kind::Directory) = since {
+                let message = task.error_message().expect("a directory is never replaced");
+                assert!(message.contains("Is a directory"), "{case}: {message}");
+                assert_made(&case, Kind::Directory, "since", &new);
+                assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
+            } else {
+                assert_eq!(None, task.error_message(), "{case}");
+                assert_eq!(b"source".to_vec(), fs::read(&new).unwrap(), "{case}");
+                assert_eq!(op == Op::Copy, old.exists(), "{case}");
             }
-            assert_eq!(Vec::<String>::new(), staging_left(&dest), "{case}");
+            assert_eq!(vec!["one"], names_in(&dest), "{case}");
         });
     }
 
-    /// A file source fails where it is opened, before the copy; a symlink where the copy reads it.
     #[test]
-    fn a_granted_overwrite_whose_source_is_gone_says_whether_it_left_the_entry() {
+    fn a_granted_overwrite_whose_source_is_gone_leaves_the_entry() {
         let cases: Vec<_> = OPS
             .into_iter()
             .flat_map(|op| [Kind::File, Kind::Symlink].map(move |kind| (op, kind)))
-            .flat_map(|(op, kind)| [false, true].map(move |gone| (op, kind, gone)))
             .collect();
 
-        every_case(cases, |&(op, kind, occupant_gone)| {
-            let case = format!("{op:?}, {kind:?}, occupant gone: {occupant_gone}");
+        every_case(cases, |&(op, kind)| {
+            let case = format!("{op:?}, {kind:?}");
             let (_fx, src, dest) = src_and_dest("tasks_granted_source_gone");
             let (old, new) = (src.join("one"), dest.join("one"));
             make(kind, "source", &old);
             fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
 
             let gate = hold_worker();
-            let job = start(&Conflicts::default(), op, granted, &dest, &old).unwrap();
+            let job = start(op, true, &dest, &old).unwrap();
             fs::remove_file(&old).unwrap();
-            if occupant_gone {
-                fs::remove_file(&new).unwrap();
-            }
             drop(gate);
             let task = await_end(&job);
 
             let verb = if op == Op::Copy { "copy" } else { "move" };
-            let failed = format!(
-                "Failed to {verb} {} to {}: No such file or directory (os error 2)",
-                compact(&old),
-                compact(&new)
+            assert_eq!(
+                Some(format!(
+                    "Failed to {verb} {} to {}: No such file or directory (os error 2)",
+                    compact(&old),
+                    compact(&new)
+                )),
+                task.error_message(),
+                "{case}"
             );
-            let expected = if occupant_gone {
-                failed
-            } else {
-                format!("{failed}; {} was not replaced", compact(&new))
-            };
-            assert_eq!(Some(expected), task.error_message(), "{case}");
-            if !occupant_gone {
-                assert_eq!(b"seen".to_vec(), fs::read(&new).unwrap(), "{case}");
-            }
-            assert_eq!(Vec::<String>::new(), staging_left(&dest), "{case}");
+            assert_eq!(b"seen".to_vec(), fs::read(&new).unwrap(), "{case}");
+            assert_eq!(vec!["one"], names_in(&dest), "{case}");
         });
     }
 
@@ -875,15 +701,14 @@ mod tests {
             let (old, new) = (src.join("one"), dest.join("one"));
             make(kind, "source", &old);
             fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
 
-            let job = start(&Conflicts::default(), op, granted, &dest, &old).unwrap();
+            let job = start(op, true, &dest, &old).unwrap();
             let task = await_end(&job);
 
             assert_eq!(None, task.error_message(), "{case}");
-            assert_made(&case, kind, "source", None, &new);
+            assert_made(&case, kind, "source", &new);
             assert_eq!(op == Op::Copy, old.symlink_metadata().is_ok(), "{case}");
-            assert_eq!(Vec::<String>::new(), staging_left(&dest), "{case}");
+            assert_eq!(vec!["one"], names_in(&dest), "{case}");
         });
     }
 
@@ -896,9 +721,8 @@ mod tests {
             fs::write(&old, b"source").unwrap();
             fs::write(dest.join("target"), b"target").unwrap();
             std::os::unix::fs::symlink("target", &new).unwrap();
-            let granted = seen(&new);
 
-            let job = start(&Conflicts::default(), op, granted, &dest, &old).unwrap();
+            let job = start(op, true, &dest, &old).unwrap();
             let task = await_end(&job);
 
             assert_eq!(None, task.error_message(), "{case}");
@@ -912,114 +736,6 @@ mod tests {
         });
     }
 
-    /// Replacing the first name changes the file's change time, not its birth time, so the second
-    /// is still the entry the queue saw. Without birth times the second is refused instead.
-    #[test]
-    fn two_granted_links_of_one_file_are_both_replaced() {
-        every_case(OPS, |&op| {
-            let case = format!("{op:?}");
-            let (_fx, src, dest) = src_and_dest("tasks_granted_links");
-            fs::write(src.join("a"), b"new a").unwrap();
-            fs::write(src.join("b"), b"new b").unwrap();
-            fs::write(dest.join("a"), b"shared").unwrap();
-            fs::hard_link(dest.join("a"), dest.join("b")).unwrap();
-            let (granted_a, granted_b) = (seen(&dest.join("a")), seen(&dest.join("b")));
-            let conflicts = Conflicts::default();
-
-            let gate = hold_worker();
-            let first = start(&conflicts, op, granted_a, &dest, &src.join("a")).unwrap();
-            let second = start(&conflicts, op, granted_b, &dest, &src.join("b")).unwrap();
-            crate::test_support::tick();
-            drop(gate);
-            assert_eq!(None, await_end(&first).error_message(), "{case}");
-            let second = await_end(&second);
-
-            assert_eq!(
-                b"new a".to_vec(),
-                fs::read(dest.join("a")).unwrap(),
-                "{case}"
-            );
-            if records_birth_time(&dest) {
-                assert_eq!(None, second.error_message(), "{case}");
-                assert_eq!(
-                    b"new b".to_vec(),
-                    fs::read(dest.join("b")).unwrap(),
-                    "{case}"
-                );
-            } else {
-                // The change time stands in, and replacing the other link moved it.
-                assert_eq!(
-                    Some(changed(op != Op::Copy, &src.join("b"), &dest.join("b"))),
-                    second.error_message(),
-                    "{case}"
-                );
-                assert_eq!(
-                    b"new a".to_vec(),
-                    fs::read(dest.join("b")).unwrap(),
-                    "{case}"
-                );
-            }
-        });
-    }
-
-    /// Skipped where there is no second filesystem.
-    #[test]
-    fn a_granted_overwrite_across_devices_replaces_only_the_entry_the_queue_saw() {
-        every_case(SINCE, |&since| {
-            let case = format!("{since:?}");
-            let fx = TempDir::new("tasks_granted_across");
-            let Some((_removed, dest)) = other_device(&fx) else {
-                eprintln!("skipped: no writable directory on another filesystem");
-                return;
-            };
-            let (old, new) = (fx.join("one"), dest.join("one"));
-            fs::write(&old, b"source").unwrap();
-            fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
-
-            let gate = hold_worker();
-            let job = start(&Conflicts::default(), Op::Move, granted, &dest, &old).unwrap();
-            // Kept on the destination's filesystem, as a rename there would leave it.
-            let id = match since {
-                Since::Replaced(kind) => {
-                    fs::rename(&new, dest.join("kept")).unwrap();
-                    make(kind, "since", &new);
-                    EntryId::of_path(&new)
-                }
-                _ => change(&fx, since, &new),
-            };
-            drop(gate);
-            let task = await_end(&job);
-
-            match since {
-                Since::Unchanged | Since::Removed => {
-                    assert_eq!(None, task.error_message(), "{case}");
-                    assert_eq!(b"source".to_vec(), fs::read(&new).unwrap(), "{case}");
-                    assert!(!old.exists(), "{case}");
-                }
-                Since::Replaced(kind) => {
-                    assert_eq!(
-                        Some(changed(true, &old, &new)),
-                        task.error_message(),
-                        "{case}"
-                    );
-                    assert_made(&case, kind, "since", id, &new);
-                    assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
-                }
-                Since::Written => {
-                    assert_eq!(
-                        Some(changed(true, &old, &new)),
-                        task.error_message(),
-                        "{case}"
-                    );
-                    assert_eq!(b"SEEN".to_vec(), fs::read(&new).unwrap(), "{case}");
-                    assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
-                }
-            }
-            assert_eq!(Vec::<String>::new(), staging_left(&dest), "{case}");
-        });
-    }
-
     #[test]
     fn a_granted_overwrite_cancelled_while_queued_does_nothing() {
         every_case([Op::Copy, Op::Move], |&op| {
@@ -1028,11 +744,9 @@ mod tests {
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
 
             let gate = hold_worker();
-            let (job, token) =
-                start_cancellable(&Conflicts::default(), op, granted, &dest, &old).unwrap();
+            let (job, token) = start_cancellable(op, true, &dest, &old).unwrap();
             token.cancel();
             drop(gate);
             let task = await_end(&job);
@@ -1040,38 +754,7 @@ mod tests {
             assert!(task.is_cancelled(), "{case}: {:?}", task.error_message());
             assert_eq!(b"seen".to_vec(), fs::read(&new).unwrap(), "{case}");
             assert_eq!(b"source".to_vec(), fs::read(&old).unwrap(), "{case}");
-            assert_eq!(Vec::<String>::new(), staging_left(&dest), "{case}");
-        });
-    }
-
-    /// For a cut, the first paste's entry is the only copy of the source.
-    #[test]
-    fn a_later_paste_granted_the_same_overwrite_never_replaces_the_earlier_one() {
-        every_case(OPS, |&op| {
-            let case = format!("{op:?}");
-            let fx = TempDir::new("tasks_two_granted");
-            let (x, y, dest) = (fx.join("x"), fx.join("y"), fx.join("dest"));
-            for dir in [&x, &y, &dest] {
-                fs::create_dir(dir).unwrap();
-            }
-            fs::write(x.join("a"), b"x").unwrap();
-            fs::write(y.join("a"), b"y").unwrap();
-            fs::write(dest.join("a"), b"there").unwrap();
-            let granted = seen(&dest.join("a"));
-
-            let gate = hold_worker();
-            let first = start(&Conflicts::default(), op, granted, &dest, &x.join("a")).unwrap();
-            let second = start(&Conflicts::default(), op, granted, &dest, &y.join("a")).unwrap();
-            drop(gate);
-
-            assert_eq!(None, await_end(&first).error_message(), "{case}");
-            assert_eq!(
-                Some(changed(op != Op::Copy, &y.join("a"), &dest.join("a"))),
-                await_end(&second).error_message(),
-                "{case}"
-            );
-            assert_eq!(b"x".to_vec(), fs::read(dest.join("a")).unwrap(), "{case}");
-            assert_eq!(b"y".to_vec(), fs::read(y.join("a")).unwrap(), "{case}");
+            assert_eq!(vec!["one"], names_in(&dest), "{case}");
         });
     }
 
@@ -1084,10 +767,9 @@ mod tests {
             let (old, new) = (src.join("one"), dest.join("one"));
             fs::write(&old, b"source").unwrap();
             fs::write(&new, b"seen").unwrap();
-            let granted = seen(&new);
 
             let gate = hold_worker();
-            let job = start(&Conflicts::default(), op, granted, &dest, &old).unwrap();
+            let job = start(op, true, &dest, &old).unwrap();
             fs::set_permissions(&dest, fs::Permissions::from_mode(0o555)).unwrap();
             let locked = fs::write(dest.join("probe"), b"").is_err();
             drop(gate);
@@ -1098,10 +780,8 @@ mod tests {
                 let verb = if op == Op::Copy { "copy" } else { "move" };
                 assert_eq!(
                     Some(format!(
-                        "Failed to {verb} {} to {}: Permission denied (os error 13); {} was not \
-                         replaced",
+                        "Failed to {verb} {} to {}: Permission denied (os error 13)",
                         compact(&old),
-                        compact(&new),
                         compact(&new)
                     )),
                     task.error_message(),
@@ -1114,58 +794,6 @@ mod tests {
                 assert_eq!(None, task.error_message(), "{case}");
             }
         });
-    }
-
-    #[test]
-    fn a_granted_move_onto_a_link_to_its_source_is_refused_as_the_same_file() {
-        let (_fx, src, dest) = src_and_dest("tasks_granted_same_file");
-        let (old, new) = (src.join("one"), dest.join("one"));
-        fs::write(&old, b"source").unwrap();
-        fs::write(&new, b"seen").unwrap();
-
-        let gate = hold_worker();
-        let job = start(&Conflicts::default(), Op::Move, seen(&new), &dest, &old).unwrap();
-        fs::remove_file(&new).unwrap();
-        fs::hard_link(&old, &new).unwrap();
-        drop(gate);
-        let task = await_end(&job);
-
-        assert_eq!(
-            Some(format!(
-                "Cannot move {} to {}: they are the same file",
-                compact(&old),
-                compact(&new)
-            )),
-            task.error_message()
-        );
-        assert!(old.exists());
-        assert!(new.exists());
-    }
-
-    #[test]
-    fn a_granted_move_that_fails_says_what_it_left() {
-        let (_fx, src, dest) = src_and_dest("tasks_granted_move_fails");
-        let (old, new) = (src.join("one"), dest.join("one"));
-        fs::write(&old, b"source").unwrap();
-        fs::write(&new, b"seen").unwrap();
-
-        let gate = hold_worker();
-        let job = start(&Conflicts::default(), Op::Move, seen(&new), &dest, &old).unwrap();
-        fs::remove_file(&old).unwrap();
-        drop(gate);
-        let task = await_end(&job);
-
-        assert_eq!(
-            Some(format!(
-                "Failed to move {} to {}: No such file or directory (os error 2); {} was not \
-                 replaced",
-                compact(&old),
-                compact(&new),
-                compact(&new)
-            )),
-            task.error_message()
-        );
-        assert_eq!(b"seen".to_vec(), fs::read(&new).unwrap());
     }
 
     #[test]
@@ -1217,19 +845,11 @@ mod tests {
         (fx, src, rx, active)
     }
 
-    /// A clean outcome of copying the entry `path` names now.
-    fn copied(path: &Path) -> CopyOutcome {
-        CopyOutcome {
-            root: EntryId::of_path(path),
-            ..CopyOutcome::default()
-        }
-    }
-
     #[test]
     fn a_cross_device_move_removes_its_source_after_a_clean_copy() {
         let (_fx, src, rx, active) = moved("tasks_move_complete");
 
-        finish_cross_device_move(active, copied(&src), &src, &src, true);
+        finish_cross_device_move(active, CopyOutcome::default(), &src, &src, true);
 
         assert!(!src.exists());
         assert_eq!(None, finished_task(&rx).error_message());
@@ -1244,7 +864,7 @@ mod tests {
         let locked = fs::write(src.join("sub").join("probe"), b"").is_err();
         let dest = fx.join("dest");
 
-        finish_cross_device_move(active, copied(&src), &src, &dest, true);
+        finish_cross_device_move(active, CopyOutcome::default(), &src, &dest, true);
 
         fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
         if !locked {
@@ -1281,30 +901,12 @@ mod tests {
         );
         token.cancel();
 
-        finish_cross_device_move(active, copied(&src), &src, &src, true);
+        finish_cross_device_move(active, CopyOutcome::default(), &src, &src, true);
 
         assert!(src.symlink_metadata().is_err());
         let task = finished_task(&rx);
         assert!(!task.is_cancelled());
         assert_eq!(None, task.error_message());
-    }
-
-    #[test]
-    fn a_cross_device_move_keeps_a_source_replaced_after_the_copy() {
-        let (fx, src, rx, active) = moved("tasks_move_replaced");
-        let outcome = copied(&src);
-        fs::rename(&src, fx.join("copied")).unwrap();
-        fs::create_dir(&src).unwrap();
-        fs::write(src.join("other.txt"), b"other").unwrap();
-
-        finish_cross_device_move(active, outcome, &src, &src, true);
-
-        assert!(src.join("other.txt").exists());
-        let message = finished_task(&rx).error_message().expect("the move fails");
-        assert!(
-            message.ends_with("it was replaced after it was copied"),
-            "{message}"
-        );
     }
 
     #[test_case(false ; "into a free name")]
@@ -1346,21 +948,14 @@ mod tests {
         assert_eq!(b"src".as_slice(), fs::read(&old).unwrap());
     }
 
-    /// A skip is not an error, so an empty `errors` must not decide the removal.
-    #[test_case(1, "Skipped 1 entry" ; "one")]
-    #[test_case(2, "Skipped 2 entries" ; "several")]
-    fn a_cross_device_move_keeps_its_source_when_an_entry_below_it_was_skipped(
-        skipped: usize,
-        reported: &str,
-    ) {
-        let (_fx, src, rx, active) = moved("tasks_move_skipped");
+    #[test]
+    fn a_cross_device_move_keeps_its_source_when_an_entry_failed() {
+        let (_fx, src, rx, active) = moved("tasks_move_failed");
 
-        // A skip below the top means the copy made the top directory.
         finish_cross_device_move(
             active,
             CopyOutcome {
-                skipped,
-                wrote: true,
+                errors: vec!["a.txt could not be written".to_string()],
                 ..CopyOutcome::default()
             },
             &src,
@@ -1370,60 +965,9 @@ mod tests {
 
         assert!(src.join("a.txt").exists());
         assert_eq!(
-            Some(format!(
-                "{reported}, so the original {} was kept",
-                compact(&src)
-            )),
+            Some("a.txt could not be written".to_string()),
             finished_task(&rx).error_message()
         );
-    }
-
-    #[test]
-    fn a_cross_device_move_whose_entry_was_skipped_keeps_its_source_quietly() {
-        let (_fx, src, rx, active) = moved("tasks_move_top_skipped");
-
-        finish_cross_device_move(
-            active,
-            CopyOutcome {
-                skipped: 1,
-                ..CopyOutcome::default()
-            },
-            &src,
-            &src,
-            true,
-        );
-
-        assert!(src.join("a.txt").exists());
-        assert_eq!(None, finished_task(&rx).error_message());
-    }
-
-    #[test_case(true ; "with part of it at the destination")]
-    #[test_case(false ; "with nothing at the destination")]
-    fn a_cross_device_move_keeps_its_source_when_an_entry_failed(wrote: bool) {
-        let (_fx, src, rx, active) = moved("tasks_move_failed");
-
-        finish_cross_device_move(
-            active,
-            CopyOutcome {
-                errors: vec!["a.txt could not be written".to_string()],
-                wrote,
-                ..CopyOutcome::default()
-            },
-            &src,
-            &src,
-            true,
-        );
-
-        assert!(src.join("a.txt").exists());
-        let expected = if wrote {
-            format!(
-                "a.txt could not be written; the original {} was kept",
-                compact(&src)
-            )
-        } else {
-            "a.txt could not be written".to_string()
-        };
-        assert_eq!(Some(expected), finished_task(&rx).error_message());
     }
 
     #[test]

@@ -186,20 +186,20 @@ When the destination already contains an entry with the same name, the paste sto
 Key | Action
 --- | ---
 <kbd>s</kbd> | Skip this entry
-<kbd>S</kbd> | Skip every collision, also in sources already running
+<kbd>S</kbd> | Skip every collision the paste meets
 <kbd>o</kbd> | Replace the existing entry
 <kbd>O</kbd> | Replace every collision the paste meets
 <kbd>Esc</kbd> | Abandon the rest of the paste
 
 - A directory is never replaced and never replaces anything, like `cp -R` and `mv`: pasting onto one, or pasting a directory onto any entry, asks with only the skip choices.
-- A paste replaces only the entry you answered <kbd>o</kbd> or <kbd>O</kbd> for, as it was then; one that has changed since is left alone and reported. A replacement lands whole or not at all, so one that fails or is cancelled leaves the old entry.
-- A name that was free when the paste reached it and is taken by the time it is written is never replaced: <kbd>S</kbd> skips it, and otherwise it is reported.
+- <kbd>o</kbd> and <kbd>O</kbd> answer for the name, like `cp -f` and `mv -f`: whatever holds it when that entry is pasted is replaced. A replacement that fails or is cancelled leaves the old entry.
+- A name that was free when the paste reached it and is taken by the time it is written is not replaced: that entry fails and is reported.
 - Two pasted entries of the same name never collide: like `mv a/x b/x dest/`, the first takes the name and the second is refused and stays on the clipboard.
 - <kbd>K</kbd> cancels a whole paste or delete at once. Pressed again, it reaches the paste or delete before it.
 - A paste consumes the clipboard as its entries start. What never started (collisions you abandon, entries refused before starting) stays on it, so pasting again retries exactly those.
-- A cut that skipped or failed to copy an entry inside a directory keeps its whole original.
+- A cut across filesystems that failed to copy any entry keeps its whole original.
 
-Permissions, times and attributes, moves across filesystems, and the edge cases above are described under [Copy and paste details](#copy-and-paste-details).
+Permissions and times, moves across filesystems, and the edge cases above are described under [Copy and paste details](#copy-and-paste-details).
 
 ### Chmod
 
@@ -207,7 +207,7 @@ Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than h
 
 ### Entries that change after they are listed
 
-Rename, chmod, delete, copy and cut act on whatever the path names when they run, like `mv`, `chmod` and `rm`, so an entry replaced since it was listed is the one acted on. Inside a tree being copied or deleted, a directory swapped for a symlink during the walk is not followed.
+Rename, chmod, delete, copy and cut act on whatever the path names when they run, like `mv`, `chmod` and `rm`, so an entry replaced since it was listed is the one acted on. A symlink inside a tree being copied or deleted is copied or deleted as a link, never followed.
 
 A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed, and an entry already gone counts as removed, so deleting marked entries that include both a directory and something inside it succeeds.
 
@@ -522,17 +522,13 @@ SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the termi
 
 The confirmation for an entry from elsewhere shows each path in full, except that where the terminal is too narrow a path loses its start to `…`, so the file name and the question stay visible. It is asked because any program can put such text on the clipboard. A shell line such as `cp build dist` copied from elsewhere is ignored, since its paths are not absolute. Without a system clipboard, the warning for pasting with nothing to paste says so, since an entry copied in another window would be unreachable.
 
-A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, and the original's setuid, setgid and sticky bits are dropped (a directory created inside a setgid directory keeps the setgid bit it inherits when you belong to that directory's group; Linux clears the bit on a mode change by anyone else, as it does for `cp -R`). A cut that crosses filesystems copies and then removes the original, the way `mv` does: it keeps the modes, the modification times of files and directories and their access times (on macOS, a directory's access time becomes the time of the move; symlinks and special files keep neither), the extended attributes of files and directories (including the POSIX ACLs on Linux) where the destination accepts them (symlinks and special files keep none), and the group when you belong to it, except on a symlink (setuid and setgid only when the copy has the original's owner and group; a special file keeps only its permission bits). Like `mv`, it removes the whole original once every entry is copied, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. An original that was replaced by another entry after the copy (another device or inode) is kept, and the move reports it. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do.
+A paste copies the way `cp -R` does without `-p`: the umask applies to each entry's mode, the original's setuid, setgid and sticky bits are dropped, and no times are kept (a directory created inside a setgid directory keeps the setgid bit it inherits). A cut that crosses filesystems copies and then removes the original, the way `mv` does: files and directories keep their full mode and modification time, and special files their mode. Nothing else is kept: not access times, owner, group, extended attributes or ACLs. Like `mv`, it removes the whole original once every entry is copied without an error, so something written into the original while the copy ran is removed with it, and from that point it can no longer be cancelled; an entry of it that cannot be removed is reported and the rest are still removed. Hard links in the original are copied as separate files, as a plain `cp -R` copies them, so names that shared one file no longer do.
 
 Collisions:
 
 - Modifier chords are not choices at a collision: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
-- On a destination that treats two names as one (letter case, Unicode normalization: macOS, Windows and SMB shares, FAT and exFAT drives, Linux case-insensitive directories), an entry made since the paste began is never offered for replacement either: it is refused like a second source of the same name, since it is most likely what an earlier source of the paste wrote under the other name. That needs a filesystem that records when an entry was created; where none does (NFS, most FUSE mounts, ext4 with small inodes), only identical names are refused.
-- A move within one filesystem replaces an entry with a single rename. A copy, or a cut across filesystems, is written into a hidden owner-only directory beside the entry, `.filectrl-<pid>-<n>`, and takes the entry's name only once complete: one that fails leaves the old entry as it was and the message says so, and one that is cancelled leaves it as it was without an error. That directory is removed when the replacement ends, or reported if it cannot be; one left behind by a process that was killed or quit part way can be deleted. A replacement needs room for both entries at once.
-- Under a umask or default ACL that leaves new directories unreadable to their owner (`0o477`, `u::---`), a replacement, and a directory copy, fails and is reported: nothing is given a mode by name.
-- <kbd>S</kbd> skips a name taken since the paste reached it when given at any point before that source's copy or move writes the name; otherwise the name is reported when that source finishes. The same holds for every name inside a directory being copied. So of two pastes into one directory at once, the later never replaces what the earlier wrote without asking, unless you answered <kbd>O</kbd> in it.
-- Another program replacing the entry in the moment between the last check and the rename that replaces it is not detected, and on a filesystem that cannot refuse a taken name in the rename itself, neither is a name taken in that moment.
-- A cut that skipped an entry inside a directory, or failed to copy one, keeps its whole original: that entry is not at the destination, so removing the source would take the only copy of it. A cut whose entry itself was skipped leaves its original where it was, with nothing to report.
+- A move within one filesystem replaces an entry with a single rename. A copy, or a cut across filesystems, is written under a hidden name beside the entry, `.filectrl-<pid>-<n>`, and renamed over it once complete: one that fails or is cancelled leaves the old entry as it was. One left behind by a process that was killed part way can be deleted. A replacement needs room for both entries at once.
+- A cut across filesystems that failed to copy an entry keeps its whole original: that entry is not at the destination, so removing the source would take the only copy of it.
 - <kbd>K</kbd> stops the entry being copied, moved or removed at its next check, and the ones queued behind it end without running.
 - Entries you skip deliberately are not put back on the clipboard. If nothing started at all, the clipboard is unchanged. An entry that fails or is cancelled after it started, including while it waits behind other operations, is reported and is not put back on the clipboard; its original is left where it was.
 

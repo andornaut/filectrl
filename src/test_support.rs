@@ -7,11 +7,6 @@ use std::{
 
 use crate::file_system::path_info::PathInfo;
 
-/// Waits past any filesystem timestamp granularity.
-pub(crate) fn tick() {
-    std::thread::sleep(std::time::Duration::from_millis(20));
-}
-
 /// Writes `contents` to `path` as an executable script, from a child process:
 /// a write fd open here could leak into a concurrent fork and cause ETXTBSY.
 pub(crate) fn write_executable(path: &Path, contents: &str) {

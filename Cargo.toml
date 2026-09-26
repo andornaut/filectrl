@@ -41,7 +41,7 @@ chrono = {version = "0.4.45", default-features = false, features = ["clock"]}
 env_logger = {version = "0.11.11", default-features = false}
 directories = "6.0.0"
 log = {version = "0.4.33", default-features = false, features = ["serde"]}
-nix = {version = "0.31.3", default-features = false, features = ["dir", "fs", "poll", "signal", "term", "user"]}
+nix = {version = "0.31.3", default-features = false, features = ["fs", "poll", "signal", "term", "user"]}
 notify = "8.2.0"
 ratatui-textarea = {version = "0.9.2", features = ["crossterm"]}
 ratatui = {version = "0.30.2", features = ["serde"]}
