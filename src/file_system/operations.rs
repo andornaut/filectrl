@@ -621,17 +621,16 @@ mod tests {
     }
 
     /// The root directory belongs to root, so an unprivileged chmod is refused by
-    /// the kernel after the checks pass.
+    /// the kernel after the checks pass. The cause varies by platform (EPERM on
+    /// Linux, EROFS on macOS's sealed system volume), so it is read from the kernel.
     #[test]
     fn setting_the_mode_reports_a_failure_it_did_not_decide() {
         let root = PathInfo::try_from(Path::new("/")).unwrap();
+        let cause = fs::set_permissions("/", fs::Permissions::from_mode(0o755)).unwrap_err();
 
         let error = chmod(&root, 0o755).unwrap_err().to_string();
 
-        assert_eq!(
-            "Failed to chmod \"/\" to 755: Operation not permitted (os error 1)",
-            error
-        );
+        assert_eq!(format!("Failed to chmod \"/\" to 755: {cause}"), error);
     }
 
     #[test]
