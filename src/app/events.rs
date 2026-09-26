@@ -351,12 +351,7 @@ fn event_loop<S: EventSource>(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::VecDeque,
-        os::fd::{AsFd, BorrowedFd},
-        sync::mpsc,
-        time::Duration,
-    };
+    use std::{collections::VecDeque, os::fd::AsFd, sync::mpsc, time::Duration};
 
     use nix::{poll::PollTimeout, sys::signal::Signal};
     use ratatui::crossterm::event::Event;
@@ -510,13 +505,16 @@ mod tests {
         assert!(!wait_for_hangup(PollTimeout::from(50u16), slave.as_fd()));
     }
 
+    // macOS blocks in `poll` on an fd number past its table instead of
+    // reporting POLLNVAL; the timeout keeps a regression from hanging.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_terminal_that_cannot_be_polled_is_not_a_hangup() {
         // SAFETY: a closed fd number, only handed to `poll`.
         #[allow(unsafe_code)]
-        let closed = unsafe { BorrowedFd::borrow_raw(1 << 20) };
+        let closed = unsafe { std::os::fd::BorrowedFd::borrow_raw(1 << 20) };
 
-        assert!(!wait_for_hangup(PollTimeout::NONE, closed));
+        assert!(!wait_for_hangup(PollTimeout::from(5000u16), closed));
     }
 
     /// A signal left unblocked kills the process with the terminal still raw.
