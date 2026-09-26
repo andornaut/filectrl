@@ -1,27 +1,15 @@
 //! Discovery of the applications that can open a given path, each with the
 //! argv that launches it.
 //!
-//! Deliberate limitations:
-//!
-//! - The application database is read, never written: the picker cannot set a
-//!   default (use `xdg-mime default`).
-//! - The index is built once per process (the `OnceLock`s in `linux.rs`), so an
-//!   application installed while FileCTRL runs appears only after a restart.
+//! The application database is read, never written: the picker cannot set a
+//! default (use `gio mime <type> <application>` or `xdg-mime default`).
 
-#[cfg(target_os = "linux")]
-mod exec;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "linux")]
-mod mimeapps;
 
-use std::{
-    collections::HashSet,
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashSet, ffi::OsString, path::Path};
 
 use log::debug;
 
@@ -42,7 +30,6 @@ pub struct AppCandidate {
     pub name: String,
     /// The `openers` key of the configured opener's row; `None` for an application.
     pub setting: Option<&'static str>,
-    pub working_dir: Option<PathBuf>,
 }
 
 impl AppCandidate {
@@ -56,14 +43,18 @@ impl AppCandidate {
 }
 
 /// The applications that can open `path`, most preferred first, always followed
-/// by the configured opener when one is set.
-pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
+/// by the configured opener when one is set, and why the platform lookup could
+/// not run, if it could not.
+pub fn candidates_for(path: &Path) -> (Vec<AppCandidate>, Option<anyhow::Error>) {
     // Absolute, so the type is sniffed from a symlink's target and the path is
     // never read as a flag.
     let path = std::fs::canonicalize(path)
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf());
-    let mut candidates = platform_candidates(&path);
+    let (mut candidates, error) = match platform_candidates(&path) {
+        Ok(candidates) => (candidates, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
     // On the full names, so two that differ only past the cut both stay.
     dedupe_by_name(&mut candidates);
     for candidate in &mut candidates {
@@ -72,7 +63,7 @@ pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     if let Some(fallback) = configured_opener(&Config::global().openers, &path) {
         candidates.push(fallback);
     }
-    candidates
+    (candidates, error)
 }
 
 /// Longest application name shown, leaving room for the detail.
@@ -96,18 +87,19 @@ fn dedupe_by_name(candidates: &mut Vec<AppCandidate>) {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
+fn platform_candidates(path: &Path) -> anyhow::Result<Vec<AppCandidate>> {
     linux::candidates_for(path)
 }
 
 #[cfg(target_os = "macos")]
-fn platform_candidates(path: &Path) -> Vec<AppCandidate> {
-    macos::candidates_for(path)
+#[allow(clippy::unnecessary_wraps)] // Same signature as the Linux lookup, which can fail.
+fn platform_candidates(path: &Path) -> anyhow::Result<Vec<AppCandidate>> {
+    Ok(macos::candidates_for(path))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
-    Vec::new()
+fn platform_candidates(_: &Path) -> anyhow::Result<Vec<AppCandidate>> {
+    Ok(Vec::new())
 }
 
 /// The `openers` template for this kind of path, run through `sh`.
@@ -127,7 +119,6 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
         is_default: false,
         name: shown_name(template),
         setting: Some(key),
-        working_dir: None,
     })
 }
 
@@ -147,7 +138,6 @@ mod tests {
             is_default: false,
             name: name.to_string(),
             setting: None,
-            working_dir: None,
         }
     }
 
@@ -164,7 +154,6 @@ mod tests {
             open_directory: template.clone(),
             open_file: template,
             open_filectrl_window: String::new(),
-            run_in_terminal: String::new(),
         };
         let opener = configured_opener(&openers, std::path::Path::new("/")).unwrap();
         assert_eq!(format!("{}…", "x".repeat(48)), opener.name);
@@ -183,7 +172,6 @@ mod tests {
             open_directory: "cd %s && exec xterm".to_string(),
             open_file: "xdg-open %s".to_string(),
             open_filectrl_window: String::new(),
-            run_in_terminal: String::new(),
         };
         let directory = configured_opener(&openers, std::path::Path::new("/")).unwrap();
         assert_eq!("openers.open_directory", directory.failure_name());
@@ -198,7 +186,6 @@ mod tests {
             open_directory: template.to_string(),
             open_file: template.to_string(),
             open_filectrl_window: String::new(),
-            run_in_terminal: String::new(),
         };
         assert!(configured_opener(&openers, std::path::Path::new("/")).is_none());
     }

@@ -169,7 +169,6 @@ pub(crate) fn exit_cause(status: ExitStatus) -> String {
 /// Launches `argv` without a shell, so nothing in a file name is reinterpreted.
 /// `label` is already rendered as a failure shows it.
 pub(super) fn spawn_argv(
-    working_dir: Option<&Path>,
     label: &str,
     path: &Path,
     argv: &[OsString],
@@ -179,20 +178,8 @@ pub(super) fn spawn_argv(
     let Some((program, rest)) = argv.split_first() else {
         return Ok(());
     };
-    let mut command = detached_command(program, rest);
-    if let Some(working_dir) = working_dir {
-        // Checked here: `spawn` would report a stale `Path=` with the same ENOENT as a
-        // missing program.
-        if !working_dir.is_dir() {
-            return Err(anyhow!(
-                "Cannot run {label}: its working directory {} is not a directory",
-                compact(working_dir)
-            ));
-        }
-        command.current_dir(working_dir);
-    }
     let failure = run_failure(label, path);
-    let child = command
+    let child = detached_command(program, rest)
         .spawn()
         .map_err(|error| anyhow!("{failure}: {error}"))?;
     watch_for_immediate_failure(child, failure, command_tx);
@@ -804,26 +791,6 @@ mod tests {
         assert_eq!("Cannot add bookmark \"favs\": it already exists", error);
     }
 
-    #[test]
-    fn spawn_argv_refuses_a_working_directory_that_is_not_one() {
-        let dir = TempDir::new("ops_spawn_cwd");
-        let missing = dir.join("missing");
-        let (tx, _rx) = std::sync::mpsc::channel();
-
-        let error = spawn_argv(
-            Some(&missing),
-            "\"App\"",
-            Path::new("/f"),
-            &[OsString::from("true")],
-            tx,
-        )
-        .expect_err("a missing working directory must be refused")
-        .to_string();
-
-        assert!(error.starts_with("Cannot run \"App\""), "{error}");
-        assert!(error.ends_with("is not a directory"), "{error}");
-    }
-
     #[test_case(&["false"] => Some("Failed to run \"App\" on \"/f\": exit code 1".to_string()) ; "a failure is reported")]
     #[test_case(&["sh", "-c", "kill -KILL $$"] => Some("Failed to run \"App\" on \"/f\": killed by signal 9".to_string()) ; "a death by signal is named")]
     #[test_case(&["true"] => None ; "a success is not")]
@@ -833,7 +800,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
 
-        spawn_argv(None, "\"App\"", Path::new("/f"), &argv, tx).unwrap();
+        spawn_argv("\"App\"", Path::new("/f"), &argv, tx).unwrap();
 
         // The watcher thread holds the only sender.
         match rx.recv_timeout(Duration::from_secs(5)) {

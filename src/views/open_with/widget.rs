@@ -71,8 +71,6 @@ fn build_row(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use ratatui::style::Style;
     use test_case::test_case;
 
@@ -94,7 +92,6 @@ mod tests {
             is_default,
             name: name.to_string(),
             setting: None,
-            working_dir: None::<PathBuf>,
         }
     }
 

@@ -42,9 +42,6 @@ pub struct Openers {
     pub open_directory: String,
     pub open_file: String,
     pub open_filectrl_window: String,
-    /// Wraps a command that needs a terminal (`Terminal=true` desktop entries).
-    /// `%s` is replaced by a command line rather than a path.
-    pub run_in_terminal: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -581,7 +578,6 @@ fn validate_openers(openers: &PlatformOpeners) -> Result<()> {
             ("open_directory", &openers.open_directory),
             ("open_file", &openers.open_file),
             ("open_filectrl_window", &openers.open_filectrl_window),
-            ("run_in_terminal", &openers.run_in_terminal),
         ] {
             if !template.trim().is_empty() && !has_unquoted_placeholder(template) {
                 return Err(anyhow!(
@@ -1489,7 +1485,8 @@ open_directory = "alacritty --working-directory %s"
 
     #[test]
     fn a_blank_opener_needs_no_placeholder() {
-        let toml = "[openers.linux]\nrun_in_terminal = \"\"\n[openers.macos]\nopen_file = \" \"\n";
+        let toml =
+            "[openers.linux]\nopen_filectrl_window = \"\"\n[openers.macos]\nopen_file = \" \"\n";
         assert!(Config::parse(RuntimeEnv::default(), None, toml, &inert_dir(), &[]).is_ok());
     }
 

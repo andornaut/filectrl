@@ -293,7 +293,6 @@ mod tests {
             open_directory: String::new(),
             open_file: String::new(),
             open_filectrl_window: String::new(),
-            run_in_terminal: String::new(),
         };
         let (tx, _rx) = mpsc::channel();
         let file_system = FileSystem::new(&config, tx);

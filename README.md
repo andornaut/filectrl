@@ -316,19 +316,16 @@ Write `%s` unquoted, as its own word: `open %s`, not `open "%s"`. The reference 
 ```toml
 # Use [openers.linux] on Linux, or [openers.macos] on macOS.
 # %s stands for the current directory, the selected entry, or a new window's
-# directory. In run_in_terminal alone it stands for a command, each word its
-# own argument (see "Open with..." below).
+# directory.
 [openers.linux]
 open_directory = "alacritty --working-directory %s"
 open_file = "pcmanfm %s"
 open_filectrl_window = "alacritty --command filectrl %s"
-run_in_terminal = "alacritty --command %s"
 
 [openers.macos]
 open_directory = "open %s"
 open_file = "open %s"
 open_filectrl_window = "open -a Terminal %s"
-run_in_terminal = "" # Linux only, ignored here
 ```
 
 #### The "Open with" picker
@@ -349,13 +346,10 @@ Only the first nine rows have a number; scroll to reach the rest. Applications t
 
 The list is built per platform:
 
-- **Linux:** the MIME type is resolved through the shared MIME database, including its parent types, so a `.rs` file also offers plain text editors, and any file (not a directory) offers applications registered for `application/octet-stream`, ranked after every more specific type. It is then matched against `mimeapps.list` and the `.desktop` files under `$XDG_DATA_DIRS/applications`, per the [mime-apps spec](https://specifications.freedesktop.org/mime-apps/latest-single/). The application directories are indexed once per run, so an application installed while FileCTRL is open is not offered until the next start. An entry whose `Exec` could hand the file name to an interpreter as code (see [Desktop entry Exec guard](#desktop-entry-exec-guard)) is not offered either, nor is one whose `Exec` is malformed, and the log names each at warn level. Relative directories in `$XDG_DATA_DIRS` and the other XDG variables are ignored, as the spec requires.
+- **Linux:** requires the `gio` command from GLib (package `libglib2.0-bin` on Debian and Ubuntu, `glib2` on Arch and Fedora). `gio info` gives the content type, and `gio mime` lists the default application, then the other registered and recommended ones, in GLib's order. Each is named by the `Name=` of its desktop file, found under `$XDG_DATA_HOME/applications` and `$XDG_DATA_DIRS/*/applications`, and launched with `gio launch`, which handles its `Exec`, `Terminal=` and `Path=` keys. Names are not localized. An application whose desktop file cannot be found is not offered. Without `gio`, the picker offers only the configured opener and an alert says `gio` is required.
 - **macOS:** Launch Services, which requires macOS 12 or newer. The chosen application is launched with `open -a`.
 
-Two `openers` settings shape the list, and setting either to `""` drops its effect:
-
-- Applications that need a terminal (`Terminal=true`) run inside `openers.run_in_terminal`, whose `%s` stands for the command, each word its own argument: `xterm -e %s` runs `xterm` with the arguments `-e`, `vim` and `/some file.txt`. The terminal must run the words after its option as a program and its arguments, as `xterm -e` and `alacritty --command` do. One that joins them into a string for a shell to parse again would run a file name as shell code.
-- `openers.open_file` (or `openers.open_directory` for a directory) is offered last, showing its command template beside the setting name, so the picker still works with no application database. Without it, a path that matches nothing shows "No applications found".
+`openers.open_file` (or `openers.open_directory` for a directory) is offered last, showing its command template beside the setting name, so the picker still works with no application database. Set it to `""` to leave it out. Without it, a path that matches nothing shows "No applications found".
 
 ### Theming
 
@@ -533,8 +527,8 @@ Paste | A later "all" answer at the collision prompt replaces an earlier one, an
 Move across filesystems | Keeps mode and modification time only: not owner, group, access time, extended attributes or ACLs. Hard links become separate files.
 Move across filesystems | The original is removed once everything is copied, so anything written into it during the copy is lost. If any entry fails, the whole original is kept.
 Clipboard | Only absolute paths are pasted. Without a system clipboard (over SSH, on a console), copy and paste work within one window only.
-Open with | Cannot set a default application (use `xdg-mime default`). Applications installed while FileCTRL runs appear after a restart. It opens the entry under the cursor and ignores marks.
-Open with | On Linux, a file name that is not valid UTF-8 is matched against file-type patterns lossily, and the `Exec` guard refuses some safe desktop entries.
+Open with | Cannot set a default application (use `gio mime <type> <application>` or `xdg-mime default`). It opens the entry under the cursor and ignores marks.
+Open with | On Linux, requires the `gio` command from GLib, and application names are shown unlocalized.
 Display | A shortened path is not fitted to the terminal width, so it can wrap on a narrow terminal.
 Signals | <kbd>Ctrl</kbd>+<kbd>z</kbd> is ignored except while an editor or pager runs. A program that stops only itself, rather than its process group, leaves FileCTRL waiting.
 Signals | Terminal settings an editor or pager leaves changed (such as echo off) stay changed after it exits.
@@ -557,22 +551,6 @@ Collisions:
 - A cut across filesystems that failed to copy an entry keeps its whole original: that entry is not at the destination, so removing the source would take the only copy of it.
 - <kbd>K</kbd> stops the entry being copied, moved or removed at its next check, and the ones queued behind it end without running.
 - Entries you skip deliberately are not put back on the clipboard. If nothing started at all, the clipboard is unchanged. An entry that fails or is cancelled after it started, including while it waits behind other operations, is reported and is not put back on the clipboard; its original is left where it was.
-
-### Desktop entry Exec guard
-
-On Linux, a desktop entry's `Exec` is refused when it matches one of the shapes in the table, in which a value could reach an interpreter as code. Only these shapes are detected: a program whose first operand is its program text, such as `awk %f`, is still offered. An option cluster is an argument starting with a single `-` whose leading run of letters and digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`, `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-verbose`, `-cprint(1)`, `-S%f`), or one of the long options `--eval`, `--exec`, `--execute`, `--execute-command`, `--print`, `--run` and `--split-string`, alone or with `=value`; it is taken to give code to run, whatever the program, and the code may be attached to it. Only `%f`, `%F`, `%u` and `%U` are substituted, and they are the field codes the table means; `%i`, `%c`, `%k` and the deprecated codes are removed from the command line, and a cluster is recognized after they are removed, so `perl -%ce %f` is the cluster `-e`.
-
-`Exec` shape | Example | Result
---- | --- | ---
-Field code with no cluster before it | `mpv %f`, `mpv --file=%f`, `foo %f -c bar` | Offered
-Quoted argument that is only the code | `app "%f"` | Offered
-Code after a long option or a `-` option that is not a cluster | `foo --file %f`, `foo --c=%f`, `foo -xvf %f`, `foo -C %f`, `flatpak run --command=foo org.x %U` | Offered
-A removed code or `%%` after a cluster, with the file code before it | `foo %f -c %i` | Offered
-Field code in or anywhere after a cluster, quoted or not | `sh -c %f`, `sh -c -x %f`, `perl -e %f`, `perl -E %f`, `env -S %f`, `env -S%f`, `node -p %f`, `php -r %f`, `node --eval=%f`, `python3 "-cimport sys; ..." %f` | Refused
-No file code, so the appended path would follow a cluster | `sh -c`, `xterm -e htop` | Refused
-Field code inside a quoted or escaped argument | `run --command "mpv %f"`, `app "--file=%f"` | Refused
-
-The rule is deliberately broad and refuses some safe entries, such as `sh -c 'mpv "$1"' sh %f`, which passes the name to the script as a parameter. To open files through a shell command, use the `openers` templates above, which pass the path to the shell as an argument.
 
 ## Developing
 

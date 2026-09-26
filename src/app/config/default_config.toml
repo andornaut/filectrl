@@ -32,10 +32,6 @@ search_max_results = 10000
 open_directory = "cd %s && exec xterm" # e.g. "alacritty --working-directory %s"
 open_file = "xdg-open %s"
 open_filectrl_window = "xterm -e filectrl %s" # e.g. "alacritty --command filectrl %s"
-# Used by "open with" for desktop entries that declare Terminal=true. Here %s
-# stands for the command to run, each word its own argument, rather than for a
-# path. Set it to "" to leave such applications out of the picker.
-run_in_terminal = "xterm -e %s" # e.g. "alacritty --command %s"
 
 [openers.macos]
 open_directory = "open -a Terminal %s"
@@ -45,8 +41,6 @@ open_file = "open %s"
 # parse the name. So this opens a Terminal window in the directory instead; run
 # filectrl there.
 open_filectrl_window = "open -a Terminal %s"
-# Linux only: macOS resolves applications through Launch Services
-run_in_terminal = ""
 
 [ui]
 # How long to wait to interpret multiple clicks to the same element as a double click

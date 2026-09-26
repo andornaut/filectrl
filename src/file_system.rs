@@ -532,14 +532,8 @@ impl FileSystem {
     }
 
     /// Launches an argv the "open with" picker already resolved, without a shell.
-    fn open_with(
-        &self,
-        working_dir: Option<&Path>,
-        label: &str,
-        path: &Path,
-        argv: &[OsString],
-    ) -> CommandResult {
-        spawn_argv(working_dir, label, path, argv, self.command_tx.clone()).into()
+    fn open_with(&self, label: &str, path: &Path, argv: &[OsString]) -> CommandResult {
+        spawn_argv(label, path, argv, self.command_tx.clone()).into()
     }
 
     fn chmod(&mut self, paths: &[PathInfo], mode_str: &str) -> CommandResult {

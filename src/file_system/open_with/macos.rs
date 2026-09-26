@@ -70,6 +70,5 @@ fn to_candidate(path: &Path, is_default: bool, bundle: String) -> AppCandidate {
         is_default,
         name,
         setting: None,
-        working_dir: None,
     }
 }

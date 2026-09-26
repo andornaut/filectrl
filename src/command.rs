@@ -118,7 +118,6 @@ pub enum Command {
         argv: Vec<OsString>,
         label: String,
         path: PathBuf,
-        working_dir: Option<PathBuf>,
     },
 
     // Navigation

@@ -192,10 +192,7 @@ impl CommandHandler for RootView {
                 self.mode = InputMode::Prompt;
                 CommandResult::Handled
             }
-            Command::OpenWithPrompt(path) => {
-                self.open_with.show(path);
-                CommandResult::Handled
-            }
+            Command::OpenWithPrompt(path) => self.open_with.show(path),
             Command::ResetView => {
                 self.is_help_visible = false;
                 self.open_with.hide();

@@ -35,12 +35,7 @@ impl CommandHandler for FileSystem {
             Command::Open(path) => self.open(path),
             Command::OpenCurrentDirectory => self.open_current_directory(),
             Command::OpenNewWindow => self.open_new_window(),
-            Command::OpenWith {
-                argv,
-                label,
-                path,
-                working_dir,
-            } => self.open_with(working_dir.as_deref(), label, path, argv),
+            Command::OpenWith { argv, label, path } => self.open_with(label, path, argv),
             Command::Progress(task) => self.check_progress_for_error(task),
             Command::RefreshDirectory => self.refresh(),
             Command::DirectoryListingComplete { generation } => {

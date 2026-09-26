@@ -61,14 +61,18 @@ impl OpenWithView {
         self.is_visible
     }
 
-    pub(super) fn show(&mut self, path: &PathInfo) {
-        self.candidates = candidates_for(path.as_path());
+    /// Shows the picker for `path`, returning an alert when the application
+    /// lookup could not run.
+    pub(super) fn show(&mut self, path: &PathInfo) -> CommandResult {
+        let (candidates, error) = candidates_for(path.as_path());
+        self.candidates = candidates;
         self.path.clone_from(&path.path);
         self.inner_height = 0;
         self.is_visible = true;
         self.scroll_offset = 0;
         self.selected = 0;
         self.title = format!("Open {} with", path.name());
+        error.map_or(CommandResult::Handled, Into::into)
     }
 
     pub(super) fn hide(&mut self) {
@@ -117,7 +121,6 @@ impl OpenWithView {
             argv: candidate.argv.clone(),
             label: candidate.failure_name(),
             path: self.path.clone(),
-            working_dir: candidate.working_dir.clone(),
         };
         self.hide();
         command.into()
@@ -157,7 +160,6 @@ mod tests {
                 is_default: false,
                 name: format!("App{index}"),
                 setting: None,
-                working_dir: None,
             })
             .collect();
         view.inner_height = 5;
