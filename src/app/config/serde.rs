@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier};
 use serde::{Deserialize, Deserializer, de::Error, de::value::StringDeserializer};
 
-/// Custom deserializer for Color that deserializes empty strings as None (inherit from parent)
+/// Deserializes a Color, with an empty string as None (inherit).
 pub fn deserialize_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
 where
     D: Deserializer<'de>,
@@ -11,8 +11,6 @@ where
         return Ok(None);
     }
 
-    // For non-empty strings, use the built-in Color deserialization, whose
-    // own error names the type rather than the forms it accepts.
     Color::deserialize(StringDeserializer::<D::Error>::new(color_str.clone()))
         .map(Some)
         .map_err(|_| {
@@ -22,9 +20,8 @@ where
         })
 }
 
-/// Deserializes a list of modifier names (e.g. `["bold", "italic"]`) into a `Modifier`.
-/// An unrecognized name is a hard error so that a typo fails the config load
-/// rather than being silently dropped.
+/// Deserializes modifier names (e.g. `["bold", "italic"]`) into a `Modifier`.
+/// An unrecognized name is an error.
 pub fn deserialize_modifier<'de, D>(deserializer: D) -> Result<Modifier, D::Error>
 where
     D: Deserializer<'de>,
@@ -95,8 +92,6 @@ mod tests {
         toml::from_str::<ModifierHolder>(&format!("modifiers = {list}")).map(|h| h.modifiers)
     }
 
-    // An empty string means "unset", so the style inherits from its parent
-    // rather than resolving to a color of its own.
     #[test_case(r#""""# => None ; "empty string inherits")]
     #[test_case(r#""Red""# => Some(Color::Red) ; "named")]
     #[test_case(r##""#FF0000""## => Some(Color::Rgb(0xFF, 0x00, 0x00)) ; "hex")]
@@ -116,8 +111,6 @@ mod tests {
 
     #[test]
     fn an_unknown_modifier_fails_the_load() {
-        // "hidden" is not supported, and the whole config must fail rather than
-        // silently dropping it.
         let error = try_modifier(r#"["bold", "hidden"]"#)
             .expect_err("an unknown modifier should be rejected")
             .to_string();

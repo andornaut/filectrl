@@ -7,30 +7,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// A desktop file id, including the ".desktop" suffix. `DesktopEntry::appid`
-/// strips the suffix, but mimeapps.list keys it with the suffix intact.
+/// A desktop file id, including the ".desktop" suffix (unlike
+/// `DesktopEntry::appid`).
 pub(super) type DesktopId = String;
 
 const ADDED_ASSOCIATIONS: &str = "Added Associations";
 const DEFAULT_APPLICATIONS: &str = "Default Applications";
 const REMOVED_ASSOCIATIONS: &str = "Removed Associations";
 
-/// One parsed `mimeapps.list`. Value order is preserved: the order in
-/// `[Added Associations]` reflects preference.
+/// One parsed `mimeapps.list`, preserving value order (preference).
 #[derive(Debug, Default)]
 pub(super) struct MimeAppsList {
     added: BTreeMap<String, Vec<DesktopId>>,
     defaults: BTreeMap<String, Vec<DesktopId>>,
-    /// True for a `$desktop-mimeapps.list`, which the spec allows to specify
-    /// only the default application, never to add or remove associations.
+    /// A `$desktop-mimeapps.list`, which may only set defaults.
     desktop_specific: bool,
     removed: BTreeMap<String, Vec<DesktopId>>,
 }
 
 impl MimeAppsList {
-    /// Parse the desktop-entry style groups this spec defines. Unknown groups
-    /// and malformed lines are skipped rather than failing the whole lookup,
-    /// because one bad file must not hide every application on the system.
+    /// Parse the groups this spec defines, skipping unknown groups and
+    /// malformed lines.
     pub(super) fn parse(desktop_specific: bool, text: &str) -> Self {
         let mut list = Self {
             desktop_specific,
@@ -72,13 +69,10 @@ impl MimeAppsList {
         list
     }
 
-    /// Rewrite every MIME key through `canonicalize`, so that a list keyed by
-    /// an alias still matches the canonical type the lookup chain carries.
+    /// Rewrite every MIME key through `canonicalize`, merging aliases.
     pub(super) fn canonicalize_keys(&mut self, canonicalize: impl Fn(&str) -> String) {
         for map in [&mut self.added, &mut self.defaults, &mut self.removed] {
             let mut canonicalized: BTreeMap<String, Vec<DesktopId>> = BTreeMap::new();
-            // An alias and its canonical form can both be keyed, so merge
-            // rather than overwrite.
             for (mime, ids) in std::mem::take(map) {
                 canonicalized
                     .entry(canonicalize(&mime))
@@ -99,9 +93,7 @@ pub(super) struct AppDirIndex {
     pub(super) mime_types: BTreeMap<DesktopId, Vec<String>>,
 }
 
-/// One rung of the precedence ladder: the lists that apply at this rung, plus
-/// the applications directory scanned alongside them. The `$XDG_CONFIG_*` rungs
-/// carry lists but no directory.
+/// One precedence level: its lists and, for a data directory, its applications.
 #[derive(Debug, Default)]
 pub(super) struct Level {
     pub(super) apps: Option<AppDirIndex>,
@@ -111,45 +103,26 @@ pub(super) struct Level {
 
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Associations {
-    /// The configured defaults, most specific type first and then highest
-    /// precedence first, less any removed for their type or a more specific
-    /// one. None has been
-    /// checked: the first that the picker can offer is the default.
-    ///
-    /// The spec also requires the default to be an associated application,
-    /// but every desktop honours an explicit default anyway, so one that is not
-    /// associated is listed here all the same.
+    /// The configured defaults, most specific type then highest precedence
+    /// first, less removed ones. Unchecked: the first the picker can offer is
+    /// the default. Not required to be associated, as desktops do.
     pub(super) defaults: Vec<DesktopId>,
-    /// The associated applications, most preferred first. The first the
-    /// picker can offer is the default when no configured one can be, which is
-    /// the fallback the spec ends with and the one `xdg-mime query default`
-    /// and `gio mime` report.
+    /// The associated applications, most preferred first.
     pub(super) ordered: Vec<DesktopId>,
 }
 
-/// Resolve which applications are associated with a file, most preferred first.
-///
-/// `mime_chain` runs most specific to least specific: the guessed type, then
-/// its parents from the subclass graph, then `all/allfiles` and `all/all`.
-/// `levels` runs highest precedence first.
+/// Resolve which applications are associated with a file. `mime_chain` runs
+/// most specific first, `levels` highest precedence first.
 pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associations {
     let mut ordered: Vec<DesktopId> = Vec::new();
     let mut seen: HashSet<DesktopId> = HashSet::new();
     let mut defaults: Vec<DesktopId> = Vec::new();
-    // `[Removed Associations]` cancels an id outright, for every later source
-    // and for every less specific type after it: removing an application for
-    // `text/markdown` does not bring it back through `text/plain`. This is the
-    // blocklist GLib keeps across the whole chain.
+    // A removal holds for every later source and less specific type, as in GLib.
     let mut removed: HashSet<&DesktopId> = HashSet::new();
 
     for mime in mime_chain {
-        // Shadowing restarts for each type. `ordered` and `seen` do not: an id
-        // already ranked for a more specific type keeps its rank.
-        //
-        // An id defined by a higher precedence applications directory masks
-        // every lower definition of that id, both in the directory scan and in
-        // a lower list's `[Added Associations]`: the id names the higher file,
-        // which may not handle the type at all.
+        // An id defined in a higher applications directory masks lower
+        // associations of that id, which name another file. Restarts per type.
         let mut shadowed: HashSet<&DesktopId> = HashSet::new();
 
         for level in levels {
@@ -187,8 +160,7 @@ pub(super) fn associations(levels: &[Level], mime_chain: &[String]) -> Associati
     Associations { defaults, ordered }
 }
 
-/// Find the file that defines a desktop id. The first directory to define it
-/// wins, which is the same shadowing rule `associations` applies.
+/// Find the file that defines a desktop id; the first directory wins.
 pub(super) fn resolve<'a>(levels: &'a [Level], id: &str) -> Option<&'a Path> {
     levels
         .iter()
@@ -197,9 +169,8 @@ pub(super) fn resolve<'a>(levels: &'a [Level], id: &str) -> Option<&'a Path> {
         .map(PathBuf::as_path)
 }
 
-/// The desktop id of a `.desktop` file found under `app_dir`. Subdirectory
-/// components are joined with '-', so `<dir>/kde4/konsole.desktop` is
-/// `kde4-konsole.desktop`.
+/// The desktop id of a `.desktop` file under `app_dir`: `kde4/konsole.desktop`
+/// is `kde4-konsole.desktop`.
 pub(super) fn desktop_id(app_dir: &Path, file: &Path) -> Option<DesktopId> {
     let relative = file.strip_prefix(app_dir).ok()?;
     let id = relative
@@ -228,8 +199,6 @@ mod tests {
         app_dir_in("/apps", entries)
     }
 
-    /// An index whose entries resolve inside `dir`, so two levels defining the
-    /// same id can be told apart by the path `resolve` returns.
     fn app_dir_in(dir: &str, entries: &[(&str, &[&str])]) -> AppDirIndex {
         let mut index = AppDirIndex::default();
         for (id, mime_types) in entries {
@@ -277,8 +246,6 @@ mod tests {
     #[test_case("[Unknown Group]\ntext/plain=a.desktop" ; "unknown group")]
     #[test_case("[Added Associations]\nno equals sign" ; "malformed line")]
     #[test_case("[Added Associations]\ntext/plain=;;" ; "no usable ids")]
-    // A comment is skipped before the line is split, so one shaped like an
-    // association is still a comment.
     #[test_case("[Added Associations]\n#text/plain=a.desktop" ; "a commented-out association")]
     fn parse_skips(text: &str) {
         assert!(MimeAppsList::parse(false, text).added.is_empty());
@@ -331,7 +298,6 @@ mod tests {
 
         list.canonicalize_keys(|mime| if mime == "text/x-alias" { TEXT } else { mime }.to_string());
 
-        // Keys iterate in order, so the canonical key's own ids come first.
         assert_eq!(ids(&["b.desktop", "a.desktop"]), list.added[TEXT]);
         assert_eq!(ids(&["r.desktop"]), list.removed[TEXT]);
         assert_eq!(1, list.added.len());
@@ -357,9 +323,6 @@ mod tests {
 
     #[test]
     fn a_removed_association_suppresses_a_lower_precedence_lists_addition() {
-        // The existing removal test has the addition come from a directory
-        // scan. This one has a lower-precedence *list* add the id back, which
-        // is the other way it can arrive and a separate check.
         let levels = vec![
             level(
                 vec![MimeAppsList::parse(
@@ -377,8 +340,6 @@ mod tests {
             ),
         ];
 
-        // Only the id the user removed is suppressed; its neighbour in the
-        // same list is untouched.
         assert_eq!(
             ids(&["b.desktop"]),
             associations(&levels, &ids(&[TEXT])).ordered
@@ -387,8 +348,6 @@ mod tests {
 
     #[test]
     fn a_directory_shadows_the_same_id_below_it() {
-        // Only the higher precedence definition of a.desktop exists, so the
-        // types the lower one declares are never seen.
         let levels = vec![
             level(vec![], Some(app_dir(&[("a.desktop", &[TEXT])]))),
             level(vec![], Some(app_dir(&[("a.desktop", &["image/png"])]))),
@@ -444,8 +403,6 @@ mod tests {
                 None,
             ),
         ];
-        // Whether one is installed, associated or offerable is for the picker
-        // to decide, so none of these ids needs a desktop file.
         assert_eq!(
             ids(&[
                 "markdown-low.desktop",
@@ -458,9 +415,6 @@ mod tests {
 
     #[test]
     fn a_higher_directory_masks_a_lower_lists_addition_of_the_same_id() {
-        // The user's own a.desktop handles only images, so the system list's
-        // association of a.desktop with text names a file that no longer
-        // applies. Its neighbour b.desktop is not masked and stands.
         let levels = vec![
             level(vec![], Some(app_dir(&[("a.desktop", &["image/png"])]))),
             level(
@@ -519,8 +473,7 @@ mod tests {
 
     #[test]
     fn a_removal_for_a_type_also_holds_for_its_parents() {
-        // a.desktop declares only the parent type, so it can reach a markdown
-        // file only through text/plain, which the removal must still block.
+        // a.desktop reaches markdown only through text/plain.
         let levels = vec![
             level(
                 vec![MimeAppsList::parse(
@@ -535,8 +488,6 @@ mod tests {
             Vec::<DesktopId>::new(),
             associations(&levels, &ids(&["text/markdown", TEXT])).ordered
         );
-        // A plain text file's chain never names text/markdown, so the removal
-        // does not reach it.
         assert_eq!(
             ids(&["a.desktop"]),
             associations(&levels, &ids(&[TEXT])).ordered
@@ -545,8 +496,6 @@ mod tests {
 
     #[test]
     fn resolve_returns_the_highest_precedence_definition() {
-        // Distinct directories, or the two definitions of a.desktop would
-        // resolve to the same path and the precedence could not be observed.
         let levels = vec![
             level(vec![], Some(app_dir_in("/user", &[("a.desktop", &[])]))),
             level(
@@ -561,7 +510,6 @@ mod tests {
             Some(Path::new("/user/a.desktop")),
             resolve(&levels, "a.desktop")
         );
-        // Defined only lower down, so the search continues past the first level.
         assert_eq!(
             Some(Path::new("/system/b.desktop")),
             resolve(&levels, "b.desktop")

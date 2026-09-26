@@ -1,13 +1,7 @@
-//! The command-claim invariant: every broadcast command must be claimed by at
-//! least one handler.
-//!
-//! `App::run` treats an unclaimed command as fatal (`must_not_contain_unhandled`),
-//! but several handler arms mutate state and then return `NotHandled`: they act
-//! on a command without claiming it. For some commands that leaves exactly one
-//! claiming arm in the entire tree (`CancelPrompt` is claimed only by
-//! `RootView`, `SetClipboardEntry` only by `Handlers` itself), and nothing at
-//! those call sites says so. This drives the real handler tree so that removing
-//! a sole claimant fails here rather than exiting the app mid-session.
+//! Every broadcast command must be claimed by at least one handler, and some
+//! have exactly one claimant (`CancelPrompt`: `RootView`; `SetClipboardEntry`:
+//! `Handlers`). Drives the real handler tree so losing a sole claimant fails
+//! here rather than ending a session.
 
 use super::*;
 use crate::{
@@ -21,7 +15,7 @@ use crate::{
 };
 
 /// A temp tree containing the working directory, so navigating to the parent
-/// stays inside the fixture instead of walking into the real temp directory.
+/// stays inside the fixture.
 pub(super) struct Fixture {
     root: TempDir,
 }
@@ -50,9 +44,8 @@ impl Fixture {
         PathInfo::try_from(self.cwd().join("file.txt").as_path()).unwrap()
     }
 
-    /// A path that does not exist, so file operations fail their pre-flight
-    /// validation: the arm is still exercised, but no worker thread starts and
-    /// nothing on disk changes.
+    /// A path that does not exist, so file operations fail validation without
+    /// starting a worker.
     fn missing(&self) -> PathInfo {
         let mut info = self.file();
         info.path = self.cwd().join("missing.txt");
@@ -61,11 +54,8 @@ impl Fixture {
     }
 }
 
-/// The real handler tree, minus the two things that reach outside the process.
-/// `FileSystem` takes its config by reference and copies out what it needs, so
-/// blanking the openers is enough to stop any command from shelling out
-/// (`open_in` returns early on an empty template) and redirecting `config_dir`
-/// keeps bookmark reads inside the fixture.
+/// The real handler tree with blank openers (so nothing shells out) and
+/// `config_dir` inside the fixture.
 pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers {
     let mut config = Config::builtin();
     config.config_dir = fixture.root.path().to_path_buf();
@@ -76,7 +66,6 @@ pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers 
         run_in_terminal: String::new(),
     };
     let file_system = FileSystem::new(&config, tx);
-    // The views read the process-global Config; the first init wins.
     Config::init_test();
     Handlers {
         clipboard: Clipboard::disabled(),
@@ -89,17 +78,8 @@ pub(super) fn test_handlers(tx: Sender<Command>, fixture: &Fixture) -> Handlers 
 
 /// One instance of every `Command` variant that a handler must claim.
 ///
-/// Deliberately absent:
-/// - `Key`, `PasteText`, `Mouse`, `Resize`: terminal input that may go unbound, which
-///   `is_ignorable_unhandled` exempts.
-/// - `Quit`: it must stay *unclaimed*. `App::run` detects it in the unhandled
-///   list and returns before `must_not_contain_unhandled` runs, so a handler
-///   that claimed it would stop the app from ever exiting.
-/// - `RunInForeground`: also unclaimed, for `App::run` to take out of the
-///   unhandled list, since only `App` holds the terminal the program needs.
-///
-/// See `every_variant_is_accounted_for` for why this list cannot silently fall
-/// behind the enum.
+/// Absent: terminal input (`Key`, `PasteText`, `Mouse`, `Resize`), and `Quit`
+/// and `RunInForeground`, which must stay unclaimed for `App::run`.
 fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
     let (_active, task, _token) = ActiveTask::new(
         tx.clone(),
@@ -111,12 +91,8 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
     vec![
         Command::OpenCurrentDirectory,
         Command::OpenNewWindow,
-        // Claimed by RootView, which enumerates the applications that can open
-        // the path. That reads the host's MIME and desktop entry databases, but
-        // it is read-only, bounded, and spawns nothing, so host variance cannot
-        // affect whether the command is claimed.
+        // Reads the host's MIME databases, read-only; spawns nothing.
         Command::OpenWithPrompt(fixture.file()),
-        // The empty-argv backstop, so no process is spawned.
         Command::OpenWith {
             argv: Vec::new(),
             label: "app".to_string(),
@@ -156,8 +132,6 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
             dest: fixture.directory(),
         },
         Command::Paste(fixture.directory()),
-        // No paste is waiting on an answer, so this resolves to a no-op; the
-        // arm still has to claim it.
         Command::ResolveConflict(ConflictChoice::Skip),
         Command::CreateDirectory("created".to_string()),
         Command::ConfirmDelete,
@@ -185,7 +159,6 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         Command::ExitedSearch { generation: 3 },
         Command::SearchStarted { generation: 3 },
         Command::SearchTick,
-        // Walks the one-file fixture; `ResetView` below cancels it.
         Command::StartSearch("query".to_string()),
         Command::FilterChanged("f".to_string()),
         Command::FilterEdited("f".to_string()),
@@ -200,30 +173,24 @@ fn claimable_commands(fixture: &Fixture, tx: &Sender<Command>) -> Vec<Command> {
         Command::AlertWarn("w".to_string()),
         Command::CancelTask,
         Command::Progress(task),
-        // Navigating out of the working directory comes last so the commands
-        // above all run against the fixture's cwd.
+        // Last, so the commands above run against the fixture's cwd.
         Command::GoToParentDirectory,
     ]
 }
 
-/// Exhaustive on purpose, and the reason `claimable_commands` cannot silently
-/// fall behind: adding a `Command` variant fails to compile here until it is
-/// either listed above or explicitly exempted.
+/// Exhaustive, so a new `Command` variant fails to compile until it is listed
+/// in `claimable_commands` or exempted.
 #[allow(dead_code)]
-// The empty arms are two different statements: one lists what is exempt, the
-// other what must be claimed. Merging them would erase the distinction this
-// function exists to record.
+// The empty arms are kept separate: one lists exemptions, the other claims.
 #[allow(clippy::match_same_arms)]
 fn every_variant_is_accounted_for(command: &Command) {
     match command {
-        // Exempt (see `claimable_commands`).
         Command::Key(_, _)
         | Command::PasteText(_)
         | Command::Mouse(_)
         | Command::Resize { .. }
         | Command::Quit
         | Command::RunInForeground { .. } => {}
-        // Must be claimed.
         Command::OpenCurrentDirectory
         | Command::OpenNewWindow
         | Command::OpenWith { .. }
@@ -277,11 +244,10 @@ fn every_command_variant_is_claimed_by_a_handler() {
     let fixture = Fixture::new();
     let (tx, _rx) = mpsc::channel();
     let mut handlers = test_handlers(tx.clone(), &fixture);
-    // Navigation and file operations resolve against a current directory.
     handlers.file_system.run_once(Some(fixture.cwd())).unwrap();
 
     for command in claimable_commands(&fixture, &tx) {
-        // Re-read the mode: OpenPrompt changes it partway through.
+        // OpenPrompt changes the mode partway through.
         let mode = handlers.root.mode();
         let mut derived = Vec::new();
         assert!(
@@ -307,8 +273,6 @@ fn running_in_the_foreground_is_left_to_the_app() {
         &mut handlers,
     );
 
-    // A handler that claimed it would keep it from `App::run`, which alone can
-    // suspend the terminal for the program.
     assert!(!handled);
 }
 
@@ -326,8 +290,6 @@ fn quit_is_deliberately_unclaimed() {
         &mut handlers,
     );
 
-    // `should_quit` reads the unhandled list, so claiming Quit anywhere would
-    // stop the app from exiting.
     assert!(!handled);
     assert!(derived.is_empty());
 }

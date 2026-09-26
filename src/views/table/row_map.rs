@@ -5,7 +5,7 @@ pub(super) struct LineItemMap {
 
     /// Maps each line index (y offset) to its corresponding item index
     lines_to_items: Vec<usize>,
-    /// Maps each item index to the index of its first line: an O(1) alternative to scanning lines_to_items
+    /// Maps each item index to the index of its first line.
     item_first_lines: Vec<usize>,
 }
 
@@ -25,8 +25,7 @@ impl LineItemMap {
         map
     }
 
-    /// Append items after the last one mapped, leaving the lines of the items
-    /// already mapped where they are.
+    /// Append items after the last one mapped.
     pub(super) fn extend(&mut self, item_heights: &[usize]) {
         for &height in item_heights {
             let item = self.item_first_lines.len();
@@ -36,9 +35,8 @@ impl LineItemMap {
         }
     }
 
-    /// Update only the viewport window (top item + visible line count) without
-    /// rebuilding the line<->item mapping, which depends solely on item heights.
-    /// Lets the view reuse a cached mapper across frames while scrolling.
+    /// Update only the viewport window (top item + visible line count), keeping
+    /// the line-to-item mapping.
     pub(super) fn set_window(&mut self, first_visible_item: usize, visible_lines_count: usize) {
         self.first_visible_item = first_visible_item;
         self.visible_lines_count = visible_lines_count;
@@ -52,10 +50,8 @@ impl LineItemMap {
         self.item_first_lines.get(item).copied().unwrap_or(0)
     }
 
-    /// The first item whose row starts at or after `line`, clamped to the
-    /// last item. A line inside a wrapped (multi-line) row snaps forward to
-    /// the next row boundary: pinning the wrapped row to the top would make
-    /// the trailing items unreachable when scrolling to the bottom.
+    /// The first item whose row starts at or after `line`, clamped to the last
+    /// item. Snapping forward keeps the trailing items reachable at the bottom.
     pub(super) fn snap_to_item_start(&self, line: usize) -> usize {
         let item = self.item(line);
         if self.first_line(item) < line {
@@ -113,7 +109,6 @@ mod tests {
         LineItemMap::new(heights, visible, 0)
     }
 
-    // Every line of a wrapped row belongs to the one item that row renders.
     // heights [2, 1, 3]: item 0 owns lines 0-1, item 1 line 2, item 2 lines 3-5.
     #[test_case(&[1, 1, 1], 0 => 0 ; "single-line item")]
     #[test_case(&[1, 1, 1], 2 => 2 ; "the last single-line item")]
@@ -130,8 +125,6 @@ mod tests {
         map(heights, 6).total_lines_count()
     }
 
-    // heights [2, 1, 3]: the rows start at lines 0, 2 and 3 and end at 1, 2
-    // and 5. The last item has no successor, so its end is the final line.
     #[test_case(0 => (0, 1) ; "a wrapped row")]
     #[test_case(1 => (2, 2) ; "a single-line row")]
     #[test_case(2 => (3, 5) ; "the trailing row, whose end falls back to the total")]
@@ -145,9 +138,7 @@ mod tests {
         assert_eq!(3, map(&[4], 3).last_line(0));
     }
 
-    // Returns an item, not a line. heights [1, 1, 3, 1, 1]: item 2 spans lines
-    // 2-4, so a line inside it snaps forward to item 3 rather than pinning the
-    // wrapped row to the top, which would leave the trailing items unreachable.
+    // heights [1, 1, 3, 1, 1]: item 2 spans lines 2-4.
     #[test_case(&[1, 1, 3, 1, 1], 0 => 0 ; "a line already at a row start")]
     #[test_case(&[1, 1, 3, 1, 1], 2 => 2 ; "the first line of a wrapped row")]
     #[test_case(&[1, 1, 3, 1, 1], 3 => 3 ; "inside a wrapped row snaps to the next")]
@@ -157,16 +148,12 @@ mod tests {
         map(heights, 3).snap_to_item_start(line)
     }
 
-    // The viewport is `visible` lines tall and cannot run past either end.
     #[test_case(3, 4 => 2 ; "a full viewport ending at line 4 starts at 2")]
     #[test_case(10, 2 => 0 ; "a viewport taller than the content starts at 0")]
     fn first_visible_line_ending_at(visible: usize, last_line: usize) -> usize {
         map(&[1; 5], visible).first_visible_line_ending_at(last_line)
     }
 
-    // heights [2, 1, 3, 1, 1] scrolled to item 1 in a viewport of four: the
-    // window starts at item 1's first line, 2, not at line 1, and spans lines
-    // 2-5. Its middle rounds down, to line 3.
     #[test]
     fn a_scrolled_window_is_measured_from_its_first_items_first_line() {
         let m = LineItemMap::new(&[2, 1, 3, 1, 1], 4, 1);

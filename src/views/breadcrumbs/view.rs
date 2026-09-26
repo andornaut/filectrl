@@ -32,11 +32,9 @@ impl View for BreadcrumbsView {
             theme.breadcrumbs.separator(),
         );
 
-        // Prioritize displaying the deepest directories.
-        // positions.len() >= area.height always holds: constraint() requests exactly
-        // self.height() rows, and the layout engine never allocates more than requested.
-        // This invariant is relied upon by handle_mouse, which indexes into self.positions
-        // using a y offset guaranteed to be < self.area.height by should_handle_mouse.
+        // Prioritize the deepest directories. handle_mouse relies on positions.len() >=
+        // area.height,
+        // which holds because constraint() requests exactly self.height() rows.
         debug_assert!(
             positions.len() >= self.area.height as usize,
             "layout allocated more height than the header requested"

@@ -13,17 +13,14 @@ use crate::{
 pub(super) struct StatusView {
     directory: Option<PathInfo>,
     directory_len: usize,
-    /// Generation of the directory load whose entries the count follows.
+    /// Generation of the directory load the count follows.
     load_generation: u64,
     selected: Option<PathInfo>,
-    /// What the table lists, set by the root before each render.
     listing_count: ListingCount,
-    /// Entries counted for a reload, applied once it completes. `None` while a
-    /// navigation loads, which counts straight into `directory_len` because
-    /// the listing it described is gone.
+    /// Entries counted for a reload, applied when it completes. `None` during navigation, which
+    /// counts into `directory_len`.
     staged_len: Option<usize>,
-    /// Right-aligned text naming the help key, so a new user can find it.
-    /// Empty when the key is unbound.
+    /// Right-aligned help-key hint; empty when the key is unbound.
     help_hint: String,
 }
 
@@ -43,10 +40,7 @@ impl StatusView {
         CommandResult::Handled
     }
 
-    /// Begin a reload of the directory already summarized. The table keeps its
-    /// listing on screen for the duration, so the count it belongs to is held
-    /// too: resetting it here would show `# Items: 0` under a listing that has
-    /// not changed, once per watcher refresh.
+    /// Begins a reload, keeping the current count because the table keeps its listing on screen.
     fn begin_reload(&mut self, directory: PathInfo, generation: u64) -> CommandResult {
         self.directory = Some(directory);
         self.load_generation = generation;
@@ -64,7 +58,7 @@ impl StatusView {
         CommandResult::Handled
     }
 
-    /// Apply a reload's count, in step with the table swapping its entries in.
+    /// Applies a reload's count as the table swaps its entries in.
     fn finish_listing(&mut self, generation: u64) -> CommandResult {
         if generation == self.load_generation
             && let Some(staged_len) = self.staged_len.take()
@@ -78,8 +72,7 @@ impl StatusView {
         self.listing_count = listing_count;
     }
 
-    /// The `# Items` count as `(total, shown)`. Search results and bookmarks
-    /// are counted by the table, since they are not the directory's entries.
+    /// The `# Items` count as `(total, shown)`; the table counts search results and bookmarks.
     fn item_count(&self) -> (usize, Option<usize>) {
         match self.listing_count {
             ListingCount::Directory { shown } => (self.directory_len, Some(shown)),
@@ -94,7 +87,6 @@ impl StatusView {
     }
 }
 
-/// The first key bound to help, with what it does.
 fn help_hint(keybindings: &KeyBindings) -> String {
     keybindings
         .keys_for(Action::ToggleHelp)
@@ -125,8 +117,6 @@ mod tests {
         info
     }
 
-    /// Search results are counted by the table, not by the directory load
-    /// the status bar follows, which counts the searched directory.
     #[test]
     fn the_item_count_follows_what_the_table_lists() {
         let mut view = StatusView::default();
@@ -177,8 +167,7 @@ mod tests {
         batch(&mut view, 2, 1);
         batch(&mut view, 3, 1);
 
-        // The count is summed across batches because a streamed listing
-        // arrives in pieces and no single command carries the total.
+        // A streamed listing arrives in batches, so the count is summed.
         assert_eq!(5, view.directory_len);
     }
 
@@ -187,8 +176,7 @@ mod tests {
         let mut view = StatusView::default();
         navigated(&mut view, 2);
 
-        // A batch still in flight when the user navigated away belongs to the
-        // previous listing; counting it would inflate the new directory.
+        // A batch in flight from before navigating away belongs to the previous listing.
         batch(&mut view, 4, 1);
         assert_eq!(0, view.directory_len);
 
@@ -204,8 +192,6 @@ mod tests {
 
         navigated(&mut view, 2);
 
-        // Leaving the old count in place would show the previous directory's
-        // total while the new one is still loading.
         assert_eq!(0, view.directory_len);
     }
 
@@ -215,8 +201,7 @@ mod tests {
         navigated(&mut view, 1);
         batch(&mut view, 4, 1);
 
-        // The watcher re-reads the same directory, so its batches repeat
-        // entries that were already counted.
+        // The watcher re-reads the same directory, so its batches repeat counted entries.
         refreshed(&mut view, 2);
         batch(&mut view, 6, 2);
         complete(&mut view, 2);
@@ -233,9 +218,7 @@ mod tests {
         refreshed(&mut view, 2);
         batch(&mut view, 5, 2);
 
-        // The table keeps its listing on screen for the whole reload, so a
-        // count dropping to zero and climbing back would flash a total that
-        // contradicts the rows above it.
+        // The listing stays on screen during a reload, so the count must not drop to zero.
         assert_eq!(4, view.directory_len);
 
         complete(&mut view, 2);
@@ -250,8 +233,7 @@ mod tests {
         refreshed(&mut view, 2);
         batch(&mut view, 5, 2);
 
-        // The completion of the load this reload replaced. Applying the
-        // pending count here would show it before its own listing arrives.
+        // Completion of the load this reload replaced.
         complete(&mut view, 1);
         assert_eq!(4, view.directory_len);
 
@@ -265,9 +247,7 @@ mod tests {
         navigated(&mut view, 1);
         batch(&mut view, 4, 1);
 
-        // The Directory section describes the directory the user is in, not
-        // the listing on screen. Search results stream under their own
-        // generation, which is what keeps them out of the count.
+        // Search results stream under their own generation, which keeps them out of the count.
         batch(&mut view, 100, 9);
 
         assert_eq!(4, view.directory_len);
@@ -279,7 +259,6 @@ mod tests {
         navigated(&mut view, 1);
         batch(&mut view, 4, 1);
 
-        // Bookmarks are an overlay listing, not a change of directory.
         view.handle_command(&Command::Bookmarks {
             bookmarks: vec![path("a"), path("b")],
         });
@@ -307,8 +286,6 @@ mod tests {
             view.selected.as_ref().map(|info| info.display_name.clone())
         );
 
-        // An empty listing clears the selection, so the pane must not keep
-        // describing a file that is no longer selected.
         view.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 0,

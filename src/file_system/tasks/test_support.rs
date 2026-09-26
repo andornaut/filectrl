@@ -25,8 +25,7 @@ pub(super) fn copy_task(tx: std::sync::mpsc::Sender<Command>) -> ActiveTask {
     copy_task_with(tx, 1).0
 }
 
-/// A copy task of `total` bytes sending to `tx`, with the token that cancels
-/// it.
+/// A copy task of `total` bytes sending to `tx`, with its cancel token.
 pub(super) fn copy_task_with(
     tx: std::sync::mpsc::Sender<Command>,
     total: u64,
@@ -42,8 +41,8 @@ pub(super) fn copy_task_with(
     (active, token)
 }
 
-/// Runs `task` on the shared worker and waits for how it finished. `Err`
-/// carries the alerts of a task that was refused before it started.
+/// Runs `task` on the shared worker and waits for it. `Err` carries the alerts of a task refused
+/// before it started.
 pub(super) fn run_to_end(task: TaskCommand) -> Result<Task, Vec<Command>> {
     let (tx, rx) = mpsc::channel();
     let result = task.run(tx);
@@ -57,7 +56,6 @@ pub(super) fn mode_of(path: &Path) -> u32 {
     fs::symlink_metadata(path).unwrap().permissions().mode()
 }
 
-/// The last task the operation sent, which carries how it finished.
 pub(super) fn finished_task(rx: &mpsc::Receiver<Command>) -> Task {
     let mut last = None;
     while let Ok(command) = rx.try_recv() {
@@ -68,11 +66,8 @@ pub(super) fn finished_task(rx: &mpsc::Receiver<Command>) -> Task {
     last.expect("the task sent no progress")
 }
 
-/// The identity of the entry `path` names now.
-/// A source file holding "src", a destination file holding "dest", and an
-/// `ActiveTask` for the operation that would replace one with the other.
-/// The receiver is leaked: nothing reads it, and it only has to outlive the
-/// task, whose sends are best-effort anyway.
+/// A source file holding "src", a destination file holding "dest", and an `ActiveTask` that would
+/// replace one with the other. The receiver is leaked so it outlives the task.
 pub(super) fn destination(
     label: &str,
 ) -> (TempDir, PathBuf, PathBuf, ActiveTask, CancellationToken) {
@@ -87,8 +82,7 @@ pub(super) fn destination(
     (fx, src, dst, active, token)
 }
 
-/// The staging directories a replacement left in `dir`, which must be none
-/// once its task has ended, however it ended.
+/// The staging directories a replacement left in `dir`.
 pub(super) fn staging_left(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir)
         .unwrap()
@@ -99,15 +93,9 @@ pub(super) fn staging_left(dir: &Path) -> Vec<String> {
 
 pub(super) use crate::file_system::entry_id::seen;
 
-/// Pastes `old` into `dest` from a selection made before `change` runs: a
-/// copy through `TaskCommand::run` and the shared worker, or the copy and
-/// removal a move falls back to when its rename crosses devices
-/// (`move_across_devices`), whatever devices the two are on. Returns the
-/// destination and the finished task.
-///
-/// The paste is watched under a deadline, so a copy that never ends fails the
-/// test rather than hanging it; the task is cancelled before the panic, so the
-/// runaway stops.
+/// Pastes `old` into `dest` from a selection made before `change` runs: a copy through the shared
+/// worker, or a cross-device move (`move_across_devices`). Returns the destination and the finished
+/// task. Runs under a deadline, cancelling the task before failing.
 pub(super) fn paste_after(
     is_move: bool,
     dest: &Path,
@@ -117,8 +105,7 @@ pub(super) fn paste_after(
     transfer(is_move, false, dest, old, change, || false)
 }
 
-/// `paste_after` with the replacement of what holds the name already granted,
-/// as a conflict answer grants it.
+/// `paste_after` with the replacement of what holds the name already granted.
 pub(super) fn paste_over(is_move: bool, dest: &Path, old: &Path) -> (PathBuf, Task) {
     transfer(is_move, true, dest, old, || {}, || false)
 }
@@ -134,7 +121,6 @@ fn transfer(
     let path = PathInfo::try_from(old).unwrap();
     let dest = PathInfo::try_from(dest).unwrap();
     let new_path = dest.path.join(old.file_name().unwrap());
-    // The entry the replacement is granted for, as the paste finds it.
     let granted = if overwrite { seen(&new_path) } else { None };
     if is_move {
         let (old_path, moved_to) = validate_paths(&path, &dest, true, overwrite).ok().unwrap();
@@ -149,8 +135,8 @@ fn transfer(
         });
         return (new_path, task);
     }
-    // Validated and registered before `change`, as a paste does; run only
-    // once the worker is let go.
+    // Validated and registered before `change`, as a paste does; run only once the worker is let
+    // go.
     let gate = hold_worker();
     let (tx, rx) = mpsc::channel();
     let started = TaskCommand::paste(PasteJob {
@@ -167,11 +153,10 @@ fn transfer(
     (new_path, watched(&rx, &token, runaway))
 }
 
-/// How long a paste a test runs may take.
 const DEADLINE: Duration = Duration::from_secs(10);
 
-/// Waits for the task reporting on `rx` to end, cancelling it through `token`
-/// and failing if `runaway` holds or it outlasts the deadline.
+/// Waits for the task on `rx` to end, cancelling it and failing if `runaway` holds or it outlasts
+/// the deadline.
 fn watched(
     rx: &mpsc::Receiver<Command>,
     token: &CancellationToken,
@@ -198,8 +183,7 @@ fn watched(
     }
 }
 
-/// Runs `run` on a thread of its own with a fresh task, watched as `watched`
-/// watches one, and returns how the task ended.
+/// Runs `run` on its own thread with a fresh task, watched as `watched` does.
 fn on_a_thread(runaway: impl Fn() -> bool, run: impl FnOnce(ActiveTask) + Send + 'static) -> Task {
     let (tx, rx) = mpsc::channel();
     let (active, token) = copy_task_with(tx, 1);
@@ -209,7 +193,7 @@ fn on_a_thread(runaway: impl Fn() -> bool, run: impl FnOnce(ActiveTask) + Send +
     task
 }
 
-/// What the workers of a paste under `standing` read of it.
+/// The `Conflicts` the workers of a paste under `standing` read.
 pub(super) fn answered(standing: Option<ConflictChoice>) -> Conflicts {
     let conflicts = Conflicts::default();
     if let Some(standing) = standing {
@@ -218,14 +202,12 @@ pub(super) fn answered(standing: Option<ConflictChoice>) -> Conflicts {
     conflicts
 }
 
-/// Every standing answer a paste can have.
 pub(super) const STANDING: [Option<ConflictChoice>; 3] = [
     None,
     Some(ConflictChoice::SkipAll),
     Some(ConflictChoice::OverwriteAll),
 ];
 
-/// The kinds of entry a source can be, and a name can be taken by.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Kind {
     File,
@@ -236,8 +218,6 @@ pub(super) enum Kind {
 
 pub(super) const KINDS: [Kind; 4] = [Kind::File, Kind::Symlink, Kind::Fifo, Kind::Directory];
 
-/// Every kind of source onto every kind of occupant, under every standing
-/// answer.
 pub(super) fn kind_matrix() -> impl Iterator<Item = (Kind, Kind, Option<ConflictChoice>)> {
     KINDS.into_iter().flat_map(|kind| {
         KINDS.into_iter().flat_map(move |occupant| {
@@ -248,8 +228,6 @@ pub(super) fn kind_matrix() -> impl Iterator<Item = (Kind, Kind, Option<Conflict
     })
 }
 
-/// A temporary directory labelled `label` holding the directories `src` and
-/// `dest`, returned with their paths.
 pub(super) fn src_and_dest(label: &str) -> (TempDir, PathBuf, PathBuf) {
     let fx = TempDir::new(label);
     let (src, dest) = (fx.join("src"), fx.join("dest"));
@@ -258,8 +236,8 @@ pub(super) fn src_and_dest(label: &str) -> (TempDir, PathBuf, PathBuf) {
     (fx, src, dest)
 }
 
-/// Makes an entry of `kind` at `path`, its contents marked with `mark`: a
-/// file's bytes, a symlink's target, or the one file a directory holds.
+/// Makes an entry of `kind` at `path` marked with `mark`: a file's bytes, a symlink's target, or a
+/// directory's one file.
 pub(super) fn make(kind: Kind, mark: &str, path: &Path) {
     match kind {
         Kind::File => fs::write(path, mark).unwrap(),
@@ -274,8 +252,7 @@ pub(super) fn make(kind: Kind, mark: &str, path: &Path) {
     }
 }
 
-/// Asserts `path` is still the entry `make(kind, mark, path)` made, as `id`
-/// when given: nothing replaced it, nothing was merged into it.
+/// Asserts `path` is still the entry `make(kind, mark, path)` made (and `id` when given).
 pub(super) fn assert_made(case: &str, kind: Kind, mark: &str, id: Option<EntryId>, path: &Path) {
     if id.is_some() {
         assert_eq!(id, EntryId::of_path(path), "{case}: {path:?} was replaced");
@@ -305,8 +282,7 @@ pub(super) fn assert_made(case: &str, kind: Kind, mark: &str, id: Option<EntryId
     }
 }
 
-/// Runs `check` for every case, then fails once, naming each case that
-/// failed, so one run reports them all rather than stopping at the first.
+/// Runs `check` for every case, then fails once naming each failed case.
 pub(super) fn every_case<T: std::fmt::Debug>(
     cases: impl IntoIterator<Item = T>,
     check: impl Fn(&T),
@@ -325,9 +301,7 @@ pub(super) fn every_case<T: std::fmt::Debug>(
     );
 }
 
-/// Runs `check` on a thread of its own and fails if it has not finished
-/// within a deadline, so a regression that blocks (opening a FIFO, say) fails
-/// the test rather than hanging the suite. A panic in `check` fails it too.
+/// Runs `check` on its own thread and fails if it blocks past a deadline or panics.
 pub(super) fn within_deadline(check: impl FnOnce() + Send + 'static) {
     let (done, finished) = mpsc::channel();
     let worker = std::thread::spawn(move || {
@@ -345,7 +319,6 @@ pub(super) fn within_deadline(check: impl FnOnce() + Send + 'static) {
     }
 }
 
-/// A directory removed, with its contents, when dropped.
 pub(super) struct RemoveOnDrop(PathBuf);
 
 impl Drop for RemoveOnDrop {
@@ -354,8 +327,8 @@ impl Drop for RemoveOnDrop {
     }
 }
 
-/// A fresh writable directory on another filesystem than `fx`'s, or `None`
-/// where there is none (macOS has no `/dev/shm`).
+/// A fresh writable directory on another filesystem than `fx`'s, or `None` (macOS has no
+/// `/dev/shm`).
 pub(super) fn other_device(fx: &TempDir) -> Option<(RemoveOnDrop, PathBuf)> {
     use std::os::unix::fs::MetadataExt;
     let device = fs::metadata(fx.path()).ok()?.dev();
@@ -376,8 +349,6 @@ pub(super) fn other_device(fx: &TempDir) -> Option<(RemoveOnDrop, PathBuf)> {
     Some((RemoveOnDrop(dir.clone()), dir))
 }
 
-/// The conflicts of a paste nobody answered anything for, for a test that has
-/// no paste of its own.
 pub(super) fn no_paste() -> &'static Conflicts {
     static NO_PASTE: std::sync::LazyLock<Conflicts> = std::sync::LazyLock::new(Conflicts::default);
     &NO_PASTE

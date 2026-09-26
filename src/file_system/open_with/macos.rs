@@ -1,7 +1,5 @@
-//! Application lookup via Launch Services.
-//!
-//! Every objc2 binding used here is generated as a safe `pub fn`, so the
-//! crate-wide `unsafe_code = "deny"` lint needs no exception.
+//! Application lookup via Launch Services. Every objc2 binding used is a safe
+//! `pub fn`, so `unsafe_code = "deny"` needs no exception.
 
 use std::path::Path;
 
@@ -11,13 +9,12 @@ use objc2_foundation::{NSFileManager, NSOperatingSystemVersion, NSProcessInfo, N
 
 use super::AppCandidate;
 
-/// Launching through `open` keeps this on the same detached spawn path as every
-/// other platform, and avoids the asynchronous completion handler that
-/// NSWorkspace's launch API requires.
+/// Launching through `open` uses the same detached spawn path as other
+/// platforms, with no asynchronous completion handler.
 const OPEN: &str = "/usr/bin/open";
 
-/// `URLsForApplicationsToOpenURL:` was added in macOS 12. Sending it to an
-/// older system raises an unrecognized selector, which aborts the process.
+/// `URLsForApplicationsToOpenURL:` was added in macOS 12; an older system
+/// aborts on the unrecognized selector.
 const MINIMUM_VERSION: NSOperatingSystemVersion = NSOperatingSystemVersion {
     majorVersion: 12,
     minorVersion: 0,
@@ -47,8 +44,7 @@ pub(super) fn candidates_for(path: &Path) -> Vec<AppCandidate> {
             to_candidate(path, is_default, bundle)
         })
         .collect();
-    // Launch Services documents no order for the returned array, so impose one
-    // and hoist the default application to the top.
+    // Launch Services documents no order; put the default first.
     candidates.sort_by_key(|candidate| (!candidate.is_default, candidate.name.to_lowercase()));
     candidates
 }
@@ -66,17 +62,10 @@ fn to_candidate(path: &Path, is_default: bool, bundle: String) -> AppCandidate {
             OPEN.into(),
             "-a".into(),
             bundle.clone().into(),
-            // The path's own bytes, like every other platform's argv: a lossy
-            // conversion would hand `open` replacement characters and it would
-            // open nothing.
-            //
-            // No "--" terminator: `open` documents "--args", not "--", so a
-            // "--" could be taken as a filename operand. `candidates_for`
-            // guarantees an absolute path, which can never look like a flag.
+            // No "--": `open` could take it as a filename. The path is
+            // absolute, so it cannot look like a flag.
             path.as_os_str().to_os_string(),
         ],
-        // The bundle path is what tells two identically named applications
-        // apart, which a display name cannot.
         detail: bundle,
         is_default,
         name,

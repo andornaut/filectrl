@@ -11,8 +11,7 @@ use crate::app::config::theme::Theme;
 use crate::command::PromptAction;
 
 impl View for PromptView {
-    /// One row, or one per line of a confirmation that lists what it asks
-    /// about.
+    /// One row, or one per line of a confirmation that lists entries.
     fn constraint(&self, _: Rect) -> Constraint {
         let lines = if self.actions.is_confirmation() {
             self.label().len()
@@ -28,7 +27,6 @@ impl View for PromptView {
             confirmation_label_widget(&lines, area.width, theme).render(area, frame.buffer_mut());
             return;
         }
-        // A text prompt's label is one line naming no path.
         let label: String = lines.iter().map(ToString::to_string).collect();
         let label_width = label.cell_width();
 
@@ -44,9 +42,7 @@ impl View for PromptView {
         frame.render_widget(&self.text_area, input_area);
         self.update_scroll_col(input_area.width);
 
-        // Goto type-ahead: paint the muted completion suffix + match counter
-        // as an overlay after the typed text, only while the cursor is at the
-        // end of the input (otherwise it would misalign with an interior cursor).
+        // The Goto overlay is drawn only with the cursor at the end, or it would misalign.
         if matches!(self.actions, PromptAction::Goto { .. })
             && self.cursor_at_end()
             && let Some((suffix, idx, total)) = self.current_suggestion()

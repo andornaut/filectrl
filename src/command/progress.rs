@@ -17,8 +17,7 @@ pub struct Transfer {
     pub destination: String,
 }
 
-/// Describes what a task is doing, for display in the notices view and the
-/// cancel alert.
+/// What a task is doing, for the notices view and the cancel alert.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TaskKind {
     Copy(Transfer),
@@ -27,8 +26,7 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    /// The verb prefix, always shown in full by the operations notice (it is
-    /// not truncated, only the `detail` is).
+    /// The verb prefix, never truncated.
     pub fn prefix(&self) -> &'static str {
         match self {
             TaskKind::Copy(_) => "Copying ",
@@ -37,7 +35,6 @@ impl TaskKind {
         }
     }
 
-    /// The underlying transfer, for operations that have one (copy/move).
     fn transfer(&self) -> Option<&Transfer> {
         match self {
             TaskKind::Copy(t) | TaskKind::Move(t) => Some(t),
@@ -45,26 +42,21 @@ impl TaskKind {
         }
     }
 
-    /// The source path, for operations that have one (copy/move). The
-    /// operations notice truncates only this part to fit the width.
+    /// The source path of a copy or move.
     pub fn source(&self) -> Option<&str> {
         self.transfer().map(|t| t.source.as_str())
     }
 
-    /// The source's basename (file/dir name), for copy/move.
     pub fn source_basename(&self) -> Option<&str> {
         self.source().map(basename)
     }
 
-    /// The full destination path (including the basename) for copy/move.
-    /// Used by the operations notice as a fallback when the source cannot be
-    /// shown at all.
+    /// The full destination path of a copy or move.
     pub fn destination(&self) -> Option<&str> {
         self.transfer().map(|t| t.destination.as_str())
     }
 
-    /// The target path shown in full by the operations notice: the
-    /// destination directory for copy/move, or the path being deleted.
+    /// The destination directory of a copy or move, or the path being deleted.
     pub fn target(&self) -> String {
         match self {
             TaskKind::Copy(t) | TaskKind::Move(t) => dest_display(&t.source, &t.destination),
@@ -72,7 +64,6 @@ impl TaskKind {
         }
     }
 
-    /// The path portion (source + target).
     pub fn detail(&self) -> String {
         match self.source() {
             Some(source) => format!("{source} to {}", self.target()),
@@ -80,9 +71,7 @@ impl TaskKind {
         }
     }
 
-    /// The shared human phrasing used by both the operations notice and the
-    /// cancel alert. Callers add their own decoration (e.g. a trailing
-    /// ellipsis or a `Cancelled:` prefix).
+    /// The phrasing shared by the operations notice and the cancel alert.
     pub fn message(&self) -> String {
         format!("{}{}", self.prefix(), self.detail())
     }
@@ -95,10 +84,8 @@ fn basename(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// If the source and destination share a basename (the common "into a
-/// directory" case), show the destination's parent directory (with a
-/// trailing slash to denote a directory) instead of repeating the filename;
-/// otherwise show the full destination path.
+/// The destination's parent with a trailing slash when the basenames match,
+/// otherwise the full destination.
 fn dest_display(source: &str, destination: &str) -> String {
     if basename(source) == basename(destination) {
         let parent = Path::new(destination)
@@ -146,15 +133,8 @@ pub struct Progress {
 }
 
 impl Progress {
-    // `is_done` has already returned for `completed == total`. `increment`
-    // caps the count at the total, but `set_total` can lower the total below a
-    // count already made, so the quotient can exceed 1: the `.min` bounds both
-    // results, and a float-to-integer `as` saturates rather than wrapping. The
-    // arithmetic stays in f64 because the rounding is half-away-from-zero,
-    // which integer division does not reproduce: 2 of 3 is 67%, not 66%.
-    // Rounding up must not reach the end early, so an unfinished task stops
-    // one short of it: 995 of 1000 reads 99%, not 100%, for the rest of a long
-    // copy.
+    // f64 for half-away-from-zero rounding; `as` saturates. An unfinished task
+    // stops one short of `factor`, even past a lowered total.
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     #[allow(clippy::cast_sign_loss)]
     pub fn scaled(&self, factor: u16) -> u16 {
@@ -176,9 +156,7 @@ impl Progress {
         self.completed = self.total;
     }
 
-    /// Only tasks still running are drawn, so a zero total is one with nothing
-    /// sized to count (a tree of empty files, symlinks and directories), not
-    /// one that is finished: it reads 0% until the task ends.
+    /// A zero total means nothing sized to count, not finished.
     fn is_done(&self) -> bool {
         self.total != 0 && self.completed == self.total
     }
@@ -188,21 +166,12 @@ impl Progress {
     }
 }
 
-/// A handle to an in-progress task.
-///
-/// Finalization (`done`, `cancelled`, `error`) consumes `self`, so finalizing
-/// twice, or reporting an error after `done`, is a compile-time error rather
-/// than an update to a task the UI has already dropped.
-///
-/// Dropped without any of them (an early `?` return), `Drop` reports the task
-/// as failed with "Task interrupted", so no phantom progress bar is left
-/// behind and the user is told it did not finish.
+/// A handle to an in-progress task. Finalization consumes `self`; dropped
+/// without it, the task reports "Task interrupted".
 pub struct ActiveTask {
     cancel_token: CancellationToken,
-    /// Set once the task can no longer be meaningfully cancelled: it reached
-    /// a terminal state, or it entered a stage that cannot be interrupted.
-    /// Shared with the cancel stack, which drops such entries instead of
-    /// cancelling them.
+    /// Set once the task ended or entered a stage that cannot be interrupted.
+    /// Shared with the cancel stack.
     uncancellable: Arc<AtomicBool>,
     task: Option<Task>,
     tx: Sender<Command>,
@@ -210,15 +179,13 @@ pub struct ActiveTask {
 
 impl Drop for ActiveTask {
     fn drop(&mut self) {
-        // Dropped without finalization: the operation exited early.
-        // Report as an error so the UI clears the progress bar and alerts the user.
         self.finalize(|task| task.error("Task interrupted"));
     }
 }
 
 impl ActiveTask {
-    /// Creates a new active task and an initial snapshot suitable for `Command::Progress`.
-    /// Returns the active task handle, an initial task snapshot, and a cancellation token.
+    /// Returns the handle, an initial snapshot for `Command::Progress`, and a
+    /// cancellation token.
     pub fn new(tx: Sender<Command>, kind: TaskKind, total: u64) -> (Self, Task, CancellationToken) {
         let cancel_token = CancellationToken::new();
         let task = Task::new(kind, total);
@@ -239,28 +206,21 @@ impl ActiveTask {
         self.cancel_token.is_cancelled()
     }
 
-    /// A shared flag that flips to `true` when the task can no longer be
-    /// cancelled, for consumers that cannot wait for the terminal `Progress`
-    /// command (e.g. the cancel stack).
+    /// A shared flag set when the task can no longer be cancelled.
     pub fn uncancellable_handle(&self) -> Arc<AtomicBool> {
         self.uncancellable.clone()
     }
 
-    /// Marks the task as no longer cancellable without finalizing it, for
-    /// stages that cannot be interrupted (e.g. removing the source after a
-    /// cross-device move's copy has completed).
+    /// Marks the task as no longer cancellable without finalizing it.
     pub fn set_uncancellable(&self) {
         self.uncancellable.store(true, Ordering::Relaxed);
     }
 
-    /// Single chokepoint for every terminal path: takes the task, marks it
-    /// uncancellable, applies the terminal transition, and sends the final
-    /// snapshot. Idempotent once the task has been taken.
+    /// Applies the terminal transition and sends the final snapshot, once.
     fn finalize(&mut self, transition: impl FnOnce(&mut Task)) {
         if let Some(mut task) = self.task.take() {
             self.uncancellable.store(true, Ordering::Relaxed);
             transition(&mut task);
-            // Err means the receiver was dropped (app is shutting down); silently ignore.
             let _ = self.tx.send(Command::Progress(task));
         }
     }
@@ -269,13 +229,11 @@ impl ActiveTask {
         self.task.as_ref().map_or(0, |t| t.progress.total)
     }
 
-    /// Sets the task's total size once it becomes known (e.g. after scanning a
-    /// directory) and sends a progress update so the notice reflects it.
+    /// Sets the total once known and sends a progress update.
     pub fn set_total(&mut self, total: u64) {
         if let Some(task) = &mut self.task {
             task.progress.total = total;
-            // The worker is already running; a `New`-status snapshot sent now
-            // could resurrect a task the user cleared from the notices view.
+            // A `New` snapshot would re-add a task cleared from the notices view.
             task.start();
         }
         self.send_progress();
@@ -288,30 +246,24 @@ impl ActiveTask {
     }
 
     pub fn send_progress(&self) {
-        // Err means the receiver was dropped (app is shutting down); silently ignore.
         if let Some(task) = &self.task {
             let _ = self.tx.send(Command::Progress(task.clone()));
         }
     }
 
-    /// Raises a warning alert about the task while it runs, for something it
-    /// leaves behind that its own outcome does not report.
+    /// Raises a warning alert while the task runs.
     pub fn warn(&self, message: String) {
-        // Err means the receiver was dropped (the app is shutting down).
         let _ = self.tx.send(Command::AlertWarn(message));
     }
 
-    /// Marks the task as successfully completed. Consumes `self`.
     pub fn done(mut self) {
         self.finalize(Task::done);
     }
 
-    /// Marks the task as cancelled by the user. Consumes `self`.
     pub fn cancelled(mut self) {
         self.finalize(Task::cancelled);
     }
 
-    /// Marks the task as failed with an error message. Consumes `self`.
     pub fn error(mut self, message: String) {
         self.finalize(|task| task.error(message));
     }
@@ -325,16 +277,13 @@ pub struct Task {
     status: TaskStatus,
 }
 
-/// Identity-based equality: two `Task` values are the same task if they share the same `id`,
-/// regardless of their current progress or status. This allows tasks to be looked up and
-/// deduplicated by identity (e.g. in the notices `HashSet`) as progress snapshots arrive.
+/// Equal by `id`, whatever the progress or status.
 impl PartialEq for Task {
     fn eq(&self, other: &Task) -> bool {
         self.id == other.id
     }
 }
 
-/// Hashed by `id` only, consistent with the identity-based `PartialEq` above.
 impl Hash for Task {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -379,9 +328,6 @@ impl Task {
         self.status = TaskStatus::Error(message.into());
     }
 
-    /// Marks the task as running. Only a live `ActiveTask` calls this, and
-    /// every terminal transition consumes it, so the task is never past
-    /// `InProgress` here.
     fn start(&mut self) {
         self.status = TaskStatus::InProgress;
     }
@@ -393,10 +339,8 @@ impl Task {
         }
     }
 
-    /// Advances byte progress. Never sets a terminal status: a byte count can
-    /// reach a stale total with work remaining (a source that grew after the
-    /// size scan, a cross-device move that still has to remove its source), so
-    /// only `done`/`cancelled`/`error` end a task.
+    /// Advances byte progress. Never terminal: the total can be stale or work
+    /// can remain.
     fn increment(&mut self, additional: u64) {
         self.progress.increment(additional);
         self.status = TaskStatus::InProgress;
@@ -406,8 +350,6 @@ impl Task {
         matches!(self.status, TaskStatus::Cancelled)
     }
 
-    /// True once the task has reached a terminal state (done, errored, or
-    /// cancelled) and should be removed from the notices view.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self.status,
@@ -424,7 +366,6 @@ impl Task {
 struct Id(usize);
 
 fn next_id() -> Id {
-    // Ref. https://users.rust-lang.org/t/idiomatic-rust-way-to-generate-unique-id/33805/6
     static COUNTER: AtomicUsize = AtomicUsize::new(1);
     Id(COUNTER.fetch_add(1, Ordering::Relaxed))
 }
@@ -451,8 +392,6 @@ mod tests {
         Progress { completed, total }
     }
 
-    /// A warning while the task runs is a warning alert with the message as
-    /// given, and nothing else.
     #[test]
     fn a_warning_is_sent_as_a_warning_alert() {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -475,11 +414,11 @@ mod tests {
 
     #[test]
     fn a_percentage_rounds_and_counts_a_zero_total_as_not_started() {
-        assert_eq!(0, progress(0, 0).percentage()); // nothing sized to count
+        assert_eq!(0, progress(0, 0).percentage());
         assert_eq!(0, progress(50, 0).percentage());
         assert_eq!(0, progress(0, 100).percentage());
         assert_eq!(50, progress(50, 100).percentage());
-        assert_eq!(33, progress(1, 3).percentage()); // 33.33 rounds down
+        assert_eq!(33, progress(1, 3).percentage());
         assert_eq!(67, progress(2, 3).percentage()); // 66.67 rounds up
         assert_eq!(99, progress(995, 1000).percentage()); // unfinished stays below 100
         assert_eq!(100, progress(100, 100).percentage());
@@ -487,12 +426,12 @@ mod tests {
 
     #[test]
     fn a_scaled_position_clamps_to_the_factor_and_is_full_when_done() {
-        assert_eq!(0, progress(0, 0).scaled(10)); // nothing sized to count
-        assert_eq!(10, progress(100, 100).scaled(10)); // done -> full factor
+        assert_eq!(0, progress(0, 0).scaled(10));
+        assert_eq!(10, progress(100, 100).scaled(10));
         assert_eq!(0, progress(0, 100).scaled(10));
         assert_eq!(5, progress(50, 100).scaled(10));
-        assert_eq!(3, progress(1, 3).scaled(10)); // 3.33 rounds down
-        assert_eq!(9, progress(99, 100).scaled(10)); // unfinished stays below full
+        assert_eq!(3, progress(1, 3).scaled(10));
+        assert_eq!(9, progress(99, 100).scaled(10));
         assert_eq!(9, progress(200, 100).scaled(10)); // past a lowered total, still unfinished
     }
 
@@ -541,14 +480,10 @@ mod tests {
         assert_eq!(None, del.source_basename());
     }
 
-    /// A destination whose basename matches the source is a copy into a
-    /// directory, so the parent is shown with a trailing slash; a differing
-    /// basename is a rename, so the whole destination is shown. An empty
-    /// `destination` builds a delete, which names one path.
+    /// An empty `destination` builds a delete.
     #[test_case("/a/b/file.txt", "/c/d/file.txt", "/c/d/" ; "copy into a directory")]
     #[test_case("/a/b/old.txt", "/c/d/new.txt", "/c/d/new.txt" ; "copy with a rename")]
     #[test_case("z/file.txt", "/file.txt", "/" ; "destination at the filesystem root")]
-    // No directory component: the empty parent falls back to the destination.
     #[test_case("z/file.txt", "file.txt", "file.txt/" ; "destination with no directory")]
     #[test_case("/x/y", "", "/x/y" ; "delete")]
     fn task_kind_renders(source: &str, destination: &str, target: &str) {
@@ -561,7 +496,6 @@ mod tests {
         };
 
         assert_eq!(target, kind.target());
-        // A delete names one path; a transfer reads "<source> to <target>".
         let detail = match kind.source() {
             Some(source) => format!("{source} to {target}"),
             None => target.to_string(),
@@ -587,17 +521,14 @@ mod tests {
     fn task_identity_equality_and_hash() {
         let mut a = delete_task();
         let snapshot = a.clone();
-        a.increment(50); // progress/status diverge from the snapshot
-        // Identity-based equality: still the same task.
+        a.increment(50);
         assert_eq!(a, snapshot);
 
         let mut set = HashSet::new();
         set.insert(snapshot);
-        // Re-inserting a later snapshot of the same task does not grow the set.
         assert!(!set.insert(a));
         assert_eq!(1, set.len());
 
-        // A different task is distinct.
         assert!(set.insert(delete_task()));
         assert_eq!(2, set.len());
     }
@@ -608,12 +539,8 @@ mod tests {
         t.increment(40);
         assert!(!t.is_new());
         assert!(!t.is_terminal());
-        // Byte counts reaching the total must not end the task: the total may
-        // be stale (source grew after the size scan) or work may remain (a
-        // cross-device move still has to remove the source).
         t.increment(60);
         assert!(!t.is_terminal());
-        // A filled-but-unfinalized task still renders as 100%.
         assert_eq!(100, t.progress.percentage());
         assert_eq!(10, t.progress.scaled(10));
         t.done();
@@ -627,7 +554,6 @@ mod tests {
         }
     }
 
-    /// A task and the channel it reports on.
     fn active_task() -> (ActiveTask, std::sync::mpsc::Receiver<Command>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let (active, _initial, _token) =
@@ -635,9 +561,7 @@ mod tests {
         (active, rx)
     }
 
-    /// The terminal snapshot, asserting that finalizing sent exactly one. A
-    /// second would mean `Drop` ran after a finalizer that had consumed the
-    /// task.
+    /// The terminal snapshot, asserting that finalizing sent exactly one.
     fn only_terminal_task(rx: &std::sync::mpsc::Receiver<Command>) -> Task {
         let task = recv_task(rx);
         assert!(task.is_terminal());
@@ -647,7 +571,6 @@ mod tests {
 
     #[test]
     fn active_task_drop_without_finalize_reports_error() {
-        // An operation that returned early still has to clear its progress bar.
         let (active, rx) = active_task();
         drop(active);
 
@@ -658,9 +581,7 @@ mod tests {
     #[test]
     fn active_task_done_fills_the_progress_bar() {
         let (active, rx) = active_task();
-        // Finished with nothing counted: the total is an estimate taken
-        // before the work started, so a task that finished under it must
-        // still leave the bar full.
+        // Finished with nothing counted.
         active.done();
 
         let task = only_terminal_task(&rx);
@@ -692,8 +613,6 @@ mod tests {
         let uncancellable = active.uncancellable_handle();
         assert!(!uncancellable.load(Ordering::Relaxed));
 
-        // The cancel stack reads this flag to drop the entry rather than
-        // cancel a task that has already ended.
         active.done();
 
         assert!(uncancellable.load(Ordering::Relaxed));
@@ -705,9 +624,6 @@ mod tests {
         let (mut active, _initial, _token) =
             ActiveTask::new(tx, TaskKind::Delete { path: "/x".into() }, 0);
 
-        // The directory scan finishes and the total becomes known. The worker
-        // is already running, so a `New` snapshot sent now would re-add a task
-        // the user had cleared from the notices view.
         active.set_total(500);
 
         let update = recv_task(&rx);

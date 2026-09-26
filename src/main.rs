@@ -18,8 +18,7 @@ use filectrl::{
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help"))]
-// Every bool here is an `#[argh(switch)]`, so the count is the number of
-// command-line flags rather than state that a richer type could model.
+// Each bool is an `#[argh(switch)]`, one per command-line flag.
 #[allow(clippy::struct_excessive_bools)]
 /// FileCTRL is a light, opinionated, responsive, theme-able, and simple Text User Interface (TUI) file manager for Linux and macOS
 struct Args {
@@ -60,9 +59,7 @@ struct Args {
     directory: Option<PathBuf>,
 }
 
-/// A mistake in the command line rather than a failure while carrying it out.
-/// Printed like argh's own parse errors, with the same pointer to `--help`, so
-/// that every way of getting the invocation wrong reads the same.
+/// A mistake in the command line, printed like argh's own parse errors.
 #[derive(Debug)]
 struct UsageError(String);
 
@@ -78,9 +75,8 @@ fn usage(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(UsageError(message.into()))
 }
 
-/// The flags that do one thing and exit. At most one may be given, and each
-/// accepts only the arguments that can change what it does; anything else is a
-/// mistake in the invocation rather than something to drop silently.
+/// The flags that do one thing and exit. At most one may be given, with only
+/// the arguments that can change what it does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Action {
     PrintKeybindings,
@@ -99,10 +95,8 @@ impl Action {
         }
     }
 
-    /// `--config` names the file to read or to write, so every action but
-    /// `--version` takes it. Only printing resolves the whole chain, so only it
-    /// takes `--include`. Only writing can replace a file, so only writing takes
-    /// `--force`. None of them draw anything, so none take `--no-truecolor`.
+    /// `--config` applies to all but `--version`; `--include` only to printing;
+    /// `--force` only to writing; `--no-truecolor` to none.
     fn accepts(self, argument: &str) -> bool {
         match self {
             Self::PrintKeybindings => matches!(argument, "--config" | "--include"),
@@ -114,12 +108,10 @@ impl Action {
     }
 }
 
-/// argh parses `&str` alone, so an argument that is not valid UTF-8 is carried
-/// through it encoded: each byte outside a valid UTF-8 sequence becomes the
-/// private use character `ESCAPE_BASE` + byte (U+F780 to U+F7FF, since such a
-/// byte is never ASCII). A character already in that range is encoded byte by
-/// byte the same way, so `decode_arg` restores every argument exactly. Only the
-/// values of path arguments are decoded; an option name is ASCII either way.
+/// argh parses `&str` alone, so a non-UTF-8 argument is carried through it
+/// encoded: each invalid byte becomes `ESCAPE_BASE` + byte (U+F780 to U+F7FF),
+/// and a character already in that range is encoded byte by byte, so
+/// `decode_arg` restores every argument exactly.
 const ESCAPE_BASE: u32 = 0xF700;
 const ESCAPE_RANGE: std::ops::RangeInclusive<char> = '\u{F780}'..='\u{F7FF}';
 
@@ -160,14 +152,14 @@ fn decode_arg(encoded: &str) -> OsString {
     OsString::from_vec(bytes)
 }
 
-// The signature is the one argh's `from_str_fn` requires.
+// The signature argh's `from_str_fn` requires.
 #[allow(clippy::unnecessary_wraps)]
 fn decode_path(value: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(decode_arg(value)))
 }
 
-/// `argh::from_env`, but over `args_os` through `encode_arg`, where `from_env`
-/// exits on the first argument that is not valid UTF-8.
+/// `argh::from_env` over `args_os` through `encode_arg`; `from_env` exits on
+/// the first argument that is not valid UTF-8.
 fn parse_args() -> Args {
     let strings: Vec<String> = std::env::args_os().map(|arg| encode_arg(&arg)).collect();
     let Some((program, rest)) = strings.split_first() else {
@@ -195,10 +187,8 @@ fn parse_args() -> Args {
     })
 }
 
-/// argh's message for a usage error, which quotes the arguments it names as
-/// `encode_arg` spelled them: decoded back to their bytes, then escaped a line
-/// at a time, so a byte that is not UTF-8 reads `\xNN` rather than as the
-/// private-use character standing for it.
+/// argh's usage error message, with `encode_arg`'s escapes decoded and invalid
+/// bytes shown as `\xNN`.
 fn shown_argh_output(output: &str) -> String {
     decode_arg(output)
         .as_bytes()
@@ -208,8 +198,7 @@ fn shown_argh_output(output: &str) -> String {
         .join("\n")
 }
 
-/// Writes a line to standard output, returning a failure (a full disk, a closed
-/// pipe) where `println!` would panic, which `panic = "abort"` makes an abort.
+/// Writes a line to stdout, returning a failure where `println!` would panic.
 fn print_line(args: fmt::Arguments<'_>) -> Result<()> {
     let mut out = io::stdout().lock();
     out.write_fmt(args)
@@ -218,8 +207,8 @@ fn print_line(args: fmt::Arguments<'_>) -> Result<()> {
         .context("Failed to write to standard output")
 }
 
-/// Writes a line to standard error, ignoring a failure: there is nowhere left
-/// to report it, and `eprintln!` would panic on a terminal that hung up.
+/// Writes a line to stderr, ignoring a failure: `eprintln!` would panic on a
+/// terminal that hung up.
 fn print_error(args: fmt::Arguments<'_>) {
     let _ = writeln!(io::stderr(), "{args}");
 }
@@ -227,9 +216,8 @@ fn print_error(args: fmt::Arguments<'_>) {
 fn main() -> ExitCode {
     let args = parse_args();
     let result = dispatch(&args);
-    // After a quit signal an error is most likely the signal's consequence (a
-    // draw to a terminal that hung up), and the terminal may be gone, so the
-    // status alone reports the run.
+    // After a quit signal an error is most likely a draw to a terminal that hung
+    // up, so the status alone reports the run.
     if let Some(signal) = quit_signal() {
         return success_status(Some(signal));
     }
@@ -243,9 +231,7 @@ fn main() -> ExitCode {
                         "{usage}\n\nRun filectrl --help for more information."
                     ));
                 }
-                // `{error:#}` flattens the cause chain onto one line, so a
-                // failure here reads the same as the alert the app would show
-                // for it.
+                // `{error:#}` flattens the cause chain onto one line.
                 None => print_error(format_args!(
                     "Error: {}",
                     escape_for_terminal(&format!("{error:#}"))
@@ -256,9 +242,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// The status of a run that ended without an error: 0, or 128 plus the signal
-/// number when a termination signal ended it, as a shell reports a process the
-/// signal killed.
+/// 0, or 128 plus the signal number when a termination signal ended the run.
 fn success_status(signal: Option<i32>) -> ExitCode {
     signal
         .and_then(|signal| u8::try_from(128 + signal).ok())
@@ -291,9 +275,8 @@ fn dispatch(args: &Args) -> Result<()> {
     }
 }
 
-/// Names the file on stdout, resolved rather than as it was written, because
-/// the config directory follows `$XDG_CONFIG_HOME` and need not be the
-/// `~/.config` path the documentation names.
+/// Prints the resolved path, since the config directory follows
+/// `$XDG_CONFIG_HOME`.
 fn report_written(path: &Path) -> Result<()> {
     print_line(format_args!("Wrote {}", visible_os(path.as_os_str())))
 }
@@ -322,8 +305,7 @@ fn selected_action(args: &Args) -> Result<Option<Action>> {
             reject_unused(args, *action)?;
             Ok(Some(*action))
         }
-        // Reported in the order the actions are listed above rather than the
-        // order they were typed, which argh does not preserve.
+        // In the order listed above; argh does not preserve typed order.
         [first, second, ..] => Err(usage(format!(
             "{} and {} cannot be combined.",
             first.flag(),
@@ -369,7 +351,6 @@ mod tests {
         success_status(signal)
     }
 
-    /// Every field defaulted, so a test names only what it is exercising.
     fn args() -> Args {
         Args {
             config: None,
@@ -423,8 +404,7 @@ mod tests {
         assert!(error.contains("--write-default-themes"), "{error}");
     }
 
-    /// `action`'s flag, plus the argument that `name` names as it appears in
-    /// the usage error.
+    /// `action`'s flag, plus the argument `name` names in the usage error.
     fn args_with(action: Action, name: &str) -> Args {
         let mut args = args();
         match action {
@@ -444,8 +424,6 @@ mod tests {
         args
     }
 
-    // --no-truecolor only changes how the TUI renders, and --version prints a
-    // constant, so even the flag every other action reads cannot change it.
     #[test_case(Action::WriteDefaultConfig, "--include" ; "include with a write")]
     #[test_case(Action::PrintKeybindings, "--force" ; "force with printing")]
     #[test_case(Action::PrintKeybindings, "--no-truecolor" ; "a run-only flag with printing")]
@@ -512,8 +490,8 @@ mod tests {
         assert_eq!(Some(Path::new(directory)), parsed.directory.as_deref());
     }
 
-    /// There are no subcommands, so `help` names a directory like any other
-    /// word; `-h` and `--help` still print usage.
+    /// `help` is a directory name like any other word; `-h` and `--help` print
+    /// usage.
     #[test]
     fn help_is_a_directory_and_only_the_flags_print_usage() {
         let parsed = Args::from_args(&["filectrl"], &["help"]).unwrap();
@@ -531,8 +509,7 @@ mod tests {
             b"caf\xc3\xa9",
             // Invalid bytes, including a truncated sequence.
             b"\xe9\xff\xc3",
-            // Characters in the escape range itself, which must not decode as
-            // the bytes they would stand for.
+            // Characters in the escape range itself.
             "\u{F780}\u{F7FF}".as_bytes(),
             b"",
         ];
@@ -540,8 +517,7 @@ mod tests {
             let arg = OsStr::from_bytes(bytes);
             assert_eq!(arg, decode_arg(&encode_arg(arg)), "{bytes:?}");
         }
-        // Valid UTF-8 outside the escape range reaches argh unchanged, so flags
-        // and argh's messages about them read as typed.
+        // Valid UTF-8 outside the escape range reaches argh unchanged.
         assert_eq!(
             "--config=caf\u{e9}",
             encode_arg(OsStr::new("--config=caf\u{e9}"))

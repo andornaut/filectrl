@@ -29,28 +29,16 @@ const FILTER_PREFIX: &str = "[Filtered] ";
 const SEARCH_PREFIX: &str = "[Searching...] ";
 const SEARCH_CANCELLED_PREFIX: &str = "[Search cancelled] ";
 
-// Number of terminal columns per unit of search-loading indicator speed.
-// The indicator advances `width / SEARCH_LOADING_SPEED_DIVISOR` cells per
-// step, so wider screens sweep faster instead of taking longer to cross.
+// Columns per unit of indicator speed, so wider screens sweep faster.
 const SEARCH_LOADING_SPEED_DIVISOR: u16 = 32;
 
-/// How long one step of the search-loading indicator lasts. Its position is
-/// derived from elapsed time rather than counted, so this sets how fast the
-/// indicator moves and nothing else. How often it is redrawn is a separate
-/// question, answered by whatever wakes the event loop.
+/// Duration of one step of the search-loading indicator (its speed, not its redraw rate).
 const SEARCH_LOADING_STEP: Duration = Duration::from_millis(80);
 
-/// Cells the search-loading indicator itself occupies.
 const SEARCH_LOADING_BLOCK_WIDTH: u16 = 3;
 
-/// Where the search-loading indicator sits after `elapsed`, or `None` when the
-/// terminal is too narrow to hold it.
-///
-/// Triangle wave: the position bounces 0 → travel → 0, one step at a time, with
-/// each step scaled by a width-derived speed so the indicator crosses a wider
-/// screen faster rather than taking longer. The modulo is taken at full width,
-/// so a search running long enough to exhaust a `u16` of steps keeps moving
-/// smoothly instead of jumping.
+/// Where the search-loading indicator sits after `elapsed` (a triangle wave), or `None` when too
+/// narrow.
 fn search_loading_position(width: u16, elapsed: Duration) -> Option<u16> {
     if width <= SEARCH_LOADING_BLOCK_WIDTH {
         return None;
@@ -58,13 +46,10 @@ fn search_loading_position(width: u16, elapsed: Duration) -> Option<u16> {
     let travel = u64::from(width - SEARCH_LOADING_BLOCK_WIDTH);
     let speed = u64::from((width / SEARCH_LOADING_SPEED_DIVISOR).max(1));
     let cycle = travel * 2;
-    // Durations are u128 milliseconds. Saturating keeps an absurd elapsed time
-    // moving at the end of the cycle rather than wrapping to the start.
+    // Saturating keeps an absurd elapsed time at the end of the cycle rather than wrapping.
     let step_millis = SEARCH_LOADING_STEP.as_millis().max(1);
     let steps = u64::try_from(elapsed.as_millis() / step_millis).unwrap_or(u64::MAX);
     let position = steps.saturating_mul(speed) % cycle;
-    // Out along the first half of the cycle and back along the second, so the
-    // block bounces rather than jumping back to the start.
     let offset = if position < travel {
         position
     } else {
@@ -166,14 +151,10 @@ pub(super) fn progress_widget<'a>(
         .style(theme.progress())
 }
 
-/// Parts of one task in the batch's bar.
 const TASK_PARTS: u64 = 1000;
 
-/// The batch's progress as the average of each task's own fraction, with the
-/// tasks that already ended counted as complete. Averaging keeps a copy's bytes
-/// and a delete's entries from being added together, and counting ended tasks
-/// keeps the bar from falling back when one finishes. A running task stops one
-/// part short of complete, so only an ended batch reads 100%.
+/// Batch progress as the mean of each task's fraction, ended tasks counted complete.
+/// A running task stops one part short, so only an ended batch reads 100%.
 pub(super) fn batch_progress(tasks: &HashSet<Task>, finished: usize) -> Progress {
     let running: u64 = tasks
         .iter()
@@ -196,18 +177,13 @@ pub(super) fn batch_progress(tasks: &HashSet<Task>, finished: usize) -> Progress
     }
 }
 
-/// The detail text after `prefix`, fitted by `fit_left` into whatever width the
-/// prefix (always shown in full) leaves, and returned without the prefix, which
-/// the notice styles as a span of its own.
+/// The detail text after `prefix`, fitted into the width the prefix leaves, without the prefix.
 fn detail_after(prefix: &str, detail: &str, width: u16) -> String {
     fit_left(prefix, detail, "", usize::from(width)).split_off(prefix.len())
 }
 
-/// The detail string for one in-progress operation, keeping the most useful part
-/// visible as the width shrinks: `"<source> to <destination dir>"` normally, or
-/// `"to <full destination path>"` once the source basename would be truncated at
-/// all, so the file name still shows in full. Then left-truncated to fit (see
-/// [`detail_after`]).
+/// Detail for one operation: `"<source> to <destination dir>"`, or `"to <destination path>"`
+/// once the source basename would be truncated; then left-truncated to fit.
 fn operation_detail(kind: &TaskKind, width: u16) -> String {
     let prefix = kind.prefix();
     let detail = match (kind.source(), kind.source_basename(), kind.destination()) {
@@ -215,9 +191,8 @@ fn operation_detail(kind: &TaskKind, width: u16) -> String {
             let dir = kind.target();
             let budget = (width as usize).saturating_sub(prefix.cell_width() as usize);
             let full = format!("{source} to {dir}");
-            // The source basename stays intact if the full form fits as-is, or
-            // if `<basename> to <dir>` survives a left-truncation (which costs
-            // one column for the ellipsis). Otherwise switch to the `to` form.
+            // Keep `<basename> to <dir>` if it fits, even left-truncated; otherwise use the `to`
+            // form.
             if full.cell_width() as usize <= budget
                 || format!("{base} to {dir}").cell_width() as usize <= budget.saturating_sub(1)
             {
@@ -240,8 +215,7 @@ pub(super) fn operations_widget<'a>(
     let style = theme.progress();
     let bold = style.add_modifier(Modifier::BOLD);
     let left = if tasks.len() == 1 {
-        // Keep the verb prefix in full; left-truncate the rest so the tail of
-        // the path (the destination) stays visible as the width shrinks.
+        // Keep the verb prefix; left-truncate the rest so the destination stays visible.
         let kind = tasks.iter().next().unwrap().kind();
         let detail = operation_detail(kind, width);
         Line::from(vec![
@@ -298,8 +272,7 @@ pub(super) fn search_cancelled_widget<'a>(
     )
 }
 
-/// A search that ran to the end, named with how many results it listed. The
-/// count leads, so a query too long for the width is what gets cut.
+/// A finished search with its result count, which leads so a long query is what gets cut.
 pub(super) fn search_finished_widget<'a>(
     theme: &NoticeTheme,
     width: u16,
@@ -339,8 +312,7 @@ pub(super) fn search_loading_widget<'a>(
         .style(style)
 }
 
-/// Renders the message as the left title and, via [`right_hint_fits`], the
-/// hint as the right title only when it fits alongside the full message.
+/// A block titled with the message, and the hint on the right only when it fits.
 fn create_notice_block<'a>(left: Line<'a>, style: Style, width: u16, hint: &'a str) -> Block<'a> {
     let left_width = left.width();
     let block = Block::default()
@@ -395,9 +367,6 @@ mod tests {
         ))
     }
 
-    /// Typed text reaches the notices as typed, so a bidi override in a filter
-    /// or a search would reorder the text drawn after it. The notices spell it
-    /// out, as every other shown text is.
     #[test]
     fn typed_text_in_the_notices_is_spelled_out() {
         Config::init_test();
@@ -424,8 +393,6 @@ mod tests {
         );
     }
 
-    /// No action builds an empty entry, but the notice reads the entry it is
-    /// given rather than assuming a first path.
     #[test]
     fn an_empty_clipboard_entry_renders_as_a_count() {
         Config::init_test();
@@ -441,17 +408,13 @@ mod tests {
         assert!(text.ends_with("0 items"), "{text}");
     }
 
-    // Width 80 gives a travel of 77 cells at 2 cells per 80 ms step, so the
-    // indicator turns around 39 steps (3120 ms) in and completes a cycle after
-    // 77 steps (6160 ms).
+    // Width 80: travel 77 cells at 2 cells per 80 ms step; turns at 39 steps, cycles at 77.
     #[test_case(0, Some(0); "starts at the left edge")]
     #[test_case(80, Some(2); "advances one step")]
     #[test_case(120, Some(2); "holds position between steps")]
     #[test_case(3_120, Some(76); "turns around at the far edge")]
     #[test_case(3_200, Some(74); "comes back")]
     #[test_case(6_160, Some(0); "returns to the left edge")]
-    // An hour of steps overflows a u16 many times over; the position is still
-    // just the phase, with no jump where the count would have wrapped.
     #[test_case(3_600_000, Some(64); "stays continuous after a long search")]
     fn search_loading_position_bounces(elapsed_ms: u64, expected: Option<u16>) {
         assert_eq!(
@@ -481,9 +444,6 @@ mod tests {
         })
     }
 
-    // As the width shrinks: full source + dest dir, then left-truncated source,
-    // then (once the source basename no longer fits) switch to
-    // `to <full destination incl. basename>`, then an ellipsis.
     #[test_case(80, "/tmp/a/file.txt to /home/developer/Downloads/"; "full when it fits")]
     #[test_case(50, "…/a/file.txt to /home/developer/Downloads/"; "source left-truncated, basename intact")]
     #[test_case(47, "…file.txt to /home/developer/Downloads/"; "source basename still fully shown")]

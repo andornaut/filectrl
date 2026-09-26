@@ -8,13 +8,10 @@ use crate::app::config::{
     theme::Help,
 };
 
-/// One `(label, keys)` row.
 type Row = (&'static str, String);
 
-/// A titled group of rows.
 pub(super) type Section = (&'static str, Vec<Row>);
 
-/// Every section of the help, in the order shown.
 pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
     vec![
         ("Normal Mode", build_normal_keybindings(kb)),
@@ -25,9 +22,7 @@ pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
     ]
 }
 
-/// The widest label in one section. Each section lines up its own key column,
-/// so one long label does not push every other section's keys off a narrow
-/// terminal.
+/// The widest label in one section; each section aligns its own key column.
 pub(super) fn label_width(rows: &[Row]) -> usize {
     rows.iter()
         .map(|(label, _)| label.cell_width() as usize)
@@ -35,13 +30,11 @@ pub(super) fn label_width(rows: &[Row]) -> usize {
         .unwrap_or(0)
 }
 
-/// Spaces after a section title, so "Keybindings" starts where the rows'
-/// keys do: rows insert ": " (2 columns) between label and keys.
+/// Spaces after a section title, so "Keybindings" aligns with the keys (after ": ").
 fn header_padding(title: &str, label_width: usize) -> String {
     " ".repeat((label_width + 2).saturating_sub(title.cell_width() as usize))
 }
 
-/// Spaces after a row's ": ", so its keys start in the section's key column.
 fn row_padding(label: &str, label_width: usize) -> String {
     " ".repeat(label_width.saturating_sub(label.cell_width() as usize))
 }
@@ -75,8 +68,7 @@ pub(super) fn add_keybinding_lines(
     }));
 }
 
-/// Annotate single uppercase-letter keys with "(Uppercase)" in a "/"-joined
-/// display string, e.g. "G/End" -> "G (Uppercase)/End".
+/// Annotates single uppercase-letter keys, e.g. "G/End" -> "G (Uppercase)/End".
 fn annotate_uppercase(display: &str) -> String {
     display
         .split('/')
@@ -91,7 +83,6 @@ fn annotate_uppercase(display: &str) -> String {
         .join("/")
 }
 
-/// The keys bound to each of `actions`, joined by `separator`.
 fn keys(kb: &KeyBindings, actions: &[Action], separator: &str) -> String {
     actions
         .iter()
@@ -100,8 +91,7 @@ fn keys(kb: &KeyBindings, actions: &[Action], separator: &str) -> String {
         .join(separator)
 }
 
-/// Build the plain-text keybindings help content for the `--print-keybindings` CLI flag.
-/// Section headers are emitted with ANSI bold when `bold` is true (i.e. stdout is a terminal).
+/// Plain-text keybindings help for `--print-keybindings`, with bold section headers when `bold`.
 pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
     let (bold, reset) = if bold {
         ("\x1b[1m", "\x1b[0m")
@@ -114,7 +104,7 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
             out.push('\n');
         }
         let width = label_width(rows);
-        // Writing to a String is infallible, so the Result cannot be an error.
+        // Writing to a String is infallible.
         let _ = writeln!(
             out,
             "{bold}{title}{}Keybindings{reset}",
@@ -127,8 +117,8 @@ pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
     out
 }
 
-/// The normal bindings as they act on a bookmark, which is a symlink: open
-/// follows it, and rename and delete act on the link, not the folder.
+/// Normal bindings as they act on a bookmark (a symlink): open follows it, rename and delete act on
+/// the link.
 fn build_bookmarks_keybindings(kb: &KeyBindings) -> Vec<Row> {
     let k = |actions: &[Action]| keys(kb, actions, ", ");
     vec![
@@ -141,8 +131,7 @@ fn build_bookmarks_keybindings(kb: &KeyBindings) -> Vec<Row> {
     ]
 }
 
-/// The answers to a paste collision. They are fixed keys, read by the prompt
-/// itself rather than bound.
+/// Paste collision answers: fixed keys read by the prompt, not bindings.
 fn build_conflict_keybindings() -> Vec<Row> {
     vec![
         ("Skip this entry", "s".into()),
@@ -159,8 +148,7 @@ fn build_conflict_keybindings() -> Vec<Row> {
     ]
 }
 
-/// The "Open with" picker's keys: the normal bindings it reads, plus the row
-/// numbers it takes itself.
+/// The "Open with" picker's keys: normal bindings plus row numbers.
 fn build_open_with_keybindings(kb: &KeyBindings) -> Vec<Row> {
     let k = |actions: &[Action]| keys(kb, actions, ", ");
     vec![
@@ -183,7 +171,6 @@ fn build_open_with_keybindings(kb: &KeyBindings) -> Vec<Row> {
     ]
 }
 
-/// Build normal mode keybinding display strings from KeyBindings.
 fn build_normal_keybindings(kb: &KeyBindings) -> Vec<Row> {
     let k = |actions: &[Action]| keys(kb, actions, ", ");
 
@@ -263,7 +250,6 @@ fn build_normal_keybindings(kb: &KeyBindings) -> Vec<Row> {
     ]
 }
 
-/// Build prompt mode keybinding display strings from KeyBindings.
 fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<Row> {
     let k = |actions: &[Action]| keys(kb, actions, ", ");
 
@@ -324,8 +310,6 @@ mod tests {
         assert_eq!(annotate_uppercase(input), expected);
     }
 
-    /// What `--print-keybindings` writes. The flag exists to be read, so the
-    /// two mode sections and the resolved keys have to reach the output.
     fn help_text(bold: bool) -> String {
         keybindings_help_text(&Config::builtin().keybindings, bold)
     }
@@ -336,15 +320,11 @@ mod tests {
 
         assert!(text.contains("Normal Mode"), "{text}");
         assert!(text.contains("Prompt Mode"), "{text}");
-        // A configurable binding, and one that merges a hardcoded key with a
-        // configurable one; both are what the printed list is for.
         assert!(text.contains("Quit:"), "{text}");
         assert!(text.contains("Select next, previous row:"), "{text}");
         assert!(text.contains("\u{2193}/j"), "{text}");
     }
 
-    /// Every key column starts where its section's "Keybindings" header does,
-    /// so each section reads as two columns.
     #[test]
     fn the_printed_keys_line_up_under_their_header() {
         let text = help_text(false);
@@ -361,8 +341,6 @@ mod tests {
         }
     }
 
-    /// Each section sizes its own label column, so on an 80-column terminal
-    /// no key is cut off by one long label elsewhere.
     #[test]
     fn every_printed_line_fits_80_columns() {
         use ratatui::buffer::CellWidth;
@@ -377,8 +355,6 @@ mod tests {
         }
     }
 
-    /// The keys only a paste collision or the picker reads, which neither
-    /// mode section lists, and the bookmarks view's use of the normal ones.
     #[test_case("Bookmarks View", "Go to the linked folder", "\u{2192}/l/Enter" ; "following a bookmark")]
     #[test_case("Bookmarks View", "Rename, delete the bookmark", "r/F2, d/Delete" ; "renaming and deleting a bookmark")]
     #[test_case("Paste Conflict", "Skip every collision, also in sources already running", "S (Uppercase)" ; "a conflict answer")]
@@ -400,14 +376,12 @@ mod tests {
 
     #[test]
     fn only_the_bold_flag_adds_escape_codes() {
-        // Bold is used when stdout is a terminal; a redirected run must stay
-        // plain, or the codes end up in whatever the output was piped into.
+        // A redirected run must have no escape codes.
         assert!(!help_text(false).contains('\u{1b}'));
 
         let bold = help_text(true);
         assert!(bold.contains("\u{1b}[1mNormal Mode"), "{bold}");
         assert!(bold.contains("\u{1b}[1mPrompt Mode"), "{bold}");
-        // Only the headers are bold: a binding line carries no codes.
         let line = bold
             .lines()
             .find(|line| line.starts_with("Quit:"))

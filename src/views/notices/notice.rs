@@ -11,8 +11,7 @@ use crate::{
     command::progress::Task,
 };
 
-/// Represents the different types of notices that can be displayed.
-/// The order of the enum variants defines the order in which notices are displayed.
+/// Variant order is display order.
 #[derive(Debug)]
 pub(super) enum Notice {
     /// The running tasks' bar; `finished` tasks of the same batch have ended.

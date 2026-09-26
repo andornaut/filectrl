@@ -13,29 +13,20 @@ use log::warn;
 
 pub struct Clipboard {
     backend: Option<ClipboardBackend>,
-    /// What this window last wrote. `None` once `clear` has run, or before
-    /// anything was written.
+    /// What this window last wrote; `None` after `clear` or before any write.
     last_written: Option<Written>,
-    /// The text of an entry another window wrote that a paste here started
-    /// from. A paste consumes the clipboard whoever wrote it, so `clear`
-    /// blanks this too while the clipboard still holds it.
+    /// The text of another window's entry that a paste here started from, which
+    /// `clear` also blanks.
     adopted: Option<String>,
 }
 
 /// Text this window wrote to the clipboard, and the entry it serializes when
 /// it was one rather than text copied from a prompt.
 ///
-/// - Without a system clipboard (no X11/Wayland session) the text is the
-///   storage, so copy/paste within this window keeps working. With one, the
-///   system clipboard is the storage, which is what makes copy/paste work
-///   across filectrl windows.
-/// - The entry keeps the exact paths. The text renders a name that is not
-///   valid UTF-8 lossily, so parsing it back would name a different file;
-///   while the clipboard still holds the text, the paths are taken from here.
-/// - `clear` blanks only an entry, and only while the clipboard still holds
-///   its text, so text copied from a prompt, or written since by another
-///   application or filectrl window, is never discarded. Each window is its
-///   own process with its own record, so only the most recent writer clears.
+/// - Without a system clipboard the text is the storage, so copy/paste still
+///   works within this window.
+/// - The entry keeps the exact paths, which the lossy text may not.
+/// - `clear` blanks an entry only while the clipboard still holds its text.
 struct Written {
     text: String,
     entry: Option<ClipboardEntry>,
@@ -60,18 +51,13 @@ impl Default for Clipboard {
 }
 
 impl Clipboard {
-    /// Whether a system clipboard backend is available. When it is not (e.g.
-    /// no X11/Wayland session), copy/paste still works within this window
-    /// through the text it last wrote, but an entry copied in another window
-    /// cannot be reached.
+    /// Whether a system clipboard backend is available. Without one, entries from
+    /// other windows cannot be reached.
     pub fn is_available(&self) -> bool {
         self.backend.is_some()
     }
 
-    /// A clipboard with no backend, so nothing reaches the system clipboard.
-    /// Every method already handles the backend-less state (it is what a
-    /// failed `try_new` leaves behind), so handlers still run their real
-    /// paths and return their real `CommandResult`s.
+    /// A clipboard with no backend, the state a failed `try_new` leaves.
     #[cfg(test)]
     pub fn disabled() -> Self {
         Self {
@@ -81,9 +67,8 @@ impl Clipboard {
         }
     }
 
-    /// Clears the entry this window copied or cut, and one written elsewhere
-    /// that a paste here started from (`adopt`). Text copied from a prompt is
-    /// not an entry, so it stays for other applications to paste.
+    /// Clears the entry this window copied or cut, and one adopted by a paste.
+    /// Text copied from a prompt is not an entry and stays.
     pub fn clear(&mut self) -> Result<(), Error> {
         let adopted = self.adopted.take();
         let Some(backend) = &mut self.backend else {
@@ -107,8 +92,8 @@ impl Clipboard {
         Ok(())
     }
 
-    /// Records that a paste of `entry` started, so `clear` consumes it even
-    /// when another window wrote it. An entry this window wrote needs nothing.
+    /// Records that a paste of `entry` started, so `clear` consumes it even when
+    /// another window wrote it.
     pub fn adopt(&mut self, entry: &ClipboardEntry) {
         if self.last_entry().is_some_and(|(_, own)| own == entry) {
             return;
@@ -119,13 +104,10 @@ impl Clipboard {
     /// Reads the system clipboard as a `ClipboardEntry`.
     /// - `Ok(Some(_))`: valid entry
     /// - `Ok(None)`: clipboard empty, unreadable, or holds unrelated text
-    /// - `Err(_)`: the text looks like an entry ("cp "/"mv " prefix) but is
-    ///   invalid (e.g. a path that no longer exists); callers should surface
-    ///   this to the user rather than silently doing nothing
+    /// - `Err(_)`: the text looks like an entry but is invalid
     ///
-    /// The flag is true when this window wrote the entry. Any program can put
-    /// text shaped like one on the clipboard, so an entry from elsewhere is
-    /// confirmed before it is acted on.
+    /// The flag is true when this window wrote the entry; an entry from elsewhere
+    /// is confirmed before it is acted on.
     pub fn get_clipboard_entry(&mut self) -> Result<Option<(ClipboardEntry, bool)>> {
         match self.get_text() {
             Some(text) => resolve_clipboard_text(self.last_entry(), &text),
@@ -205,9 +187,8 @@ impl ClipboardEntry {
     }
 }
 
-/// Serialized as `"cp '/path/one' '/path/two'"` in the system clipboard.
-/// Paths are quoted with `shell_words::quote` so filenames containing spaces,
-/// newlines, or other shell metacharacters round-trip correctly.
+/// Serialized as `"cp '/path/one' '/path/two'"`, quoted with
+/// `shell_words::quote`.
 impl Display for ClipboardEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -222,9 +203,8 @@ impl Display for ClipboardEntry {
     }
 }
 
-/// Parses clipboard text, preferring `last_entry`'s exact paths when the text is
-/// still what was written for it. The paths are looked up again either way, so
-/// a path removed since the copy is reported the same as one parsed from text.
+/// Parses clipboard text, preferring `last_entry`'s exact paths while the text
+/// still matches. The paths are looked up either way.
 fn resolve_clipboard_text(
     last_entry: Option<(&str, &ClipboardEntry)>,
     text: &str,
@@ -248,19 +228,16 @@ fn path_info(path: &Path) -> Result<PathInfo> {
     PathInfo::try_from(path).with_context(|| format!("Failed to access {}", compact(path)))
 }
 
-/// Parses clipboard text, distinguishing unrelated text (ignored) from a
-/// malformed entry (shaped like "cp <path>"/"mv <path>" but failing to
-/// convert), which is returned as an error so the caller can alert the user.
-/// The text is tokenized exactly once, so classification and parsing cannot
-/// disagree about token boundaries.
+/// Parses clipboard text: unrelated text is `Ok(None)`, a malformed entry
+/// (shaped like "cp <path>"/"mv <path>") is an error. Tokenized once, so
+/// classification and parsing agree.
 fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
     let Ok(parts) = shell_words::split(text) else {
-        // Unparseable quoting after an operation token is most likely a
-        // truncated entry (filectrl quotes paths), so surface the error;
-        // anything else is unrelated text.
+        // Unparseable quoting after an operation token is most likely a truncated
+        // entry; anything else is unrelated text.
         let mut tokens = text.split_whitespace();
         if matches!(tokens.next(), Some("cp" | "mv")) && tokens.next().is_some() {
-            // The text came from another program, so it is not echoed.
+            // From another program, so not echoed.
             return Err(anyhow!("Cannot paste the clipboard entry: it is malformed"));
         }
         return Ok(None);
@@ -277,20 +254,16 @@ fn parse_clipboard_text(text: &str) -> Result<Option<ClipboardEntry>> {
     parse_clipboard_parts(&parts).map(Some)
 }
 
-/// Whether every component of `path` names an entry: no `.` and no `..`. A
-/// `..` makes a path lead somewhere other than the directories it spells out,
-/// so the confirmation would name one location and the paste act on another.
-/// Split on the separator rather than walking `Path::components`, which drops
-/// a `.` it finds past the start.
+/// Whether no component of `path` is `.` or `..`, so the confirmation names
+/// where the paste acts. Split on the separator because `Path::components`
+/// drops an inner `.`.
 fn is_plain_path(path: &str) -> bool {
     path.split('/').all(|part| part != "." && part != "..")
 }
 
-/// True when the tokens are shaped like an entry filectrl writes: a "cp"/"mv"
-/// token followed by absolute paths. An ordinary copied shell line
-/// ("cp build dist") is not one, even when its paths exist: a relative path
-/// would resolve against the directory filectrl was started in, which is not
-/// the one it names.
+/// Whether the tokens are shaped like an entry filectrl writes: "cp"/"mv"
+/// followed by absolute paths. A relative path would resolve against the
+/// wrong directory.
 fn is_entry_shaped(parts: &[String]) -> bool {
     matches!(parts.first().map(String::as_str), Some("cp" | "mv"))
         && parts[1..].iter().all(|part| part.starts_with('/'))
@@ -333,14 +306,11 @@ impl ClipboardBackend {
     }
 }
 
-/// Whether `clear` should blank the system clipboard holding the entry this
-/// window wrote as `entry_text`: only while it still holds that text. Anything
-/// else there now (or a read that failed) means another window or application
-/// took it over.
+/// Whether `clear` should blank the system clipboard: only while it still
+/// holds `entry_text`. A failed read counts as someone else's.
 ///
-/// `read_current` is a closure so that tests can see the read happen; reading
-/// blocks on whichever application owns the selection, so `clear` reads only
-/// when it has an entry to clear.
+/// `read_current` is a closure because the read blocks on the selection owner,
+/// so `clear` reads only when it has an entry to clear.
 fn should_clear(entry_text: &str, read_current: impl FnOnce() -> Option<String>) -> bool {
     read_current().as_deref() == Some(entry_text)
 }
@@ -353,30 +323,21 @@ mod tests {
 
     #[test]
     fn the_clipboard_is_cleared_only_while_this_window_still_owns_it() {
-        // Still holding what this window wrote, so clearing it discards only
-        // this window's own entry.
         assert!(should_clear("cp /a", || Some("cp /a".to_string())));
 
-        // Another window or application has written since. Blanking now would
-        // throw away someone else's clipboard.
         assert!(!should_clear("cp /a", || Some("other".to_string())));
-        // A read that failed says nothing about ownership, so it is not a
-        // licence to overwrite either.
         assert!(!should_clear("cp /a", || None));
     }
 
     #[test_case("some copied text" ; "prose")]
     #[test_case("" ; "nothing")]
     #[test_case("cp" ; "an operation without a path")]
-    // Unclosed quotes without an operation token stay silent, however many
-    // tokens follow: an apostrophe in copied prose is not a truncation.
+    // An apostrophe in copied prose is not a truncation.
     #[test_case("don't" ; "an apostrophe")]
     #[test_case("don't copy that" ; "an apostrophe then more tokens")]
-    // An ordinary copied shell line: filectrl writes absolute paths only, so a
-    // failing relative-path "entry" is unrelated text, not an error.
+    // A relative-path "entry" is unrelated text.
     #[test_case("cp filectrl-nonexistent-dir/ dist/" ; "a relative shell line")]
     #[test_case("\tmv filectrl-nonexistent-dir/ dist/" ; "an indented relative shell line")]
-    // An absolute path alone does not make an entry: only "cp"/"mv" does.
     #[test_case("see /filectrl-does-not-exist-xyz" ; "prose naming an absolute path")]
     fn unrelated_text_is_not_an_entry(text: &str) {
         assert!(parse_clipboard_text(text).unwrap().is_none());
@@ -391,15 +352,11 @@ mod tests {
     }
 
     #[test_case("mv '/filectrl-does-not-exist-xyz'" => "Failed to access \"/filectrl-does-not-exist-xyz\"" ; "a missing path")]
-    // The entry parser splits on any whitespace, so classification must not
-    // depend on a literal "cp "/"mv " space prefix.
+    // Classification must not depend on a literal "cp "/"mv " prefix.
     #[test_case("mv\t'/filectrl-does-not-exist-xyz'" => "Failed to access \"/filectrl-does-not-exist-xyz\"" ; "a tab-separated missing path")]
-    // A filectrl-written entry mangled by a clipboard manager: the quote never
-    // closes, so tokenizing fails, but the operation token makes it clearly an
-    // entry, not prose.
+    // A mangled entry: the quote never closes, but "cp" marks it as one.
     #[test_case("cp '/path wi" => "Cannot paste the clipboard entry: it is malformed" ; "a truncated quoted entry")]
-    // Paths that exist, so the refusal is not the lookup failing. Each leads
-    // somewhere other than the directories it names.
+    // Existing paths, so the refusal is not the lookup failing.
     #[test_case("cp /usr/../tmp" => "Cannot paste \"/usr/../tmp\": a clipboard path must not contain \".\" or \"..\"" ; "a parent component")]
     #[test_case("mv /tmp /tmp/." => "Cannot paste \"/tmp/.\": a clipboard path must not contain \".\" or \"..\"" ; "a current directory component after a plain path")]
     fn a_malformed_entry_is_an_error(text: &str) -> String {
@@ -416,9 +373,7 @@ mod tests {
         assert!(matches!(entry, ClipboardEntry::Copy(_)));
     }
 
-    /// The clipboard is the cross-window contract, so an entry this process
-    /// wrote has to parse back to the same paths in another window. Quoting is
-    /// what carries a name a shell would otherwise split or expand.
+    /// An entry must parse back to the same paths in another window.
     #[test]
     fn an_entry_round_trips_through_its_serialized_form() {
         use crate::test_support::TempDir;
@@ -442,9 +397,8 @@ mod tests {
         assert_eq!(ClipboardEntry::Move(paths), parsed);
     }
 
-    /// A bookmark is listed under the config directory, so a `..` in the
-    /// config path would reach every entry copied from the bookmarks, and
-    /// another window would refuse to paste it.
+    /// A `..` in the config path would reach every bookmark entry, which another
+    /// window would refuse.
     #[test]
     fn a_bookmark_under_a_config_path_with_a_parent_component_can_be_pasted() {
         use crate::{
@@ -467,7 +421,6 @@ mod tests {
         std::os::unix::fs::symlink(dir.path(), &bookmark).unwrap();
         let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(bookmark.as_path()).unwrap()]);
 
-        // Another window has no `last_entry`, so it parses the text.
         let parsed = parse_clipboard_text(&entry.to_string())
             .expect("a filectrl-written entry must parse")
             .expect("a filectrl-written entry is not unrelated text");
@@ -475,7 +428,7 @@ mod tests {
         assert_eq!(entry, parsed);
     }
 
-    // Linux only: macOS file systems refuse a name that is not valid UTF-8.
+    // macOS refuses a name that is not valid UTF-8.
     #[cfg(target_os = "linux")]
     #[test_case(ClipboardEntry::Copy ; "a copy")]
     #[test_case(ClipboardEntry::Move ; "a cut")]
@@ -494,7 +447,7 @@ mod tests {
         let mut clipboard = Clipboard::disabled();
         clipboard.set_clipboard_entry(&entry).unwrap();
 
-        // The text holds U+FFFD in place of 0xe9, which names no file.
+        // U+FFFD in place of 0xe9 names no file.
         assert_eq!(
             Some((entry, true)),
             clipboard.get_clipboard_entry().unwrap()
@@ -512,8 +465,6 @@ mod tests {
         let entry = ClipboardEntry::Copy(vec![PathInfo::try_from(first.as_path()).unwrap()]);
         let written = (entry.to_string(), entry);
 
-        // Another window's entry: the text no longer matches, so it is what
-        // counts, and it is not this window's own.
         let other = ClipboardEntry::Move(vec![PathInfo::try_from(second.as_path()).unwrap()]);
         assert_eq!(
             Some((other.clone(), false)),
@@ -521,8 +472,7 @@ mod tests {
         );
     }
 
-    /// Text copied from a prompt replaces the entry as what this window
-    /// wrote, so clearing leaves it for other applications to paste.
+    /// Text copied from a prompt is not cleared.
     #[test]
     fn clearing_keeps_text_copied_from_a_prompt() {
         let mut clipboard = Clipboard::disabled();

@@ -10,8 +10,7 @@ use crate::views::{View, as_dimension};
 
 impl View for NoticesView {
     fn constraint(&self, _: Rect) -> Constraint {
-        // Read the cached list (rebuilt by the command handler on state change)
-        // rather than rebuilding it here; this runs before `render` each frame.
+        // The cached list is rebuilt on state change, not per frame.
         Constraint::Length(as_dimension(self.notices.len()))
     }
 

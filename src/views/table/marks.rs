@@ -8,9 +8,8 @@ use super::TableView;
 pub(super) struct Marks {
     set: BTreeSet<usize>,
     range_anchor: Option<usize>,
-    /// The marks made before range mode began, kept under the range so that a
-    /// range adds to a selection rather than replacing it. Taken afresh each
-    /// time range mode begins, so it is only read while `range_anchor` is set.
+    /// The marks made before range mode began; a range adds to them. Only read
+    /// while `range_anchor` is set.
     range_base: BTreeSet<usize>,
 }
 
@@ -48,14 +47,11 @@ impl Marks {
         }
     }
 
-    /// The range anchor and the marks made before the range began, while in
-    /// range mode.
     fn range(&self) -> Option<(usize, &BTreeSet<usize>)> {
         Some((self.range_anchor?, &self.range_base))
     }
 
-    /// Resume range mode at `anchor` over the earlier marks `base`, leaving the
-    /// current marks as they are until the cursor next moves.
+    /// Resume range mode at `anchor` over the earlier marks `base`.
     fn restore_range(&mut self, anchor: usize, base: impl IntoIterator<Item = usize>) {
         self.range_anchor = Some(anchor);
         self.range_base = base.into_iter().collect();
@@ -65,7 +61,6 @@ impl Marks {
         self.range_anchor.is_some()
     }
 
-    /// Mark `item`, leaving it marked if it already was.
     pub(super) fn insert(&mut self, item: usize) {
         self.set.insert(item);
     }
@@ -92,8 +87,7 @@ impl Marks {
     }
 }
 
-/// Range mode captured by the entries it names, see
-/// [`TableView::range_by_path`].
+/// Range mode captured by path, see [`TableView::range_by_path`].
 pub(super) struct RangeByPath {
     anchor: PathInfo,
     base: Vec<PathInfo>,
@@ -118,9 +112,7 @@ impl TableView {
         self.selection_snapshot()
     }
 
-    /// Marks every row shown, which leaves out entries a filter or the hidden
-    /// setting keeps off screen. It replaces a range rather than extending it,
-    /// so range mode ends.
+    /// Marks every row shown and ends range mode.
     pub(super) fn mark_all(&mut self) -> CommandResult {
         self.marks.clear();
         for index in 0..self.content.len() {
@@ -133,11 +125,8 @@ impl TableView {
         self.marks.clear();
     }
 
-    /// Clear all marks and return the snapshot that resets the mark-count
-    /// notice. Emits only when marks were actually cleared, so callers can
-    /// `return self.clear_marks_notifying()` to keep the NoticesView in sync
-    /// (the marks set is the source of truth) without firing spurious commands
-    /// when there was nothing marked.
+    /// Clear all marks, returning the mark-count notice update only when marks
+    /// were cleared.
     pub(super) fn clear_marks_notifying(&mut self) -> CommandResult {
         let had_marks = self.has_marks();
         self.clear_marks();
@@ -159,8 +148,7 @@ impl TableView {
             .collect()
     }
 
-    /// Range mode as the entries it names rather than their positions, to
-    /// carry it across a rebuilt listing with [`Self::restore_range_by_path`].
+    /// Range mode by path, to carry it across a rebuilt listing.
     pub(super) fn range_by_path(&self) -> Option<RangeByPath> {
         let (anchor, base) = self.marks.range()?;
         Some(RangeByPath {
@@ -172,9 +160,8 @@ impl TableView {
         })
     }
 
-    /// Resume range mode captured by [`Self::range_by_path`], found again by
-    /// path as the marks are. Range mode stays ended if its anchor is gone,
-    /// since there is nothing left to measure the range from.
+    /// Resume range mode captured by [`Self::range_by_path`]. It stays ended if
+    /// its anchor is gone.
     pub(super) fn restore_range_by_path(&mut self, range: Option<RangeByPath>) {
         let Some(range) = range else { return };
         if let Some(anchor) = self.content.find_by_path(range.anchor.as_path()) {
@@ -254,8 +241,6 @@ mod tests {
         assert_eq!(vec![0, 1, 5, 6], marked(&marks));
     }
 
-    /// Shrinking the range unmarks only what the range marked: an entry marked
-    /// beforehand stays marked when the range no longer covers it.
     #[test]
     fn shrinking_a_range_keeps_an_earlier_mark_it_had_covered() {
         let mut marks = Marks::default();
@@ -307,7 +292,6 @@ mod tests {
         marks.clear();
         assert!(marks.is_empty());
         assert!(!marks.in_range_mode());
-        // After clearing, a stale anchor must not resurrect a range.
         marks.update_range(9);
         assert!(marks.is_empty());
     }

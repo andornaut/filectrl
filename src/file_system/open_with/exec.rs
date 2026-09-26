@@ -11,41 +11,25 @@ use std::{
 
 use anyhow::{Result, anyhow};
 
-/// Expand `exec` into an argv suitable for `std::process::Command`, opening
-/// `path`. Only the file and URI codes are substituted. `%i`, `%c` and `%k`
-/// are removed like the deprecated codes, as the spec directs for a code that
-/// is not supported.
+/// Expand `exec` into an argv opening `path`. Only the file and URI codes are
+/// substituted; every other code is removed, as the spec directs.
 ///
-/// `DesktopEntry::parse_exec` is deliberately not used: it splits on ASCII
-/// whitespace (which tears apart a quoted program path), substitutes a field
-/// code only when it is an entire token (so `--file=%f` is passed through
-/// literally), and rejects any `Exec` whose first token contains '='
-/// (`env FOO=1 app %f`).
+/// `DesktopEntry::parse_exec` is not used: it splits a quoted program path,
+/// ignores a code inside a token (`--file=%f`), and rejects `env FOO=1 app %f`.
 ///
-/// Two shapes are refused, so the entry is not offered: a
-/// field code in an argument written with quotes or escapes, unless the
-/// argument is nothing but that code (`app "%f"`), and a value in or after an
-/// option that may take code, however it is written, whether a field code or
-/// the path appended for want of one. The spec leaves a quoted code
-/// undefined, and in practice such an argument is a script for some
-/// interpreter (`sh -c`, `python3 -c`, `env -S`), where the name would run as
-/// code and no quoting is right for every language that might read it. An
-/// unquoted code is read as code only in or after such an option (`sh -c %f`,
-/// `env -S%f`), which is recognized by its shape alone, whatever the program.
-/// The rule is deliberately broad and refuses some safe entries (`sh -c 'mpv
-/// "$1"' sh %f`).
+/// Refused, so the entry is not offered: a field code in a quoted or escaped
+/// argument other than the bare code (`app "%f"`), and any path in or after an
+/// option that may take code (see `code_option`), since the name would run as
+/// code. Deliberately broad: it refuses some safe entries.
 pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
-    // The desktop entry string escapes are undone before the quoting rules are
-    // applied, so a literal backslash inside a quoted argument is written as
-    // four backslashes.
+    // String escapes are undone before quoting, so a literal backslash inside
+    // quotes is written as four.
     let tokens = split(&unescape_value(exec))
         .map_err(|error| anyhow!("Malformed Exec {exec:?}: {error}"))?;
     let takes_path = tokens
         .iter()
         .any(|token| has_substituting_code(&token.text));
-    // Options are recognized in the arguments as the program will receive
-    // them, so a removed code cannot join an option letter to the text after
-    // it (`-%ce` reaches the program as `-e`).
+    // Matched as the program receives them: `-%ce` reaches it as `-e`.
     let shapes: Vec<String> = tokens
         .iter()
         .map(|token| without_removed_codes(&token.text))
@@ -73,8 +57,7 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
             ));
         }
         let expanded = expand_in_token(path, &uri, &text);
-        // A token that was nothing but removed field codes is not an empty
-        // argument, but a literal "" is.
+        // A token of only removed codes is dropped; a literal "" is kept.
         if !expanded.is_empty() || !text.contains('%') {
             argv.push(expanded);
         }
@@ -83,20 +66,15 @@ pub(super) fn expand(path: &Path, exec: &str) -> Result<Vec<OsString>> {
     if argv.is_empty() {
         return Err(anyhow!("Exec {exec:?} is empty"));
     }
-    // An entry that declares no file field code takes no argument, but the user
-    // picked it to open this path, so append it rather than launch the
-    // application against nothing. A program that rejects the extra argument
-    // exits straight away and is reported.
+    // The user picked this entry to open the path, so append it.
     if !takes_path {
         argv.push(path.as_os_str().to_os_string());
     }
     Ok(argv)
 }
 
-/// Long options that give an interpreter code to run: `node --eval`,
-/// `node --print`, `php --run`, `env --split-string`, `guake
-/// --execute-command` and the like. `--command` is not one: Flatpak's exported
-/// entries use it to name the program to run, not code.
+/// Long options that give an interpreter code to run. Not `--command`: Flatpak
+/// uses it to name a program.
 const CODE_LONG_OPTIONS: [&str; 7] = [
     "eval",
     "exec",
@@ -107,17 +85,10 @@ const CODE_LONG_OPTIONS: [&str; 7] = [
     "split-string",
 ];
 
-/// The index of the first option among `tokens` that takes code to run.
-///
-/// A single-dash option cluster matches when its leading run of letters and
-/// digits holds `c`, `e`, `E`, `S`, `p`, `r`, `R` or `B` (`-c`, `-lc`, `-cx`,
-/// `-e`, `-E`, `-S`, `-p`, `-r`, `-R`, `-B`, `-cprint(1)`, `-S%f`). That is how shells, `env`,
-/// `python3`, `perl`, `node`, `php` and the like are given code to run, so it
-/// is matched for any program. A double-dash option matches when it is named
-/// in `CODE_LONG_OPTIONS`, with or without an attached `=value`. The code may
-/// be attached to the option, and every later argument counts, since options
-/// may stand between the option and the code (`sh -c -x %f`) and a program
-/// may read an argument after the code as code too (`eval "$1"`).
+/// The index of the first option that takes code to run, for any program: a
+/// single-dash cluster whose leading alphanumerics hold `c`, `e`, `E`, `S`,
+/// `p`, `r`, `R` or `B`, or a long option in `CODE_LONG_OPTIONS`. Every later
+/// argument counts as code too (`sh -c -x %f`, `eval "$1"`).
 fn code_option(words: &[String]) -> Option<usize> {
     words.iter().position(|word| {
         if let Some(long) = word.strip_prefix("--") {
@@ -159,10 +130,8 @@ struct Token {
     quoted: bool,
 }
 
-/// Splits an `Exec` line into arguments. The spec's quoting (double quotes,
-/// backslash-escaping of " ` $ \) is a subset of POSIX quoting, which this
-/// follows: single quotes, double quotes, backslashes, and a `#` that starts a
-/// word begins a comment.
+/// Splits an `Exec` line into arguments with POSIX quoting, a superset of the
+/// spec's.
 fn split(line: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let mut current: Option<Token> = None;
@@ -174,7 +143,6 @@ fn split(line: &str) -> Result<Vec<Token>> {
                 chars.by_ref().find(|&c| c == '\n');
             }
             '\\' => match chars.next() {
-                // A line continuation, which is not part of any argument.
                 Some('\n') => {}
                 Some(c) => {
                     let token = current.get_or_insert_with(Token::default);
@@ -221,8 +189,7 @@ fn split(line: &str) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-/// Whether `token` holds a field code that substitutes a value, as opposed to a
-/// literal percent or a code that is removed.
+/// Whether `token` holds a field code that substitutes a value.
 fn has_substituting_code(token: &str) -> bool {
     let mut chars = token.chars();
     while let Some(c) = chars.next() {
@@ -233,8 +200,7 @@ fn has_substituting_code(token: &str) -> bool {
     false
 }
 
-/// Substitute the field codes appearing anywhere within a single argument, so
-/// that `--file=%f` works as well as a bare `%f`.
+/// Substitute the field codes anywhere within one argument.
 fn expand_in_token(path: &Path, uri: &str, token: &str) -> OsString {
     let mut expanded = OsString::with_capacity(token.len());
     let mut chars = token.chars();
@@ -243,14 +209,11 @@ fn expand_in_token(path: &Path, uri: &str, token: &str) -> OsString {
             expanded.push(c.encode_utf8(&mut [0u8; 4]));
             continue;
         }
-        // Pushed as an `OsStr`, so a name that is not valid UTF-8 reaches the
-        // program intact rather than as replacement characters.
+        // An `OsStr`, so a non-UTF-8 name reaches the program intact.
         let value = match chars.next() {
             Some('%') => OsStr::new("%"),
             Some('f' | 'F') => path.as_os_str(),
             Some('u' | 'U') => OsStr::new(uri),
-            // Unsupported (%i, %c, %k), deprecated, unrecognized, and a
-            // trailing '%' are all removed.
             _ => continue,
         };
         expanded.push(value);
@@ -258,10 +221,8 @@ fn expand_in_token(path: &Path, uri: &str, token: &str) -> OsString {
     expanded
 }
 
-/// The `file://` URI of an absolute path, for the `%u` and `%U` field codes.
-/// Everything outside the RFC 3986 unreserved set is percent encoded, from the
-/// raw bytes: a lossy conversion would percent encode replacement characters
-/// rather than the name they stood in for.
+/// The `file://` URI of an absolute path, percent encoding the raw bytes
+/// outside the RFC 3986 unreserved set.
 fn file_uri(path: &Path) -> String {
     let mut uri = String::from("file://");
     for &byte in path.as_os_str().as_bytes() {
@@ -269,8 +230,6 @@ fn file_uri(path: &Path) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 uri.push(byte as char);
             }
-            // Writing into the string rather than formatting a new one per byte.
-            // Writing to a String is infallible, so the Result cannot be an error.
             _ => {
                 let _ = write!(uri, "%{byte:02X}");
             }
@@ -279,8 +238,7 @@ fn file_uri(path: &Path) -> String {
     uri
 }
 
-/// Undo the escape sequences that the desktop entry spec defines for values of
-/// type string. Any other backslash sequence is left alone.
+/// Undo the desktop entry string escapes, leaving any other backslash sequence.
 pub(super) fn unescape_value(value: &str) -> String {
     if !value.contains('\\') {
         return value.to_string();
@@ -297,8 +255,6 @@ pub(super) fn unescape_value(value: &str) -> String {
             Some('n') => unescaped.push('\n'),
             Some('t') => unescaped.push('\t'),
             Some('r') => unescaped.push('\r'),
-            // An escaped backslash, and a trailing one at the end of the
-            // value, both yield a single backslash.
             Some('\\') | None => unescaped.push('\\'),
             Some(other) => {
                 unescaped.push('\\');
@@ -317,7 +273,6 @@ mod tests {
 
     use super::{expand, file_uri, split, unescape_value};
 
-    /// The expansion as plain strings, for comparing against the expected argv.
     fn expanded(path: &str, exec: &str) -> Vec<String> {
         expand(Path::new(path), exec)
             .unwrap()
@@ -345,8 +300,6 @@ mod tests {
     #[test_case("env FOO=1 app %f", &["env", "FOO=1", "app", PATH] ; "equals sign in the first token")]
     #[test_case("app %d %v %f", &["app", PATH] ; "deprecated codes are dropped")]
     #[test_case("app %z %f", &["app", PATH] ; "unknown code is dropped")]
-    // Escapes are undone before the quoting rules are applied, so \s becomes a
-    // real separator; quoting is the only way to get a space inside one token.
     #[test_case("app\\sname %f", &["app", "name", PATH] ; "escaped space separates tokens")]
     #[test_case("\"app name\" %f", &["app name", PATH] ; "quoting keeps a space inside one token")]
     #[test_case("app \"a\\\\\\\\b\" %f", &["app", "a\\b", PATH] ; "four backslashes are one literal backslash")]
@@ -368,11 +321,8 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let name = std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt");
 
-        // A lossy conversion would hand the program U+FFFD instead of 0xe9,
-        // and it would open nothing.
         let argv = expand(Path::new(name), "app %f %u").unwrap();
         assert_eq!(name, argv[1]);
-        // The URI encodes the byte itself rather than a replacement character.
         assert_eq!("file:///tmp/caf%E9.txt", argv[2]);
     }
 
@@ -380,16 +330,10 @@ mod tests {
     const HOSTILE: &str = "/v/x$(touch pwned).mp4";
     const HOSTILE_URI: &str = "file:///v/x%24%28touch%20pwned%29.mp4";
 
-    /// The rules `expand` refuses by, as the tail of their messages.
     const CODE_OPTION: &str =
         "a path in or after an option that takes code cannot be passed safely";
     const QUOTED: &str = "a field code in a quoted argument cannot be passed safely";
 
-    // Any value in or after an option cluster whose leading letters hold c, e,
-    // E or S may be read as code, by any program, however it is written. So
-    // may the path appended to an entry with no field code. A code in an
-    // argument with any quoting or escape in it is in a script, whatever reads
-    // it.
     #[test_case("sh -c %f", CODE_OPTION ; "c directly before the code")]
     #[test_case("foo -e %f", CODE_OPTION ; "e directly before the code")]
     #[test_case("perl -E %f", CODE_OPTION ; "upper case e directly before the code")]
@@ -459,10 +403,6 @@ mod tests {
         assert!(error.to_string().ends_with(rule), "{error}");
     }
 
-    // Outside quotes the value is one argv element and no shell reads it, so it
-    // is passed raw, embedded or not. So is a quoted argument that is only the
-    // code. A code that expands to nothing puts nothing into a script, and a
-    // literal percent is not a code.
     #[test_case("mpv %f", &["mpv", HOSTILE] ; "a bare code")]
     #[test_case("vlc %U", &["vlc", HOSTILE_URI] ; "a bare uri code")]
     #[test_case("app \"%f\"", &["app", HOSTILE] ; "a quoted code on its own")]
@@ -499,8 +439,6 @@ mod tests {
         assert_eq!(expected, expanded(HOSTILE, exec).as_slice());
     }
 
-    // Called directly, since the escapes of an `Exec` value are undone before
-    // splitting and a quoted field code is refused.
     #[test_case("a\tb", &["a", "b"] ; "a tab separates")]
     #[test_case("a\nb", &["a", "b"] ; "a newline separates")]
     #[test_case(r#""a\`b""#, &["a`b"] ; "an escaped backtick in double quotes")]

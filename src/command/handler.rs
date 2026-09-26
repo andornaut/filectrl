@@ -10,12 +10,10 @@ pub trait CommandHandler {
     }
 
     fn handle_key(&mut self, _code: KeyCode, _modifiers: KeyModifiers) -> CommandResult {
-        // Only invoked if self.should_handle_key() returns true
         CommandResult::NotHandled
     }
 
-    /// Only invoked if self.should_handle_key() returns true, since a paste is
-    /// typed input delivered at once.
+    /// Only invoked if `should_handle_key` returns true.
     fn handle_paste(&mut self, _text: &str) -> CommandResult {
         CommandResult::NotHandled
     }

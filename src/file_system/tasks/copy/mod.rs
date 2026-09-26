@@ -36,64 +36,43 @@ use self::{
     tree::{copy_tree, enter_directory},
 };
 
-/// The settings and shared state one copy carries from the task down to every
-/// entry of the tree, so that adding another does not lengthen every signature
-/// in between.
+/// Settings and shared state one copy carries from the task down to every entry of the tree.
 struct CopyContext<'a> {
-    /// The task the copy reports progress and a cancel through.
     active: &'a mut ActiveTask,
-    /// Each entry that could not be copied, in the order met: the copy carries
-    /// on past them, like `cp -R`, and the task reports them when it ends.
+    /// Entries that could not be copied, in order. The copy continues past them, like `cp -R`.
     errors: Vec<String>,
-    /// One read buffer for the whole tree; see `copy_with_progress`.
+    /// One read buffer for the whole tree.
     buffer: &'a mut [u8],
-    /// The paste's standing `*All` answer (`Conflicts`).
+    /// The paste's standing `*All` answer.
     conflicts: &'a Conflicts,
-    /// The copy is the one a move across devices makes. It keeps each entry's
-    /// full mode, times and extended attributes, as `mv` does, so the move
-    /// leaves what a same-device rename would have, and its messages call it
-    /// a move. A copy takes the umask and drops the special bits instead, as
-    /// `cp` does.
+    /// The copy a move across devices makes: it keeps full mode, times and extended attributes,
+    /// like `mv`. A copy takes the umask and drops the special bits, like `cp`.
     is_move: bool,
-    /// The top-level source file, already opened by `prepare_destination`,
-    /// with its metadata. `copy_file` takes it in place of opening the path
-    /// again. `None` for any other source.
+    /// The top-level source file already opened by `prepare_destination`, with its metadata.
     source: Option<(File, Stat)>,
-    /// The staging directory the top-level entry is being written into while
-    /// it replaces another (`replace_entry`), for what is made by path.
+    /// The staging directory the top-level entry is written into while it replaces another.
     staging: Option<PathBuf>,
-    /// The entry the copy created in that staging directory, the only one it
-    /// lands or removes there (`Staging`).
+    /// The entry the copy created in the staging directory, the only one it lands or removes.
     staged: Option<EntryId>,
-    /// Entries a standing "skip all" left alone. Counted separately from the
-    /// errors: skipping is a choice rather than a failure, but a move still
-    /// must not remove a source whose entries never reached the destination.
+    /// Entries a standing "skip all" left alone. Not errors, but a move must still keep its source.
     skipped: usize,
-    /// Something now holds the top-level destination name that the copy put
-    /// there, whole or not: what a move that fails leaves behind.
+    /// Something the copy made now holds the top-level destination name.
     wrote: bool,
-    /// The directories this copy created, which it never descends into as a
-    /// source: a destination swapped for a link into the source tree, or a
-    /// bind mount of it, would otherwise copy the copy into itself without end.
+    /// Directories this copy created, never descended into as a source: a destination swapped for a
+    /// link into the source tree would otherwise copy into itself without end.
     created: std::collections::HashSet<EntryId>,
-    /// The top-level source that was copied, which is the entry a move removes
-    /// afterwards and no other.
+    /// The top-level source copied, the only entry a move removes afterwards.
     root: Option<EntryId>,
-    /// One debouncer for the whole tree, against its total: one per file would
-    /// send an update for every file, since a debouncer's first call triggers.
+    /// One debouncer for the whole tree: a per-file debouncer sends an update for every file.
     progress: debounce::ProgressDebouncer,
-    /// Called with each directory the walk leaves, just before it goes back
-    /// to the parent through it: where a test moves or locks the tree.
+    /// Called with each directory before the walk returns to its parent through it.
     #[cfg(test)]
     on_leave: Option<OnLeave<'a>>,
-    /// The deepest level the walk may enter, for a test whose failure would
-    /// otherwise nest directories without end: past it the walk stops as if
-    /// cancelled, whatever the cancel token says.
+    /// The deepest level the walk may enter; past it the walk stops as if cancelled.
     #[cfg(test)]
     max_depth: Option<usize>,
 }
 
-/// What `CopyContext::on_leave` calls.
 #[cfg(test)]
 type OnLeave<'a> = Box<dyn FnMut(&Path) + 'a>;
 
@@ -130,11 +109,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// Records that the copy created the entry `at` names (`paths`), which at
-    /// the top level means the destination now holds something of it. While
-    /// the entry is staged (`replace_entry`) it is beside the name, not at it,
-    /// and which entry it is is recorded instead, so that only that entry is
-    /// landed or removed.
+    /// Records that the copy created the entry `at` names. While staged, the entry's identity is
+    /// recorded instead, so only it is landed or removed.
     fn mark_written(&mut self, at: &At<'_>, paths: &Paths) {
         if paths.depth != 0 {
             return;
@@ -146,10 +122,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// How a failure to write the entry `paths` names reads: `own`, which
-    /// names the entry as what failed, or while the entry is staged to replace
-    /// another, the transfer that failed, since the entry at the name is not
-    /// what failed and is left as it was (`replace_entry`).
+    /// A failure to write `paths`: `own`, or while staged, the transfer that failed, since the
+    /// entry at the name is left as it was.
     fn written_failure(
         &self,
         paths: &Paths,
@@ -163,9 +137,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// Where the entry `paths` names is being created, for what is made by
-    /// path (`make_node` on macOS): in the staging directory for a top-level
-    /// entry that is replacing another, and at its destination otherwise.
+    /// Where the entry is being created (the staging directory for a staged top-level entry), for
+    /// `make_node` on macOS.
     fn node_path(&self, paths: &Paths) -> PathBuf {
         match (&self.staging, paths.new.file_name()) {
             (Some(staging), Some(name)) if paths.depth == 0 => staging.join(name),
@@ -173,7 +146,6 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// What the copy left behind, with the errors it recorded.
     fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {
             errors: self.errors,
@@ -186,61 +158,49 @@ impl<'a> CopyContext<'a> {
     }
 }
 
-/// What `prepare_destination` hands the copy: the top-level source file it
-/// opened, and the entry a granted overwrite lets the copy replace, if it
-/// still held the name.
+/// What `prepare_destination` hands the copy: the opened top-level source file, and the entry a
+/// granted overwrite replaces if it still held the name.
 pub(super) struct Prepared {
     pub(super) source: Option<(File, Stat)>,
     pub(super) replace: Option<Seen>,
 }
 
-/// What a tree copy left behind: the entries that could not be written, how
-/// many a standing "skip all" left alone, and which entry was copied.
+/// What a tree copy left behind: errors, how many entries were skipped, and which entry was copied.
 #[derive(Default)]
 pub(super) struct CopyOutcome {
     pub(super) errors: Vec<String>,
     pub(super) skipped: usize,
-    /// Something the copy made holds the top-level destination name.
     pub(super) wrote: bool,
     pub(super) root: Option<EntryId>,
-    /// The tree debouncer's threshold, which a copy too quick to outlast the
-    /// time floor gives no other way to observe.
+    /// The tree debouncer's threshold.
     #[cfg(test)]
     pub(super) progress_threshold: u64,
 }
 
 impl CopyOutcome {
-    /// Whether the top-level entry itself was skipped, so nothing was copied:
-    /// any skip inside the tree comes after the copy made its top directory.
+    /// Whether the top-level entry itself was skipped.
     pub(super) fn top_skipped(&self) -> bool {
         self.skipped > 0 && !self.wrote
     }
 }
 
-/// The copy read buffer, one per task. Benchmarked fastest on ext4, btrfs and
-/// tmpfs, and it keeps cancel latency near 10 ms under writeback throttling;
-/// the same size coreutils `cp` reads in.
+/// The copy read buffer size, the same as coreutils `cp`. Keeps cancel latency near 10 ms under
+/// writeback throttling.
 const COPY_BUFFER_BYTES: usize = 128 * 1024;
 
-/// What a copy was asked for, the same for every entry of its tree: whether it
-/// is the copy a move across devices makes (`CopyContext::is_move`), and the
-/// paste's standing answer (`CopyContext::conflicts`).
+/// What a copy was asked for, the same for every entry of its tree.
 #[derive(Clone, Copy)]
 pub(super) struct CopySettings<'a> {
     pub(super) is_move: bool,
     pub(super) conflicts: &'a Conflicts,
 }
 
-/// The byte-copy stage shared by copy and cross-device move: checks the
-/// destination and opens the source (`prepare_destination`, with the entry
-/// `overwrite` grants replacing), for a directory source scans the real
-/// transfer total (a directory entry's own size is not the transfer size) and
-/// applies it via `set_total`, and copies the tree. `listed` is the source as
-/// the task was started for it: its type, mode and size.
+/// The byte-copy stage shared by copy and cross-device move: prepares the destination, sets the
+/// progress total for a directory source, and copies the tree. `listed` is the source as the task
+/// was started for it.
 ///
-/// Returns `None` when the task was finalized on the way: cancelled, via
-/// `active.cancelled()`, or refused by `prepare_destination`. Otherwise
-/// returns the task and what the walk left behind, for the caller to finalize.
+/// `None` when the task was finalized on the way (cancelled or refused); otherwise the task and
+/// what the walk left behind, for the caller to finalize.
 pub(super) fn copy_with_progress(
     settings: CopySettings<'_>,
     overwrite: Option<Seen>,
@@ -268,8 +228,6 @@ pub(super) fn copy_with_progress(
     } else {
         listed.size
     };
-    // One buffer for the whole tree: allocating it per file would zero a fresh
-    // one for every small file in a large directory.
     let mut buffer = vec![0; COPY_BUFFER_BYTES];
     let mut context = CopyContext::new(
         settings,
@@ -287,12 +245,8 @@ pub(super) fn copy_with_progress(
     Some((active, outcome))
 }
 
-/// Best-effort recursive size for the progress total. Entries that cannot be
-/// read are skipped here; the copy itself reports them as errors.
-///
-/// Returns `None` when the task was cancelled. The walk runs before any bytes
-/// are copied and takes as long as the tree is large, so it observes the token
-/// itself rather than leaving a cancel acknowledged but still running.
+/// Best-effort recursive size for the progress total; unreadable entries are skipped. `None` when
+/// cancelled.
 pub(super) fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
     let mut total: u64 = 0;
     scan_tree(active, root, |dir, name, is_directory| {
@@ -309,30 +263,15 @@ pub(super) fn dir_total_size(active: &ActiveTask, root: &Path) -> Option<u64> {
     Some(total)
 }
 
-/// The copy functions below follow coreutils `cp -R`/`mv` semantics: an entry
-/// that cannot be copied is recorded in `CopyContext::errors` and the copy
-/// continues with the remaining entries. Each returns `false` only when the
-/// task was cancelled, in which case the caller must finalize with
-/// `active.cancelled()`; otherwise the caller finalizes via `finalize`.
-/// A cancelled copy leaves the partially copied destination in place, like an
-/// interrupted `cp`; the destination is not removed. A replacement is the
-/// exception: it is written beside the entry it replaces and removed when it
-/// does not complete (`replace_entry`).
+/// Copies with `cp -R`/`mv` semantics: an entry that cannot be copied is recorded and the copy
+/// continues. Returns `false` only when cancelled, and then the caller finalizes with
+/// `active.cancelled()`. A cancelled copy leaves its partial destination, except a replacement
+/// (`replace_entry`).
 ///
-/// Every entry is read, created and changed relative to an open directory on
-/// its side, never through a path, and nothing is opened through a symlink. An
-/// entry swapped for a link while the copy runs therefore fails rather than
-/// leading the copy out of the tree: reading a file outside the source, or
-/// creating one or changing a mode outside the destination. Only the top-level
-/// parents, which the user chose, are opened by path.
-///
-/// An entry's mode and owner are read from the file actually copied, never
-/// from an earlier stat of its name: another file renamed over the name in
-/// between would otherwise be given the first one's mode. `listed` is the
-/// source as the task was started for it, and one that is no longer of its
-/// type is refused. A non-directory replaces the entry `replace` names, if
-/// given, whole or not at all (`replace_entry`), and a failure before that is
-/// attempted says the entry was left.
+/// Every entry is accessed relative to an open directory and never through a symlink, so an entry
+/// swapped for a link fails rather than leading the copy out of the tree. Only the top-level
+/// parents are opened by path. Modes and owners come from the file actually copied; a source no
+/// longer of its `listed` type is refused.
 fn copy_path(
     context: &mut CopyContext<'_>,
     replace: Option<Seen>,
@@ -358,8 +297,7 @@ fn copy_path(
         return true;
     };
     let opened = open_parent(old_path).and_then(|src| {
-        // The file `prepare_destination` opened is the one copied, so its
-        // metadata is the one that counts.
+        // The file `prepare_destination` opened is the one copied.
         let stat = match &context.source {
             Some((_, stat)) => *stat,
             None => fstatat(&src, src_name.as_c_str(), AtFlags::AT_SYMLINK_NOFOLLOW)?,
@@ -401,12 +339,10 @@ fn copy_path(
     let Some(level) = enter_directory(context, &at, &paths, &stat) else {
         return true;
     };
-    // Only the directories being worked in are held open.
     drop((src_parent, dst_parent));
     copy_tree(context, level, &mut paths)
 }
 
-/// An entry to copy, named relative to an open directory on each side.
 struct At<'a> {
     src: &'a File,
     dst: &'a File,
@@ -414,13 +350,12 @@ struct At<'a> {
     dst_name: &'a CStr,
 }
 
-/// The paths of the entry being copied, for messages only: every system call
-/// goes through an `At`. One pair for the whole walk, extended on the way down
-/// and cut back on the way up, so memory does not grow with depth squared.
+/// The paths of the entry being copied, for messages only. One pair for the whole walk, extended
+/// and truncated in step with it.
 struct Paths {
     old: PathBuf,
     new: PathBuf,
-    /// How far below the top-level entry these are: 0 for the entry itself.
+    /// Depth below the top-level entry: 0 for the entry itself.
     depth: usize,
 }
 
@@ -439,16 +374,13 @@ impl Paths {
     }
 }
 
-/// What the copy needs of a source entry: its mode, its owner for deciding
-/// whether a move keeps the setuid and setgid bits, and for a move its times
-/// and extended attributes. Taken from the entry before the copy reads it,
-/// since reading moves its access time.
+/// What the copy needs of a source entry, taken before the copy reads it since reading moves its
+/// access time.
 struct Source {
     mode: u32,
     uid: u32,
     gid: u32,
     times: Option<Times>,
-    /// Each extended attribute the source has, by name.
     attributes: Vec<(CString, Vec<u8>)>,
 }
 
@@ -463,8 +395,8 @@ impl Source {
         }
     }
 
-    /// `of` the open `file`, whose `stat` it is, with its extended attributes
-    /// for a move. `path` names it in a warning.
+    /// Reads `file`'s metadata, and its extended attributes for a move. `path` names it in a
+    /// warning.
     fn read(is_move: bool, path: &Path, file: &File, stat: &Stat) -> Self {
         let mut source = Self::of(stat);
         if is_move {
@@ -475,8 +407,8 @@ impl Source {
     }
 }
 
-/// How an error copying `object` reads: filectrl's own refusal (no errno) in
-/// the `Cannot` form, anything else in the `Failed to` form.
+/// An error copying `object`: `Cannot` for filectrl's own refusal (no errno), `Failed to`
+/// otherwise.
 fn refused_or_failed(
     is_move: bool,
     object: &dyn std::fmt::Display,
@@ -490,9 +422,8 @@ fn refused_or_failed(
     format!("{shape} {} {object}: {error}", verb(is_move))
 }
 
-/// The object of a transfer's message: its source and destination. Below the
-/// top-level entry it names the entry relative to both, since `compact` keeps
-/// only the last components of a path, which are the same on either side.
+/// The object of a transfer's message. Below the top level it names the entry relative to both
+/// sides, since `compact` keeps only the last components of a path.
 fn transfer_object(paths: &Paths) -> String {
     let roots = (paths.depth > 0).then(|| {
         (

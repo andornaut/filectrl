@@ -17,17 +17,14 @@ use std::os::fd::AsFd;
 use std::path::Path;
 use std::time::Instant;
 
-/// Copies the non-directory entry `at` names, of the type `stat` gives it: a
-/// symlink, a regular file, or a special file. Returns `false` only when
-/// cancelled.
+/// Copies the non-directory entry `at` names. Returns `false` only when cancelled.
 pub(super) fn copy_entry(
     context: &mut CopyContext<'_>,
     at: &At<'_>,
     paths: &Paths,
     stat: &Stat,
 ) -> bool {
-    // The type comes from an `lstat`, so a symlink (even one pointing at a
-    // directory) is recreated as a link rather than followed.
+    // The type comes from `lstat`, so a symlink is recreated, never followed.
     match FileType::of(stat) {
         FileType::Symlink => {
             copy_symlink(context, at, paths);
@@ -41,9 +38,7 @@ pub(super) fn copy_entry(
     }
 }
 
-/// Recreates the symlink `at` names, pointing at the same (possibly relative,
-/// possibly dangling) target. The target is never followed, so no bytes are
-/// transferred and no permissions are applied.
+/// Recreates the symlink `at` names with the same target, which is never followed.
 pub(super) fn copy_symlink(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Paths) {
     let target = match readlinkat(at.src, at.src_name) {
         Ok(read) => read,
@@ -67,13 +62,9 @@ pub(super) fn copy_symlink(context: &mut CopyContext<'_>, at: &At<'_>, paths: &P
     }
 }
 
-/// Copies a file chunk-by-chunk, sending debounced progress updates through
-/// the context's task. The destination is never more readable than the source
-/// while it is written (see `create_file_at`), and gets its final mode through
-/// the handle once the copy stops, however it stops. Failures are recorded in
-/// the context's errors; returns `false` only when cancelled.
-///
-/// The mode and owner applied are those of the file opened.
+/// Copies a regular file, sending debounced progress. The destination is never more readable than
+/// the source while written (`create_file_at`) and gets its final mode through the handle however
+/// the copy stops. Returns `false` only when cancelled.
 pub(super) fn copy_file(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Paths) -> bool {
     let is_move = context.is_move;
     let failed = |error: &dyn std::fmt::Display| {
@@ -83,8 +74,7 @@ pub(super) fn copy_file(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Path
             transfer_object(paths)
         )
     };
-    // Opened before the destination is created, so a source that cannot be
-    // read leaves nothing behind.
+    // Opened before the destination is created, so an unreadable source leaves nothing behind.
     let opened = match context.source.take() {
         Some(opened) => Ok(opened),
         None => open_source_file(at.src, at.src_name),
@@ -114,16 +104,14 @@ pub(super) fn copy_file(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Path
 
     let not_cancelled = loop {
         if context.active.is_cancelled() {
-            // Like interrupted `cp`: leave the partially written destination
-            // file in place rather than removing it.
+            // Like interrupted `cp`: the partial destination stays.
             break false;
         }
 
         match old_file.read(context.buffer) {
             Ok(0) => {
-                // Before `new_file` is dropped: writing is what moves the
-                // modification time, so it has to be restored once the last
-                // byte is written.
+                // Before `new_file` is dropped: the last write moves the
+                // modification time.
                 if context.is_move {
                     apply_times(&paths.new, source, &new_file);
                 }
@@ -159,11 +147,9 @@ pub(super) fn copy_file(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Path
     not_cancelled
 }
 
-/// Recreates a special file (FIFO, socket, or device node) as a fresh node
-/// with the source's permission bits, like `cp -R` does. No bytes are
-/// transferred: reading a FIFO would block until a writer appears. FIFOs and
-/// sockets need no privileges; device nodes require root, so as a normal user
-/// they record a "not permitted" error here, exactly as `cp` reports.
+/// Recreates a FIFO, socket, or device node with the source's permission bits, like `cp -R`. No
+/// bytes are read: a FIFO would block. A device node needs root, otherwise "not permitted" is
+/// recorded.
 pub(super) fn copy_special(context: &mut CopyContext<'_>, at: &At<'_>, paths: &Paths, stat: &Stat) {
     let file_type = FileType::of(stat);
     if !matches!(
@@ -177,8 +163,6 @@ pub(super) fn copy_special(context: &mut CopyContext<'_>, at: &At<'_>, paths: &P
         ));
         return;
     }
-    // Everything comes from the one `lstat` the type came from. Device nodes
-    // need the source's device numbers; the rest take zero.
     let path = context.node_path(paths);
     match make_node(at, &path, file_type, stat_mode(stat), stat.st_rdev) {
         Ok(()) => context.mark_written(at, paths),
@@ -200,9 +184,8 @@ pub(super) fn copy_special(context: &mut CopyContext<'_>, at: &At<'_>, paths: &P
         }
     }
     if context.is_move {
-        // The source's group first, as a moved file or directory gets it, so the
-        // group bits restored below are granted to the group they were granted
-        // to before. Best effort, the same way.
+        // The source's group first, so the group bits restored below keep their meaning.
+        // Best effort.
         let _ = nix::unistd::fchownat(
             at.dst,
             at.dst_name,
@@ -214,11 +197,8 @@ pub(super) fn copy_special(context: &mut CopyContext<'_>, at: &At<'_>, paths: &P
     }
 }
 
-/// Gives a node a move created the source's permission bits, which the umask
-/// trimmed at creation and `mv` keeps. By name, since a FIFO cannot be opened
-/// without blocking, and without following a link swapped in at the name since
-/// (`set_mode_at`). A filesystem that cannot
-/// set a mode that way leaves the node as created, with a warning.
+/// Gives a node a move created the source's permission bits, by name (a FIFO cannot be opened
+/// without blocking) and without following a symlink (`set_mode_at`).
 pub(super) fn restore_node_mode(
     context: &mut CopyContext<'_>,
     at: &At<'_>,
@@ -231,8 +211,6 @@ pub(super) fn restore_node_mode(
     if error.raw_os_error() == Some(nix::libc::EOPNOTSUPP) {
         warn!("Failed to set the mode of {}: {error}", compact(&paths.new));
     } else if context.staging.is_some() {
-        // The entry at the name is not what failed; `replace_entry` says it
-        // was left.
         context.errors.push(format!(
             "Failed to set the mode of the replacement for {}: {error}",
             compact(&paths.new)
@@ -246,8 +224,7 @@ pub(super) fn restore_node_mode(
     }
 }
 
-/// Creates the node `at` names in the destination directory. `_path` is where
-/// that is, which only macOS needs.
+/// Creates the node `at` names. `_path` is only used on macOS.
 #[cfg(not(target_os = "macos"))]
 pub(super) fn make_node(
     at: &At<'_>,
@@ -266,10 +243,7 @@ pub(super) fn make_node(
     )?)
 }
 
-/// Creates the node `at` names, at `path`: macOS has no `mknodat`. A parent
-/// swapped for a symlink since it was opened could place the node outside the
-/// tree; an empty FIFO or socket there carries nothing, and a device node
-/// needs root.
+/// Creates the node at `path`: macOS has no `mknodat`.
 #[cfg(target_os = "macos")]
 pub(super) fn make_node(
     _at: &At<'_>,
@@ -287,8 +261,8 @@ pub(super) fn make_node(
     )?)
 }
 
-/// The node type `mknod` takes for `file_type`, and the device numbers it
-/// takes with it: a device node the source's, anything else zero.
+/// The `mknod` node type for `file_type`, and the source's device numbers for a device node (else
+/// zero).
 pub(super) fn node_kind(
     file_type: FileType,
     device: nix::libc::dev_t,
@@ -303,16 +277,12 @@ pub(super) fn node_kind(
     }
 }
 
-/// The file type bits of `mode`.
 pub(super) fn type_bits(mode: u32) -> u32 {
     mode & 0o170_000
 }
 
-/// Opens a regular file to copy from. `O_NOFOLLOW` refuses a symlink swapped
-/// in since the entry was listed, and `O_NONBLOCK` keeps a FIFO swapped in
-/// from blocking the open (and with it the worker every operation shares);
-/// anything that is not a regular file is then refused before a byte is read,
-/// so a device such as `/dev/zero` cannot be read without end either.
+/// Opens a regular file to copy from. `O_NOFOLLOW` refuses a swapped-in symlink and `O_NONBLOCK` a
+/// FIFO; anything not a regular file is refused before a byte is read.
 pub(super) fn open_source_file(dir: impl AsFd, name: &CStr) -> std::io::Result<(File, Stat)> {
     let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
     let fd = openat(dir, name, flags, Mode::empty())?;
@@ -323,22 +293,15 @@ pub(super) fn open_source_file(dir: impl AsFd, name: &CStr) -> std::io::Result<(
             "it is no longer a regular file",
         ));
     }
-    // `O_NONBLOCK` was only for the open. None of the other flags `F_SETFL`
-    // changes was asked for, so clearing them all clears only it.
+    // Clears `O_NONBLOCK`, the only `F_SETFL` flag set.
     fcntl(&fd, FcntlArg::F_SETFL(OFlag::empty()))?;
     Ok((File::from(fd), stat))
 }
 
-/// Creates the destination of a file copy. `O_EXCL` fails atomically if the
-/// name is taken, closing the same window as `rename_no_replace`: without it a
-/// file that appeared since `validate_paths` ran would be truncated, and
-/// `O_NOFOLLOW` keeps a symlink planted at the name from being written through.
-///
-/// A copy is created with the source's permission bits, which the umask trims
-/// as it does for `cp`: the file is never readable by more users than the
-/// source, even part way through. A move is created with the source's owner
-/// bits only and given its full mode at the end, since `mv` keeps the mode
-/// whatever the umask.
+/// Creates the destination of a file copy with `O_EXCL | O_NOFOLLOW`, so a name taken since
+/// validation fails and a planted symlink is not written through. A copy gets the source's
+/// permission bits (trimmed by the umask); a move gets only the owner bits until its full mode is
+/// applied at the end.
 pub(super) fn create_file_at(
     dir: impl AsFd,
     name: &CStr,
@@ -355,16 +318,11 @@ pub(super) fn create_file_at(
     Ok(File::from(openat(dir, name, flags, mode_bits(creation))?))
 }
 
-/// Settles an entry's destination name (`paths.new`), taken since the queue
-/// saw it free: when the task started for the top-level entry, and at any time
-/// inside a directory this copy created. It is never replaced (`Conflicts`):
-/// a standing "skip all" skips it, which also makes a move keep its source,
-/// and otherwise it is recorded like any other entry that could not be
-/// written.
+/// Settles a destination name taken since the queue saw it free. It is never replaced: a standing
+/// "skip all" skips it (a move then keeps its source), otherwise it is recorded as an error.
 pub(super) fn resolve_raced(context: &mut CopyContext<'_>, paths: &Paths) {
-    // The staging directory was created empty for the one entry, so a name
-    // taken in it is no race another paste or program could win fairly: it
-    // is refused, never skipped, and what holds it is never landed.
+    // The staging directory was created empty, so a name taken in it is refused, never skipped
+    // or landed.
     if paths.depth == 0 && context.staging.is_some() {
         context.errors.push(staging_changed(context.is_move, paths));
     } else if context.conflicts.skips_raced() {

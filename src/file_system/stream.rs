@@ -6,15 +6,12 @@ use std::{
 use super::path_info::PathInfo;
 use crate::command::Command;
 
-/// Default interval after which a partial batch is flushed even if not full, so
-/// results still stream visibly when items arrive sparsely. Each flush redraws
-/// the screen, and 100 ms is the shortest interval at which redrawing buys any
-/// perceived responsiveness, so nothing below it is worth the wakeup.
+/// Interval after which a partial batch is flushed, so sparse results still
+/// stream. Each flush redraws, and 100 ms is the UI timer floor.
 pub(super) const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
-/// The per-batch send closure shared by the streaming producers: builds a
-/// `ListingBatch` stamped with `generation` and reports whether the channel
-/// is still open.
+/// The send closure for a `ListingBatch` stamped with `generation`; returns
+/// whether the channel is still open.
 pub(super) fn batch_sender(
     tx: &Sender<Command>,
     generation: u64,
@@ -22,14 +19,9 @@ pub(super) fn batch_sender(
     move |items| tx.send(Command::ListingBatch { items, generation }).is_ok()
 }
 
-/// Accumulates `PathInfo`s and flushes them in batches through a caller-supplied
-/// sender, once one reaches `max_size` or `interval` elapses. The directory
-/// loader and the recursive search stream this way rather than sending one
-/// command per item, which would sit ahead of terminal input in the single FIFO
-/// channel and make the UI unresponsive.
-///
-/// The `send` closure builds and sends the per-batch command, returning `false`
-/// once the channel is closed, at which point the producer stops.
+/// Accumulates `PathInfo`s and flushes them once `max_size` is reached or
+/// `interval` elapses. One command per item would sit ahead of terminal input in
+/// the single FIFO channel. `send` returns `false` once the channel is closed.
 pub(super) struct Batcher {
     batch: Vec<PathInfo>,
     last_flush: Instant,
@@ -47,8 +39,8 @@ impl Batcher {
         }
     }
 
-    /// Add an item, flushing first if the batch is now full or the flush
-    /// interval has elapsed. Returns `false` if the channel is closed.
+    /// Adds an item, flushing if the batch is full or the interval has elapsed.
+    /// Returns `false` if the channel is closed.
     pub(super) fn push<F: Fn(Vec<PathInfo>) -> bool>(&mut self, item: PathInfo, send: &F) -> bool {
         self.batch.push(item);
         if self.batch.len() >= self.max_size {
@@ -58,9 +50,8 @@ impl Batcher {
         }
     }
 
-    /// Flush the pending batch if the flush interval has elapsed. Producers that
-    /// add items sparsely call this between items so results still stream.
-    /// Returns `false` if the channel is closed.
+    /// Flushes the pending batch if the interval has elapsed. Returns `false` if
+    /// the channel is closed.
     pub(super) fn flush_if_due<F: Fn(Vec<PathInfo>) -> bool>(&mut self, send: &F) -> bool {
         if self.last_flush.elapsed() >= self.interval {
             self.flush(send)
@@ -69,8 +60,8 @@ impl Batcher {
         }
     }
 
-    /// Send the pending batch (if any) and reset the interval timer. Returns
-    /// `false` if the channel is closed.
+    /// Sends the pending batch, if any, and restarts the interval. Returns `false`
+    /// if the channel is closed.
     pub(super) fn flush<F: Fn(Vec<PathInfo>) -> bool>(&mut self, send: &F) -> bool {
         self.last_flush = Instant::now();
         if self.batch.is_empty() {
@@ -93,7 +84,6 @@ mod tests {
         PathInfo::try_from(Path::new(".")).unwrap()
     }
 
-    /// Records the size of each flushed batch and reports the channel as open.
     fn recorder(sizes: &RefCell<Vec<usize>>) -> impl Fn(Vec<PathInfo>) -> bool + '_ {
         move |items| {
             sizes.borrow_mut().push(items.len());
@@ -109,8 +99,6 @@ mod tests {
 
         assert!(batcher.push(item(), &send));
         assert!(batcher.push(item(), &send));
-        // Batching exists to keep a flood of per-item commands from sitting
-        // ahead of terminal input in the single command channel.
         assert!(sizes.borrow().is_empty());
 
         assert!(batcher.push(item(), &send));
@@ -121,8 +109,7 @@ mod tests {
     fn an_elapsed_interval_flushes_a_partial_batch() {
         let sizes = RefCell::new(Vec::new());
         let send = recorder(&sizes);
-        // A zero interval is always due, standing in for a producer whose
-        // matches arrive more sparsely than the flush interval.
+        // A zero interval is always due.
         let mut batcher = Batcher::new(1_000, Duration::ZERO);
 
         assert!(batcher.push(item(), &send));
@@ -135,8 +122,6 @@ mod tests {
         let send = recorder(&sizes);
         let mut batcher = Batcher::new(3, Duration::ZERO);
 
-        // An empty batch must not send a ListingBatch: consumers would count
-        // it as a completed batch of zero items.
         assert!(batcher.flush(&send));
         assert!(batcher.flush_if_due(&send));
         assert!(sizes.borrow().is_empty());
@@ -147,8 +132,6 @@ mod tests {
         let closed = |_: Vec<PathInfo>| false;
         let mut batcher = Batcher::new(1, NEVER);
 
-        // Every producer treats `false` as "stop walking": the receiver is
-        // gone, so any further work is wasted.
         assert!(!batcher.push(item(), &closed));
 
         let mut batcher = Batcher::new(10, NEVER);
@@ -162,10 +145,7 @@ mod tests {
         let send = recorder(&sizes);
         let interval = Duration::from_secs(1);
         let mut batcher = Batcher::new(1_000, interval);
-        // Backdate the timer so the first push is due. Reaching into the field
-        // keeps the test off the wall clock: the two pushes below are
-        // microseconds apart, so only the reset inside `flush` can decide
-        // whether the second one flushes.
+        // Backdated so the first push is due, keeping the test off the wall clock.
         batcher.last_flush = Instant::now()
             .checked_sub(interval)
             .expect("the monotonic clock should be past the interval");
@@ -173,8 +153,6 @@ mod tests {
         assert!(batcher.push(item(), &send));
         assert_eq!(vec![1], *sizes.borrow());
 
-        // Without the reset the timer would still read as elapsed, and a
-        // producer adding items sparsely would send each one as its own batch.
         assert!(batcher.push(item(), &send));
         assert_eq!(vec![1], *sizes.borrow());
     }

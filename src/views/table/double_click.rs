@@ -46,10 +46,8 @@ mod tests {
         info
     }
 
-    /// Two calls in a row are microseconds apart, so every case here is inside
-    /// the window whatever it is set to. The elapsed-time branch needs a real
-    /// wait and is not covered. The value is the test's own: what the app
-    /// builds its own with is pinned in `mouse.rs`.
+    /// Every case here is inside the window; the elapsed-time branch is not
+    /// covered.
     fn clicker() -> DoubleClick {
         DoubleClick::new(300)
     }
@@ -66,8 +64,6 @@ mod tests {
         let mut clicks = clicker();
         clicks.click_and_is_double_click(&path("a"));
 
-        // Clicking away and back is two first clicks, not a double click on
-        // whichever entry the cursor happens to land on.
         assert!(!clicks.click_and_is_double_click(&path("b")));
         assert!(!clicks.click_and_is_double_click(&path("a")));
     }
@@ -78,8 +74,6 @@ mod tests {
         clicks.click_and_is_double_click(&path("a"));
         assert!(clicks.click_and_is_double_click(&path("a")));
 
-        // A double click opens the entry, so leaving the state armed would
-        // open it again on the next click.
         assert!(!clicks.click_and_is_double_click(&path("a")));
         assert!(clicks.click_and_is_double_click(&path("a")));
     }

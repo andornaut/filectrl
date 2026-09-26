@@ -32,29 +32,21 @@ use crate::{
     views::{View, root::RootView},
 };
 
-/// Maximum number of broadcast cycles per input command. Each resolves one link
-/// in an intent → result chain, such as the 4 below, from renaming a bookmark
-/// while the bookmarks view is showing (`Chmod` and `CreateDirectory` from that
-/// view take the same shape):
+/// Maximum broadcast cycles per input command, each resolving one link of an
+/// intent → result chain. The longest is renaming a bookmark in the bookmarks
+/// view (4 cycles):
 ///
 ///   1. `Key`                - terminal input
 ///   2. `Rename`             - submitted by the prompt
 ///   3. `Bookmarks`          - `FileSystem` renames, then reads the bookmarks
 ///   4. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
 ///
-/// `RefreshedDirectory`/`NavigatedDirectory` only switch the directory; the
-/// entries stream in afterwards as `ListingBatch`/`DirectoryListingComplete`,
-/// fresh channel sends that each start their own short chain rather than
-/// extending this one.
-///
-/// The bound keeps headroom over the chains that exist, and guards against a
-/// handler stuck deriving forever; see `broadcast_command` for what exceeding
-/// it does.
+/// Streamed listing batches start their own chains. Exceeding the bound is an
+/// error (see `broadcast_command`).
 const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
 
-/// The command-handling half of the app: the whole tree a broadcast visits.
-/// Split from `App` so it can be built and driven without a terminal, which
-/// is what lets the broadcast be exercised in tests.
+/// The command-handling half of the app, separate from `App` so it can be
+/// driven without a terminal.
 struct Handlers {
     clipboard: Clipboard,
     #[cfg(debug_assertions)]
@@ -63,9 +55,7 @@ struct Handlers {
     root: RootView,
 }
 
-/// A handler tree the broadcast loop can drive: the tree itself, plus where to
-/// read the input mode from. Only `Handlers` implements it in production; the
-/// trait exists so the loop's own behavior (chaining, the cycle limit) can be
+/// A handler tree the broadcast loop can drive. Exists so the loop can be
 /// tested against a handler that does nothing else.
 trait Broadcast: CommandHandler {
     fn mode(&self) -> InputMode;
@@ -89,11 +79,8 @@ fn broadcast_commands<H: Broadcast>(
 }
 
 /// Resolves `command` and everything it derives, returning what no handler
-/// claimed. See `MAX_BROADCAST_CHAIN_LENGTH` for the bound and why it exists.
-///
-/// Exceeding the bound is an error that ends the session, like an unhandled
-/// command: both are bugs, and carrying on would run with an action half
-/// applied.
+/// claimed. Exceeding `MAX_BROADCAST_CHAIN_LENGTH` is an error that ends the
+/// session, like an unhandled command.
 fn broadcast_command<H: Broadcast>(handlers: &mut H, command: Command) -> Result<Vec<Command>> {
     let mut pending = vec![command];
     let mut unhandled = Vec::new();
@@ -102,21 +89,16 @@ fn broadcast_command<H: Broadcast>(handlers: &mut H, command: Command) -> Result
         if pending.is_empty() {
             break;
         }
-        // Re-read mode each iteration so a derived command that changes mode
-        // (e.g. OpenPrompt) is reflected in subsequent cycles.
+        // Re-read each cycle: a derived command may change the mode.
         let mode = handlers.mode();
         let mut next_pending = Vec::new();
         for cmd in pending {
             let mut derived = Vec::new();
             let handled = recursively_handle_command(&mut derived, &cmd, mode, handlers);
             if handled {
-                // Only derived commands (HandledWith) continue to the next cycle.
                 next_pending.append(&mut derived);
             } else {
-                // Unhandled commands are returned as-is; never re-queued.
-                // `derived` is necessarily empty here: a handler only pushes to
-                // it via `HandledWith`/`HandledWithMany`, which force
-                // `handled == true`.
+                // `derived` is empty here: only a claim can derive.
                 unhandled.push(cmd);
             }
         }
@@ -124,7 +106,6 @@ fn broadcast_command<H: Broadcast>(handlers: &mut H, command: Command) -> Result
     }
 
     if !pending.is_empty() {
-        // A chain longer than expected, or a handler stuck deriving in a loop.
         return Err(anyhow!(
             "Broadcast cycle limit ({MAX_BROADCAST_CHAIN_LENGTH}) exceeded; dropped {} derived command(s): {:?}",
             pending.len(),
@@ -165,18 +146,14 @@ impl App {
     }
 
     pub fn run(&mut self, initial_directory: Option<PathBuf>) -> Result<()> {
-        // Handled synchronously, before the loop: `run_once` spawns the loader,
-        // which starts streaming `ListingBatch`es at once, and handling the
-        // resulting `NavigatedDirectory` here registers its generation before
-        // those batches are drained, so none are dropped.
+        // Handled before the loop so the `NavigatedDirectory` registers its generation
+        // before the loader's first `ListingBatch`es are drained.
         let initial = self.handlers.file_system.run_once(initial_directory)?;
         let remaining = broadcast_commands(&mut self.handlers, initial)?;
         must_not_contain_unhandled(&remaining)?;
         self.render()?;
 
         spawn_command_sender(&self.tx, self.reader_gate.clone());
-        // Answers termination signals when the reader thread cannot, which is
-        // the case whenever the terminal itself is what went away.
         spawn_signal_watcher(self.tx.clone());
 
         loop {
@@ -213,12 +190,9 @@ impl App {
         }
     }
 
-    /// Runs an editor or pager on an entry, then queues a refresh (the program
-    /// may have changed the directory) and an alert for a program that could
-    /// not run or failed. The terminal comes back cleared, and the refresh
-    /// redraws it. Only a terminal that cannot be taken back is an error.
-    /// Returns whether a termination signal arrived, in which case the
-    /// terminal is already handed back and the caller quits.
+    /// Runs an editor or pager on an entry, then queues a refresh and any failure
+    /// alert. Returns whether a termination signal arrived, in which case the
+    /// caller quits. Only a terminal that cannot be taken back is an error.
     fn run_in_foreground(&mut self, command: Command) -> Result<bool> {
         let Command::RunInForeground { program, path } = command else {
             return Ok(false);
@@ -226,7 +200,7 @@ impl App {
         let alert = match foreground::argv(|name| std::env::var_os(name), program, &path.path) {
             Err(error) => Some(Command::AlertWarn(format!("{error:#}"))),
             Ok(argv) => {
-                // Words of a variable that was valid UTF-8, so nothing is lost.
+                // Built from a variable that was valid UTF-8.
                 let program = argv[0].to_string_lossy().into_owned();
                 let failure = failure_prefix(&program, &path.path);
                 let outcome = foreground::run(
@@ -253,8 +227,6 @@ impl App {
                 }
             }
         };
-        // Sent rather than handled here, so they take the one path every
-        // command does. A send fails only once the receiver is gone.
         let _ = self.tx.send(Command::RefreshDirectory);
         if let Some(alert) = alert {
             let _ = self.tx.send(alert);
@@ -264,8 +236,6 @@ impl App {
 
     fn render(&mut self) -> Result<()> {
         let root = &mut self.handlers.root;
-        // The one theme read in the view layer: everything below is handed
-        // what it draws with.
         let theme = Config::global().theme();
         self.terminal.draw(|frame: &mut Frame| {
             let area = frame.area();
@@ -307,17 +277,11 @@ fn recursively_handle_command(
     };
 
     let mut claimed = !matches!(result, CommandResult::NotHandled);
-    // Sibling commands are queued for the same next cycle, so deriving
-    // several does not lengthen the chain.
     derived.extend(result.into_commands());
 
-    // Once a handler claims a key, siblings are skipped, so HelpView's scroll
-    // keys do not also move the table selection. Mouse events are deliberately
-    // not short-circuited: a positional click already reaches at most one handler
-    // (views occupy disjoint regions), but TableView accepts scroll-wheel events
-    // wherever the cursor is, so a wheel event over another view must reach both,
-    // and short-circuiting would make that depend on sibling order. Non-key
-    // commands are always broadcast to every handler.
+    // A claimed key stops at its handler, so HelpView's scroll keys do not also
+    // move the table. Mouse events are not short-circuited: the table takes wheel
+    // events over any view.
     let is_key = matches!(command, Command::Key(_, _) | Command::PasteText(_));
     let mut key_consumed = is_key && claimed;
     handler.visit_command_handlers(&mut |child| {
@@ -334,10 +298,7 @@ fn recursively_handle_command(
     claimed
 }
 
-// Terminal events that may go unhandled without error:
-// - Key/PasteText/Mouse: not all inputs are bound to actions, and a paste
-//   outside a text prompt is ignored
-// - Resize: wakes the render loop; ratatui redraws automatically
+// Unhandled terminal input is normal; Resize only wakes the render loop.
 fn is_ignorable_unhandled(command: &Command) -> bool {
     matches!(
         command,
@@ -360,16 +321,10 @@ fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
     Ok(())
 }
 
-/// Whether a batch can be drained without redrawing: the same number of commands
-/// came back as went out, all unclaimed, and every one is an input event.
-///
-/// A claimed command may have changed the screen, so any batch holding one
-/// redraws. An unclaimed input event cannot have: `handle_key`, `handle_paste`
-/// and `handle_mouse` return `NotHandled` only from arms that touch no state, which is what an
-/// unbound keystroke or a click landing on no view hits.
-///
-/// `Resize` is excluded, though it too goes unhandled: it is the notification
-/// that the dimensions changed, and exists to redraw.
+/// Whether a batch can be drained without redrawing: every command came back
+/// unclaimed and is an input event. `handle_key`, `handle_paste` and
+/// `handle_mouse` return `NotHandled` only from arms that touch no state.
+/// `Resize` is excluded because it exists to redraw.
 fn changed_nothing_visible(received: usize, remaining: &[Command]) -> bool {
     !remaining.is_empty()
         && remaining.len() == received
@@ -385,9 +340,7 @@ fn is_key_input(command: &Command) -> bool {
     matches!(command, Command::Key(_, _) | Command::PasteText(_))
 }
 
-/// Whether a handler claimed any of the `keys` key inputs a batch held: fewer
-/// came back unclaimed than went out. An unclaimed key changes nothing on
-/// screen and is not redrawn, so it leaves the alerts alone too.
+/// Whether a handler claimed any of the batch's `keys` key inputs.
 fn claimed_a_key(keys: usize, remaining: &[Command]) -> bool {
     remaining
         .iter()
@@ -415,16 +368,12 @@ mod tests {
 
     use super::*;
 
-    /// A `CommandHandler` that records the order in which it is visited and can
-    /// be configured to consume keys or to derive a follow-up command.
+    /// A handler that logs visits and can consume keys or derive commands.
     struct Spy {
         name: &'static str,
         consume_key: bool,
-        /// Accepts, and so claims, every mouse event.
         accept_mouse: bool,
-        /// Derives `.1` in response to `.0`. Keyed on the incoming command
-        /// rather than deriving unconditionally, so a chain driven through
-        /// `broadcast_command` terminates instead of feeding itself forever.
+        /// Derives `.1` in response to `.0`, keyed so a chain terminates.
         derive_on: Option<(Command, Command)>,
         derive_many: Vec<Command>,
         log: Rc<RefCell<Vec<&'static str>>>,
@@ -510,7 +459,6 @@ mod tests {
         );
 
         assert!(handled);
-        // root is visited (and declines), a consumes the key, b is skipped.
         assert_eq!(vec!["root", "a"], *log.borrow());
     }
 
@@ -537,8 +485,7 @@ mod tests {
     #[test]
     fn a_key_skips_every_handler_that_does_not_take_keys_in_the_mode() {
         let log = Rc::new(RefCell::new(Vec::new()));
-        // The default `should_handle_key` takes keys in Normal mode only, so
-        // no spy may see a key typed into a prompt.
+        // The default `should_handle_key` takes keys in Normal mode only.
         let mut root = Spy::new("root", &log);
         root.consume_key = true;
         root.children = vec![Spy::new("a", &log)];
@@ -573,9 +520,7 @@ mod tests {
             &mut root,
         );
 
-        // Root declines the event; both children accept it, and the second is
-        // not skipped for the first having claimed it, since a wheel event
-        // over one view also scrolls the table.
+        // The second is not skipped for the first having claimed it.
         assert!(handled);
         assert_eq!(vec!["a", "b"], *log.borrow());
     }
@@ -594,7 +539,7 @@ mod tests {
             &mut root,
         );
 
-        assert!(!handled); // none of the spies handle it
+        assert!(!handled);
         assert_eq!(vec!["root", "a", "b"], *log.borrow());
     }
 
@@ -614,10 +559,7 @@ mod tests {
             &mut root,
         );
 
-        // Only a key short-circuits. A claimed non-key command must still
-        // reach the rest of the tree: `SelectionChanged` is read by both
-        // NoticesView and StatusView, and whichever came second would stop
-        // seeing it.
+        // Only a key short-circuits: `SelectionChanged` is read by two views.
         assert!(handled);
         assert_eq!(vec!["root", "a", "b"], *log.borrow());
         assert_eq!(vec![Command::ResetView], derived);
@@ -673,10 +615,6 @@ mod tests {
 
         let unhandled = broadcast_command(&mut root, Command::SearchTick).unwrap();
 
-        // Two cycles: the input, then what it derived. Resolving an intent
-        // into a result is the whole reason the loop exists, and a handler
-        // that only ran the first cycle would leave the result unhandled but
-        // never delivered.
         assert_eq!(vec!["root", "root"], *log.borrow());
         assert_eq!(vec![Command::ResetView], unhandled);
     }
@@ -688,9 +626,6 @@ mod tests {
 
         let unhandled = broadcast_command(&mut root, Command::Quit).unwrap();
 
-        // Visited once and handed back. `should_quit` reads this list, so a
-        // command re-queued here would spin the loop instead of exiting, and
-        // one dropped would stop the app from ever quitting.
         assert_eq!(vec!["root"], *log.borrow());
         assert_eq!(vec![Command::Quit], unhandled);
     }
@@ -699,8 +634,6 @@ mod tests {
     fn a_chain_is_bounded_by_the_cycle_limit() {
         let log = Rc::new(RefCell::new(Vec::new()));
         let mut root = Spy::new("root", &log);
-        // A handler that answers every SearchTick with another one: the
-        // stuck-deriving bug the limit exists to stop.
         root.derive_on = Some((Command::SearchTick, Command::SearchTick));
 
         let error = broadcast_command(&mut root, Command::SearchTick)
@@ -737,7 +670,6 @@ mod tests {
             )))),
             Some(Command::Mouse(_))
         ));
-        // Moved is suppressed; non-terminal events are ignored.
         assert_eq!(
             None,
             Command::maybe_from(&Event::Mouse(mouse(MouseEventKind::Moved)))
@@ -783,8 +715,6 @@ mod tests {
         assert!(must_not_contain_unhandled(&[Command::AlertInfo("x".into())]).is_err());
     }
 
-    /// Alerts expire only when a key was claimed: an unclaimed key is not
-    /// redrawn, and a click or a command from a task is not a key.
     #[test]
     fn only_a_claimed_key_counts() {
         let key = Command::Key(KeyCode::Char('~'), KeyModifiers::NONE);
@@ -804,9 +734,7 @@ mod tests {
 
         assert!(changed_nothing_visible(2, &[key.clone(), click]));
         assert!(!changed_nothing_visible(0, &[]));
-        // One of the two was claimed, so the batch may have changed the screen.
         assert!(!changed_nothing_visible(2, std::slice::from_ref(&key)));
-        // A resize is unhandled by design and is precisely a reason to redraw.
         assert!(!changed_nothing_visible(
             2,
             &[
@@ -829,8 +757,7 @@ mod tests {
         assert!(!should_quit(&[]));
     }
 
-    /// The real handler tree, counting the cycles `broadcast_command` runs: it
-    /// reads the mode once per cycle.
+    /// The real handler tree, counting cycles through `mode` reads.
     struct CountingCycles<'a> {
         handlers: &'a mut Handlers,
         cycles: std::cell::Cell<usize>,
@@ -849,9 +776,8 @@ mod tests {
         }
     }
 
-    /// The longest chain `MAX_BROADCAST_CHAIN_LENGTH` documents, driven through
-    /// the real handlers, so a step added to it fails here rather than ending
-    /// the session with the cycle limit's error.
+    /// The longest chain documented on `MAX_BROADCAST_CHAIN_LENGTH`, through the
+    /// real handlers.
     #[test]
     fn renaming_a_bookmark_is_the_documented_chain() {
         let fixture = claims::Fixture::new();

@@ -1,26 +1,17 @@
 //! Running a configured shell template on a path.
 //!
-//! The path is never written into the script. `%s` becomes a quoted reference
-//! to the positional parameters and the path is passed after the script as an
-//! argument, so the shell only ever expands it and never parses it: no file
-//! name can run as a command, whatever quoting, here-document or backticks the
-//! template puts around `%s`. Only a template that hands the text to another
-//! parser can still run it: `eval`, a nested `sh -c`, `ssh`, or bash
-//! arithmetic such as `$(( %s ))`, which evaluates `x[$(cmd)]`.
+//! The path is never written into the script: `%s` becomes `"$@"` and the path
+//! is passed as an argument, so the shell expands it and never parses it. Only a
+//! template that hands the text to another parser can run it (`eval`, a nested
+//! `sh -c`, `ssh`, bash arithmetic such as `$(( %s ))`).
 //!
-//! `%s` must be written unquoted, as its own word. The reference carries its
-//! own double quotes, so inside double quotes it ends up unquoted and the value
-//! is split into words, and inside single quotes it stays the literal text
-//! `"$@"`. Neither is supported, and neither runs the value.
-//!
-//! The values are passed as raw bytes, so a path that is not valid UTF-8
-//! reaches the program intact.
+//! `%s` must be unquoted, as its own word: inside double quotes the value is
+//! split into words, and inside single quotes it stays the literal `"$@"`.
+//! Values are passed as raw bytes, so a path that is not UTF-8 arrives intact.
 
 use std::ffi::OsString;
 
-/// The argv that runs `template` with `sh -c`, each `%s` replaced by `"$@"`,
-/// which expands to every value, each its own word: a single path or the words
-/// of a command. With one value it expands exactly like `"$1"`.
+/// The argv that runs `template` with `sh -c`, each `%s` replaced by `"$@"`.
 pub(crate) fn command(template: &str, values: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     let mut argv = vec![
         OsString::from("sh"),
@@ -41,13 +32,11 @@ mod tests {
 
     use super::*;
 
-    /// A name that runs `touch pwned` if a shell ever parses it, and closes
-    /// either kind of quote first.
+    /// A name that runs `touch pwned` if a shell parses it, closing either quote first.
     const HOSTILE: &str = "a b'\"$(touch pwned)`touch pwned`";
 
-    /// Runs `template` on `values` in a scratch directory holding `rec`, a
-    /// program that prints its arguments NUL-terminated. Returns the words it
-    /// printed and whether anything ran `touch`.
+    /// Runs `template` on `values` in a scratch directory holding `rec`, which
+    /// prints its arguments NUL-terminated. Returns the words and whether `touch` ran.
     fn run(template: &str, values: &[&OsStr]) -> (Vec<Vec<u8>>, bool) {
         let dir = crate::test_support::TempDir::new("shell_command");
         crate::test_support::write_executable(
@@ -69,8 +58,7 @@ mod tests {
         (words, dir.join("pwned").exists())
     }
 
-    // Wherever `%s` sits, the value is only expanded, so nothing in it runs.
-    // That holds for the quoted placements too, which are unsupported.
+    // The quoted placements are unsupported, but still run nothing.
     #[test_case("./rec %s" ; "unquoted")]
     #[test_case("./rec \"%s\"" ; "inside double quotes")]
     #[test_case("./rec '%s'" ; "inside single quotes")]
@@ -81,9 +69,8 @@ mod tests {
     #[test_case("cat <<EOF\n%s\nEOF" ; "in a here document")]
     #[test_case("true # it's\n./rec %s" ; "after a comment holding a quote")]
     fn a_hostile_name_is_never_run(template: &str) {
-        // Written into most of these scripts, `HOSTILE` leaves a quote open
-        // and is a syntax error that runs nothing, so balanced names are tried
-        // too: one that runs outside single quotes, one that runs inside them.
+        // `HOSTILE` leaves a quote open in most of these, a syntax error that runs
+        // nothing, so balanced names are tried too.
         for name in [HOSTILE, "$(touch pwned)", "'$(touch pwned)'"] {
             let (_, ran) = run(template, &[OsStr::new(name)]);
             assert!(!ran, "{name:?}");
@@ -97,8 +84,6 @@ mod tests {
         assert_eq!(vec![format!("{prefix}{HOSTILE}").into_bytes()], words);
     }
 
-    // The reference's own quotes close the surrounding double quotes, leaving
-    // it unquoted and split on the space, and are literal inside single quotes.
     #[test_case("./rec \"%s\"", &["a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "inside double quotes")]
     #[test_case("./rec \"--file=%s\"", &["--file=a", "b'\"$(touch", "pwned)`touch", "pwned`"] ; "embedded in a double quoted word")]
     #[test_case("./rec '%s'", &["\"$@\""] ; "inside single quotes")]

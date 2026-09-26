@@ -29,8 +29,7 @@ use ratatui::{
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 
-/// Whether `$COLORTERM`'s value says the terminal supports truecolor (24-bit
-/// color). Unset, or not valid UTF-8, means it does not.
+/// Whether `$COLORTERM` indicates truecolor.
 pub fn supports_truecolor(colorterm: Option<&str>) -> bool {
     colorterm.is_some_and(|value| {
         let lower = value.to_lowercase();
@@ -38,17 +37,13 @@ pub fn supports_truecolor(colorterm: Option<&str>) -> bool {
     })
 }
 
-/// Process-wide "already restored" guard: whichever cleanup path runs first
-/// restores, the rest are no-ops. A second `PopKeyboardEnhancementFlags` after
-/// leaving the alternate screen would pop an entry from the main screen's stack
-/// that this program never pushed. Static because the panic hook is a `'static`
-/// closure that cannot reach instance state; `try_new` re-arms it.
+/// Process-wide "already restored" guard, so only the first cleanup path
+/// restores: a second `PopKeyboardEnhancementFlags` would pop the main
+/// screen's stack. Static because the panic hook cannot reach instance state.
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 
-/// Undoes everything `try_new` set up, at most once per acquisition (see
-/// `TERMINAL_RESTORED`), in one shared sequence so the cleanup paths cannot
-/// drift. Errors are ignored: this runs in exit and panic paths where there is
-/// nothing useful to do with them.
+/// Undoes everything `try_new` set up, at most once per acquisition. Errors
+/// are ignored: this runs on exit and panic paths.
 fn restore_terminal_once() {
     if TERMINAL_RESTORED.swap(true, Ordering::SeqCst) {
         return;
@@ -66,31 +61,24 @@ fn restore_terminal_once() {
 
 /// A terminal wrapper that restores the terminal state on drop.
 ///
-/// Two cleanup paths, each covering what the other cannot: `Drop` runs on normal
-/// exit, and the panic hook (installed in `try_new`) covers a panic, where
-/// `panic = "abort"` never calls `Drop` and would leave the shell in raw mode.
-/// `TERMINAL_RESTORED` leaves whichever runs first the only one to emit escape
-/// sequences.
+/// `Drop` covers a normal exit and the panic hook covers a panic, since
+/// `panic = "abort"` never runs `Drop`.
 pub struct CleanupOnDropTerminal {
-    /// Dropped by hand, so that ratatui's own drop never runs on a terminal
-    /// that could not show the cursor (see `Drop`).
+    /// Dropped by hand, so ratatui's drop is skipped when the cursor cannot be
+    /// shown (see `Drop`).
     terminal: ManuallyDrop<CrosstermTerminal>,
-    /// The terminal's settings as the shell left them, read before raw mode.
-    /// A foreground program can exit with other settings (killed with echo
-    /// off), and raw mode records whatever it finds as the settings to restore
-    /// on exit, so these are put back before raw mode is entered again. `None`
-    /// when neither the controlling terminal nor stdin could be read.
+    /// The shell's terminal settings, read before raw mode and restored before
+    /// raw mode is entered again, since a foreground program may change them.
+    /// `None` when they could not be read.
     shell_settings: Option<Termios>,
 }
 
-/// Opens the controlling terminal, which is what raw mode applies to whether
-/// or not stdin is a terminal.
+/// Opens the controlling terminal, which raw mode applies to.
 pub(super) fn controlling_terminal() -> Result<File> {
     OpenOptions::new().read(true).write(true).open("/dev/tty")
 }
 
-/// Runs `act` on the controlling terminal, or on stdin when it cannot be
-/// opened.
+/// Runs `act` on the controlling terminal, or on stdin if it cannot be opened.
 fn on_terminal<T>(act: impl FnOnce(std::os::fd::BorrowedFd<'_>) -> T) -> T {
     match controlling_terminal() {
         Ok(tty) => act(tty.as_fd()),
@@ -100,13 +88,9 @@ fn on_terminal<T>(act: impl FnOnce(std::os::fd::BorrowedFd<'_>) -> T) -> T {
 
 impl CleanupOnDropTerminal {
     pub fn try_new() -> Result<Self> {
-        // Re-arm the process-wide guard for this acquisition, so the type is
-        // not silently single-use.
         TERMINAL_RESTORED.store(false, Ordering::SeqCst);
 
-        // Every build profile but the test one uses `panic = "abort"`, which
-        // skips stack unwinding and therefore never calls `Drop`. This hook
-        // restores the terminal before the abort.
+        // `panic = "abort"` never runs `Drop`, so the hook restores the terminal.
         let original_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
             restore_terminal_once();
@@ -116,9 +100,7 @@ impl CleanupOnDropTerminal {
         let shell_settings = on_terminal(|fd| tcgetattr(fd).ok());
         enable_raw_mode()?;
 
-        // Any failure past this point must roll back what is already set up:
-        // no instance exists yet for `Drop`, and without a panic the hook
-        // never fires, so an early `?` would leave the shell in raw mode.
+        // A failure from here on must roll back: no instance exists yet for `Drop`.
         let build = || -> Result<Self> {
             let mut stdout = stdout();
             enter_interface_modes(&mut stdout)?;
@@ -133,27 +115,24 @@ impl CleanupOnDropTerminal {
         build().inspect_err(|_| restore_terminal_once())
     }
 
-    /// Hands the terminal back in the state the shell left it, for a program
-    /// that runs in the foreground. A suspended terminal counts as restored,
-    /// so a panic meanwhile does not undo the modes a second time.
+    /// Hands the terminal back as the shell left it, for a foreground program.
+    /// Marked restored, so a panic meanwhile does not undo it again.
     pub fn suspend(&mut self) {
-        // Recorded as shown while the terminal is live, so ratatui's own drop
-        // has no cursor to show on a terminal that hung up meanwhile.
+        // So ratatui's drop has no cursor to show on a terminal that hung up.
         let _ = self.terminal.show_cursor();
         restore_terminal_once();
     }
 
-    /// Puts the shell's settings back on a suspended terminal that is not
-    /// being taken back, ignoring a failure: the process is quitting.
+    /// Restores the shell's settings on a suspended terminal, ignoring failure:
+    /// the process is quitting.
     pub fn release(&mut self) {
         if let Some(settings) = &self.shell_settings {
             let _ = on_terminal(|fd| release_settings(fd, settings));
         }
     }
 
-    /// Takes the terminal back after `suspend` and clears it, so the next draw
-    /// repaints every cell rather than only those it believes changed. A
-    /// failure is rolled back like one in `try_new`.
+    /// Takes the terminal back after `suspend` and clears it so the next draw
+    /// repaints every cell. A failure is rolled back like one in `try_new`.
     pub fn resume(&mut self) -> Result<()> {
         let settings = self.shell_settings.clone();
         take_back(
@@ -172,9 +151,8 @@ impl CleanupOnDropTerminal {
     }
 }
 
-/// The first half of `resume`: the shell's settings go back before raw mode is
-/// entered, since raw mode records what it finds as the settings to restore on
-/// exit. Once raw mode is on there is something for a cleanup path to undo.
+/// The first half of `resume`: the shell's settings go back before raw mode
+/// records them as the settings to restore.
 fn take_back(
     restore_settings: impl FnOnce() -> Result<()>,
     enable_raw_mode: impl FnOnce() -> Result<()>,
@@ -185,10 +163,8 @@ fn take_back(
     Ok(())
 }
 
-/// `restore_settings`, only while this process group owns the terminal `fd`.
-/// From the background the write raises SIGTTOU, which stops a process that is
-/// quitting (a stopped job sent `kill %1`), and it would overwrite the settings
-/// of the job that now owns the terminal.
+/// `restore_settings`, only while this process group owns the terminal. From
+/// the background the write raises SIGTTOU and would clobber another job.
 fn release_settings(fd: impl AsFd, settings: &Termios) -> Result<()> {
     if tcgetpgrp(&fd) != Ok(getpgrp()) {
         return Ok(());
@@ -196,20 +172,17 @@ fn release_settings(fd: impl AsFd, settings: &Termios) -> Result<()> {
     restore_settings(fd, settings)
 }
 
-/// Puts `settings` back on the terminal `fd`, so the next raw mode records
-/// them rather than whatever a foreground program left behind.
+/// Puts `settings` back on the terminal `fd`.
 fn restore_settings(fd: impl AsFd, settings: &Termios) -> Result<()> {
     tcsetattr(fd, SetArg::TCSANOW, settings).map_err(std::io::Error::from)
 }
 
-/// The modes the interface runs in, which `restore_terminal_once` undoes.
 fn enter_interface_modes(out: &mut impl std::io::Write) -> Result<()> {
     execute!(
         out,
         EnterAlternateScreen,
         EnableMouseCapture,
-        // Without it a paste arrives as keystrokes, and a line break in it as
-        // Enter, so pasted text could answer prompts and run bindings.
+        // Without it a pasted line break arrives as Enter.
         EnableBracketedPaste,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
     )
@@ -231,12 +204,9 @@ impl DerefMut for CleanupOnDropTerminal {
 
 impl Drop for CleanupOnDropTerminal {
     fn drop(&mut self) {
-        // Shown here first, so ratatui's own drop has no cursor left to show.
-        // On a terminal that hung up that attempt fails, and ratatui reports
-        // it with `eprintln!`, which panics writing to the dead terminal; with
-        // `panic = "abort"` the process then dies by SIGABRT instead of
-        // exiting. When the cursor cannot be shown, ratatui's drop is skipped:
-        // the process is exiting and the terminal holds nothing else to free.
+        // On a terminal that hung up ratatui's drop fails to show the cursor and
+        // panics in `eprintln!`, aborting. So the cursor is shown here, and ratatui's
+        // drop is skipped when that fails.
         let shown = self.terminal.show_cursor().is_ok();
         restore_terminal_once();
         if shown {
@@ -264,8 +234,7 @@ mod tests {
         supports_truecolor(colorterm)
     }
 
-    /// A program that exits with echo off leaves the terminal that way; the
-    /// settings read at startup are what come back.
+    /// Settings a program leaves (echo off) are replaced by those read at startup.
     #[test]
     fn the_shell_settings_replace_what_a_program_left() {
         use nix::{
@@ -290,9 +259,8 @@ mod tests {
         );
     }
 
-    /// A terminal this process group does not own in the foreground is left
-    /// alone: the write would stop a quitting process with SIGTTOU. A pty the
-    /// test did not make its controlling terminal stands in for one.
+    /// A terminal this process group does not own is left alone. A pty that is not
+    /// the test's controlling terminal stands in for one.
     #[test]
     fn a_terminal_owned_by_another_group_keeps_its_settings() {
         use nix::{
@@ -316,7 +284,6 @@ mod tests {
         );
     }
 
-    /// Raw mode records the settings it finds, so the shell's go back first.
     #[test]
     fn the_shell_settings_go_back_before_raw_mode() {
         let order = std::cell::RefCell::new(Vec::new());

@@ -6,18 +6,11 @@ use crate::{
 };
 
 impl TableView {
-    /// Puts the cursor on `item`, or on the last row when `item` is past the
-    /// end. An empty listing has no row to put it on, so it gets no cursor, and
-    /// nothing that acts on the cursor finds an entry.
-    ///
-    /// The clamp is needed because the page and screen-relative moves read the
-    /// last render's line map, and the listing can shrink between that render
-    /// and the key (a filter or a reload drained in the same batch).
+    /// Puts the cursor on `item`, clamped to the last row; an empty listing gets
+    /// no cursor. The clamp covers a listing that shrank since the last render.
     pub(super) fn select(&mut self, item: usize) -> CommandResult {
         let len = self.content.len();
         let selected = (len != 0).then(|| item.min(len - 1));
-        // A reload that keeps the cursor on its row leaves a scrolled window
-        // alone; a move brings the cursor back into view.
         if selected != self.table_state.selected() {
             self.wheel_scrolled = false;
         }
@@ -55,8 +48,6 @@ impl TableView {
     }
 
     pub(super) fn select_next(&mut self) -> CommandResult {
-        // The render pass owns the scroll offset, so moving the selection is
-        // enough; the next render re-derives the window to keep it visible.
         let last = self.content.len().saturating_sub(1);
         let next = self.table_state.selected().map_or(0, |i| (i + 1).min(last));
         self.select(next)
@@ -94,8 +85,8 @@ impl TableView {
         self.select(self.mapper.item(self.mapper.last_visible_line()))
     }
 
-    /// A page is measured from the cursor, so a window the wheel moved off it
-    /// is first put back around it, as the next render would.
+    /// Puts a window the wheel moved back around the cursor, as the next render
+    /// would.
     fn window_around_cursor(&mut self) {
         if !self.wheel_scrolled {
             return;
@@ -146,8 +137,6 @@ mod tests {
         display_names(&table.marked_paths())
     }
 
-    /// A directory's count is of its entries, which the status bar totals
-    /// itself; search results carry both, since nothing else counts them.
     #[test]
     fn the_listing_count_says_what_the_table_lists() {
         use crate::command::{Command, handler::CommandHandler};
@@ -192,8 +181,7 @@ mod tests {
         (dir, table)
     }
 
-    /// A four entry listing. An odd count cannot tell `(len - 1) / 2` from
-    /// `len / 2`, which is the whole of what the middle-item rule says.
+    /// A four entry listing, so `(len - 1) / 2` and `len / 2` differ.
     fn even_table() -> (crate::test_support::TempDir, TableView) {
         use crate::file_system::path_info::PathInfo;
 
@@ -228,9 +216,6 @@ mod tests {
         assert_eq!(Some("d".to_string()), selected(&table));
     }
 
-    /// Four one-line rows in a four-line window: the first, middle and last
-    /// visible rows are three different entries, and the middle is not the
-    /// centre row rounded up.
     #[test]
     fn the_visible_row_keys_land_on_the_rows_the_window_shows() {
         let (_dir, mut table) = even_table();
@@ -252,7 +237,6 @@ mod tests {
     #[test]
     fn page_up_lands_on_the_top_of_a_scrolled_window() {
         let (_dir, mut table) = table();
-        // Scrolled down one row, as a render leaves it: `b` is the top row.
         table.first_visible_item = 1;
         table.mapper = LineItemMap::new(&[1; 3], 2, 1);
         table.select(2);
@@ -272,10 +256,8 @@ mod tests {
         assert_eq!(Some("c".to_string()), selected(&table));
     }
 
-    /// The screen-relative keys read the last render's line map. A filter
-    /// applied since that render has shrunk the listing to one row, so the
-    /// row the map names no longer exists, and in range mode a cursor past
-    /// the end would mark it: a mark with no entry under it.
+    /// A filter applied since the last render shrank the listing below the
+    /// row the line map names.
     #[test]
     fn a_screen_relative_move_after_the_listing_shrank_lands_on_a_real_row() {
         use crate::command::{Command, handler::CommandHandler};
@@ -302,8 +284,6 @@ mod tests {
         table.toggle_mark();
         table.select_next();
 
-        // The key that started the range is the one that fixes it: the cursor
-        // row stays marked, and moving on no longer sweeps.
         assert!(!table.marks.in_range_mode());
         assert_eq!(vec!["a", "b"], marked(&table));
     }
@@ -318,8 +298,6 @@ mod tests {
         table.select_next();
         table.select_next();
 
-        // Sweeping as the cursor moves is what range mode is for, and `select`
-        // is the one place every cursor move goes through.
         assert_eq!(vec!["a", "b", "c"], marked(&table));
     }
 
@@ -333,8 +311,6 @@ mod tests {
 
         table.select_previous();
 
-        // The range spans anchor to cursor, so overshooting is undone by
-        // moving back rather than leaving the extra entry marked.
         assert_eq!(vec!["a", "b"], marked(&table));
     }
 
@@ -361,20 +337,15 @@ mod tests {
         table.select_previous();
         assert_eq!(Some("a".to_string()), selected(&table));
 
-        // Of `a`, `b`, `c`, the middle is `b`.
         table.select_middle_item();
         assert_eq!(Some("b".to_string()), selected(&table));
     }
 
     #[test]
     fn the_cursor_keys_are_safe_on_an_empty_listing() {
-        // Every cursor move ends in a selection snapshot, which reads the
-        // theme, so this test cannot borrow another one's initialization.
         crate::app::config::Config::init_test();
         let mut table = TableView::default();
 
-        // Each of these bounds itself with `saturating_sub` on a length of
-        // zero; a plain `- 1` would panic before anything could be selected.
         table.select_last();
         table.select_next();
         table.select_previous();

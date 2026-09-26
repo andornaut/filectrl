@@ -18,12 +18,9 @@ use crate::{
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
-/// Longest alert kept, in characters. A message can quote text from outside
-/// (a clipboard entry, a path), and every frame wraps each alert again, so an
-/// unbounded one would slow every redraw until the alerts are cleared.
+/// Longest alert kept, in characters: every frame rewraps each alert.
 const MAX_ALERT_CHARS: usize = 1000;
-/// Most wrapped lines one alert is drawn on, so a few long messages cannot
-/// push the table down to its minimum. The full text is in the log.
+/// Most wrapped lines per alert. The full text is in the log.
 const MAX_ALERT_LINES: usize = 3;
 const MIN_HEIGHT_BORDERED: u16 = 3; // border(2) + 1 alert line
 const MIN_HEIGHT_BORDERLESS: u16 = MIN_HEIGHT_BORDERED - 2; // 1 alert line
@@ -45,8 +42,7 @@ impl AlertKind {
     }
 }
 
-/// One alert, with the sequence number it was raised under
-/// (`AlertsView::mark`).
+/// One alert, with its sequence number (`AlertsView::mark`).
 type Alert = (AlertKind, String, u64);
 
 pub(super) struct AlertsView {
@@ -54,8 +50,7 @@ pub(super) struct AlertsView {
     area: Rect,
     hint: String,
     next_seq: u64,
-    /// Every alert numbered below this was on screen at the last frame that
-    /// drew the pane: help, the picker and a terminal too small hide it.
+    /// Alerts numbered below this were on screen at the last frame that drew the pane.
     shown_to: u64,
 }
 
@@ -94,16 +89,12 @@ impl AlertsView {
         CommandResult::Handled
     }
 
-    /// Where the next alert will be numbered from: every alert raised before
-    /// this call is below it.
+    /// The number the next alert will get.
     pub(super) fn mark(&self) -> u64 {
         self.next_seq
     }
 
-    /// Removes the info and warning alerts raised before `mark` that the pane
-    /// has drawn, which a claimed key has now followed: the user has seen them
-    /// and moved on. One raised while the pane was hidden stays until a key
-    /// follows its first frame on screen. Errors stay until cleared.
+    /// Removes info and warning alerts raised before `mark` that the pane has drawn. Errors stay.
     pub(super) fn expire_before(&mut self, mark: u64) {
         let seen = mark.min(self.shown_to);
         self.alerts
@@ -115,7 +106,6 @@ impl AlertsView {
         self.alerts.len()
     }
 
-    /// Clears every alert, errors included.
     pub(super) fn clear_alerts(&mut self) -> CommandResult {
         self.alerts.clear();
         CommandResult::Handled
@@ -150,8 +140,6 @@ impl AlertsView {
         self.alerts
             .iter()
             .flat_map(|(kind, message, _)| {
-                // Every line but the last ends in an ellipsis, so a message
-                // cut short already shows that it continues.
                 let mut lines = split_with_ellipsis(message, width);
                 lines.truncate(MAX_ALERT_LINES);
                 lines.into_iter().enumerate().map(|(i, line)| {
@@ -245,8 +233,6 @@ mod tests {
         assert_eq!(v.alerts.back().unwrap().1, "first");
     }
 
-    /// A long alert is cut to a few lines, so five of them cannot squeeze the
-    /// table down to its minimum.
     #[test]
     fn a_long_alert_is_drawn_on_at_most_three_lines() {
         let mut v = view();
@@ -277,7 +263,7 @@ mod tests {
             v.add_alert(AlertKind::Info, format!("msg{i}"));
         }
         assert_eq!(v.alerts.len(), MAX_NUMBER_ALERTS);
-        // Newest stays at the front; the two oldest ("msg0", "msg1") fell off.
+        // The two oldest ("msg0", "msg1") fell off.
         assert_eq!(
             v.alerts.front().unwrap().1,
             format!("msg{}", MAX_NUMBER_ALERTS + 1)
@@ -295,8 +281,6 @@ mod tests {
         kept.chars().count()
     }
 
-    /// One short alert, whose single line the border wraps when there is room
-    /// for it.
     #[test_case(10 => 3 ; "a tall area adds the border")]
     #[test_case(3 => 3 ; "the border needs three rows")]
     #[test_case(2 => 1 ; "a shorter area drops the border")]
@@ -337,8 +321,8 @@ mod tests {
         assert!(v.alerts.is_empty());
     }
 
-    /// A claimed key clears what was on screen before it, but not what the
-    /// key itself raised, and never an error.
+    /// A claimed key clears what was on screen before it, but not what it raised, and never an
+    /// error.
     #[test]
     fn a_key_expires_the_info_and_warnings_raised_before_it() {
         let mut v = view();
@@ -355,8 +339,7 @@ mod tests {
         assert_eq!(vec!["raised by the key", "earlier error"], left);
     }
 
-    /// A notice click resets the view too, but only Esc clears the alerts,
-    /// so an unread error survives dropping the clipboard entry.
+    /// Only Esc clears alerts, not a notice click's reset.
     #[test]
     fn a_reset_command_leaves_the_alerts() {
         let mut v = view();
@@ -367,7 +350,6 @@ mod tests {
         assert_eq!(1, v.alerts.len());
     }
 
-    /// An alert the pane never drew survives a claimed key.
     #[test]
     fn an_alert_never_drawn_does_not_expire() {
         let mut v = view();

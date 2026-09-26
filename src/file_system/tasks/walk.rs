@@ -11,23 +11,19 @@ use super::sys::{AtFlags, CWD, Dir, Errno, FileType, Mode, OFlag, UnlinkatFlags,
 
 use crate::{command::progress::ActiveTask, file_system::entry_id::EntryId};
 
-/// The directories a walk is inside, from its root down to the one it is
-/// working in. Only that deepest directory holds its handles open, so depth is
-/// not bounded by the open-file limit: `descend` closes the parent's, and
-/// `reopen` opens them again through the child's "..", which is never a
-/// symlink, refusing any that is not the directory that was listed (by device
-/// and inode), since the child may have been moved in between. A walk outside
-/// its tree would act on what it was never given.
+/// The directories a walk is inside, from its root down to the one it works in. Only the deepest
+/// holds its handles open, so depth is bounded by neither the open-file limit nor the stack:
+/// `descend` closes the parent's handles and `reopen` opens them again through the child's "..",
+/// refusing any that is not the directory listed (by device and inode).
 ///
-/// Iterative, so depth cannot overflow the thread stack either. `P` is what
-/// each walk keeps per directory (the entries left, say), and `H` its handles:
-/// one directory, or a copy's source and destination walked in step.
+/// `P` is the per-directory walk state and `H` its handles: one directory, or a copy's source and
+/// destination in step.
 pub(super) struct Walk<H: Handles, P> {
     levels: Vec<Level<H, P>>,
 }
 
-/// One directory of a `Walk`: its handles (`None` while the walk is below it),
-/// its identity for reopening them, and the walk's own state for it.
+/// One directory of a `Walk`: its handles (`None` while the walk is below it), its identity, and
+/// the walk's state for it.
 pub(super) struct Level<H: Handles, P> {
     handles: Option<H>,
     id: H::Id,
@@ -35,7 +31,6 @@ pub(super) struct Level<H: Handles, P> {
 }
 
 impl<H: Handles, P> Level<H, P> {
-    /// A directory just opened as `handles`, which `id` identifies.
     pub(super) fn open(handles: H, id: H::Id, payload: P) -> Self {
         Self {
             handles: Some(handles),
@@ -45,13 +40,12 @@ impl<H: Handles, P> Level<H, P> {
     }
 }
 
-/// The open directories a walk works through at one level.
 pub(super) trait Handles: Sized {
-    /// What identifies them, to tell whether reopened ones are the same.
+    /// Identifies the directories, to check reopened ones are the same.
     type Id: Copy;
 
-    /// Reopens, through `self`'s "..", the directories `parent` identifies,
-    /// refusing them with the error `moved` otherwise.
+    /// Reopens, through `self`'s "..", the directories `parent` identifies, refusing others with
+    /// the error `moved`.
     fn reopen_parent(&self, parent: Self::Id, moved: &str) -> std::io::Result<Self>;
 }
 
@@ -72,7 +66,6 @@ impl<H: Handles, P> Walk<H, P> {
         Self { levels: vec![root] }
     }
 
-    /// The directory being worked in, `None` once the walk is done.
     pub(super) fn top(&mut self) -> Option<(&H, &mut P)> {
         let level = self.levels.last_mut()?;
         let handles = level
@@ -82,8 +75,7 @@ impl<H: Handles, P> Walk<H, P> {
         Some((handles, &mut level.payload))
     }
 
-    /// `top`, with the identities of every directory on the walk, for a
-    /// `holds` asked while the directory being worked in is borrowed.
+    /// `top`, with the identities of every directory on the walk.
     pub(super) fn top_and_lineage(&mut self) -> Option<(&H, &mut P, Lineage<'_, H, P>)> {
         let (level, above) = self.levels.split_last_mut()?;
         let handles = level
@@ -97,8 +89,7 @@ impl<H: Handles, P> Walk<H, P> {
         Some((handles, &mut level.payload, lineage))
     }
 
-    /// Enters `child`, a directory in the one being worked in, whose handles
-    /// are closed until `reopen`.
+    /// Enters `child`; the current directory's handles are closed until `reopen`.
     pub(super) fn descend(&mut self, child: Level<H, P>) {
         if let Some(parent) = self.levels.last_mut() {
             parent.handles = None;
@@ -106,8 +97,8 @@ impl<H: Handles, P> Walk<H, P> {
         self.levels.push(child);
     }
 
-    /// Leaves the directory being worked in, handing back its handles and
-    /// state. Its parent, if any, stays closed until `reopen`.
+    /// Leaves the current directory, returning its handles and state. The parent stays closed until
+    /// `reopen`.
     pub(super) fn pop(&mut self) -> Option<(H, P)> {
         let level = self.levels.pop()?;
         let handles = level
@@ -116,9 +107,8 @@ impl<H: Handles, P> Walk<H, P> {
         Some((handles, level.payload))
     }
 
-    /// Reopens the parent's handles through the ".." of `child`, which `pop`
-    /// handed back, refusing them with the error `moved` unless they are the
-    /// directories that were listed. Nothing to do once the root is popped.
+    /// Reopens the parent's handles through `child`'s "..", refusing them with the error `moved`
+    /// unless they are the directories listed.
     pub(super) fn reopen(&mut self, child: &H, moved: &str) -> std::io::Result<()> {
         if let Some(parent) = self.levels.last_mut() {
             parent.handles = Some(child.reopen_parent(parent.id, moved)?);
@@ -130,42 +120,32 @@ impl<H: Handles, P> Walk<H, P> {
         self.levels.is_empty()
     }
 
-    /// Whether a directory already on the walk, from the root down to the one
-    /// being worked in, is one `matches` accepts. A child that is one of them
-    /// leads back above itself (a bind mount of an ancestor inside the tree),
-    /// and descending into it would never end, so each walk refuses it, as
-    /// `rm` and `cp` do.
+    /// Whether a directory already on the walk is one `matches` accepts. Descending into one (a
+    /// bind mount of an ancestor) would never end, so walks refuse it, as `rm` and `cp` do.
     pub(super) fn holds(&self, matches: impl Fn(&H::Id) -> bool) -> bool {
         self.levels.iter().any(|level| matches(&level.id))
     }
 
-    /// Each directory's state, from the root down.
     pub(super) fn payloads(&self) -> impl Iterator<Item = &P> {
         self.levels.iter().map(|level| &level.payload)
     }
 }
 
-/// The identities of every directory on a walk, beside the one being worked
-/// in (`Walk::top_and_lineage`).
+/// The identities of every directory on a walk (`Walk::top_and_lineage`).
 pub(super) struct Lineage<'a, H: Handles, P> {
     above: &'a [Level<H, P>],
     own: H::Id,
 }
 
 impl<H: Handles, P> Lineage<'_, H, P> {
-    /// `Walk::holds`.
     pub(super) fn holds(&self, matches: impl Fn(&H::Id) -> bool) -> bool {
         matches(&self.own) || self.above.iter().any(|level| matches(&level.id))
     }
 }
 
-/// Walks the tree below `root` for a pre-scan, calling `visit` with each
-/// entry's directory, its name, and whether it is a directory. Like the delete
-/// walk, it is relative to open directories and never goes through a symlink
-/// (a directory swapped for one after it was listed is not descended into). A directory that cannot be
-/// opened is skipped, and one whose parent cannot be reopened ends the walk
-/// early, which leaves a smaller total rather than an error. Returns `None`
-/// when the task was cancelled.
+/// Walks the tree below `root` for a pre-scan, calling `visit` with each entry's directory, name,
+/// and whether it is a directory. Never goes through a symlink. Unopenable directories are skipped
+/// and an unreopenable parent ends the walk early, leaving a smaller total. `None` when cancelled.
 pub(super) fn scan_tree(
     active: &ActiveTask,
     root: &Path,
@@ -206,10 +186,8 @@ pub(super) fn scan_tree(
     Some(())
 }
 
-/// Unlinks `name` in `dir`: a file or symlink with `NoRemoveDir`, an empty
-/// directory with `RemoveDir`. Neither follows a symlink. An entry that is
-/// already gone counts as removed, like `rm -f`: whatever removed it in the
-/// meantime left what the delete or the replace asked for.
+/// Unlinks `name` in `dir` without following a symlink. An entry already gone counts as removed,
+/// like `rm -f`.
 pub(super) fn unlink_at(dir: impl AsFd, name: &CStr, flags: UnlinkatFlags) -> std::io::Result<()> {
     match unlinkat(dir, name, flags) {
         Err(Errno::ENOENT) => Ok(()),
@@ -217,8 +195,8 @@ pub(super) fn unlink_at(dir: impl AsFd, name: &CStr, flags: UnlinkatFlags) -> st
     }
 }
 
-/// Opens the directory `path` is in, following symlinks: the top-level
-/// directories are the ones the user chose, however they are reached.
+/// Opens the directory `path` is in, following symlinks: the top-level directories are the user's
+/// choice.
 pub(super) fn open_parent(path: &Path) -> std::io::Result<File> {
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -227,15 +205,11 @@ pub(super) fn open_parent(path: &Path) -> std::io::Result<File> {
     Ok(File::from(openat(CWD, parent, READ_FLAGS, Mode::empty())?))
 }
 
-/// `path`'s file name, for the `*at` calls.
 pub(super) fn c_name(path: &Path) -> Option<CString> {
     CString::new(path.file_name()?.as_bytes()).ok()
 }
 
-/// Opens the directory `name` in `parent` without following a symlink:
-/// `O_NOFOLLOW` with `O_DIRECTORY` refuses a link in the last component (ENOTDIR
-/// on Linux, ELOOP elsewhere), and `O_DIRECTORY` anything else that is not a
-/// directory.
+/// Opens the directory `name` in `parent` without following a symlink.
 pub(super) fn open_directory<P: ?Sized + NixPath>(
     parent: impl AsFd,
     name: &P,
@@ -248,10 +222,8 @@ pub(super) fn open_directory<P: ?Sized + NixPath>(
     )?))
 }
 
-/// `open_directory` for a pre-scan, which on Linux leaves the directory's
-/// access time alone (`O_NOATIME`, which only its owner may ask for; anyone
-/// else lists it as usual). A move takes each directory's times just before
-/// listing it to copy, so they would otherwise record the scan's read.
+/// `open_directory` for a pre-scan: on Linux `O_NOATIME` (owner only) keeps the scan from moving
+/// the access time a move later copies.
 fn open_unread<P: ?Sized + NixPath>(parent: impl AsFd, name: &P) -> std::io::Result<File> {
     #[cfg(target_os = "linux")]
     match openat(
@@ -267,20 +239,14 @@ fn open_unread<P: ?Sized + NixPath>(parent: impl AsFd, name: &P) -> std::io::Res
     open_directory(parent, name)
 }
 
-/// How a directory is opened to be read.
 const READ_FLAGS: OFlag = OFlag::O_RDONLY
     .union(OFlag::O_DIRECTORY)
     .union(OFlag::O_CLOEXEC);
 
-/// How `open_directory` opens a directory.
 const DIRECTORY_FLAGS: OFlag = READ_FLAGS.union(OFlag::O_NOFOLLOW);
 
-/// The names in the open directory `dir`, read to the end. `copy_tree` checks
-/// for a cancel between the entries.
-///
-/// Read through a new handle on "." rather than `dir`'s own, since reading
-/// moves the handle's position. A directory removed since it was opened lists
-/// as empty, including where "." can no longer be opened in it.
+/// The names in `dir`, read to the end, through a new handle on "." so `dir`'s position is
+/// untouched. A directory removed since it was opened lists as empty.
 pub(super) fn list_names(dir: &File) -> std::io::Result<Vec<CString>> {
     let fd = match openat(dir, c".", READ_FLAGS, Mode::empty()) {
         Ok(fd) => fd,
@@ -295,30 +261,21 @@ pub(super) fn list_names(dir: &File) -> std::io::Result<Vec<CString>> {
     Ok(names)
 }
 
-/// Whether a directory entry read names an entry to copy, count or remove:
-/// "." and ".." do not. An error is kept for the caller to report.
+/// Whether a directory entry is one to copy, count or remove: not "." or "..". An error is kept for
+/// the caller.
 pub(super) fn is_named(entry: &nix::Result<Entry>) -> bool {
     entry.as_ref().map_or(true, |entry| {
         entry.file_name() != c"." && entry.file_name() != c".."
     })
 }
 
-/// A directory's entries as `remove_path` lists them: each name, and whether it
-/// is a directory to descend into.
+/// A directory's entries: each name, and whether it is a directory to descend into.
 pub(super) type Entries = Vec<(CString, bool)>;
 
-/// Collects `(name, is_directory)` for each entry of `dir`, read to the end
-/// before the caller deletes anything. The type comes from the directory entry,
-/// or from an `lstat` where the filesystem does not report one, so a link to a
-/// directory reports `false` and is unlinked rather than descended into.
-///
-/// Read through a duplicate of `dir`'s handle, which shares its position and
-/// its flags (`O_NOATIME` from a pre-scan), since the stream takes ownership
-/// of the one it reads.
-///
-/// Never checked for cancellation: the callers check between entries, and the
-/// removal of a moved source, which a cancel must not stop part way, lists
-/// through here too.
+/// Collects `(name, is_directory)` for each entry of `dir`, read to the end before anything is
+/// deleted. The type comes from the directory entry or `lstat`, so a link to a directory is
+/// `false`. Reads a duplicate handle (the stream takes ownership). Never checks for cancellation: a
+/// moved source's removal must not stop part way.
 pub(super) fn list_entries(dir: &File) -> std::io::Result<Entries> {
     let mut stream = Dir::from_fd(dir.try_clone()?.into())?;
     let mut entries = Vec::new();
@@ -333,10 +290,8 @@ pub(super) fn list_entries(dir: &File) -> std::io::Result<Entries> {
     Ok(entries)
 }
 
-/// Whether the entry `name` of `dir`, listed as `file_type`, is a directory:
-/// from an `lstat` when the filesystem did not report the type. `None` when
-/// the entry is gone by then, which is how it would have been listed a moment
-/// later, rather than a reason to fail the whole directory.
+/// Whether the entry `name`, listed as `file_type`, is a directory, using `lstat` when the type was
+/// not reported. `None` when the entry is gone.
 fn is_listed_directory(
     dir: &File,
     name: &CStr,
@@ -377,8 +332,6 @@ mod tests {
         );
         token.cancel();
 
-        // Both scans run before any file is touched and take as long as the
-        // tree is large, so a cancel must not have to wait one out.
         assert_eq!(None, dir_total_size(&active, fx.path()));
         assert_eq!(None, dir_total_entries(&active, fx.path()));
         active.done();
@@ -397,8 +350,6 @@ mod tests {
         assert_eq!(expected, EntryId::of(&reopened).unwrap());
     }
 
-    /// A child moved elsewhere during the walk has a different "..", which the
-    /// walk must not continue into.
     #[test]
     fn reopening_the_parent_of_a_moved_directory_is_refused() {
         let fx = TempDir::new("tasks_reopen_moved");
@@ -415,8 +366,6 @@ mod tests {
         assert_eq!("moved", error.to_string());
     }
 
-    /// Every directory on the walk counts, the one being worked in included,
-    /// and nothing else does, so a child that is any of them is refused.
     #[test]
     fn a_walk_holds_every_directory_it_is_in() {
         let fx = TempDir::new("tasks_walk_holds");
@@ -443,8 +392,6 @@ mod tests {
         assert!(!held(&mut walk, other));
     }
 
-    /// A walk reopens the parent it returns to, and stops at a parent that
-    /// is no longer the one it listed.
     #[test]
     fn a_walk_returns_only_to_the_parent_it_left() {
         let fx = TempDir::new("tasks_walk_reopen");
@@ -488,8 +435,6 @@ mod tests {
         std::os::unix::fs::symlink(fx.join("real"), fx.join("link")).unwrap();
         let parent = open_directory(CWD, fx.path()).unwrap();
 
-        // A directory swapped for a link after it was listed has to fail to
-        // open, or the walk would descend into the link's target.
         let error = open_directory(&parent, "link")
             .expect_err("a symlink must not be opened as a directory");
 
@@ -501,8 +446,6 @@ mod tests {
         assert!(open_directory(&parent, "real").is_ok());
     }
 
-    /// A directory the pre-scan listed is swapped for a link to one outside
-    /// the tree before the scan reads it. The link is not followed.
     #[test]
     fn the_pre_scan_does_not_follow_a_directory_swapped_for_a_symlink() {
         let fx = TempDir::new("tasks_scan_swapped");
@@ -527,7 +470,6 @@ mod tests {
         assert_eq!(vec![c"sub".to_owned()], seen);
     }
 
-    /// A directory holding a file, a directory and a link to that directory.
     fn listing_fixture(label: &str) -> TempDir {
         let fx = TempDir::new(label);
         fs::write(fx.join("f"), b"x").unwrap();
@@ -536,8 +478,6 @@ mod tests {
         fx
     }
 
-    /// "." and ".." name no entry, and a link to a directory is not one to
-    /// descend into.
     #[test]
     fn a_listing_skips_the_dot_entries_and_types_each_entry() {
         let fx = listing_fixture("tasks_list_entries");
@@ -569,8 +509,6 @@ mod tests {
         );
     }
 
-    /// A copy's source removed after it was opened has nothing left to copy,
-    /// which is not a failure to read it.
     #[test]
     fn a_directory_removed_after_it_was_opened_lists_as_empty() {
         let fx = TempDir::new("tasks_list_removed");
@@ -586,16 +524,13 @@ mod tests {
         let fx = listing_fixture("tasks_open_directory_file");
         let parent = open_directory(CWD, fx.path()).unwrap();
 
-        // No `fdopendir` stands behind the handle to refuse a file after the
-        // open, so the open itself has to.
+        // No `fdopendir` follows to refuse a file, so the open itself has to.
         let error = open_directory(&parent, "f").expect_err("a file is not a directory");
 
         assert_eq!(Some(nix::libc::ENOTDIR), error.raw_os_error());
     }
 
-    /// A filesystem that reports no type (XFS without `ftype`) is typed by an
-    /// `lstat`, so a link to a directory is still not one, and an entry gone
-    /// by then is left out rather than failing the directory.
+    /// Simulates a filesystem that reports no type (XFS without `ftype`).
     #[test]
     fn an_entry_listed_without_a_type_is_typed_by_lstat_or_left_out_when_gone() {
         let fx = listing_fixture("tasks_list_unknown_type");
@@ -609,8 +544,6 @@ mod tests {
         assert_eq!(None, typed(c"missing"));
     }
 
-    /// Like `rm -f`: whatever removed the entry left what was asked for. Any
-    /// other failure keeps its errno.
     #[test]
     fn unlinking_counts_an_entry_already_gone_as_removed() {
         let fx = listing_fixture("tasks_unlink_gone");

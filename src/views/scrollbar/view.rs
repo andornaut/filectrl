@@ -9,10 +9,7 @@ use super::ScrollbarView;
 use crate::app::config::theme::{ScrollbarConfig, Theme};
 
 impl ScrollbarView {
-    /// Clears the hit-test area for a frame that draws no scrollbar, so clicks
-    /// in its column are not treated as scrollbar interactions. A drag in
-    /// progress ends too: the release may never reach a scrollbar that is not
-    /// drawn, and one left dragging claims every later mouse event.
+    /// Clears the hit-test area and ends any drag, for a frame that draws no scrollbar.
     pub fn hide(&mut self) {
         self.area = Rect::default();
         self.track = Rect::default();

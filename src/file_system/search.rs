@@ -16,18 +16,14 @@ use crate::command::{Command, progress::CancellationToken};
 
 const SEARCH_BATCH_SIZE: usize = 128;
 
-/// Bounds on a single traversal, configured under `[file_system]`. Injected
-/// rather than read from constants so that the limit behaviour can be exercised
-/// without building a tree of `max_results` entries.
+/// Bounds on a single traversal, configured under `[file_system]`.
 pub(super) struct Limits {
     pub(super) max_depth: u32,
     pub(super) max_results: u32,
 }
 
-/// Spawns a background thread that performs a breadth-first, case-insensitive
-/// name search starting from `root`. Matching entries are sent in batches as
-/// `Command::ListingBatch` through the channel. A `Command::ExitedSearch`
-/// is sent when the traversal finishes (or is cancelled).
+/// Spawns a breadth-first, case-insensitive name search from `root`, sending
+/// matches as `ListingBatch`es and ending with `ExitedSearch`, also on cancel.
 pub(super) fn run_search(
     limits: Limits,
     tx: Sender<Command>,
@@ -41,9 +37,8 @@ pub(super) fn run_search(
     });
 }
 
-/// "1 result" / "2 results". Both bounds are configurable, so either case is
-/// reachable. `views::unicode::pluralize_items` is the same idea one layer up,
-/// and stays there: this module is below the views.
+/// "1 result" / "2 results". This module is below the views, so it does not use
+/// `views::unicode::pluralize_items`.
 fn plural(count: u32, noun: &str) -> String {
     if count == 1 {
         format!("{count} {noun}")
@@ -52,12 +47,8 @@ fn plural(count: u32, noun: &str) -> String {
     }
 }
 
-/// Sends an alert about the traversal itself, unless a newer search has
-/// already superseded this one: the user would read a late alert as
-/// describing their current search rather than the abandoned one.
-///
-/// The token is only ever set, never cleared, so a search that observes itself
-/// cancelled here stays cancelled for the rest of its walk.
+/// Sends an alert about the traversal unless a newer search superseded this
+/// one, whose user would read it as describing the current search.
 fn alert_unless_superseded(tx: &Sender<Command>, cancel: &CancellationToken, alert: Command) {
     if cancel.is_cancelled() {
         return;
@@ -65,7 +56,6 @@ fn alert_unless_superseded(tx: &Sender<Command>, cancel: &CancellationToken, ale
     let _ = tx.send(alert);
 }
 
-/// The traversal itself, run on the caller's thread.
 fn search(
     limits: &Limits,
     tx: &Sender<Command>,
@@ -83,10 +73,8 @@ fn search(
 
     let send = batch_sender(tx, generation);
     let mut batcher = Batcher::new(SEARCH_BATCH_SIZE, BATCH_FLUSH_INTERVAL);
-    // Every exit path flushes pending hits and self-cancels before
-    // announcing the exit: the cancel stack treats a cancelled token as
-    // "nothing left to cancel", so a cancel keypress racing the
-    // in-flight exit cannot relabel a completed search as cancelled.
+    // Self-cancel before announcing the exit, so a racing cancel keypress finds
+    // nothing to cancel and cannot relabel a completed search as cancelled.
     let exit = |batcher: &mut Batcher| {
         let _ = batcher.flush(&send);
         cancel.cancel();
@@ -101,8 +89,7 @@ fn search(
 
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
-            // A root that cannot be read leaves nothing searched, which the
-            // count of skipped subdirectories would understate.
+            // An unreadable root is reported by itself, not counted with subdirectories.
             Err(e) if depth == 0 => {
                 let message = format!("Failed to search {}: {e}", compact(&dir));
                 warn!("{message}");
@@ -124,7 +111,6 @@ fn search(
                 return;
             }
 
-            // Time-based flush so sparse matches still stream to the UI.
             if !batcher.flush_if_due(&send) {
                 return;
             }
@@ -164,10 +150,7 @@ fn search(
                 }
             }
 
-            // Enqueue directories for BFS traversal. `file_type` does not
-            // follow symlinks (so a link to a directory is not descended
-            // into) and is usually free from the readdir data, unlike a
-            // per-entry stat.
+            // `file_type` does not follow symlinks, and is usually free from readdir.
             if let Ok(file_type) = entry.file_type()
                 && file_type.is_dir()
             {
@@ -175,8 +158,7 @@ fn search(
                 if next_depth <= limits.max_depth {
                     queue.push_back((entry_path, next_depth));
                 } else if !depth_limit_hit {
-                    // Warn once however many directories are turned away, so a
-                    // wide tree cannot bury the listing under repeats.
+                    // Warn once, however many directories are turned away.
                     depth_limit_hit = true;
                     alert_unless_superseded(
                         tx,
@@ -195,9 +177,8 @@ fn search(
     exit(&mut batcher);
 }
 
-/// Whether a directory below the root the walk failed to read counts towards
-/// the unreadable warning. One removed, or replaced by a file, after it was
-/// queued hid nothing that still exists there.
+/// Whether a subdirectory the walk failed to read counts as unreadable. One
+/// removed or replaced by a file since it was queued hid nothing.
 fn counts_as_unreadable(error: &std::io::Error) -> bool {
     !matches!(
         error.kind(),
@@ -205,8 +186,7 @@ fn counts_as_unreadable(error: &std::io::Error) -> bool {
     )
 }
 
-/// Reports the directories the walk could not read, once when it ends, like
-/// the depth warning: one per directory would bury the listing under repeats.
+/// Reports the unreadable directories once, when the walk ends.
 fn warn_unreadable(tx: &Sender<Command>, cancel: &CancellationToken, unreadable: u32) {
     if unreadable == 0 {
         return;
@@ -242,8 +222,7 @@ mod tests {
         }
     }
 
-    /// Runs a search to completion on this thread and returns everything it
-    /// sent, so each test can assert on the whole conversation.
+    /// Runs a search to completion on this thread and returns everything it sent.
     fn run(limits: &Limits, root: &TempDir, query: &str) -> (Vec<Command>, CancellationToken) {
         let (tx, rx) = mpsc::channel();
         let cancel = CancellationToken::new();
@@ -252,7 +231,6 @@ mod tests {
         (rx.into_iter().collect(), cancel)
     }
 
-    /// The display names of every entry that reached the table, in batch order.
     fn matched_names(commands: &[Command]) -> Vec<String> {
         commands
             .iter()
@@ -312,13 +290,12 @@ mod tests {
         std::fs::write(root.join("README.md"), b"").unwrap();
         std::fs::write(root.join("notes.txt"), b"").unwrap();
 
-        // Mixed case, so lowercasing only one side cannot match.
         let (commands, _) = run(&default_limits(), &root, "eAdM");
 
         assert_eq!(vec!["README.md".to_string()], matched_names(&commands));
     }
 
-    // Linux only: APFS refuses a name that is not valid UTF-8.
+    // APFS refuses a name that is not valid UTF-8.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_name_that_is_not_utf8_is_found_by_the_text_its_row_shows() {
@@ -328,8 +305,7 @@ mod tests {
         std::fs::write(root.join(OsStr::from_bytes(b"caf\xe9.txt")), b"").unwrap();
         std::fs::write(root.join("cafe.txt"), b"").unwrap();
 
-        // The row shows the byte spelled out as `\xe9`, so that is what the
-        // user types. A lossy conversion turns it into U+FFFD instead.
+        // The row shows the byte as `\xe9`; a lossy conversion would give U+FFFD.
         let (commands, _) = run(&default_limits(), &root, "CAF\\XE9");
 
         assert_eq!(vec!["caf\\xe9.txt".to_string()], matched_names(&commands));
@@ -343,15 +319,12 @@ mod tests {
         let (commands, cancel) = run(&default_limits(), &root, "a");
 
         assert_eq!(1, exits(&commands));
-        // The exit self-cancels so that a cancel keypress racing it finds
-        // nothing left to cancel and cannot relabel a completed search.
         assert!(cancel.is_cancelled());
     }
 
     #[test]
     fn results_below_the_depth_limit_are_found_without_a_warning() {
-        // max_depth 3 admits level0/level1/level2, which is where the
-        // deepest `hit` lives.
+        // max_depth 3 admits level0/level1/level2, where the deepest `hit` lives.
         let root = nested_tree("search_depth_ok", 3);
         let limits = Limits {
             max_depth: 3,
@@ -367,7 +340,6 @@ mod tests {
     #[test]
     fn the_depth_limit_stops_the_descent_and_warns_once() {
         let root = nested_tree("search_depth_hit", 4);
-        // A second directory past the limit, beside level2.
         std::fs::create_dir(root.join("level0/level1/sibling")).unwrap();
         let limits = Limits {
             max_depth: 2,
@@ -376,10 +348,7 @@ mod tests {
 
         let (commands, _) = run(&limits, &root, "hit");
 
-        // Only the two admitted levels are searched; the rest are unreachable.
         assert_eq!(2, matched_names(&commands).len());
-        // One warning however many directories were turned away, so a wide
-        // tree cannot bury the listing under repeats of the same alert.
         let warnings = warnings(&commands);
         assert_eq!(1, warnings.len(), "{warnings:?}");
         assert!(warnings[0].contains("maximum depth of 2"), "{warnings:?}");
@@ -402,13 +371,9 @@ mod tests {
         let warnings = warnings(&commands);
         assert_eq!(1, warnings.len(), "{warnings:?}");
         assert!(warnings[0].contains("stopped at 2 results"), "{warnings:?}");
-        // Truncating is still a normal finish, so the consumers' search state
-        // is unwound exactly once.
         assert_eq!(1, exits(&commands));
     }
 
-    /// Exactly as many matches as the limit is not a truncated search: the
-    /// limit is only reported when a match beyond it was turned away.
     #[test]
     fn exactly_the_result_limit_is_not_reported() {
         let root = TempDir::new("search_result_limit_exact");
@@ -426,8 +391,8 @@ mod tests {
         assert_eq!(Vec::<String>::new(), warnings(&commands));
     }
 
-    /// The shipped bounds are 20 and 10,000, so the singular reads only under
-    /// a configured limit of one, which is where a hardcoded plural shows.
+    /// The shipped limits are 20 and 10,000, so only a configured limit of one
+    /// shows a hardcoded plural.
     #[test]
     fn a_limit_of_one_is_reported_in_the_singular() {
         let root = TempDir::new("search_singular_results");
@@ -485,15 +450,12 @@ mod tests {
         let commands: Vec<Command> = rx.into_iter().collect();
 
         assert!(matched_names(&commands).is_empty());
-        // The exit still fires: it is what clears the consumers' search state.
+        // The exit still fires: it clears the consumers' search state.
         assert_eq!(1, exits(&commands));
     }
 
-    /// Both warnings describe the walk rather than a result, so a search
-    /// superseded mid-walk must stay silent: its warning would read as
-    /// describing the search now on screen. Cancellation lands between the walk's
-    /// own checks, which a synchronous test cannot schedule, so the rule is
-    /// pinned on the helper both call sites route through.
+    /// Cancellation cannot be scheduled between the walk's own checks from a
+    /// synchronous test, so this is pinned on the helper both warnings use.
     #[test]
     fn a_superseded_search_announces_no_warning() {
         let (tx, rx) = mpsc::channel();
@@ -509,8 +471,6 @@ mod tests {
         assert_eq!(1, commands.len(), "nothing else may be sent: {commands:?}");
     }
 
-    /// A directory below the root deleted or replaced after it was queued hides
-    /// nothing; any other failure to read one does.
     #[test_case::test_case(ErrorKind::NotFound => false ; "a subdirectory removed")]
     #[test_case::test_case(ErrorKind::NotADirectory => false ; "a subdirectory replaced by a file")]
     #[test_case::test_case(ErrorKind::PermissionDenied => true ; "a subdirectory that is locked")]
@@ -518,8 +478,6 @@ mod tests {
         counts_as_unreadable(&std::io::Error::from(kind))
     }
 
-    /// A search of a directory that is gone, or is not one, found nothing and
-    /// says so, naming it, rather than counting it with the subdirectories.
     #[test]
     fn a_root_that_cannot_be_read_is_reported() {
         let root = TempDir::new("search_gone");
@@ -549,10 +507,8 @@ mod tests {
         }
     }
 
-    /// A search cancelled before it starts sends only its exit, whatever its
-    /// root: it reads nothing, so it has nothing to report. The root's own
-    /// failure is checked against a cancel only in the branch after
-    /// `read_dir`, which a cancel before the walk never reaches.
+    /// The root's failure is checked against a cancel only after `read_dir`, which
+    /// a cancel before the walk never reaches.
     #[test]
     fn a_search_cancelled_before_it_starts_sends_only_its_exit() {
         let root = TempDir::new("search_gone_superseded");
@@ -579,9 +535,8 @@ mod tests {
         );
     }
 
-    /// Stopping at the result limit still reports what the walk skipped before
-    /// it stopped. The hits sit two levels down, so the breadth-first walk
-    /// reaches the locked directory before them whatever the readdir order.
+    /// The hits sit two levels down, so the breadth-first walk reaches the locked
+    /// directory first whatever the readdir order.
     #[test]
     fn a_search_stopped_at_the_limit_still_reports_unreadable_directories() {
         use std::os::unix::fs::PermissionsExt;
@@ -617,8 +572,6 @@ mod tests {
         assert_eq!(1, exits(&commands));
     }
 
-    /// Like `find`, a directory the walk cannot read is reported rather than
-    /// passed over in silence, once for the whole search.
     #[test_case::test_case(1 ; "one directory")]
     #[test_case::test_case(2 ; "several directories")]
     fn unreadable_directories_are_counted_in_one_warning(count: usize) {

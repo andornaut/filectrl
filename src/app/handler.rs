@@ -28,11 +28,8 @@ impl CommandHandler for Handlers {
                 }
                 CommandResult::Handled
             }
-            // A confirmed delete clears the clipboard, which may name the
-            // entries it removes; declining the prompt leaves it alone. The
-            // derived SetClipboardEntry(None) re-enters the arm above, which
-            // performs the actual clear (and surfaces any error), so this arm
-            // does not also clear inline.
+            // A confirmed delete clears the clipboard, which may name the removed
+            // entries. The derived SetClipboardEntry(None) does the clear.
             Command::ConfirmDelete => CommandResult::from(Command::SetClipboardEntry(None)),
             Command::Paste(dest) => match self.clipboard.get_clipboard_entry() {
                 Ok(Some((entry, true))) => entry.into_paste(dest.clone()).into(),
@@ -46,8 +43,7 @@ impl CommandHandler for Handlers {
                     Command::AlertWarn(format!("Failed to read the clipboard: {error:#}")).into()
                 }
             },
-            // A paste has started from the clipboard: it consumes the entry
-            // even when another window wrote it. Left for the file system.
+            // A paste consumes the entry even when another window wrote it.
             Command::Copy { srcs, .. } => {
                 self.clipboard.adopt(&ClipboardEntry::Copy(srcs.clone()));
                 CommandResult::NotHandled
@@ -83,22 +79,16 @@ impl CommandHandler for Handlers {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::CancelTask) => Command::CancelTask.into(),
-            // Over help or the picker, quit and reset close the overlay, which
-            // RootView handles: a reset would also drop the marks, filter and
-            // clipboard entry the overlay was covering, and `q` closes a
-            // viewer rather than the application.
+            // Over help or the picker, RootView closes the overlay instead.
             Some(Action::Quit | Action::ResetView) if self.root.is_overlay_visible() => {
                 CommandResult::NotHandled
             }
-            // Quitting ends the worker, and with it any file operation part
-            // way through, so that is confirmed first. A signal still quits
-            // at once: it does not come through here.
+            // Confirmed first, since quitting ends any running file operation.
             Some(Action::Quit) => match self.file_system.task_count() {
                 0 => Command::Quit.into(),
                 tasks => Command::OpenPrompt(PromptAction::ConfirmQuit(tasks)).into(),
             },
-            // Esc clears every alert, errors included; a reset from a notice
-            // click reaches only the views, so an unread error survives it.
+            // Only Esc clears errors; a reset from a notice click does not.
             Some(Action::ResetView) => {
                 self.root.clear_alerts();
                 Command::ResetView.into()
@@ -108,10 +98,8 @@ impl CommandHandler for Handlers {
     }
 }
 
-/// The warning for a paste that found no entry: the clipboard is empty or
-/// holds text another program put there. Without a system clipboard, an entry
-/// copied in another window is unreachable, which is the more useful thing to
-/// say.
+/// The warning for a paste that found no entry. Without a system clipboard,
+/// an entry from another window is unreachable, so that is said instead.
 fn nothing_to_paste(system_clipboard: bool) -> Command {
     Command::AlertWarn(
         if system_clipboard {
@@ -161,8 +149,6 @@ mod tests {
         );
     }
 
-    /// Over help, quit and reset are left to RootView, which closes the
-    /// overlay: neither ends the session nor resets what it covers.
     #[test_case(KeyCode::Char('q') ; "the quit key")]
     #[test_case(KeyCode::Esc ; "the reset key")]
     fn a_closing_key_over_help_is_left_to_the_overlay(code: KeyCode) {
@@ -207,8 +193,6 @@ mod tests {
         );
     }
 
-    /// Text any program could have written, shaped like an entry: it is
-    /// confirmed rather than carried out.
     #[test]
     fn a_paste_of_an_entry_this_window_did_not_write_asks_first() {
         let fixture = Fixture::new();
@@ -226,8 +210,8 @@ mod tests {
         );
     }
 
-    /// Confirming a paste from elsewhere hands the keys back: a second `y`
-    /// reaches the table, not the prompt, so it cannot start the paste again.
+    /// Confirming hands the keys back, so a second `y` cannot start the paste
+    /// again.
     #[test]
     fn confirming_a_paste_from_elsewhere_closes_its_prompt() {
         let fixture = Fixture::new();
@@ -244,8 +228,6 @@ mod tests {
         assert_eq!(crate::command::InputMode::Normal, handlers.root.mode());
     }
 
-    /// Esc clears every alert, errors included; a reset a notice click sends
-    /// clears the view it resets but leaves an unread error.
     #[test]
     fn only_esc_clears_the_alerts() {
         let fixture = Fixture::new();
@@ -264,9 +246,6 @@ mod tests {
         assert_eq!(0, handlers.root.alert_count(), "Esc");
     }
 
-    /// A paste consumes the clipboard whoever wrote it: once a paste of an
-    /// entry from elsewhere has started and finished cleanly, nothing is left
-    /// to paste again.
     #[test]
     fn a_clean_paste_of_an_entry_from_elsewhere_consumes_it() {
         let fixture = Fixture::new();
@@ -311,15 +290,12 @@ mod tests {
 
         assert_eq!(CommandResult::Handled, handlers.handle_command(clear));
 
-        // Nothing is left to paste, so the paste warns instead of copying.
         assert!(matches!(
             Command::try_from(handlers.handle_command(&Command::Paste(fixture.directory()))),
             Ok(Command::AlertWarn(_))
         ));
     }
 
-    /// The clipboard may name the entries a delete removes, so a confirmed
-    /// delete clears it. Opening the prompt and declining it leave it alone.
     #[test]
     fn only_a_confirmed_delete_clears_the_clipboard() {
         let fixture = Fixture::new();
@@ -365,9 +341,8 @@ mod tests {
         );
     }
 
-    /// Quitting ends the worker, so a delete it has not finished is confirmed
-    /// first. A task counts until its terminal progress is handled, which
-    /// nothing feeds back here, so the count holds for the whole test.
+    /// A task counts until its terminal progress is handled, which nothing feeds
+    /// back here.
     #[test]
     fn quit_asks_first_while_file_operations_are_running() {
         let fixture = Fixture::new();

@@ -33,49 +33,38 @@ pub(super) struct TableView {
 
     table_area: Rect,
     table_state: TableState,
-    /// Index of the topmost rendered item. Owned by the render pass (instead of
-    /// ratatui's auto-scroll) so only the visible window's rows are built.
+    /// Index of the topmost rendered item, owned by the render pass so only the
+    /// visible rows are built.
     first_visible_item: usize,
-    /// Line the scrollbar thumb is dragged to, tracked while a drag is active
-    /// so the thumb renders at the cursor even when the window top snaps
-    /// across a wrapped row.
+    /// Line the scrollbar thumb is dragged to while a drag is active.
     drag_line: Option<usize>,
-    /// Set when the wheel scrolled the window away from the cursor: the render
-    /// keeps `first_visible_item` as the wheel left it instead of bringing the
-    /// cursor into view. Cleared by anything that moves the cursor and by any
-    /// key the table handles, so the next key shows the row it acts on.
+    /// Set when the wheel scrolled the window away from the cursor, so the
+    /// render does not bring the cursor into view. Cleared by any handled key.
     wheel_scrolled: bool,
 
-    /// Generation of the stream (directory load or search) currently feeding
-    /// the listing. `ListingBatch`es stamped with a different generation are
-    /// stale and ignored.
+    /// Generation of the stream feeding the listing; batches from another
+    /// generation are ignored.
     stream_generation: u64,
     /// Selection state captured at the start of a streamed load, applied once it
-    /// completes (see `begin_directory`/`finish_directory`).
+    /// completes.
     pending_load: PendingLoad,
-    /// Whether input moved the cursor, or marked, while the current search
-    /// streamed in. The first result takes the cursor in walk order, so
-    /// unless the user chose that row, the finished search puts the cursor on
-    /// the top row.
+    /// Whether input moved the cursor or marked while the current search
+    /// streamed in. If not, the finished search puts the cursor on the top row.
     search_cursor_chosen: bool,
 
     columns: Columns,
     double_click: DoubleClick,
     mapper: LineItemMap,
-    /// Per-item row heights, cached across frames. Rebuilt (together with
-    /// `mapper`) only when `height_cache_key` changes, so scrolling a large
-    /// directory stays O(visible rows) instead of O(items).
+    /// Per-item row heights, rebuilt with `mapper` only when `height_cache_key`
+    /// changes.
     cached_heights: Vec<usize>,
     /// The (name column width, visible line count, content revision) the
-    /// cache was built for. An append leaves the revision alone and is picked
-    /// up from `cached_heights` being shorter than the listing.
+    /// cache was built for.
     height_cache_key: Option<(u16, usize, u64)>,
     scrollbar_view: ScrollbarView,
     /// The sortable column headers, which name their sort keys.
     header_labels: [String; 3],
-    /// Set while a y/n confirmation prompt is open: the prompt already holds
-    /// what it asks about, so a wheel or a click that moved the cursor would
-    /// only make the status bar describe something else.
+    /// Set while a y/n confirmation prompt is open; mouse input is ignored.
     ignores_mouse: bool,
 }
 
@@ -89,9 +78,6 @@ impl TableView {
         self.pending_delete.only_name()
     }
 
-    /// The listing settings and the double-click window come from the config
-    /// here, once, rather than from a global reached for during a sort or a
-    /// click.
     pub(super) fn new(ui: UiConfig, keybindings: &KeyBindings) -> Self {
         Self {
             clipboard: None,
@@ -118,10 +104,7 @@ impl TableView {
     }
 }
 
-/// The shipped defaults, so a test says only what it is about. Test-only: the
-/// app builds its table from the config it loaded, and a `Default` that read a
-/// global would put a test's behaviour at the mercy of whether another test
-/// had initialized one.
+/// The shipped defaults. Test-only: the app builds its table from its config.
 #[cfg(test)]
 impl Default for TableView {
     fn default() -> Self {
@@ -130,10 +113,8 @@ impl Default for TableView {
     }
 }
 
-/// A listing of `a`, `b` and `c`, with `a` and `b` marked and the cursor left
-/// on `c`, so an action reading the marks and one reading the cursor cannot
-/// produce the same answer. Shared by the sibling modules whose tests are about
-/// which of the two an action reads.
+/// A listing of `a`, `b` and `c`, with `a` and `b` marked and the cursor on `c`,
+/// so actions reading the marks and the cursor give different answers.
 #[cfg(test)]
 fn marked_table() -> (crate::test_support::TempDir, TableView) {
     use crate::test_support::TempDir;

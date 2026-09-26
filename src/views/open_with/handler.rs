@@ -23,11 +23,7 @@ impl CommandHandler for OpenWithView {
             }
             None => {}
         }
-        // Row shortcuts are checked last, so a digit bound to an action the
-        // picker implements keeps that action. A digit bound to any other
-        // action selects a row instead, which is what a picker should do.
-        // Keys claimed higher in the handler tree (quit, cancel task, reset
-        // view, toggle help) never reach this point.
+        // Row shortcuts are checked last, so a digit bound to a picker action keeps it.
         if modifiers == KeyModifiers::NONE
             && let KeyCode::Char(digit @ '1'..='9') = code
         {
@@ -56,16 +52,13 @@ impl CommandHandler for OpenWithView {
                 {
                     let row = event.row.saturating_sub(self.content_area.y) as usize;
                     let index = self.scroll_offset + row;
-                    // Ignore a click on the blank space below the last row,
-                    // which would otherwise silently move the selection.
                     if index < self.candidates.len() {
                         self.select(index);
                     }
                 }
                 CommandResult::Handled
             }
-            // Claim everything else so a stray event cannot leak to the views
-            // the picker is covering.
+            // Claim everything else so no event reaches the covered views.
             _ => CommandResult::Handled,
         }
     }

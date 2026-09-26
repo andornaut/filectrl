@@ -9,56 +9,36 @@ use crate::contains_ignore_case;
 use crate::file_system::path_info::{PathInfo, name_key, visible_path};
 use crate::views::ListingMode;
 
-/// Deliberately not `Default`: the two settings below have no meaningful
-/// default of their own, and a derived one would read as "hide dotfiles, do
-/// not group directories", the opposite of what the shipped config asks for.
+/// Not `Default`: a derived default would contradict the shipped config.
 pub(super) struct DirectoryContent {
     directory: Option<PathInfo>,
     filter: String,
     items: Vec<PathInfo>,
     items_sorted: Vec<PathInfo>,
-    /// Which listing is shown. Mode membership lives here; `search_root` and
-    /// the bookmark items are per-mode data.
     mode: ListingMode,
     search_root: Option<PathBuf>,
-    /// True while a directory's entries are still streaming in.
     loading: bool,
-    /// Entries of a staged load, held back until `finalize_listing` swaps them
-    /// in. `Some` for a reload of the directory already shown, whose listing
-    /// stays valid until the new one is complete; `None` for a load that has
-    /// nothing valid to show and so clears the listing up front.
+    /// Entries of a reload of the directory shown, held back until
+    /// `finalize_listing` swaps them in.
     staged: Option<Vec<PathInfo>>,
-    /// Bumped whenever `items_sorted` or display-affecting state (search root,
-    /// bookmarks mode) changes, except by `append`. Lets the view cache
-    /// per-item row heights and invalidate them with a cheap equality check.
-    /// An append only adds entries after the last, so the view extends its
-    /// cache from the length it last saw instead of rebuilding it.
+    /// Bumped whenever `items_sorted` or display-affecting state changes,
+    /// except by `append`. Keys the view's row-height cache.
     revision: u64,
-    /// Whether hidden (dotfile) entries are listed. Seeded from
-    /// `ui.show_hidden_files` and toggled at runtime.
     show_hidden: bool,
     name_order: NameOrder,
-    /// The order `items_sorted` is in, while it is exactly the visible
-    /// `items` sorted that way. `None` once anything leaves it otherwise: an
-    /// append in read order, or a visibility change not yet re-derived.
+    /// The order `items_sorted` is in, while it is exactly the visible `items`
+    /// sorted that way.
     sorted_by: Option<(SortColumn, SortDirection)>,
 }
 
 /// How the Name column orders entries, fixed for the listing's life.
 struct NameOrder {
-    /// Whether directories are grouped ahead of files under a name sort.
-    /// Seeded from `ui.sort_directories_first`.
     directories_first: bool,
-    /// Whether runs of digits compare as numbers. Seeded from
-    /// `ui.natural_sort`.
+    /// Whether runs of digits compare as numbers.
     natural: bool,
 }
 
 impl DirectoryContent {
-    /// The listing settings come from the config once, at construction, rather
-    /// than being read on every sort: a listing has to behave the same way for
-    /// its whole life, and a test has to be able to state the settings it is
-    /// about.
     pub(super) fn new(ui: UiConfig) -> Self {
         Self {
             directory: None,
@@ -115,16 +95,8 @@ impl DirectoryContent {
         self.sorted_by = None;
     }
 
-    /// Begin a streamed directory load: switch to `directory`, and either stage
-    /// the incoming entries or clear the listing for them. Entries arrive via
-    /// `append` and are applied by `finalize_listing`. Filter/search/bookmarks
-    /// state is left untouched (the caller decides what carries over for a
-    /// navigate vs. a refresh).
-    ///
-    /// `staged` says the listing on screen is of this same directory and stays
-    /// valid until the new one is complete, so a directory being written to
-    /// does not blank and repaint once per watcher refresh. Nothing visible
-    /// changes then, so the revision is left alone.
+    /// Begin a streamed directory load of `directory`. `staged` keeps the
+    /// listing on screen (of this same directory) until the new one completes.
     pub(super) fn start_listing(&mut self, directory: PathInfo, staged: bool) {
         self.directory = Some(directory);
         self.loading = true;
@@ -139,11 +111,8 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
-    /// Append a streamed batch (directory entries or search results) in read
-    /// order so partial results are visible immediately. The visibility
-    /// predicate is applied per batch so mid-stream rendering honors it; the
-    /// final ordering is applied once by `finalize_listing`. A staged load
-    /// shows nothing until it completes, so its batches only accumulate.
+    /// Append a streamed batch in read order, filtered; `finalize_listing`
+    /// sorts it. A staged load's batches only accumulate.
     pub(super) fn append(&mut self, items: &[PathInfo]) {
         if let Some(staged) = &mut self.staged {
             staged.extend_from_slice(items);
@@ -161,8 +130,6 @@ impl DirectoryContent {
     }
 
     /// Apply a listing-mode transition (see `ListingMode::transition`).
-    /// Leaving search mode drops the search root, which doubles as
-    /// display-affecting state for the relative-path rendering.
     pub(super) fn set_mode(&mut self, mode: ListingMode) {
         if self.mode == mode {
             return;
@@ -173,19 +140,11 @@ impl DirectoryContent {
             self.search_root = None;
         }
         if mode == ListingMode::Normal {
-            // Entering the plain listing from a search or the bookmarks view,
-            // whose entries are of another root and describe nothing in this
-            // directory. The refresh that follows would otherwise stage onto
-            // them, leaving them on screen as this directory's own, and
-            // rendered as bare names now that the search root is gone.
+            // The entries are of another root; a refresh must not stage onto them.
             self.items.clear();
             self.items_sorted.clear();
         } else {
-            // A load cancelled mid-stream never finalizes, so leaving the
-            // plain-listing flow must clear the loading flag; a stale value
-            // would let late batches through the table's accept guard. Its
-            // staged entries go with it: nothing will ever swap them in, and
-            // the next load must not inherit them.
+            // A load cancelled mid-stream never finalizes.
             self.loading = false;
             self.staged = None;
         }
@@ -196,14 +155,11 @@ impl DirectoryContent {
         self.mode
     }
 
-    /// The visibility predicate for the current mode, with per-entry state
-    /// (lowercased filter, show-hidden setting) computed once. Both `append`
-    /// and `sort` derive visibility from this so their semantics cannot drift.
+    /// The visibility predicate for the current mode, shared by `append` and
+    /// `sort`.
     fn visibility(&self) -> Visibility {
         Visibility {
-            // Search results bypass the show-hidden setting: the user
-            // explicitly asked for name matches, so a hidden match must not
-            // be dropped (neither mid-stream nor on a later re-sort).
+            // Search results bypass the show-hidden setting.
             show_hidden: self.show_hidden() || self.is_searching(),
             filter_lowercase: self.filter.to_lowercase(),
             is_bookmarks: self.is_showing_bookmarks(),
@@ -211,13 +167,8 @@ impl DirectoryContent {
         }
     }
 
-    /// Finish a streamed load: sort the entries accumulated (and already
-    /// filtered) by `append` once, in place. Visibility changes mid-stream go
-    /// through `sort`, which re-derives from the unfiltered items.
-    ///
-    /// A staged load replaces the listing here instead, in one step: its
-    /// entries skipped `append`'s per-batch filter, so `sort` re-derives
-    /// visibility from them.
+    /// Finish a streamed load: sort the entries `append` accumulated, or swap
+    /// in a staged load's entries and filter them.
     pub(super) fn finalize_listing(
         &mut self,
         sort_column: SortColumn,
@@ -238,8 +189,7 @@ impl DirectoryContent {
         self.loading
     }
 
-    /// Whether the load in flight is staged, and so has left the listing that
-    /// is on screen live for its whole duration.
+    /// Whether the load in flight is staged.
     pub(super) fn is_staged(&self) -> bool {
         self.staged.is_some()
     }
@@ -250,17 +200,9 @@ impl DirectoryContent {
         self.sorted_by = None;
     }
 
-    /// Filter the listing by `filter`, sorted by `sort_column`.
-    ///
-    /// A filter that holds the one applied (typing onto it) only hides more
-    /// entries, so they are dropped from the sorted listing in place rather
-    /// than filtered and sorted again from every entry, which on a large
-    /// directory costs a sort per keystroke. That holds because the filter is
-    /// a case-insensitive substring test on the displayed name (pinned by
-    /// `filter_agrees_with_a_substring_search_of_the_displayed_name`): a name
-    /// holding the longer text holds the shorter. A stable sort of a subset
-    /// keeps the order the subset had in the whole, so what remains is what a
-    /// full sort would give.
+    /// Filter the listing by `filter`, sorted by `sort_column`. A filter that
+    /// extends the one applied narrows the sorted listing in place: the filter
+    /// is a substring test, so a name holding the longer text holds the shorter.
     pub(super) fn apply_filter(
         &mut self,
         filter: String,
@@ -294,9 +236,7 @@ impl DirectoryContent {
         self.sorted_by = None;
     }
 
-    /// Sort and filter items into `items_sorted`. Visibility is re-derived
-    /// from the unfiltered `items`, so a toggled show-hidden setting or filter
-    /// change takes effect on the next sort.
+    /// Sort and filter the unfiltered `items` into `items_sorted`.
     pub(super) fn sort(&mut self, sort_column: SortColumn, sort_direction: SortDirection) {
         let visibility = self.visibility();
         self.items_sorted = self
@@ -310,27 +250,16 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
-    /// Sort `items_sorted` without re-deriving visibility: `append` applies
-    /// the same predicate, so finalizing a stream can skip the re-filter and
-    /// re-clone of every entry.
+    /// Sort `items_sorted` without re-deriving visibility.
     fn sort_in_place(&mut self, sort_column: SortColumn, sort_direction: SortDirection) {
-        // The Name column shows the path relative to the search root while
-        // searching, not the entry's own name. Order by that same string, or the
-        // listing looks unsorted (`z/apple.txt` above `a/zebra.txt`). The filter
-        // matches the displayed name for the same reason. Read before the sort
-        // borrows `items_sorted` mutably.
+        // Order by the displayed name (the relative path while searching).
         let search_root = self.search_root.clone();
         let natural = self.name_order.natural;
         let name_key =
             |item: &PathInfo| name_key(&displayed_name_stem(item, search_root.as_deref()), natural);
-        // Every column sorts by a key built once per entry rather than by a
-        // comparator: the name key allocates to build, and a comparator builds
-        // one per side of every comparison, which a listing of any size pays
-        // n log n times over (the filter re-sorts on every keystroke). The
-        // Modified and Size keys carry the name too, so a tie is broken by
-        // name in ascending order whichever way the column points, not left in
-        // the order the entries arrived. Every sort here is stable, as the
-        // directories-first pass below requires.
+        // Keys are built once per entry because the name key allocates. Ties
+        // break by ascending name. Every sort is stable, as the
+        // directories-first pass requires.
         let descending = sort_direction == SortDirection::Descending;
         match (sort_column, descending) {
             (SortColumn::Name, true) => self
@@ -366,9 +295,7 @@ impl DirectoryContent {
         self.revision += 1;
     }
 
-    /// Replaces the search results with the same ones read again. The
-    /// visible listing is left for `sort` to rebuild, so the cursor and the
-    /// marks can be read from it first.
+    /// Replaces the search results; the visible listing is left for `sort`.
     pub(super) fn replace_search_results(&mut self, items: Vec<PathInfo>) {
         self.items = items;
         self.sorted_by = None;
@@ -388,11 +315,8 @@ impl DirectoryContent {
         self.search_root.as_deref()
     }
 
-    /// Replace the listing with the given bookmarks (one synchronous batch,
-    /// unlike streamed search results). The current `directory` is left
-    /// untouched so breadcrumbs/CWD restore cleanly when the view is dismissed.
-    /// The visible listing is left for `sort` to rebuild, so a reload can read
-    /// the cursor and the marks from it first.
+    /// Replace the listing with the given bookmarks, keeping `directory`. The
+    /// visible listing is left for `sort`.
     pub(super) fn set_bookmarks(&mut self, items: Vec<PathInfo>) {
         self.set_mode(ListingMode::Bookmarks);
         self.filter.clear();
@@ -409,14 +333,8 @@ impl DirectoryContent {
         self.items_sorted.iter().position(|p| p.is_same_inode(path))
     }
 
-    /// The indices `paths` now occupy, for carrying marks across a reorder.
-    /// One pass over the listing rather than a scan per path, so marking every
-    /// result of a large search stays linear. An entry the reorder dropped
-    /// (filtered out, or gone from the listing) simply has no index.
-    ///
-    /// By path, not inode: two hard links share a device and inode, so inode
-    /// identity would spread one mark onto every name the file has. A path
-    /// appears at most once, which is the identity a mark needs.
+    /// The indices `paths` now occupy, for carrying marks across a reorder. By
+    /// path, not inode: hard links share an inode.
     pub(super) fn find_all_by_path(&self, paths: &[PathInfo]) -> Vec<usize> {
         let wanted: HashSet<&Path> = paths.iter().map(PathInfo::as_path).collect();
         self.items_sorted
@@ -434,13 +352,9 @@ impl DirectoryContent {
     }
 }
 
-/// The name the table shows in its name column: the entry's own name in a plain
-/// listing, the path relative to the search root while searching, the bookmark
-/// name in the bookmarks view. Directories outside that view carry a trailing
-/// separator.
-///
-/// Shared by the name column and the filter so the two cannot disagree about
-/// what a row is called. Borrowed where possible: both run over every item.
+/// The name column's text: the entry's name, the path relative to the search
+/// root while searching, or the bookmark name. Directories outside the
+/// bookmarks view carry a trailing separator. The filter matches it too.
 pub(super) fn displayed_name<'a>(
     item: &'a PathInfo,
     is_bookmarks: bool,
@@ -454,10 +368,7 @@ pub(super) fn displayed_name<'a>(
     }
 }
 
-/// `displayed_name` without the trailing separator, which the filter matches
-/// by rule instead of by building the joined string for every directory entry.
-/// A search root is only set in search mode, so it never applies to the
-/// bookmarks view.
+/// `displayed_name` without the trailing separator.
 fn displayed_name_stem<'a>(item: &'a PathInfo, search_root: Option<&Path>) -> Cow<'a, str> {
     match search_root {
         Some(root) => Cow::Owned(visible_path(
@@ -472,13 +383,11 @@ fn displays_trailing_separator(item: &PathInfo, is_bookmarks: bool) -> bool {
     !is_bookmarks && item.is_directory()
 }
 
-/// Snapshot of the visibility predicate (see `DirectoryContent::visibility`).
+/// Snapshot of the visibility predicate.
 struct Visibility {
     show_hidden: bool,
     filter_lowercase: String,
-    /// The name column's inputs, so the filter matches the displayed name.
-    /// Owned rather than borrowed from `DirectoryContent`, which is mutated
-    /// while the predicate is live.
+    /// Owned: `DirectoryContent` is mutated while the predicate is live.
     is_bookmarks: bool,
     search_root: Option<PathBuf>,
 }
@@ -488,14 +397,8 @@ impl Visibility {
         (self.show_hidden || !path.is_hidden()) && self.matches_filter(path)
     }
 
-    /// Case-insensitive substring match on the displayed name, so the filter
-    /// acts on what the row says (see `displayed_name`).
-    ///
-    /// Matched against the stem plus a rule for the trailing separator rather
-    /// than the joined name, which would allocate for every directory entry on
-    /// every keystroke. A match reaching the separator has to end there, so the
-    /// separator is the filter's last character and the rest is a suffix of the
-    /// stem.
+    /// Case-insensitive substring match on the displayed name, matched against
+    /// the stem plus a rule for the trailing separator to avoid allocating.
     fn matches_filter(&self, path: &PathInfo) -> bool {
         if self.filter_lowercase.is_empty() {
             return true;
@@ -511,8 +414,7 @@ impl Visibility {
     }
 }
 
-/// Case-insensitive `str::ends_with`. `suffix_lowercase` must already be
-/// lowercased.
+/// Case-insensitive `str::ends_with`; `suffix_lowercase` must be lowercase.
 fn ends_with_ignore_case(haystack: &str, suffix_lowercase: &str) -> bool {
     if suffix_lowercase.is_ascii() && haystack.is_ascii() {
         let suffix = suffix_lowercase.as_bytes();
@@ -530,8 +432,7 @@ mod tests {
     use super::*;
     use crate::{app::config::Config, test_support::TempDir};
 
-    /// A listing built with the shipped settings, so a test states only the
-    /// setting it is about. The app builds one from the config it loaded.
+    /// A listing built with the shipped settings.
     fn content() -> DirectoryContent {
         Config::init_test();
         DirectoryContent::new(Config::global().ui)
@@ -554,15 +455,12 @@ mod tests {
             .collect()
     }
 
-    // Linux only: the fixture needs a directory "Apple" and a file "apple" as
-    // distinct entries, which a case-insensitive filesystem cannot represent.
-    // The comparison under test is pure and platform-independent.
+    // Linux only: needs "Apple" and "apple" as distinct entries.
     #[cfg(target_os = "linux")]
     #[test]
     fn sort_by_name_ascending_groups_directories_first_then_case_insensitive() {
         Config::init_test();
         let fx = TempDir::new("content");
-        // Intentionally unsorted input order.
         let items = vec![
             fx.file("Banana", 1),
             fx.subdirectory("Apricot"),
@@ -574,16 +472,13 @@ mod tests {
         content.set_items(fx.directory(), items);
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
-        // Directories first (config default sort_directories_first = true),
-        // then files; comparison is case-insensitive and ignores a leading dot
-        // (".secret" sorts as "secret").
         assert_eq!(
             names(&content),
             vec!["Apple", "Apricot", "apple", "Banana", ".secret"]
         );
     }
 
-    // Linux only, for the same case-only fixture pair as the ascending case.
+    // Linux only: needs "Apple" and "apple" as distinct entries.
     #[cfg(target_os = "linux")]
     #[test]
     fn sort_by_name_descending_reverses_within_the_directory_grouping() {
@@ -599,8 +494,6 @@ mod tests {
         content.set_items(fx.directory(), items);
         content.sort(SortColumn::Name, SortDirection::Descending);
 
-        // Descending reverses the name order, but directories are still grouped
-        // ahead of files (the directories-first pass runs last and is stable).
         assert_eq!(names(&content), vec!["Apricot", "Apple", "Banana", "apple"]);
     }
 
@@ -623,8 +516,6 @@ mod tests {
         assert_eq!(names(&content), vec!["large", "medium", "small"]);
     }
 
-    // The filter is stored as typed. Outside ASCII, only lowercasing it
-    // matches an uppercase filter against a name compared in lowercase.
     #[test_case("ap", &["Apple", "Apricot"] ; "lowercase")]
     #[test_case("AP", &["Apple", "Apricot"] ; "uppercase")]
     #[test_case("ÉQ", &["Équipe"] ; "uppercase outside ascii")]
@@ -684,8 +575,7 @@ mod tests {
 
         content.sort(SortColumn::Size, SortDirection::Descending);
 
-        // A directory's own size varies by filesystem, so only the entry that
-        // outweighs any empty directory has a fixed place: first.
+        // A directory's own size varies by filesystem.
         assert_eq!("large", names(&content)[0]);
     }
 
@@ -697,11 +587,9 @@ mod tests {
         let mut content = content();
         content.set_items(fx.directory(), items);
 
-        // Default config has show_hidden_files = true.
         content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(content.len(), 2);
 
-        // First toggle flips the runtime override to false.
         content.toggle_show_hidden();
         content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["visible"]);
@@ -722,8 +610,6 @@ mod tests {
         let r1 = content.revision();
         assert_ne!(r0, r1, "start_listing must bump the revision");
 
-        // An append adds entries after the last without moving any, which the
-        // view picks up from the length, so the cache it keys stays valid.
         content.append(&[fx.file("a", 1)]);
         let r2 = content.revision();
         assert_eq!(r1, r2, "append must leave the revision alone");
@@ -732,13 +618,12 @@ mod tests {
         let r3 = content.revision();
         assert_ne!(r2, r3, "finalize_listing (sort) must bump the revision");
 
-        // Pure reads must not bump it (cache stays valid while only scrolling).
         let _ = content.items_sorted();
         let _ = content.len();
         assert_eq!(r3, content.revision());
     }
 
-    // Linux only, for the same case-only fixture pair as the sort cases.
+    // Linux only: needs "Apple" and "apple" as distinct entries.
     #[cfg(target_os = "linux")]
     #[test]
     fn streamed_listing_matches_set_items_then_sort() {
@@ -751,12 +636,10 @@ mod tests {
             fx.subdirectory("Apple"),
         ];
 
-        // Reference: the one-shot path.
         let mut reference = content();
         reference.set_items(fx.directory(), items.clone());
         reference.sort(SortColumn::Name, SortDirection::Ascending);
 
-        // Streamed in two batches, then finalized once.
         let mut streamed = content();
         streamed.start_listing(fx.directory(), false);
         streamed.append(&items[..2]);
@@ -776,7 +659,6 @@ mod tests {
         assert!(content.is_loading());
 
         content.append(&items);
-        // Partial results are visible in read order before the final sort.
         assert_eq!(names(&content), vec!["c", "a", "b"]);
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
@@ -796,10 +678,6 @@ mod tests {
         content.start_listing(fx.directory(), true);
         content.append(&[fx.file("c", 1), fx.file("b", 1)]);
 
-        // The entries on screen are of this same directory and are still
-        // correct, so nothing changes until the load completes: neither the
-        // listing nor the revision the row-height cache keys on, which is what
-        // makes the frame identical and the terminal write nothing.
         assert_eq!(names(&content), vec!["a", "b"]);
         assert_eq!(revision, content.revision());
 
@@ -817,8 +695,6 @@ mod tests {
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
 
-        // Staged entries never reach `append`'s per-batch filter, so the swap
-        // is what has to apply it.
         content.start_listing(fx.directory(), true);
         content.append(&[fx.file("Apricot", 1), fx.file("Banana", 1)]);
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
@@ -826,10 +702,7 @@ mod tests {
         assert_eq!(names(&content), vec!["Apricot"]);
     }
 
-    // The directory sorts last by name, so grouping it first is the only thing
-    // that can put it at the top: a directory named ahead of the files would
-    // lead either way. The dot is trimmed per segment, so `.hidden` sorts as
-    // `hidden`.
+    // The directory sorts last by name, so only grouping puts it first.
     #[test_case(true, &["zdir", "afile", ".hidden"]   ; "directories are grouped first")]
     #[test_case(false, &["afile", ".hidden", "zdir"]  ; "one flat name order")]
     fn the_listing_obeys_the_settings_it_was_built_with(
@@ -838,8 +711,6 @@ mod tests {
     ) {
         Config::init_test();
         let fx = TempDir::new("content");
-        // Built with the settings rather than reading them from a global, so
-        // the same listing can be exercised both ways in one process.
         let mut content = DirectoryContent::new(ui(true, directories_first));
         content.set_items(
             fx.directory(),
@@ -949,11 +820,6 @@ mod tests {
         content.append(&[fx.nested("sub", "hit")]);
         assert_eq!(names(&content), vec!["hit"]);
 
-        // Esc leaves the search. Its results are of another root and describe
-        // nothing in this directory, and the refresh that follows stages onto
-        // whatever is here, so leaving them would show them as this
-        // directory's own entries, under bare names now that the search root
-        // is gone.
         content.set_mode(ListingMode::Normal);
         assert!(names(&content).is_empty());
     }
@@ -970,8 +836,6 @@ mod tests {
 
         content.set_mode(mode);
 
-        // Names are rendered relative to the root, so a stale one would show
-        // the next listing's entries as paths from wherever the search ran.
         assert_eq!(None, content.search_root());
     }
 
@@ -986,8 +850,6 @@ mod tests {
         content.start_search();
         content.append(&[fx.file("hit", 1)]);
 
-        // The search has its own query; a filter left from the directory
-        // would hide what it found.
         assert_eq!(names(&content), vec!["hit"]);
     }
 
@@ -1018,8 +880,6 @@ mod tests {
         assert!(!content.is_loading());
         content.append(&[fx.file("hit", 1)]);
 
-        // A late completion of the abandoned load must not swap its directory
-        // entries into the search results.
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["hit"]);
     }
@@ -1038,7 +898,6 @@ mod tests {
         content.start_listing(fx.directory(), false);
 
         content.append(&items);
-        // Non-matching entries must not flash into view mid-stream.
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
@@ -1056,7 +915,6 @@ mod tests {
         content.start_listing(fx.directory(), false);
 
         content.append(&items);
-        // Hidden entries must not flash into view mid-stream.
         assert_eq!(names(&content), vec!["visible"]);
 
         content.finalize_listing(SortColumn::Name, SortDirection::Ascending);
@@ -1073,11 +931,9 @@ mod tests {
         content.toggle_show_hidden();
         content.start_search();
 
-        // A search explicitly matched these names, so hidden results are kept.
         content.append(&[fx.file(".hidden", 1), fx.file("visible", 1)]);
         assert_eq!(names(&content), vec![".hidden", "visible"]);
 
-        // Re-sorting search results must not drop hidden matches either.
         content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec![".hidden", "visible"]);
     }
@@ -1090,8 +946,6 @@ mod tests {
         content.start_listing(fx.directory(), false);
         content.append(&[fx.file("Banana", 1), fx.file("Apple", 1)]);
 
-        // A filter arrives mid-stream; `sort` re-derives from the unfiltered
-        // items, after which finalize only has to order the survivors.
         content.set_filter("ap".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
         content.append(&[fx.file("Apricot", 1), fx.file("Cherry", 1)]);
@@ -1100,8 +954,7 @@ mod tests {
         assert_eq!(names(&content), vec!["Apple", "Apricot"]);
     }
 
-    /// Typing onto a filter narrows the listing in place; every step has to
-    /// equal filtering and sorting the whole listing afresh, under each sort.
+    /// Every narrowing step equals filtering and sorting afresh.
     #[test]
     fn a_narrowed_filter_matches_a_fresh_filter_and_sort() {
         Config::init_test();
@@ -1138,10 +991,8 @@ mod tests {
         }
     }
 
-    /// The narrowing works from the listing shown rather than from every
-    /// entry, which is what saves the sort. Shown by a listing reordered
-    /// behind the content's back: narrowing keeps that order, a widened or
-    /// replaced filter sorts again.
+    /// A listing reordered behind the content's back: narrowing keeps that
+    /// order, a widened or replaced filter sorts again.
     #[test]
     fn only_a_filter_holding_the_last_one_narrows_the_shown_listing() {
         Config::init_test();
@@ -1161,14 +1012,11 @@ mod tests {
         content.apply_filter("b".to_string(), column, direction);
         assert_eq!(vec!["ab", "abc", "b"], names(&content));
 
-        // Asked for another order than the listing is in: sorted again.
         content.items_sorted.reverse();
         content.apply_filter("b".to_string(), column, SortDirection::Descending);
         assert_eq!(vec!["b", "abc", "ab"], names(&content));
     }
 
-    /// A finished stream is sorted, so it narrows in place; entries appended
-    /// since the last sort are in read order, so the listing sorts again.
     #[test]
     fn a_listing_narrows_in_place_only_while_it_is_sorted() {
         Config::init_test();
@@ -1188,9 +1036,6 @@ mod tests {
         assert_eq!(vec!["ab", "abc"], names(&content));
     }
 
-    /// `matches_filter` avoids building the displayed name by special-casing
-    /// the trailing separator, so it must agree exactly with a plain substring
-    /// search of that name, in every listing mode.
     #[test]
     fn filter_agrees_with_a_substring_search_of_the_displayed_name() {
         Config::init_test();
@@ -1224,7 +1069,6 @@ mod tests {
             "ÉQUIPE/",
             "z",
         ];
-        // Normal, searching from the fixture root, and bookmarks.
         let modes = [
             (false, None),
             (false, Some(fx.path().to_path_buf())),
@@ -1255,9 +1099,6 @@ mod tests {
         }
     }
 
-    /// The name column and the filter both read `displayed_name`, so the
-    /// property test above cannot catch a wrong string on its own: pin the
-    /// three modes here.
     #[test]
     fn displayed_name_per_listing_mode() {
         Config::init_test();
@@ -1279,11 +1120,6 @@ mod tests {
         assert_eq!("inner.txt", displayed_name(&nested, true, None));
     }
 
-    /// Search rows render the path relative to the search root, so the filter
-    /// has to reach the directory part, not just the basename. The property test
-    /// above builds its `Visibility` by hand, so this and
-    /// `filter_finds_no_separator_in_bookmark_rows` are what pin `visibility()`
-    /// threading the mode through from the content's own state.
     #[test]
     fn filter_matches_the_relative_path_of_search_results() {
         Config::init_test();
@@ -1298,8 +1134,6 @@ mod tests {
         content.start_search();
         content.append(&items);
 
-        // "reports/" reaches the directory itself through its trailing
-        // separator, and the nested file through its rendered path.
         content.set_filter("reports/".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
         assert_eq!(names(&content), vec!["reports", "inner.txt"]);
@@ -1310,8 +1144,6 @@ mod tests {
         assert_eq!(names(&content), vec!["inner.txt"]);
     }
 
-    /// A search result shows its path below the root, which is spelled out
-    /// the same way as a plain listing's name is.
     #[test]
     fn a_search_result_spells_out_a_disguising_name() {
         let fx = TempDir::new("content");
@@ -1322,8 +1154,6 @@ mod tests {
         assert_eq!("sub/a\\u{202e}b", name);
     }
 
-    /// Bookmark rows render bare names, so there is no trailing separator for
-    /// a filter to match.
     #[test]
     fn filter_finds_no_separator_in_bookmark_rows() {
         Config::init_test();

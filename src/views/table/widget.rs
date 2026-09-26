@@ -42,9 +42,8 @@ pub(super) fn table_widget<'a>(
         .style(theme.table.body())
 }
 
-/// The headers of the Name, Modified and Size columns. Each names its sort key
-/// in brackets (`[N]ame`) while that key's first binding is the column's own
-/// initial, and is plain otherwise, so a rebound key is not misreported.
+/// The Name, Modified and Size headers. Each brackets its sort key (`[N]ame`)
+/// only while that key's first binding is the column's initial.
 pub(super) fn header_labels(keybindings: &KeyBindings) -> [String; 3] {
     [
         ("Name", Action::SortByName),
@@ -97,7 +96,6 @@ fn header_cell_widget<'a>(
 ) -> Cell<'a> {
     let is_sorted = sort_column == column;
 
-    // Add direction indicator if this column is sorted
     let text = if is_sorted {
         match sort_direction {
             SortDirection::Ascending => format!("{text}⌃"),
@@ -107,7 +105,6 @@ fn header_cell_widget<'a>(
         text.into()
     };
 
-    // Apply bold styling if this is the sorted column
     let label = if is_sorted {
         text.bold()
     } else {
@@ -172,10 +169,8 @@ pub(super) fn row_widget_and_height<'a>(
     (row, height)
 }
 
-/// The wrapped name-column lines for an item, at most `max_lines` of them. A
-/// row taller than the viewport is never drawn: ratatui scrolls past a selected
-/// row that cannot fit and renders no rows at all. Every line but the last ends
-/// in an ellipsis, so the cut keeps the marker that the name continues.
+/// The wrapped name-column lines for an item, at most `max_lines` of them:
+/// ratatui renders no rows at all for a selected row taller than the viewport.
 fn name_lines(
     name_column_width: u16,
     max_lines: usize,
@@ -189,9 +184,7 @@ fn name_lines(
     lines
 }
 
-/// The rendered height of an item's row: the number of lines `name_lines`
-/// returns, counted without building them, so it can be computed for every
-/// item to drive the scroll math without building all the `Row` widgets.
+/// The rendered height of an item's row, counted without building its lines.
 pub(super) fn item_height(
     name_column_width: u16,
     max_lines: usize,
@@ -230,13 +223,10 @@ mod tests {
         );
     }
 
-    // `item_height` must always agree with the height `row_widget_and_height`
-    // actually renders, since the windowing scroll math relies on it.
     #[test_case("short.txt", 40, 10, None ; "fits on one line")]
     #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 10, None ; "wraps")]
     #[test_case("中文文件名称非常长非常长非常长.txt", 12, 10, None ; "wide chars")]
     #[test_case("a_very_long_file_name_that_must_wrap_across_several_lines.txt", 20, 2, None ; "capped at the viewport")]
-    // Rendered as `sub/name.txt`, which wraps where the bare name would not.
     #[test_case("name.txt", 10, 10, Some("/root") ; "a search result measured by its relative path")]
     fn item_height_matches_rendered_row_height(
         name: &str,

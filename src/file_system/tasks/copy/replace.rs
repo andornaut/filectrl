@@ -16,16 +16,11 @@ use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-/// Copies the top-level entry `at` names over the entry `granted` describes,
-/// which a granted overwrite lets it replace, whole or not at all.
+/// Copies the top-level entry `at` names over the entry `granted` describes, whole or not at all.
 ///
-/// The copy is made in a directory of its own beside the destination
-/// (`Staging`) and renamed over the name only once it is complete, and only
-/// if `granted` still holds the name (`land`). The entry granted is never
-/// removed before its replacement exists, so a copy that fails, is cancelled,
-/// or finds the name changed leaves it as it was, which a failure says, and
-/// the staging directory is removed with what the copy made in it
-/// (`clear_staging`). Returns `false` only when cancelled.
+/// The copy is written into a staging directory beside the destination and renamed over the name
+/// only once complete and only if `granted` still holds it (`land`). On failure or cancel the
+/// granted entry is left as it was. Returns `false` only when cancelled.
 pub(super) fn replace_entry(
     context: &mut CopyContext<'_>,
     granted: Seen,
@@ -49,15 +44,15 @@ pub(super) fn replace_entry(
     }
 }
 
-/// What a granted overwrite replaces an entry with: the entry `granted`
-/// describes, and the directory its replacement is written into.
+/// The entry a granted overwrite replaces, and the staging directory its replacement is written
+/// into.
 pub(super) struct Replacement<'a> {
     pub(super) granted: Seen,
     pub(super) staging: Staging<'a>,
 }
 
-/// `replace_entry` once its staging directory is made: copies the entry into
-/// it, lands the copy when it is whole, and removes the staging directory.
+/// Copies the entry into an already-made staging directory, lands it when whole, and removes the
+/// staging directory.
 pub(super) fn replace_through(
     context: &mut CopyContext<'_>,
     replacement: Replacement<'_>,
@@ -84,13 +79,11 @@ pub(super) fn replace_through(
     for error in &mut context.errors[errors_before..] {
         error.push_str(&kept);
     }
-    // A staged copy is never skipped: a name taken in its staging directory
-    // is refused (`resolve_raced`), so only an error or a cancel stops it.
+    // A staged copy is never skipped: a name taken in staging is refused (`resolve_raced`).
     if finished && context.errors.len() == errors_before {
         match land(context, &staging, granted, at, paths) {
             Ok(true) => {
                 context.wrote = true;
-                // Landed, so nothing of it is left in staging to remove.
                 staging.staged = None;
             }
             Ok(false) => {}
@@ -101,8 +94,7 @@ pub(super) fn replace_through(
     finished
 }
 
-/// The refusal of an entry whose staging directory holds something the copy
-/// did not put there, which is neither landed nor removed.
+/// The refusal for a staging directory holding something the copy did not put there.
 pub(super) fn staging_changed(is_move: bool, paths: &Paths) -> String {
     format!(
         "Cannot {} {} to {}: its staging directory was changed",
@@ -112,9 +104,7 @@ pub(super) fn staging_changed(is_move: bool, paths: &Paths) -> String {
     )
 }
 
-/// Removes `staging`, and when it cannot be, says where it was left: in the
-/// log and as a warning, since a hidden directory holding a partial copy is
-/// otherwise found only by chance.
+/// Removes `staging`, warning with its path when it cannot be removed.
 pub(super) fn clear_staging(active: &ActiveTask, staging: Staging<'_>) {
     let path = staging.path.clone();
     if let Err(error) = staging.remove() {
@@ -124,7 +114,6 @@ pub(super) fn clear_staging(active: &ActiveTask, staging: Staging<'_>) {
     }
 }
 
-/// What a staging directory at `path` that could not be removed says.
 pub(super) fn staging_left_behind(path: &Path, error: &std::io::Error) -> String {
     format!(
         "Failed to remove the staging directory {}: {error}",
@@ -132,15 +121,10 @@ pub(super) fn staging_left_behind(path: &Path, error: &std::io::Error) -> String
     )
 }
 
-/// Renames the replacement staged under `at`'s name in `staging` onto that
-/// name in the destination: over the entry `granted`, if it still holds the
-/// name (`still_holds`), and without replacing anything if the name is free
-/// now, so an entry that took it since is refused rather than replaced.
-/// Only the entry the copy made is landed: another at its name in the staging
-/// directory is refused. Another program replacing the entry between the
-/// check and the rename is not detected. `Ok(false)` when a standing "skip
-/// all" skipped a name taken since (`landed`); the error is the whole message
-/// for the task's errors.
+/// Renames the staged replacement onto `at`'s name in the destination: over `granted` if it still
+/// holds the name (`still_holds`), otherwise only if the name is free. Only the entry the copy made
+/// is landed. A replacement between the check and the rename is not detected. `Ok(false)` when a
+/// standing "skip all" skipped a raced name.
 pub(super) fn land(
     context: &mut CopyContext<'_>,
     staging: &Staging<'_>,
@@ -164,9 +148,8 @@ pub(super) fn land(
     landed(context, paths, replaces, renamed)
 }
 
-/// What the rename that lands a replacement (`renamed`) means
-/// (`conflicts::rename_failure`): `Ok(false)` when a standing "skip all"
-/// skipped a name taken since the check.
+/// Interprets the landing rename's result (`conflicts::rename_failure`): `Ok(false)` when a
+/// standing "skip all" skipped a raced name.
 pub(super) fn landed(
     context: &mut CopyContext<'_>,
     paths: &Paths,
@@ -186,10 +169,9 @@ pub(super) fn landed(
     }
 }
 
-/// Renames the entry `name` in `staging` to `name` in `dst`: over what holds
-/// it when `replaces`, with a plain `renameat`, which works where `renameat2`
-/// is missing, and otherwise without replacing anything (`AlreadyExists` when
-/// the name is taken).
+/// Renames `name` in `staging` to `name` in `dst`: over the existing entry when `replaces` (plain
+/// `renameat`, which works where `renameat2` is missing), otherwise without replacing
+/// (`AlreadyExists`).
 pub(super) fn rename_staged(
     replaces: bool,
     staging: &File,
@@ -203,13 +185,11 @@ pub(super) fn rename_staged(
     }
 }
 
-/// What every staging directory's name starts with.
 pub(in crate::file_system::tasks) const STAGING_PREFIX: &str = ".filectrl-";
 
-/// How many names `staging_names` offers before giving up.
 pub(super) const STAGING_ATTEMPTS: u64 = 16;
 
-/// Names for a staging directory, hidden and unique to this process and call.
+/// Hidden staging directory names, unique to this process and call.
 pub(super) fn staging_names() -> impl Iterator<Item = CString> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let pid = std::process::id();
@@ -219,21 +199,15 @@ pub(super) fn staging_names() -> impl Iterator<Item = CString> {
     })
 }
 
-/// A directory of its own beside a destination, owner-only, which a
-/// replacement named `entry` is written into before it takes the
-/// destination's name. It is created with the first of the names offered
-/// that is free, so an entry that already has one is never touched, and it is
-/// removed (`remove`, or when dropped) with the entry the copy made in it
-/// (`staged`) if that is still there: through its own handle, and then by
-/// name, which only removes an empty directory and only while the name still
-/// holds this one (`unlink_all`).
+/// An owner-only directory beside a destination that a replacement named `entry` is written into
+/// before it takes the destination's name. Created with the first free name offered. On `remove` or
+/// drop, it is removed with the entry the copy made in it (`staged`), by name only while the name
+/// still holds this directory (`unlink_all`).
 pub(super) struct Staging<'a> {
     pub(super) parent: &'a File,
     pub(super) name: CString,
-    /// Where it is, for what is made by path and for a warning.
     pub(super) path: PathBuf,
     pub(super) dir: File,
-    /// Which directory `dir` is.
     pub(super) id: EntryId,
     pub(super) entry: CString,
     /// The entry the copy created at `entry`, the only one landed or removed.
@@ -242,8 +216,7 @@ pub(super) struct Staging<'a> {
 }
 
 impl<'a> Staging<'a> {
-    /// Creates a staging directory in `parent`, which is at `parent_path`.
-    /// Having no free name is filectrl's own refusal, an error with no errno.
+    /// Creates a staging directory in `parent`. Having no free name is an error with no errno.
     pub(super) fn create(
         parent: &'a File,
         parent_path: &Path,
@@ -265,10 +238,8 @@ impl<'a> Staging<'a> {
         ))
     }
 
-    /// Takes the directory just made at `name` in `parent` (at `path`) as the
-    /// staging directory (`open_owned`). When it cannot be opened, whatever
-    /// holds the name is removed if it is an empty directory, which anyone who
-    /// can write `parent` could remove as well, and otherwise left where it is.
+    /// Takes the directory just made at `name` as the staging directory (`open_owned`). When it
+    /// cannot be opened, an empty directory at the name is removed; anything else is left.
     pub(super) fn adopt(
         parent: &'a File,
         name: CString,
@@ -293,21 +264,17 @@ impl<'a> Staging<'a> {
         }
     }
 
-    /// Which entry holds `entry` in the staging directory now, if any.
     pub(super) fn holds_staged(&self) -> Option<EntryId> {
         EntryId::at(&self.dir, &self.entry).ok()
     }
 
-    /// Removes the staging directory, with its entry if that is still there.
     pub(super) fn remove(mut self) -> std::io::Result<()> {
         self.removed = true;
         self.unlink_all()
     }
 
-    /// Unlinks the entry the copy made, if it still holds its name, through
-    /// the directory's own handle, then the directory by name, which only
-    /// succeeds when it is empty, and only while the name still holds this
-    /// directory: another swapped in at it is left alone.
+    /// Unlinks the staged entry if it still holds its name, then the directory by name, only while
+    /// the name still holds this directory.
     pub(super) fn unlink_all(&self) -> std::io::Result<()> {
         if self.staged.is_some() && self.holds_staged() == self.staged {
             unlink_at(&self.dir, &self.entry, UnlinkatFlags::NoRemoveDir)?;
@@ -321,19 +288,10 @@ impl<'a> Staging<'a> {
     }
 }
 
-/// Opens the directory `name` just created in `parent`, at `path`, without
-/// following a symlink there, and gives it owner access when a umask
-/// (`0o277`) or a default ACL took that away: without it nothing could be
-/// written into it. Returns it and which directory it is. It is not checked to
-/// be the one just made: the copy acts in it only on the entry it creates
-/// there, by identity (`land`, `unlink_all`), so a directory another user
-/// swaps in at the name loses nothing but, at most, the owner access given
-/// to it. One left without owner read (a umask of `0o477`) cannot be opened,
-/// and the replacement fails. A mount that refuses a mode change to the user
-/// who created the directory (vfat or exfat without `uid=`, CIFS without unix
-/// extensions) has no per-user permissions to keep, so that refusal is only
-/// logged: a directory that really cannot be written still fails the write
-/// into it.
+/// Opens the directory `name` just created in `parent` without following a symlink, adding owner
+/// access a umask or default ACL removed. It is not checked to be the one just made: the copy only
+/// acts on the entry it creates there, by identity. A refused mode change (vfat or exfat without
+/// `uid=`, CIFS without unix extensions) is only logged.
 pub(super) fn open_owned(
     parent: &File,
     name: &CStr,
@@ -356,9 +314,8 @@ pub(super) fn open_owned(
 }
 
 impl Drop for Staging<'_> {
-    /// Best effort, for a staging directory `remove` was not called on (an
-    /// unwinding test): a removal that fails leaves a hidden, owner-only
-    /// directory behind, and says where it is.
+    /// Best effort, for a staging directory `remove` was not called on; a failure is logged with
+    /// its path.
     fn drop(&mut self) {
         if self.removed {
             return;
@@ -369,22 +326,12 @@ impl Drop for Staging<'_> {
     }
 }
 
-/// Checks that the entry a granted overwrite names still holds the
-/// destination, then opens a regular-file source. Returns the task and what it
-/// found, or `None` when the task was finalized here and must not continue.
+/// Checks that the entry a granted overwrite names still holds the destination, then opens a
+/// regular-file source. `None` when the task was finalized here.
 ///
-/// The destination is checked first, so a copy that could never land opens
-/// nothing, and again just before the copy lands (`land`). A name found free
-/// is left for the copy to create, which refuses it if it is taken again by
-/// then. A failure here that leaves the entry granted at the name says so: a
-/// source that cannot be opened while the entry still holds the name, and a
-/// look at the name that fails. Only a non-directory source gets here with an
-/// overwrite: `validate_paths` refuses one for a directory.
-///
-/// Opening the source here means one that cannot be read (mode 000, or gone)
-/// fails the task with the destination untouched, and the copy then reads the
-/// handle that was checked rather than reopening the path. Other types are not
-/// opened: a FIFO would block, and a directory or symlink is not read as bytes.
+/// The destination is checked first so a copy that could never land opens nothing. The source is
+/// opened here so an unreadable one fails with the destination untouched and the copy reads the
+/// checked handle. Other types are not opened: a FIFO would block.
 pub(in crate::file_system::tasks) fn prepare_destination(
     active: ActiveTask,
     settings: CopySettings<'_>,

@@ -20,8 +20,6 @@ impl View for StatusView {
         };
         let (total, shown) = self.item_count();
         let widget = default_widget(directory, total, shown, self.selected.as_ref(), theme);
-        // The hint takes the right edge only where it leaves the fields most
-        // of the line.
         let hint_width = self.help_hint.cell_width();
         if hint_width == 0 || area.width < hint_width.saturating_mul(4) {
             widget.render(area, frame.buffer_mut());

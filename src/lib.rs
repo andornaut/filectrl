@@ -36,13 +36,10 @@ pub fn run(
     initial_directory: Option<&Path>,
     no_truecolor: bool,
 ) -> Result<()> {
-    // Configure logging with a default level before loading config, so that Info+ messages from the
-    // config initialization are logged
+    // A default level before the config loads, so its Info messages are logged.
     configure_logging();
 
-    // Validate the initial directory before entering raw mode so an invalid
-    // positional argument fails fast with a clean stderr message and a nonzero
-    // exit code, rather than silently opening the TUI in the current directory.
+    // Validated before raw mode, so a bad argument fails with a clean message.
     let initial_directory = initial_directory
         .map(validate_initial_directory)
         .transpose()?;
@@ -54,11 +51,8 @@ pub fn run(
         ls_colors: ls_colors.as_deref(),
     };
 
-    // Records would be drawn over the interface, or left on the screen before
-    // it starts, so they are kept only when stderr is redirected away from the
-    // terminal. The config's own level is not known until it loads, so loading
-    // is silenced too (a warning about `$LS_COLORS`, say), unless `$RUST_LOG`
-    // asks for the loader's records.
+    // Logs are kept only when stderr is not the terminal, where they would be
+    // drawn over the interface. Loading is silenced too unless `$RUST_LOG` is set.
     let stderr_is_terminal = std::io::stderr().is_terminal();
     if stderr_is_terminal && env::var(DEFAULT_FILTER_ENV).is_err() {
         log::set_max_level(LevelFilter::Off);
@@ -72,15 +66,11 @@ pub fn run(
     }
     Config::init(config);
 
-    // Install signal handlers before entering raw mode so that SIGTERM/SIGHUP
-    // cause a graceful shutdown (terminal restored) rather than leaving the
-    // shell in a broken state.
+    // Before raw mode, so a signal restores the terminal.
     install_signal_handlers().context("Failed to install the signal handlers")?;
 
-    // Checked after everything the user typed has been validated, so that a bad
-    // argument or config is reported before the environment is. Crossterm opens
-    // the controlling terminal itself, so without this a redirected stdout
-    // surfaces as a bare ENXIO that names nothing.
+    // After the user's input is validated. Without it a redirected stdout
+    // surfaces from crossterm as a bare ENXIO.
     if !stdout().is_terminal() {
         return Err(anyhow!("Cannot start: standard output is not a terminal"));
     }
@@ -93,8 +83,7 @@ pub fn print_keybindings(config_path: Option<PathBuf>, include_paths: &[PathBuf]
     let config = Config::load(RuntimeEnv::default(), config_path, include_paths)?;
     let bold = std::io::stdout().is_terminal();
     let text = views::keybindings_help_text(&config.keybindings, bold);
-    // Written rather than `print!`ed, which panics on a failed write (a full
-    // disk, a closed pipe), and `panic = "abort"` makes that an abort.
+    // `print!` panics on a failed write, which `panic = "abort"` makes an abort.
     let mut out = stdout().lock();
     out.write_all(text.as_bytes())
         .and_then(|()| out.flush())
@@ -114,8 +103,7 @@ fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
             quoted(&canonical)
         ));
     }
-    // A directory that cannot be listed would start the UI on an empty table
-    // with the reason only in an alert, where `ls` exits with it.
+    // Fail like `ls` rather than start on an empty table.
     fs::read_dir(&canonical)
         .map_err(|error| anyhow!("Failed to open {}: {error}", quoted(path)))?;
     Ok(canonical)
@@ -123,10 +111,9 @@ fn validate_initial_directory(path: &Path) -> Result<PathBuf> {
 
 fn apply_log_level(config: &Config) {
     if let Ok(level) = env::var(DEFAULT_FILTER_ENV) {
-        // RUST_LOG is set; env_logger already applied it in configure_logging()
+        // RUST_LOG is set; env_logger already applied it.
         info!("Log level set from environment variable: {DEFAULT_FILTER_ENV}={level}");
     } else {
-        // No env override; apply the level from the config file
         let level = config.log_level;
         log::set_max_level(level);
         info!("Log level set from config: {level:?}");
@@ -134,11 +121,9 @@ fn apply_log_level(config: &Config) {
 }
 
 fn configure_logging() {
-    // When $RUST_LOG is unset, set env_logger's internal filter to the most
-    // permissive level so that the level can later be raised above Info from the
-    // config file. env_logger's internal filter is fixed at init() and cannot be
-    // changed afterward, so gating is done solely through log::set_max_level().
-    // When $RUST_LOG is set, it takes precedence and env_logger applies it.
+    // Without $RUST_LOG, env_logger's filter (fixed at init) is left fully
+    // permissive so the config can raise the level; gating is done through
+    // `log::set_max_level`.
     Builder::from_env(Env::default().default_filter_or(LevelFilter::Trace.as_str()))
         .format(|buf, record| {
             let path = record.module_path().unwrap_or_default();
@@ -153,21 +138,16 @@ fn configure_logging() {
         })
         .init();
 
-    // Gate to Info for the pre-config phase so verbose internal messages don't
-    // appear before the configured level is applied by apply_log_level(). When
-    // $RUST_LOG is set, leave the level env_logger derived from it in place.
+    // Info until `apply_log_level` runs, unless $RUST_LOG set the level.
     if env::var(DEFAULT_FILTER_ENV).is_err() {
         log::set_max_level(LevelFilter::Info);
     }
 }
 
-/// Whether `c` would hide or disguise the text around it when shown: a control
-/// character, which a terminal runs as a command and the renderer drops; a bidi
-/// control, which reorders what is drawn after it, so `a\u{202e}txt.exe` reads
-/// as `aexe.txt`; a line or paragraph separator; or a character that draws
-/// nothing, so two different names look the same. The zero width joiner and
-/// non-joiner, variation selectors and tag characters are left alone, since
-/// scripts and emoji are spelled with them.
+/// Whether `c` would hide or disguise surrounding text when shown: a control
+/// character, a bidi control, a line or paragraph separator, or a character
+/// that draws nothing. ZWJ, ZWNJ, variation selectors and tag characters are
+/// allowed, since scripts and emoji need them.
 pub fn is_disguising(c: char) -> bool {
     c.is_control()
         || matches!(
@@ -186,11 +166,10 @@ pub fn is_disguising(c: char) -> bool {
                 | '\u{180e}'
                 | '\u{200b}'
                 | '\u{200e}'..='\u{200f}'
-                // Line and paragraph separators, then the bidi embeddings and
-                // overrides.
+                // Line and paragraph separators, bidi embeddings and overrides.
                 | '\u{2028}'..='\u{202e}'
                 | '\u{2060}'..='\u{206f}'
-                // Braille pattern blank, which draws as a space.
+                // Braille pattern blank draws as a space.
                 | '\u{2800}'
                 | '\u{3164}'
                 | '\u{feff}'
@@ -207,18 +186,15 @@ pub fn is_disguising(c: char) -> bool {
         )
 }
 
-/// `text` with every character `is_disguising` names spelled out as an escape,
-/// so it shows exactly what it holds. The one function every piece of text
-/// from outside filectrl passes through on its way to the screen or the log: a
-/// file name, a message naming one, a desktop entry's name. A newline is
-/// escaped too, so a name cannot forge a log record or a second line.
+/// `text` with every `is_disguising` character spelled as an escape. All
+/// external text shown on screen or logged passes through here. A newline is
+/// escaped too, so a name cannot forge a log line.
 pub fn visible(text: &str) -> Cow<'_, str> {
     escape_disguising(text, |_| false)
 }
 
-/// `visible` for text that need not be UTF-8, such as a file name: each byte
-/// that is not part of a valid sequence is spelled `\xNN`, so names that differ
-/// only in such bytes, or in a byte and U+FFFD, do not look the same.
+/// `visible` for text that need not be UTF-8: an invalid byte is spelled
+/// `\xNN`, so it does not look like U+FFFD.
 pub fn visible_os(text: &OsStr) -> Cow<'_, str> {
     let bytes = text.as_encoded_bytes();
     if let Ok(text) = std::str::from_utf8(bytes) {
@@ -234,10 +210,8 @@ pub fn visible_os(text: &OsStr) -> Cow<'_, str> {
     Cow::Owned(shown)
 }
 
-/// Case-insensitive `str::contains`, shared by search and the filter so both
-/// match the same text. The common all-ASCII case compares in place instead of
-/// allocating a lowercased copy of every entry name. `needle_lowercase` must
-/// already be lowercased.
+/// Case-insensitive `str::contains` shared by search and the filter, without
+/// allocating for ASCII. `needle_lowercase` must already be lowercased.
 pub fn contains_ignore_case(haystack: &str, needle_lowercase: &str) -> bool {
     if needle_lowercase.is_ascii() && haystack.is_ascii() {
         let needle = needle_lowercase.as_bytes();
@@ -250,9 +224,7 @@ pub fn contains_ignore_case(haystack: &str, needle_lowercase: &str) -> bool {
     haystack.to_lowercase().contains(needle_lowercase)
 }
 
-/// `visible` for text printed to the terminal outside the interface, which can
-/// carry a path from the command line, a symlink or a config file. A newline is
-/// kept, since usage text and some error messages span lines.
+/// `visible` for terminal output outside the interface. Newlines are kept.
 pub fn escape_for_terminal(text: &str) -> Cow<'_, str> {
     escape_disguising(text, |c| c == '\n')
 }
@@ -285,13 +257,11 @@ mod tests {
     fn validate_initial_directory_accepts_a_directory_as_its_canonical_path() {
         let dir = test_support::TempDir::new("initial_directory");
         std::fs::create_dir(dir.join("sub")).unwrap();
-        // Spelled with a `..` component, so only the canonicalized path equals
-        // the directory.
+        // Spelled with `..`, so only the canonicalized path equals the directory.
         let result = validate_initial_directory(&dir.join("sub").join("..")).unwrap();
         assert_eq!(dir.path().canonicalize().unwrap(), result);
     }
 
-    /// An attempt that the OS refused, so the message carries its cause.
     #[test]
     fn validate_initial_directory_rejects_a_nonexistent_path() {
         let path = env::temp_dir().join("filectrl-does-not-exist-xyz");
@@ -299,8 +269,6 @@ mod tests {
         assert!(error.starts_with("Failed to open "), "{error}");
     }
 
-    /// Refused by filectrl rather than by the OS, so the message gives its own
-    /// reason instead of an errno.
     #[test]
     fn validate_initial_directory_rejects_a_regular_file() {
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
@@ -315,11 +283,9 @@ mod tests {
         let dir = test_support::TempDir::new("lib_unlistable");
         let locked = dir.join("locked");
         std::fs::create_dir(&locked).unwrap();
-        // Search permission only, so `canonicalize` and `is_dir` succeed and
-        // only the listing is refused.
+        // Search permission only, so only the listing is refused.
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o100)).unwrap();
-        // Root lists a mode-100 directory anyway; probe rather than inspect
-        // the euid.
+        // Root can list it anyway, so probe.
         let is_unlistable = std::fs::read_dir(&locked).is_err();
 
         let result = validate_initial_directory(&locked);
@@ -336,8 +302,6 @@ mod tests {
         assert!(error.contains("Permission denied"), "{error}");
     }
 
-    /// A byte that is not UTF-8 is spelled out rather than replaced, so the
-    /// message names the path that was typed.
     #[test]
     fn validate_initial_directory_spells_out_a_byte_that_is_not_utf8() {
         use std::os::unix::ffi::OsStringExt;
@@ -349,8 +313,6 @@ mod tests {
         assert!(error.contains("filectrl-does-not-exist-\\xe9\""), "{error}");
     }
 
-    /// An empty positional would otherwise reach `canonicalize` and be reported
-    /// against a path that renders as nothing at all.
     #[test]
     fn validate_initial_directory_rejects_an_empty_path() {
         let error = validate_initial_directory(&PathBuf::new())

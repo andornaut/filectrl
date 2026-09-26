@@ -27,8 +27,7 @@ pub(super) fn default_widget<'a>(
     Paragraph::new(Line::from(spans)).style(theme.status.detail())
 }
 
-/// The directory's entry count, as `shown of total` while a filter or hidden
-/// entries leave some of them out of the table.
+/// The entry count, as `shown of total` when the table omits some.
 fn item_count(total: usize, shown: Option<usize>) -> String {
     match shown {
         Some(shown) if shown < total => format!("{shown} of {total}"),
@@ -53,8 +52,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
     spans.extend(to_entries(fields, default_style, label_style));
 }
 
-/// The type and a symlink's target come first: the line is clipped at the
-/// terminal's width, and they are what an 80-column terminal must still show.
+/// Type and symlink target come first, so an 80-column terminal still shows them.
 fn selected_fields(selected: &PathInfo, now: DateTime<Local>) -> Vec<(&'static str, String)> {
     let mut fields = vec![(" Type:", kind_field(selected))];
     fields.extend(target_field(selected));
@@ -68,7 +66,6 @@ fn selected_fields(selected: &PathInfo, now: DateTime<Local>) -> Vec<(&'static s
     fields
 }
 
-/// Read from the user and group databases, which can hold any text.
 fn account_fields(owner: Option<String>, group: Option<String>) -> Vec<(&'static str, String)> {
     let mut fields = Vec::new();
     if let Some(owner) = owner {
@@ -80,8 +77,6 @@ fn account_fields(owner: Option<String>, group: Option<String>) -> Vec<(&'static
     fields
 }
 
-/// Where a symlink points, escaped like any shown path, since a link's target
-/// can hold any bytes.
 fn target_field(selected: &PathInfo) -> Option<(&'static str, String)> {
     selected
         .symlink_target()
@@ -91,7 +86,6 @@ fn target_field(selected: &PathInfo) -> Option<(&'static str, String)> {
 fn kind_field(selected: &PathInfo) -> String {
     let mut kind = Vec::with_capacity(5); // Pre-allocate with reasonable capacity
 
-    // File type flags (mutually exclusive)
     if selected.is_block_device() {
         kind.push("Block");
     } else if selected.is_character_device() {
@@ -106,9 +100,7 @@ fn kind_field(selected: &PathInfo) -> String {
         kind.push("Socket");
     }
 
-    // A symlink's permission bits are 0777 by convention and the kernel
-    // ignores them, so the flags below would put two words on every link that
-    // describe nothing. The link's own type is the whole answer.
+    // A symlink's permission bits are ignored by the kernel, so only its type is shown.
     if selected.is_symlink() {
         kind.push(if selected.is_symlink_broken() {
             "Broken Symlink"
@@ -118,7 +110,6 @@ fn kind_field(selected: &PathInfo) -> String {
         return kind.join(",");
     }
 
-    // Special flags (can be combined)
     if selected.is_setgid() {
         kind.push("SetGID");
     }
@@ -131,8 +122,6 @@ fn kind_field(selected: &PathInfo) -> String {
     if selected.is_other_writable() {
         kind.push("Other Writable");
     }
-    // On a directory the execute bit grants search (entering it, reaching
-    // what it holds), not running it.
     if selected.is_executable() {
         kind.push(if selected.is_directory() {
             "Searchable"
@@ -141,8 +130,6 @@ fn kind_field(selected: &PathInfo) -> String {
         });
     }
 
-    // Note: is_door() is not included as it's a Solaris-specific IPC mechanism
-    // and would only be relevant on Solaris systems
     kind.join(",") // No space after comma, intentional to save status bar width
 }
 
@@ -176,8 +163,7 @@ mod tests {
         item_count(total, shown)
     }
 
-    // The mode bits each case stands for. A door is Solaris-only and cannot be
-    // built here, which is also why `kind_field` leaves it out.
+    // Doors are Solaris-only and cannot be built here.
     const REGULAR: u32 = 0o100_644;
     const EXECUTABLE: u32 = 0o100_755;
     const SETUID_SETGID: u32 = 0o106_755;
@@ -189,9 +175,6 @@ mod tests {
     const BLOCK_DEVICE: u32 = 0o060_644;
     const CHARACTER_DEVICE: u32 = 0o020_644;
 
-    /// One base type, then whichever flags also apply, comma-joined with no
-    /// space: the status bar is one line and this field competes with the rest
-    /// of it for width.
     #[test_case(REGULAR => "File" ; "a plain file")]
     #[test_case(DIRECTORY => "Directory,Searchable" ; "a directory's execute bit reads as search")]
     #[test_case(EXECUTABLE => "File,Executable" ; "an executable file")]
@@ -201,8 +184,7 @@ mod tests {
     #[test_case(SOCKET => "Socket" ; "a socket")]
     #[test_case(BLOCK_DEVICE => "Block" ; "a block device")]
     #[test_case(CHARACTER_DEVICE => "Character" ; "a character device")]
-    // The flags accumulate where the base types do not: unlike `name_style`,
-    // this field reports every property rather than the highest-ranked one.
+    // Unlike `name_style`, this field reports every flag, not the highest-ranked one.
     #[test_case(SETUID_SETGID => "File,SetGID,SetUID,Executable" ; "both special bits and the execute bit they imply")]
     #[test_case(DIRECTORY_STICKY_OTHER_WRITABLE => "Directory,Sticky,Other Writable,Searchable" ; "a sticky, other-writable directory")]
     fn kind_field_reports(mode: u32) -> String {
@@ -253,10 +235,6 @@ mod tests {
 
     #[test]
     fn a_symlink_reports_its_type_and_nothing_else() {
-        // The fixture mode is 0777, which is what a link carries on disk. The
-        // kernel ignores those bits, so none of them reach the field: the
-        // status bar is one line and "Other Writable,Executable" on every link
-        // would spend it saying nothing.
         assert_eq!("Symlink", kind_field(&PathInfo::with_mode(SYMLINK)));
         assert_eq!(
             "Broken Symlink",

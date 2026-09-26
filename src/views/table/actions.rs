@@ -7,8 +7,7 @@ use crate::{
     },
 };
 
-/// The entries a delete prompt is waiting on, with their paths indexed for the
-/// render's per-row lookup.
+/// The entries a delete prompt is waiting on.
 #[derive(Default)]
 pub(super) struct PendingDelete {
     paths: Vec<PathInfo>,
@@ -45,9 +44,7 @@ impl PendingDelete {
 
 /// What an operation on the selection acts on.
 pub(super) enum Targets<'a> {
-    /// The marked entries, whenever any are held.
     Marked(Vec<PathInfo>),
-    /// The entry under the cursor, when nothing is marked.
     Cursor(&'a PathInfo),
 }
 
@@ -61,10 +58,8 @@ impl Targets<'_> {
 }
 
 impl TableView {
-    /// The marked entries, else the entry under the cursor; `None` when there
-    /// is neither. Decided by the marked entries themselves, not by whether
-    /// any marks are held: a mark with no entry under it must not become an
-    /// operation on nothing.
+    /// The marked entries, else the entry under the cursor. A mark with no
+    /// entry under it does not count.
     pub(super) fn targets(&self) -> Option<Targets<'_>> {
         let marked = self.marked_paths();
         if marked.is_empty() {
@@ -103,9 +98,7 @@ impl TableView {
     pub(super) fn open_chmod_prompt(&self) -> CommandResult {
         let (paths, initial_mode) = match self.targets() {
             Some(Targets::Marked(marked)) => (marked, String::new()),
-            // A symlink's own mode is always 777 and chmod would apply to its
-            // target, so the prompt would offer the wrong mode for the wrong
-            // file. A marked symlink is refused when the chmod runs.
+            // chmod would apply to the target, not the symlink.
             Some(Targets::Cursor(path)) if path.is_symlink() => {
                 return Command::AlertWarn(format!(
                     "Cannot chmod {}: it is a symlink",
@@ -129,8 +122,6 @@ impl TableView {
     }
 
     pub(super) fn open_create_directory_prompt(&self) -> CommandResult {
-        // As for a paste: the directory would be made behind the bookmarks,
-        // in a listing that is not on screen.
         if self.content.is_showing_bookmarks() {
             return Command::AlertWarn("Cannot create a directory from the bookmarks view".into())
                 .into();
@@ -186,11 +177,8 @@ impl TableView {
         }
     }
 
-    /// Opens the cursor's entry in the editor or pager, which show one file, so
-    /// this ignores the marks like `open_with`. A directory, or a link to one,
-    /// is refused rather than handed to a program that expects a file, and so
-    /// is a broken link, whose program would fail with a message the redraw
-    /// on return erases.
+    /// Opens the cursor's entry (never the marks) in the editor or pager.
+    /// Directories and broken links are refused.
     pub(super) fn run_in_foreground(&mut self, program: ForegroundProgram) -> CommandResult {
         let Some(path) = self.selected_path() else {
             return CommandResult::Handled;
@@ -217,8 +205,7 @@ impl TableView {
         .into()
     }
 
-    /// The picker offers applications for one path, so this deliberately
-    /// ignores marks and uses the selection.
+    /// The picker offers applications for one path, so this ignores marks.
     pub(super) fn open_with(&mut self) -> CommandResult {
         match self.selected_path() {
             Some(path) => Command::OpenWithPrompt(path.clone()).into(),
@@ -227,9 +214,7 @@ impl TableView {
     }
 }
 
-/// The text a prompt offers for editing `path`'s name: the name itself rather
-/// than `display_name`, which spells out disguising characters, so submitting
-/// the prompt unchanged does not store the escaped form.
+/// The real name for an editable prompt, not the escaped `display_name`.
 #[allow(clippy::disallowed_methods)]
 fn editable_name(path: &PathInfo) -> String {
     path.path
@@ -237,9 +222,7 @@ fn editable_name(path: &PathInfo) -> String {
         .map_or(String::new(), |name| name.to_string_lossy().into_owned())
 }
 
-/// Which entries each action acts on. Every action here reads either the marks
-/// or the cursor, and nothing about the call site says which, so the choice is
-/// pinned per action rather than left to the reader.
+/// Which entries each action acts on: the marks or the cursor.
 #[cfg(test)]
 mod tests {
     use test_case::test_case;
@@ -254,8 +237,6 @@ mod tests {
         }
     }
 
-    /// An empty listing has no cursor, so each action that falls back to it
-    /// says what it could not do and why.
     #[test_case("copy" ; "copy")]
     #[test_case("cut" ; "cut")]
     #[test_case("chmod" ; "chmod")]
@@ -283,8 +264,6 @@ mod tests {
     fn open_with_offers_the_selection_and_ignores_the_marks() {
         let (_dir, mut table) = marked_table();
 
-        // The picker is single-path: it expands `%F`/`%U` as if one entry was
-        // given, so acting on the marks would silently drop all but one.
         let result = table.open_with();
 
         let Ok(Command::OpenWithPrompt(path)) = Command::try_from(result) else {
@@ -293,7 +272,6 @@ mod tests {
         assert_eq!("c", path.display_name);
     }
 
-    /// An editor or pager shows one file, so both take the cursor's entry.
     #[test_case(ForegroundProgram::Editor ; "edit")]
     #[test_case(ForegroundProgram::Pager ; "page")]
     fn edit_and_page_take_the_selection_and_ignore_the_marks(program: ForegroundProgram) {
@@ -364,8 +342,6 @@ mod tests {
         }
     }
 
-    /// An empty listing has no cursor, so nothing can be marked, and delete
-    /// and copy find no entry to act on.
     #[test]
     fn an_empty_listing_offers_nothing_to_mark_delete_or_copy() {
         use crate::{app::config::Config, test_support::TempDir};
@@ -396,8 +372,6 @@ mod tests {
     fn rename_names_the_selection_even_where_entries_are_marked() {
         let (_dir, table) = marked_table();
 
-        // One new name cannot describe several entries, so rename is the
-        // cursor's regardless of what is marked.
         let PromptAction::Rename { path, name } = prompt(table.open_rename_prompt()) else {
             panic!("expected a Rename prompt");
         };
@@ -405,7 +379,6 @@ mod tests {
         assert_eq!("c", name);
     }
 
-    /// The table shows the escaped form; the prompt must hold the real name.
     #[test]
     fn rename_starts_from_the_name_rather_than_its_escaped_form() {
         use crate::{app::config::Config, test_support::TempDir};
@@ -435,8 +408,6 @@ mod tests {
 
         let action = prompt(table.delete());
 
-        // The count in the prompt and the paths held for the confirmation have
-        // to agree, or the message names a number the delete does not act on.
         assert_eq!(PromptAction::Delete(2), action);
         assert_eq!(vec!["a", "b"], names(&table.pending_delete.paths));
     }
@@ -452,8 +423,6 @@ mod tests {
         assert_eq!(vec!["c"], names(&table.pending_delete.paths));
     }
 
-    /// A mark with no entry under it names nothing to delete, so the delete
-    /// acts on the cursor rather than prompting to delete zero items.
     #[test]
     fn a_mark_past_the_end_of_the_listing_is_not_a_selection() {
         let (_dir, mut table) = marked_table();
@@ -475,8 +444,6 @@ mod tests {
         assert!(table.pending_delete.contains(&entries[0]));
         assert!(!table.pending_delete.contains(&entries[2]));
 
-        // Confirming hands the paths off, so no row stays styled for a delete
-        // that is no longer pending.
         table.pending_delete.take();
         assert!(!table.pending_delete.contains(&entries[0]));
     }
@@ -525,8 +492,6 @@ mod tests {
         }
     }
 
-    /// Each names the directory behind the bookmarks, which is not the
-    /// listing on screen. Outside the view both go ahead.
     #[test_case(TableView::open_add_bookmark_prompt, "Cannot add a bookmark from the bookmarks view" ; "add a bookmark")]
     #[test_case(TableView::paste_from_clipboard, "Cannot paste into the bookmarks view" ; "paste")]
     #[test_case(TableView::open_create_directory_prompt, "Cannot create a directory from the bookmarks view" ; "create a directory")]
@@ -549,8 +514,6 @@ mod tests {
         );
     }
 
-    /// As for rename: the bookmark is named by what the prompt holds, so it
-    /// must start from the directory's real name, not the escaped one shown.
     #[test]
     fn add_bookmark_starts_from_the_name_rather_than_its_escaped_form() {
         let (dir, mut table) = marked_table();
@@ -572,8 +535,6 @@ mod tests {
     fn chmod_leaves_the_mode_blank_for_a_marked_set() {
         let (_dir, table) = marked_table();
 
-        // The marked entries need not share a mode, so prefilling either one
-        // would offer to apply it to the rest.
         let PromptAction::Chmod { paths, mode } = prompt(table.open_chmod_prompt()) else {
             panic!("expected a Chmod prompt");
         };

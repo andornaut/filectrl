@@ -1,69 +1,56 @@
 use super::LineItemMap;
 
-/// Calculates the target item for the next page movement
+/// The target item for the next page movement.
 pub(super) fn next_page(
     mapper: &LineItemMap,
     selected_item: usize,
     items_count: usize,
 ) -> Option<usize> {
-    // If already at the last item, then no-op
     if selected_item == items_count.saturating_sub(1) {
         return None;
     }
 
-    // If not at the last visible item, then move to it
     let current_last_line = mapper.last_visible_line();
     let current_last_item = mapper.item(current_last_line);
     if selected_item != current_last_item {
         return Some(current_last_item);
     }
 
-    // Calculate new position based on current selection
     let new_first_line = mapper.first_line(selected_item);
     let new_last_line = mapper.last_visible_line_starting_at(new_first_line);
     let mut new_last_item = mapper.item(new_last_line);
 
-    // Adjust if necessary to keep the selected item visible
-    // If the last item overflows, ratatui will scroll down until it is fully visible,
-    // so we need to "scroll up" `new_last_item`, so that the `current_last_item` remains visible.
+    // ratatui scrolls an overflowing last item fully into view, so back off one
+    // item to keep the current last item visible.
     let new_last_item_last_line = mapper.last_line(new_last_item);
     if new_last_item_last_line > new_last_line {
         new_last_item = new_last_item.saturating_sub(1);
     }
-    // The back-off can land on or before the selection when the next item
-    // overflows the page, so step one item rather than standing still or
-    // moving backward. The early return above guarantees a next item exists.
+    // The back-off can land on or before the selection; step one item instead.
     if new_last_item <= selected_item {
         new_last_item = selected_item + 1;
     }
     Some(new_last_item)
 }
 
-/// Calculates the target item for the previous page movement
+/// The target item for the previous page movement.
 pub(super) fn previous_page(
     mapper: &LineItemMap,
     selected_item: usize,
     viewport_offset: usize,
 ) -> Option<usize> {
-    // If already at the first item, then no-op
     if selected_item == 0 {
         return None;
     }
 
-    // If not at the first visible item, then move to it
     if selected_item != viewport_offset {
         return Some(viewport_offset);
     }
 
-    // Calculate the new position based on the current selection. A first
-    // line inside a wrapped row snaps forward, so the current first item
-    // stays visible instead of being scrolled past.
     let new_last_item_first_line = mapper.first_line(selected_item);
     let new_first_line = mapper.first_visible_line_ending_at(new_last_item_first_line);
     let new_first_item = mapper.snap_to_item_start(new_first_line);
-    // The snap can land on or after the selection when the previous item is
-    // taller than the page, so step one item rather than standing still or
-    // moving forward. The early return above guarantees a previous item exists.
+    // The snap can land on or after the selection; step one item instead.
     if new_first_item >= selected_item {
         return Some(selected_item - 1);
     }
@@ -80,21 +67,11 @@ mod tests {
         LineItemMap::new(heights, visible, first)
     }
 
-    // Five single-line items in a viewport of three, so the window shows items
-    // 0-2. The first press lands on the last visible item; only once the cursor
-    // is already there does a press advance a whole page. The cursor starts
-    // mid-window, where a page measured from it would land on item 3 instead.
     #[test_case(&[1; 5], 3, 0, 4 => None ; "at the last item")]
     #[test_case(&[1; 5], 3, 0, 1 => Some(2) ; "jumps to the last visible item")]
     #[test_case(&[1; 5], 3, 0, 2 => Some(4) ; "pages once already at the last visible item")]
-    // Items 2 and 3 fill the viewport. Item 4 overflows the page measured
-    // from item 3, and backing off from it would land on the cursor.
     #[test_case(&[1, 1, 1, 2, 2, 1], 3, 2, 3 => Some(4) ; "backs off when the new last item overflows")]
-    // Item 3 is taller than the viewport, so the back-off lands before the
-    // cursor, which would move a page down backward.
     #[test_case(&[1, 1, 1, 4, 1], 3, 2, 3 => Some(4) ; "never moves backward")]
-    // Items 0 and 1 fill the viewport. Item 2 overflows the page measured
-    // from item 1, so the back-off alone would return the cursor unmoved.
     #[test_case(&[1, 2, 2, 2], 3, 0, 1 => Some(2) ; "moves one item when the back-off lands on the cursor")]
     fn next_page_target(
         heights: &[usize],
@@ -105,16 +82,10 @@ mod tests {
         next_page(&map(heights, visible, first), selected, heights.len())
     }
 
-    // The mirror of the above: the first press lands on the first visible item,
-    // not item 1, where a page measured back from the cursor would land.
     #[test_case(&[1; 5], 3, 0, 0, 0 => None ; "at the first item")]
     #[test_case(&[1; 5], 3, 2, 3, 2 => Some(2) ; "jumps to the first visible item")]
     #[test_case(&[1; 5], 3, 2, 2, 2 => Some(0) ; "pages once already at the first visible item")]
-    // Item 0 is four lines tall, so a window anchored on it would scroll past
-    // the item the page was measured from; the snap moves forward instead.
     #[test_case(&[4, 1, 1], 3, 2, 2, 2 => Some(1) ; "advances when the new first item overflows")]
-    // Item 0 fills the viewport on its own, so the snap forward past it
-    // alone would return the cursor unmoved.
     #[test_case(&[3, 1], 3, 1, 1, 1 => Some(0) ; "moves one item when the snap lands on the cursor")]
     fn previous_page_target(
         heights: &[usize],

@@ -28,8 +28,7 @@ impl TableView {
     }
 
     pub(super) fn paste_from_clipboard(&self) -> CommandResult {
-        // The directory kept behind the bookmarks is not the listing on
-        // screen, so a paste would land somewhere the user is not looking.
+        // The directory behind the bookmarks is not the listing on screen.
         if self.content.is_showing_bookmarks() {
             return Command::AlertWarn("Cannot paste into the bookmarks view".into()).into();
         }
@@ -52,8 +51,6 @@ mod tests {
         }
     }
 
-    /// Copy and cut differ only in the variant they build, and the variant is
-    /// what the paste reads to decide whether to remove the source.
     #[test_case(TableView::copy_to_clipboard, ClipboardEntry::Copy as fn(_) -> _ ; "copy")]
     #[test_case(TableView::cut_to_clipboard, ClipboardEntry::Move as fn(_) -> _ ; "cut")]
     fn the_clipboard_takes_the_marks_when_there_are_any(
@@ -71,8 +68,6 @@ mod tests {
         assert_eq!(vec!["a", "b"], display_names(entry.paths()));
     }
 
-    /// A mark with no entry under it would put an empty entry on the
-    /// clipboard; the cursor is what the copy takes instead.
     #[test]
     fn a_mark_past_the_end_of_the_listing_is_not_a_selection() {
         let (_dir, mut table) = marked_table();
@@ -104,8 +99,6 @@ mod tests {
         );
         table.finish_directory();
 
-        // An entry naming nothing would clear the clipboard on the next paste
-        // while reading as a successful copy.
         assert!(matches!(
             Command::try_from(table.copy_to_clipboard()),
             Ok(Command::AlertWarn(_))

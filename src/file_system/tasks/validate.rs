@@ -24,9 +24,7 @@ use crate::{
     },
 };
 
-/// Restats the source of a copy, or of a move when `is_move`, and validates
-/// it against `dir`: the source as it is now, its path, the destination's,
-/// and the task kind.
+/// Restats the source of a copy (or move when `is_move`) and validates it against `dir`.
 pub(super) fn start_transfer(
     is_move: bool,
     dir: &PathInfo,
@@ -53,19 +51,15 @@ pub(super) fn start_transfer(
     Ok((path, old_path, new_path, kind))
 }
 
-/// Reads the entry `listed` names again, without following a symlink in its
-/// own name, for the type, mode and size it has now: the listing may be out of
-/// date. Like `rm`, `mv` and `chmod`, an operation acts on whatever the path
-/// names when it runs.
+/// Reads the entry `listed` names again, without following a symlink in its own name: like `rm`,
+/// `mv` and `chmod`, an operation acts on what the path names when it runs.
 pub(in crate::file_system) fn restat(listed: &PathInfo, operation: &str) -> Result<PathInfo> {
     PathInfo::try_from(listed.as_path())
         .map_err(|error| anyhow!("Failed to {operation} {}: {error}", compact(&listed.path)))
 }
 
-/// Renames `old_path` to `new_path`, failing atomically with `AlreadyExists` if
-/// `new_path` is taken, unlike `fs::rename`, which replaces it. A check made
-/// before the rename leaves a window in which a file created at `new_path` is
-/// silently replaced; folding the check into the rename closes it.
+/// Renames `old_path` to `new_path`, failing atomically with `AlreadyExists` if `new_path` is taken
+/// (`fs::rename` replaces it).
 pub(in crate::file_system) fn rename_no_replace(
     old_path: &Path,
     new_path: &Path,
@@ -73,18 +67,12 @@ pub(in crate::file_system) fn rename_no_replace(
     rename_no_replace_at(CWD, old_path, CWD, new_path)
 }
 
-/// `rename_no_replace` for `old` in the directory `old_dir` and `new` in
-/// `new_dir`; a path caller passes the current directory, which absolute paths
-/// ignore and relative ones resolve against, matching `fs::rename`.
+/// `rename_no_replace` relative to `old_dir` and `new_dir`.
 ///
-/// Linux uses `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np`, through
-/// rustix's `renameat_with`, since `unsafe` is denied crate-wide. nix wraps
-/// only glibc's `renameat2`, which glibc before 2.28 lacks, so a binary linked
-/// against it fails to build for older sysroots such as cross's aarch64 image.
-/// A kernel or filesystem that rejects the flag falls back to a check and a
-/// plain rename (`checked_rename_at`), and keeps the narrow race. The errno is
-/// kept otherwise (e.g. EXDEV as `CrossesDevices`, EEXIST as `AlreadyExists`)
-/// so callers can dispatch on `error.kind()`.
+/// Uses rustix's `renameat_with` (`renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np` on macOS):
+/// nix wraps glibc's `renameat2`, which glibc before 2.28 lacks. Where the flag is rejected it
+/// falls back to `checked_rename_at`, with its narrow race. The errno is kept so callers can
+/// dispatch on `error.kind()`.
 pub(super) fn rename_no_replace_at<P: rustix::path::Arg + Copy>(
     old_dir: impl AsFd,
     old: P,
@@ -100,9 +88,7 @@ pub(super) fn rename_no_replace_at<P: rustix::path::Arg + Copy>(
     }
 }
 
-/// `rename_no_replace_at` where the kernel cannot refuse a taken name itself:
-/// a check, then a plain `renameat`, which never goes through `renameat2` and
-/// so also works where that call is missing.
+/// A check then a plain `renameat`, for where the kernel cannot refuse a taken name itself.
 fn checked_rename_at<P: rustix::path::Arg + Copy>(
     old_dir: impl AsFd,
     old: P,
@@ -115,27 +101,23 @@ fn checked_rename_at<P: rustix::path::Arg + Copy>(
     Ok(renameat(old_dir, old, new_dir, new)?)
 }
 
-/// An absolute, display-friendly rendering of `path` for the operations
-/// notice. Lexical only (no filesystem access), so it works for destination
-/// paths that do not exist yet; falls back to the original path if it cannot
-/// be absolutized.
+/// An absolute rendering of `path` for the operations notice. Lexical, so it works for destinations
+/// that do not exist yet; falls back to `path`.
 pub(super) fn display_path(path: &Path) -> String {
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     crate::visible_os(path.as_os_str()).into_owned()
 }
 
-/// The path with symlinks and `..` components resolved. Falls back to a lexical
-/// absolutize-and-normalize when the path cannot be resolved, which is the
-/// normal case for a destination that does not exist yet.
+/// `path` with symlinks and `..` resolved, or lexically normalized when it cannot be resolved (a
+/// destination that does not exist yet).
 fn resolve(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| {
         lexical_normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
     })
 }
 
-/// The entry `path` names, with symlinks resolved in its parent directories
-/// but not in its own name: a symlink is compared as itself, never as the file
-/// it points at, which is a different entry.
+/// `path` with symlinks resolved in its parent directories but not in its own name, so a symlink is
+/// compared as itself.
 fn resolve_entry(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => {
@@ -150,13 +132,11 @@ fn resolve_entry(path: &Path) -> PathBuf {
     }
 }
 
-/// Whether both paths name one file: the same device and inode, without
-/// following a symlink in either.
+/// Whether both paths name one file (same device and inode), following neither symlink.
 pub(in crate::file_system) fn is_same_file(a: &Path, b: &Path) -> bool {
     EntryId::of_path(a).is_some_and(|a| EntryId::of_path(b) == Some(a))
 }
 
-/// Whether `link` is a symlink that resolves to the entry `entry` names.
 fn is_link_to(link: &Path, entry: &Path) -> bool {
     link.symlink_metadata()
         .is_ok_and(|metadata| metadata.is_symlink())
@@ -165,31 +145,21 @@ fn is_link_to(link: &Path, entry: &Path) -> bool {
             .is_ok_and(|target| target == resolve_entry(entry))
 }
 
-/// How pasting an entry as `destination` would paste it onto itself. Such a
-/// paste is refused, never offered as a collision: replacing the destination
-/// with the source would replace the source itself, or a link to it.
+/// How pasting an entry as `destination` would paste it onto itself. Refused, never offered as a
+/// collision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::file_system) enum OntoItself {
-    /// Both paths name one entry: the destination directory is the source's
-    /// own, however either is spelled.
+    /// Both paths name one entry: the destination directory is the source's own.
     SameEntry,
-    /// Two names of one file (hard links, or one entry spelled two ways on a
-    /// case-insensitive mount): replacing one with the other either deletes
-    /// the file or does nothing, depending on how the names relate. `cp` and
-    /// `mv` refuse both as the same file.
+    /// Two names of one file (hard links, or a case-insensitive mount). `cp` and `mv` refuse it.
     SameFile,
-    /// A symlink pasted over the entry it points at, which would replace the
-    /// only copy of its data with a link to itself. `cp` and `mv` refuse it as
-    /// the same file.
+    /// A symlink pasted over the entry it points at. `cp` and `mv` refuse it.
     LinksTo,
 }
 
-/// Whether pasting `source` as `destination` would paste it onto itself. The
-/// paste queue and the task both ask this, so the prompt never offers to
-/// replace what the task then refuses. Paths are compared resolved, so neither
-/// a parent-dir segment (e.g. `/a/c/../b`) nor a symlinked directory can
-/// disguise one as the other; a symlink in the last component is compared as
-/// the link it is.
+/// Whether pasting `source` as `destination` would paste it onto itself. Shared by the paste queue
+/// and the task, so the prompt never offers what the task refuses. Paths are compared resolved; a
+/// symlink in the last component is compared as itself.
 pub(in crate::file_system) fn onto_itself(source: &Path, destination: &Path) -> Option<OntoItself> {
     if resolve_entry(source) == resolve_entry(destination) {
         Some(OntoItself::SameEntry)
@@ -202,9 +172,7 @@ pub(in crate::file_system) fn onto_itself(source: &Path, destination: &Path) -> 
     }
 }
 
-/// Collapses `.` and `..` components purely lexically (no filesystem access,
-/// so it works for destinations that do not exist yet). `..` pops the previous
-/// component; at the root it is a no-op.
+/// Collapses `.` and `..` components lexically; `..` at the root is a no-op.
 fn lexical_normalize(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = PathBuf::new();
@@ -228,9 +196,7 @@ pub(super) fn validate_paths(
 ) -> Result<(PathBuf, PathBuf), CommandResult> {
     let operation = verb(is_move);
     let old_path = source.path.clone();
-    // Join the source's raw `OsStr` file name rather than its display name:
-    // the display name is lossy UTF-8, which would silently mangle a non-UTF8
-    // name at the destination.
+    // The raw `OsStr` file name, not the lossy display name, so non-UTF-8 names survive.
     let Some(file_name) = source.path.file_name() else {
         return Err(anyhow!(
             "Cannot {operation} {}: path has no file name",
@@ -240,15 +206,11 @@ pub(super) fn validate_paths(
     };
     let new_path = destination_directory.path.join(file_name);
 
-    // Compared resolved (see `onto_itself`), so a destination that reaches
-    // into the source through a symlinked parent is still found below.
     let abs_old = resolve_entry(&old_path);
     let abs_new = resolve_entry(&new_path);
 
     if let Some(onto_itself) = onto_itself(&old_path, &new_path) {
         let error = match onto_itself {
-            // Equal resolved paths mean the destination directory is the
-            // source's own, so the message names the entry once.
             OntoItself::SameEntry => anyhow!(
                 "Cannot {operation} {} into its own directory",
                 compact(&old_path)
@@ -263,12 +225,8 @@ pub(super) fn validate_paths(
         return Err(error.into());
     }
 
-    // Without this a copy creates the destination under the source and recurses
-    // into it forever, filling the disk. Only a real directory can: `copy_path`
-    // recreates a symlink as a link and copies a file as bytes, so neither
-    // descends into what it is creating. Restricting the check to directories
-    // also keeps it from refusing a symlink copied into the directory it points
-    // at.
+    // A directory copied into itself would recurse forever. Symlinks and files never descend, so
+    // only directories are checked.
     if source.is_directory() && abs_new.starts_with(&abs_old) {
         return Err(anyhow!(
             "Cannot {operation} {} into its own subdirectory {}",
@@ -278,14 +236,9 @@ pub(super) fn validate_paths(
         .into());
     }
 
-    // Refuse to replace an existing destination unless the paste asked for it:
-    // `File::create`/`fs::rename` would otherwise do so silently. An existing
-    // directory is never replaced whatever was asked, because removing it would
-    // take its contents with it and merging into it is not supported.
+    // An existing destination is replaced only when the paste asked; an existing directory never
+    // is.
     match new_path.symlink_metadata() {
-        // Both messages name the destination directory rather than the full
-        // destination path: it differs from the source only in its directory,
-        // so repeating the file name says nothing.
         Ok(metadata) if metadata.is_dir() => Err(anyhow!(
             "Cannot {operation} {} into {}: a directory of that name is already there",
             compact(&old_path),
@@ -298,9 +251,7 @@ pub(super) fn validate_paths(
             compact(&destination_directory.path)
         )
         .into()),
-        // Nor does a directory replace anything, like `cp -R` and `mv`. The
-        // paste never offers it, so this refuses only an overwrite granted
-        // some other way.
+        // A directory never replaces anything, like `cp -R` and `mv`.
         _ if overwrite && source.is_directory() => Err(anyhow!(
             "Cannot {operation} {} into {}: a directory never replaces what holds its name",
             compact(&old_path),
@@ -316,14 +267,12 @@ pub(super) fn validate_paths(
 pub(super) enum Holds {
     /// The entry seen, unchanged (`Seen`), which may be replaced.
     Granted,
-    /// Nothing: the name is free, so nothing is replaced.
+    /// Nothing: the name is free.
     Free,
-    /// Another entry, or the one seen written since, which is not replaced
-    /// (`conflicts::changed_refusal`).
+    /// Another entry, or the one seen written since, which is not replaced.
     Changed,
 }
 
-/// What `found` at a name is, under the overwrite granted for `granted`.
 pub(super) fn still_holds(granted: Seen, found: Option<Seen>) -> Holds {
     match found {
         None => Holds::Free,
@@ -332,44 +281,33 @@ pub(super) fn still_holds(granted: Seen, found: Option<Seen>) -> Holds {
     }
 }
 
-/// What the name `path`, for which an overwrite was granted for `granted`,
-/// holds now (`still_holds`), with the entry found there: looked at once, just
-/// before the paste acts on it.
+/// What the name `path` holds now relative to `granted` (`still_holds`), with the entry found.
 pub(super) fn look_again(granted: Seen, path: &Path) -> std::io::Result<(Holds, Option<Seen>)> {
     let found = Seen::of_path(path)?;
     Ok((still_holds(granted, found), found))
 }
 
-/// How `rename_for_move` ended.
 #[derive(Debug)]
 pub(super) enum Renamed {
-    /// The source now holds the destination name.
     Moved,
-    /// The name a granted overwrite would replace is another link to the
-    /// source, which `rename(2)` onto it leaves in place while reporting
-    /// success.
+    /// The granted name is another link to the source, which `rename(2)` leaves in place while
+    /// reporting success.
     SameFile,
-    /// The name holds another entry than the one the overwrite was granted
-    /// for, or that entry written since (`Holds::Changed`).
+    /// The name holds another entry than the one granted, or that entry written since.
     Changed,
-    /// A call failed. `kept` when it left the entry a granted overwrite was
-    /// to replace at the name: the replacing rename failed, or looking at the
-    /// name did. A rename that was not replacing anything leaves nothing
-    /// granted behind.
-    Failed { error: std::io::Error, kept: bool },
+    /// A call failed. `kept` when the entry a granted overwrite was to replace is still at the
+    /// name.
+    Failed {
+        error: std::io::Error,
+        kept: bool,
+    },
 }
 
-/// Renames `old_path` onto `new_path`, replacing the entry `overwrite` names
-/// when it still holds the destination (`still_holds`), and refusing a taken
-/// name otherwise: a name found free is taken without replacing anything, so
-/// an entry that takes it before the rename is refused rather than replaced.
+/// Renames `old_path` onto `new_path`, replacing the entry `overwrite` names if it still holds the
+/// destination (`still_holds`), otherwise only taking a free name.
 ///
-/// The kernel's atomic replace: no window with the destination missing, and a
-/// rename that fails for an unrelated reason (a vanished source, a permission
-/// error) leaves it untouched rather than destroyed for nothing. It refuses a
-/// directory over a non-directory, as `mv` does. A destination that is another
-/// link to the source is refused (`Renamed::SameFile`), since `rename(2)` onto
-/// it does nothing and reports success. Another program replacing the entry
+/// The kernel's replace is atomic, so a failed rename leaves the destination untouched. A
+/// destination that is another link to the source is refused (`Renamed::SameFile`). A replacement
 /// between the check and the rename is not detected.
 pub(super) fn rename_for_move(
     overwrite: Option<Seen>,
@@ -410,9 +348,8 @@ mod tests {
     use super::*;
     use crate::{command::Command, file_system::entry_id::seen, test_support::TempDir};
 
-    /// A source built from `/`, so it reports as a directory: the subdirectory
-    /// check below only applies to one, and every test using this helper is
-    /// about a path rule rather than about the source's type.
+    /// A source built from `/`, so it reports as a directory, which the subdirectory check
+    /// requires.
     fn path_info(path: &str, basename: &str) -> PathInfo {
         let mut info = PathInfo::try_from(Path::new("/")).unwrap();
         info.path = PathBuf::from(path);
@@ -420,9 +357,7 @@ mod tests {
         info
     }
 
-    /// The message a refusal carried. `validate_paths` has five separate
-    /// reasons to refuse, so `is_err` alone cannot tell whether a fixture
-    /// reached the rule it was built for.
+    /// The refusal message, to tell which of `validate_paths`'s rules fired.
     fn rejection(result: Result<(PathBuf, PathBuf), CommandResult>) -> String {
         let refusal = result.expect_err("the paths should have been refused");
         match Command::try_from(refusal) {
@@ -449,8 +384,7 @@ mod tests {
 
     #[test]
     fn validate_paths_rejects_destination_inside_source_via_parent_dir() {
-        // "/a/c/../b/d" resolves to "/a/b/d", inside the source, which a raw
-        // component-wise prefix check on the path as written would not catch.
+        // Resolves to "/a/b/d", inside the source.
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/c/../b/d", "d");
         let message = rejection(validate_paths(&src, &dest, false, false));
@@ -462,9 +396,6 @@ mod tests {
         let fx = TempDir::new("tasks");
         let src = fx.join("src");
         std::fs::create_dir_all(src.join("inner")).unwrap();
-        // A lexical prefix check cannot see that `link` resolves inside `src`.
-        // Copying through it would create the destination under the source and
-        // then recurse into what it is creating, filling the disk.
         let link = fx.join("link");
         std::os::unix::fs::symlink(src.join("inner"), &link).unwrap();
 
@@ -482,9 +413,7 @@ mod tests {
         let link = fx.join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        // The source resolves to the destination, but copying a symlink
-        // recreates a link rather than descending into anything, so there is
-        // no subtree to recurse into and nothing to reject.
+        // Copying a symlink recreates a link, so there is nothing to recurse into.
         let source = PathInfo::try_from(link.as_path()).unwrap();
         let dest = PathInfo::try_from(target.as_path()).unwrap();
         assert!(validate_paths(&source, &dest, false, false).is_ok());
@@ -497,25 +426,19 @@ mod tests {
         let real = fx.join("real");
         std::fs::create_dir_all(&real).unwrap();
         std::fs::write(real.join("f.txt"), b"precious").unwrap();
-        // A second path to the same directory, which the clipboard can easily
-        // carry: it holds whatever absolute path the other window was showing.
         std::os::unix::fs::symlink(&real, fx.join("link")).unwrap();
 
         let src = PathInfo::try_from(real.join("f.txt").as_path()).unwrap();
         let dest = PathInfo::try_from(fx.join("link").as_path()).unwrap();
 
-        // The two paths name one file, so replacing one with the other would
-        // replace the source with itself. Without a granted overwrite the
-        // existing-destination rule refuses the same paste, so the message is
-        // what says the alias check is the one that fired.
+        // Without a granted overwrite the existing-destination rule refuses too; the message says
+        // which fired.
         let message = rejection(validate_paths(&src, &dest, false, overwrite));
         assert!(message.ends_with("into its own directory"), "{message}");
         assert!(real.join("f.txt").exists());
     }
 
-    /// `a/foo` is a symlink. Its own name is what is compared, so a paste into
-    /// `b` meets `b/foo`, not the source's own directory, and whether that is a
-    /// collision or a refusal depends on where the link points.
+    /// `a/foo` is a symlink pasted into `b`; the outcome depends on where it points.
     fn link_pasted_into(label: &str, target: &str) -> (TempDir, PathInfo, PathInfo) {
         let fx = TempDir::new(label);
         let (a, b, c) = (fx.join("a"), fx.join("b"), fx.join("c"));
@@ -534,8 +457,6 @@ mod tests {
     fn validate_paths_refuses_a_symlink_pasted_over_the_entry_it_points_at() {
         let (fx, src, dest) = link_pasted_into("tasks_link_over_target", "b");
 
-        // Even with the overwrite granted: replacing `b/foo` with the link
-        // would leave a link to itself and lose the only copy of the data.
         let message = rejection(validate_paths(&src, &dest, false, true));
 
         assert!(message.ends_with("the entry it would replace"), "{message}");
@@ -583,7 +504,6 @@ mod tests {
 
     #[test]
     fn validate_paths_allows_destination_with_shared_prefix_but_different_component() {
-        // "/a/bb" must not be treated as inside "/a/b".
         let src = path_info("/a/b", "b");
         let dest = path_info("/a/bb", "bb");
         assert!(validate_paths(&src, &dest, false, false).is_ok());
@@ -592,8 +512,6 @@ mod tests {
     #[test]
     fn validate_paths_preserves_non_utf8_source_names() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-        // The display name is lossy UTF-8; the destination must be built from
-        // the raw file name so the bytes survive.
         let name = OsStr::from_bytes(b"caf\xe9.txt");
         let mut src = path_info("/a/placeholder", "placeholder");
         src.path = PathBuf::from("/a").join(name);
@@ -605,8 +523,6 @@ mod tests {
     #[test]
     fn display_path_spells_out_a_byte_that_is_not_utf8() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-        // A lossy rendering would show U+FFFD, the same as for any other
-        // invalid byte, or for a name holding U+FFFD itself.
         let path = Path::new(OsStr::from_bytes(b"/a/caf\xe9.txt"));
 
         assert_eq!("/a/caf\\xe9.txt", display_path(path));
@@ -637,8 +553,6 @@ mod tests {
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
 
-        // A directory is refused whatever the answer: removing it would take
-        // its contents with it, and merging is not supported.
         for overwrite in [false, true] {
             let message = rejection(validate_paths(&src, &dest, false, overwrite));
             assert!(
@@ -656,8 +570,7 @@ mod tests {
         let src = path_info("/elsewhere/existing.txt", "existing.txt");
         let dest = path_info(fx.path().to_str().unwrap(), "dir");
 
-        // `symlink_metadata` rather than `exists`, which follows the link and
-        // reports a dangling one as absent, silently overwriting it.
+        // `exists` follows the link and reports a dangling one as absent.
         let message = rejection(validate_paths(&src, &dest, false, false));
         assert!(message.ends_with("it already exists there"), "{message}");
     }
@@ -669,9 +582,6 @@ mod tests {
         let dst = fx.join("dest.txt");
         std::fs::write(&dst, b"dest").unwrap();
 
-        // The source vanished while the task sat in the queue, which a single
-        // worker running a long copy makes easy. A rename that fails leaves the
-        // destination untouched.
         let (error, kept) = failure(rename_for_move(seen(&dst), &src, &dst));
         assert_eq!(ErrorKind::NotFound, error.kind(), "{error}");
         assert!(kept, "the replacing rename failed with the entry in place");
@@ -686,8 +596,6 @@ mod tests {
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dest").unwrap();
 
-        // The kernel replaces atomically here, so there is no moment in which
-        // the destination is missing.
         assert!(matches!(
             rename_for_move(seen(&dst), &src, &dst),
             Renamed::Moved
@@ -705,8 +613,6 @@ mod tests {
         let dst = fx.join("dest");
         std::fs::write(&dst, b"dest").unwrap();
 
-        // `rename` refuses a directory over a non-directory, as `mv` does, and
-        // nothing clears the file to make way for it.
         let (error, kept) = failure(rename_for_move(seen(&dst), &src, &dst));
         assert_eq!(Some(libc::ENOTDIR), error.raw_os_error(), "{error}");
         assert!(kept);
@@ -726,7 +632,6 @@ mod tests {
         let src = PathInfo::try_from(src.as_path()).unwrap();
         let dest = PathInfo::try_from(dest.as_path()).unwrap();
 
-        // The paste never offers it, so only a granted overwrite reaches this.
         let message = rejection(validate_paths(&src, &dest, is_move, true));
 
         assert!(
@@ -743,8 +648,6 @@ mod tests {
         std::fs::write(&src, b"src").unwrap();
         std::fs::write(&dst, b"dest").unwrap();
 
-        // Without a granted overwrite the destination is never touched, even
-        // though the same function would replace it with one.
         let (error, kept) = failure(rename_for_move(None, &src, &dst));
         assert_eq!(ErrorKind::AlreadyExists, error.kind(), "{error}");
         assert!(!kept, "nothing was granted");
@@ -752,10 +655,7 @@ mod tests {
         assert!(src.exists());
     }
 
-    /// An overwrite granted before the task started, when another process
-    /// linked the destination name to the source since: `rename(2)` onto it
-    /// would do nothing and report success, so the move would count as done
-    /// with the source kept.
+    /// Another process linked the destination name to the source after the overwrite was granted.
     #[test]
     fn a_granted_overwrite_onto_a_hard_link_to_the_source_is_refused() {
         let fx = TempDir::new("tasks_move_granted_link");
@@ -771,9 +671,6 @@ mod tests {
         assert!(dst.exists());
     }
 
-    /// A granted overwrite replaces only the entry it was granted for: the
-    /// same entry is replaced, a free name is created, and any other entry is
-    /// refused.
     #[test]
     fn a_granted_overwrite_holds_only_for_the_entry_it_was_granted_for() {
         let fx = TempDir::new("tasks_still_holds");
@@ -787,9 +684,6 @@ mod tests {
         assert_eq!(Holds::Changed, still_holds(granted, Some(other)));
     }
 
-    /// A granted name found free is taken without replacing anything, so an
-    /// entry that takes it before the rename is refused, and a failure there
-    /// leaves nothing granted behind.
     #[test]
     fn a_granted_overwrite_of_a_name_freed_since_does_not_replace() {
         let fx = TempDir::new("tasks_move_granted_freed");
@@ -806,9 +700,7 @@ mod tests {
         assert!(!kept, "nothing granted was there to keep");
     }
 
-    /// A granted move that cannot look at the name (its directory has no
-    /// search permission) cannot tell whether the entry granted still holds
-    /// it, so the failure counts as leaving it.
+    /// Its directory has no search permission, so the name cannot be looked at.
     #[test]
     fn a_granted_move_that_cannot_look_at_the_name_leaves_it() {
         let fx = TempDir::new("tasks_move_unsearchable");
@@ -834,7 +726,6 @@ mod tests {
         assert_eq!(b"granted".to_vec(), fs::read(&target).unwrap());
     }
 
-    /// The error and `kept` of a rename that failed.
     fn failure(renamed: Renamed) -> (std::io::Error, bool) {
         match renamed {
             Renamed::Failed { error, kept } => (error, kept),
@@ -842,8 +733,6 @@ mod tests {
         }
     }
 
-    /// The move itself: an entry that took the granted one's place is left
-    /// alone, and so is the source.
     #[test]
     fn a_granted_overwrite_of_an_entry_since_replaced_is_refused() {
         let fx = TempDir::new("tasks_move_granted_changed");
@@ -852,8 +741,7 @@ mod tests {
         fs::write(&src, b"src").unwrap();
         fs::write(&dst, b"seen").unwrap();
         let granted = seen(&dst);
-        // Kept under another name, so the one written next cannot reuse its
-        // inode number.
+        // Kept under another name, so the next entry cannot reuse its inode number.
         fs::rename(&dst, fx.join("kept")).unwrap();
         fs::write(&dst, b"since").unwrap();
 
@@ -876,8 +764,6 @@ mod tests {
         assert_eq!(b"x".to_vec(), std::fs::read(&dst).unwrap());
     }
 
-    /// The fallback for a filesystem that rejects the no-replace flag, which
-    /// `fs::rename` alone would turn into a silent replace.
     #[test]
     fn the_checked_rename_refuses_a_taken_name() {
         let fx = TempDir::new("tasks_checked_rename");
@@ -906,9 +792,6 @@ mod tests {
         assert!(!src.exists());
     }
 
-    /// Relative to the directory handles given, not the current directory, as
-    /// a replacement staged in a directory of its own lands: the rename, and
-    /// the check and rename of its fallback alike.
     #[test_case(|a, b, c, d| rename_no_replace_at(a, b, c, d) ; "the rename")]
     #[test_case(|a, b, c, d| checked_rename_at(a, b, c, d) ; "its fallback")]
     fn a_rename_between_open_directories_refuses_a_taken_name(
@@ -933,8 +816,7 @@ mod tests {
         assert!(!from.join("b").exists());
     }
 
-    /// Refused by the kernel, not by the fallback's check: only the kernel's
-    /// refusal carries an errno.
+    /// Only the kernel's refusal carries an errno.
     #[test]
     fn a_rename_onto_a_taken_name_is_refused_as_already_exists() {
         let fx = TempDir::new("tasks_rename_taken");
@@ -958,9 +840,7 @@ mod tests {
         assert_eq!(ErrorKind::NotFound, error.kind());
     }
 
-    /// The error kind is what sends a move to the copy fallback, so it has to
-    /// survive the conversion. Needs a writable directory on another
-    /// filesystem than the temporary one; skipped where there is none.
+    /// Needs a writable directory on another filesystem; skipped where there is none.
     #[test]
     fn a_rename_to_another_filesystem_crosses_devices() {
         let fx = TempDir::new("tasks_rename_xdev");

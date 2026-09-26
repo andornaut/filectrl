@@ -17,27 +17,23 @@ use crate::{
 };
 
 const MIN_HEIGHT: u16 = 3; // border + 1 row + border
-/// Rows past this many have no digit shortcut and are reached by scrolling.
+/// Rows past this many have no digit shortcut.
 const MAX_SHORTCUT: usize = 9;
 
-/// Lists the applications that can open one path, and resolves the chosen one
-/// into a `Command::OpenWith`. Shown in place of the table, so that the
-/// breadcrumbs above and the status bar below stay visible.
+/// Lists the applications that can open a path and resolves the choice to `Command::OpenWith`.
+/// Shown in place of the table.
 pub(super) struct OpenWithView {
     area: Rect,
     candidates: Vec<AppCandidate>,
     /// What the candidates open, named in a launch failure.
     path: PathBuf,
-    /// The rows' area, for hit testing a click on a row.
     content_area: Rect,
-    /// Bordered header hint, cached at construction.
     hint: String,
     inner_height: usize,
     is_visible: bool,
     scroll_offset: usize,
     scrollbar_view: ScrollbarView,
     selected: usize,
-    /// Bordered header title, rebuilt each time the picker is shown.
     title: String,
 }
 
@@ -65,7 +61,6 @@ impl OpenWithView {
         self.is_visible
     }
 
-    /// Enumerate the applications for `path` and show the picker.
     pub(super) fn show(&mut self, path: &PathInfo) {
         self.candidates = candidates_for(path.as_path());
         self.path.clone_from(&path.path);
@@ -113,8 +108,7 @@ impl OpenWithView {
         self.launch_row(self.selected)
     }
 
-    /// Launch the application in `index`, or do nothing when the row does not
-    /// exist (a digit beyond the end of a short list).
+    /// Launches the application in row `index`, if it exists.
     fn launch_row(&mut self, index: usize) -> CommandResult {
         let Some(candidate) = self.candidates.get(index) else {
             return CommandResult::Handled;
@@ -130,9 +124,8 @@ impl OpenWithView {
     }
 }
 
-/// Move `selected` into the viewport starting at `scroll`, moving as little as
-/// possible. A scrollbar drag sets the offset directly, and the next render
-/// would pull it straight back if the selection were left off screen.
+/// Moves `selected` into the viewport at `scroll`, so a scrollbar drag is not undone by the next
+/// render.
 fn clamp_selection(inner_height: usize, count: usize, scroll: usize, selected: usize) -> usize {
     if count == 0 {
         return 0;
@@ -175,8 +168,6 @@ mod tests {
     fn selecting_past_the_end_lands_on_the_last_candidate() {
         let mut view = picker(3);
 
-        // A digit shortcut names a row that a short list may not have, and the
-        // index is used to launch, so it must address a real candidate.
         view.select(9);
 
         assert_eq!(2, view.selected);
@@ -186,7 +177,7 @@ mod tests {
     fn selecting_in_an_empty_list_selects_nothing() {
         let mut view = picker(0);
 
-        // `len() - 1` would underflow, and there is no row to launch anyway.
+        // `len() - 1` would underflow.
         assert_eq!(CommandResult::Handled, view.select(0));
         assert_eq!(0, view.selected);
     }
@@ -204,8 +195,7 @@ mod tests {
         assert_eq!("\"App2\"", label);
     }
 
-    /// The configured opener's name is its template, so a failure to run it
-    /// names the setting instead.
+    /// A failure to run the configured opener names the setting.
     #[test]
     fn the_configured_opener_launches_under_its_setting() {
         let mut view = picker(1);
@@ -224,8 +214,7 @@ mod tests {
         Config::init_test();
         let mut view = picker(20);
 
-        // Ctrl+3 is not a row: a chord belongs to whatever binds it, and
-        // launching an application on one would be a surprise.
+        // A chord belongs to whatever binds it.
         let result = view.handle_key(KeyCode::Char('3'), KeyModifiers::CONTROL);
 
         assert_eq!(CommandResult::NotHandled, result);
@@ -236,7 +225,6 @@ mod tests {
         Config::init_test();
         let mut view = picker(20);
 
-        // The digit keys the picker scrolls with must not also launch a row.
         let result = view.handle_key(KeyCode::Down, KeyModifiers::NONE);
 
         assert_eq!(CommandResult::Handled, result);
@@ -263,12 +251,11 @@ mod tests {
         };
 
         assert_eq!(1, click(2));
-        // Row 4 of the area is below the third and last candidate.
+        // Row 4 is below the last candidate.
         assert_eq!(1, click(5));
     }
 
-    // A 20 candidate list in a 5 row viewport, so a page is 5 rows and the
-    // ends of the list are reachable in one keystroke.
+    // 20 candidates in a 5-row viewport.
     #[test_case(Action::SelectNext, 0, 1       ; "next moves one row down")]
     #[test_case(Action::SelectPrevious, 3, 2   ; "previous moves one row up")]
     #[test_case(Action::SelectPrevious, 0, 0   ; "previous holds at the first row")]

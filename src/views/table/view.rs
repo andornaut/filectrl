@@ -31,17 +31,16 @@ impl View for TableView {
 
         let (block_area, scrollbar_area, table_area) = layout(area);
 
-        // We must render the table first to initialize the mapper, which is used by the scrollbar
+        // The scrollbar reads the mapper the table render builds.
         self.render_table_and_init_mapper(theme, table_area, frame.buffer_mut());
-        // Must be rendered after render_table_and_init_mapper, because it depends on the mapper
         self.render_scrollbar(theme, scrollbar_area, frame.buffer_mut());
         Self::render_1x1_block(theme, block_area, frame.buffer_mut());
     }
 }
 
 impl TableView {
-    /// For a frame that draws no table: nothing is drawn, so a click on the
-    /// area must not be tested against the last layout that was.
+    /// For a frame that draws no table, so clicks are not tested against the
+    /// last layout.
     pub(in crate::views) fn hide(&mut self) {
         self.table_area = Rect::default();
         self.scrollbar_view.hide();
@@ -53,7 +52,6 @@ impl TableView {
     }
 
     fn render_1x1_block(theme: &Theme, area: Rect, buf: &mut Buffer) {
-        // Extend the table header above the scrollbar as a 1x1 block
         Fill::new(" ")
             .style(theme.table.header())
             .render(Rect { height: 1, ..area }, buf);
@@ -80,16 +78,12 @@ impl TableView {
         let search_root = self.content.search_root();
         let is_bookmarks = self.content.is_showing_bookmarks();
         let name_width = self.columns.name_width();
-        // -1 for the table header.
         let visible_lines_count = self.table_area.height.saturating_sub(1) as usize;
 
         let items = self.content.items_sorted();
 
-        // Per-item heights drive the window math and the line<->item mapper the
-        // scrollbar and mouse code use. They depend only on the name column
-        // width, the viewport height (a row is capped at it) and the listing,
-        // so caching them across frames keeps a height per item plus the
-        // mapper's line map off every keystroke.
+        // Heights depend only on the name column width, the viewport height and
+        // the listing, so they are cached across frames.
         let height = |item: &PathInfo| {
             item_height(
                 name_width,
@@ -105,18 +99,14 @@ impl TableView {
             self.mapper = LineItemMap::new(&self.cached_heights, visible_lines_count, 0);
             self.height_cache_key = Some(key);
         } else if self.cached_heights.len() < items.len() {
-            // Only an append adds entries without bumping the revision, and it
-            // adds them after the last, so the cached heights still describe
-            // the items they were measured for. Measuring just the new entries
-            // keeps a streamed listing from remeasuring every earlier batch.
+            // An append does not bump the revision; measure only the new entries.
             let appended_from = self.cached_heights.len();
             self.cached_heights
                 .extend(items[appended_from..].iter().map(height));
             self.mapper.extend(&self.cached_heights[appended_from..]);
         }
 
-        // Own the scroll offset (rather than letting ratatui derive it from all
-        // rows) so we can build Row widgets for only the visible window.
+        // Own the scroll offset so only the visible window's rows are built.
         let selected = self.table_state.selected();
         let (start, end) = if self.wheel_scrolled {
             wheel_window(
@@ -165,9 +155,7 @@ impl TableView {
             self.columns.sort_direction(),
         );
 
-        // Render the window with a throwaway state: offset 0 (we already sliced
-        // to the window) and the selection translated to be window-relative.
-        // Using a local state keeps ratatui from mutating our own offset model.
+        // A throwaway state: offset 0 and a window-relative selection.
         let mut render_state = TableState::default();
         if let Some(selected) = selected
             && selected >= start
@@ -177,16 +165,12 @@ impl TableView {
         }
         StatefulWidget::render(table, area, buf, &mut render_state);
 
-        // The cached mapper's line<->item data is still valid; only the viewport
-        // window (which depends on the current selection and table height) moves.
         self.mapper.set_window(start, visible_lines_count);
     }
 }
 
-/// Returns the `[start, end)` range of item indices to render so the `selected`
-/// item stays within `viewport_lines`, preferring to keep `prev_first` as the
-/// top item (stable scrolling). Walks at most a viewport's worth of items, so it
-/// is O(viewport), not O(items).
+/// The `[start, end)` range of items to render so `selected` stays visible,
+/// keeping `prev_first` as the top item when possible.
 pub(super) fn visible_window(
     item_heights: &[usize],
     viewport_lines: usize,
@@ -198,12 +182,8 @@ pub(super) fn visible_window(
         return (0, 0);
     }
     let selected = selected.min(n - 1);
-    // `prev_first.min(selected)` handles scrolling up: if the selection moved
-    // above the previous window top, anchor the window at the selection.
     let mut start = prev_first.min(selected);
     if !fits_from(item_heights, start, selected, viewport_lines) {
-        // Scrolling down: place `start` as high as possible while still showing
-        // the selected item's last line.
         start = highest_start_keeping_visible(item_heights, selected, viewport_lines);
     }
 
@@ -216,8 +196,7 @@ pub(super) fn visible_window(
     (start, end)
 }
 
-/// Whether items `start..=selected` fit within `viewport_lines`. Bounded by the
-/// viewport: it stops as soon as the running total exceeds it.
+/// Whether items `start..=selected` fit within `viewport_lines`.
 fn fits_from(item_heights: &[usize], start: usize, selected: usize, viewport_lines: usize) -> bool {
     let mut lines = 0;
     for &height in &item_heights[start..=selected] {
@@ -229,11 +208,8 @@ fn fits_from(item_heights: &[usize], start: usize, selected: usize, viewport_lin
     true
 }
 
-/// The highest (smallest-index) `start` that still shows the selected item's
-/// last line within `viewport_lines`. If the selected item is taller than the
-/// viewport, returns `selected` (its top is shown).
-/// The window the wheel left, whether or not it shows the cursor: `first`,
-/// clamped so the window never starts past the one that shows the last row.
+/// The window the wheel left: `first`, clamped so the window never starts past
+/// the one that shows the last row.
 fn wheel_window(item_heights: &[usize], viewport_lines: usize, first: usize) -> (usize, usize) {
     let n = item_heights.len();
     if n == 0 || viewport_lines == 0 {
@@ -253,6 +229,8 @@ fn wheel_window(item_heights: &[usize], viewport_lines: usize, first: usize) -> 
     (start, end)
 }
 
+/// The smallest `start` that still shows the selected item's last line, or
+/// `selected` if that item is taller than the viewport.
 pub(super) fn highest_start_keeping_visible(
     item_heights: &[usize],
     selected: usize,
@@ -267,11 +245,8 @@ pub(super) fn highest_start_keeping_visible(
     start
 }
 
-/// The thumb position: the dragged-to line while a drag is active, so the
-/// thumb tracks the cursor exactly even when the window top snaps across a
-/// wrapped row; otherwise the first visible line. Clamped because the
-/// bottom-most window can underfill (a tall row forces an earlier anchor),
-/// pushing its first line past `max_position`.
+/// The thumb position: the dragged-to line during a drag, else the first
+/// visible line. Clamped because the bottom-most window can underfill.
 fn scrollbar_position(
     drag_line: Option<usize>,
     first_visible_line: usize,
@@ -285,7 +260,6 @@ fn layout(area: Rect) -> (Rect, Rect, Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
         .areas(area);
-    // Make room for the 1x1 block
     let block_area = Rect {
         height: 1,
         ..scrollbar_area
@@ -318,9 +292,6 @@ mod tests {
         test_support::TempDir,
     };
 
-    // While a drag is live the thumb tracks the pointer, so it stays under the
-    // cursor even where the window top snaps past a wrapped row. On release it
-    // settles on the first visible line, clamped to the scale's end.
     #[test_case(Some(3), 5, 4 => 3 ; "a live drag tracks the cursor")]
     #[test_case(None, 5, 4 => 4 ; "after release, clamped to the end of the scale")]
     #[test_case(None, 2, 4 => 2 ; "with no drag, follows the first visible line")]
@@ -344,9 +315,6 @@ mod tests {
         super::wheel_window(heights, viewport_lines, first)
     }
 
-    // The window is a half-open range of items. It holds still while the
-    // selection is already inside it, and otherwise moves the shortest distance
-    // that brings the selection back into view.
     #[test_case(&[], 5, 0, 0 => (0, 0) ; "no items")]
     #[test_case(&[1, 1, 1], 0, 0, 0 => (0, 0) ; "no viewport")]
     #[test_case(&[1, 1, 1], 5, 0, 0 => (0, 3) ; "everything fits, filled from the top")]
@@ -355,11 +323,7 @@ mod tests {
     #[test_case(&[1; 10], 3, 7, 0 => (5, 8) ; "the selection moved below, so it sits at the bottom")]
     #[test_case(&[1; 100], 3, 99, 0 => (97, 100) ; "a jump to the end anchors at the end")]
     #[test_case(&[1; 5], 3, 9, 0 => (2, 5) ; "a selection past the end anchors at the end")]
-    // A row taller than the viewport can never fit whole, so the window shows
-    // its top rather than scrolling past it.
     #[test_case(&[1, 5, 1], 3, 1, 0 => (1, 2) ; "an item taller than the viewport")]
-    // After a resize an earlier row wraps, so the window reclamps around the
-    // selection rather than keeping a top that no longer fits.
     #[test_case(&[1, 1, 3, 1], 3, 2, 0 => (2, 3) ; "narrowing grows the heights")]
     fn visible_window_cases(
         heights: &[usize],
@@ -404,8 +368,6 @@ mod tests {
     fn a_row_taller_than_the_viewport_is_cut_to_fit_and_rendered() {
         let dir = TempDir::new("table_tall_row");
         let mut table = loading_table(&dir);
-        // 45 characters in a 10 column name field wrap to five lines of nine
-        // characters and an ellipsis.
         table.content.append(&entries(
             &dir,
             &["abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI"],
@@ -413,17 +375,13 @@ mod tests {
         table.finish_directory();
         table.select(0);
 
-        // The header and three lines.
         let buf = render(&mut table, 10, 4);
 
         let rows: Vec<String> = (1..4).map(|y| row_text(&buf, y)).collect();
         assert_eq!(vec!["abcdefghi…", "jklmnopqr…", "stuvwxyz0…"], rows);
-        // The mouse and the scrollbar read the same capped height.
         assert_eq!(3, table.mapper.total_lines_count());
     }
 
-    /// The heights and line map the render keeps equal what it would build
-    /// from nothing for the listing as it now stands.
     fn assert_cache_is_a_full_rebuild(table: &TableView, visible_lines_count: usize) {
         let heights: Vec<usize> = table
             .content
@@ -453,11 +411,8 @@ mod tests {
         table
     }
 
-    // Thirty rows with nine visible, the window scrolled to rows 5-13. From
-    // the cursor on row 7 every selection key lands on a different row, so an
-    // arm dispatching a key to the wrong movement is caught. The paging rows
-    // start on the window's edges, where a page moves past the window rather
-    // than to its edge, which the visible-row keys would also reach.
+    // Thirty rows with nine visible, scrolled to rows 5-13; every key lands on
+    // a different row.
     #[test_case(7, KeyCode::Char('j') => 8 ; "next row")]
     #[test_case(7, KeyCode::Char('k') => 6 ; "previous row")]
     #[test_case(7, KeyCode::Char('g') => 0 ; "first row")]
@@ -493,9 +448,6 @@ mod tests {
         let dir = TempDir::new("table_scrolled_click");
         let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
         let mut table = loaded_table(&dir, &names);
-        // Three lines under the header. Selecting the last row scrolls the
-        // window to `h`-`j`; moving up one stays inside it, so the window holds
-        // still rather than re-anchoring the cursor at the bottom.
         table.select(9);
         render(&mut table, 20, 4);
         table.select(8);
@@ -514,11 +466,8 @@ mod tests {
         );
     }
 
-    /// One row per state, in a window scrolled off the top of the listing, so
-    /// a row looked up by its position in the window rather than the listing
-    /// would take another row's state. Where states overlap, the one that says
-    /// what the next keypress does wins: a pending delete over the clipboard,
-    /// the clipboard over a mark.
+    /// One row per state, in a window scrolled off the top. Precedence: pending
+    /// delete, then clipboard, then mark.
     #[test]
     fn each_row_is_drawn_in_the_style_of_its_state() {
         let dir = TempDir::new("table_row_styles");
@@ -533,8 +482,6 @@ mod tests {
         table.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
             vec![items[4].clone(), items[5].clone()],
         ))));
-        // Selecting the last row scrolls the window to `c`-`f`; moving the
-        // cursor to `c` keeps it there.
         render(&mut table, 20, 5);
         table.select(2);
 
@@ -570,8 +517,6 @@ mod tests {
     fn the_row_height_cache_follows_appends_reorders_and_resizes() {
         let dir = TempDir::new("table_height_cache");
         let mut table = loading_table(&dir);
-        // Batches arrive out of name order and mix one and two line rows, so
-        // the sorted order puts different heights at the same positions.
         let batches = [
             ["dddddddddddddddddddddddd", "a"],
             ["cc", "bbbbbbbbbbbbbbbbbbbbbbbb"],
@@ -595,7 +540,6 @@ mod tests {
 
         assert_cache_is_a_full_rebuild(&table, 9);
 
-        // Wide enough that the long names no longer wrap.
         let wrapped = table.cached_heights.clone();
         render(&mut table, 30, 10);
 

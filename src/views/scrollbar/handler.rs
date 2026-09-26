@@ -12,13 +12,12 @@ impl ScrollbarView {
         self.is_dragging
     }
 
-    /// Ends a drag whose release never arrived, as when another view took it.
+    /// Ends a drag whose release never arrived.
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
     }
 
-    /// A drag begun without the click that starts one, for a test whose view
-    /// has no scrollbar drawn to click.
+    /// A drag begun without a click, for tests whose view draws no scrollbar.
     #[cfg(test)]
     pub fn begin_drag(&mut self) {
         self.is_dragging = true;
@@ -52,13 +51,10 @@ impl ScrollbarView {
         if last_relative == 0 {
             return None;
         }
-        // Measured over the track, not the end arrows. Clamped before scaling,
-        // so a drag past either end, or a click on an arrow, lands on the
-        // nearest position rather than beyond it.
+        // Measured over the track; clamped so a drag past an end or a click on an arrow lands on
+        // the nearest position.
         let relative_y = y.saturating_sub(self.track.y).min(last_relative);
-        // Integer arithmetic rather than a float ratio: the numerator is at
-        // most `last_relative * max_position`, and adding half the denominator
-        // before dividing rounds to nearest as the float version did.
+        // Integer arithmetic; adding half the denominator rounds to nearest.
         let denominator = u64::from(last_relative);
         let numerator = u64::from(relative_y) * u64::try_from(max_position).unwrap_or(u64::MAX)
             + denominator / 2;
@@ -114,8 +110,7 @@ mod tests {
         assert_eq!(None, s.handle_drag(0, 0));
     }
 
-    // height=10 over a max position of 100, so a row maps to 100/9 of the
-    // range, which is not a whole number: truncating and rounding differ.
+    // Height 10 over max 100: a row is 100/9 positions, so truncating and rounding differ.
     #[test_case(0, Some(0)     ; "the top row selects the first position")]
     #[test_case(9, Some(100)   ; "the bottom row selects the last position")]
     // relative=5, position = 5 * 100 / 9 = 55.6, rounded to nearest
@@ -152,12 +147,10 @@ mod tests {
         let drag = MouseEventKind::Drag(MouseButton::Left);
         let release = MouseEventKind::Up(MouseButton::Left);
 
-        // Column 5 is beside the one-column scrollbar.
         assert_eq!(None, mouse(press, 5));
         assert_eq!(None, mouse(drag, 5));
 
         assert_eq!(Some(99), mouse(press, 0));
-        // A drag keeps scrolling once started, wherever the pointer is.
         assert_eq!(Some(99), mouse(drag, 5));
 
         assert_eq!(None, mouse(release, 0));
@@ -173,8 +166,6 @@ mod tests {
         assert_eq!(Some(99), s.handle_drag(14, 99));
     }
 
-    /// With end arrows drawn, the track is the rows between them, so its first
-    /// and last rows are the ends of the range and the arrows clamp to them.
     #[test_case(1, Some(0)   ; "the first track row selects the first position")]
     #[test_case(8, Some(99)  ; "the last track row selects the last position")]
     #[test_case(0, Some(0)   ; "the top arrow clamps to the first position")]

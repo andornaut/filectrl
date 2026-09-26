@@ -15,16 +15,13 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct BreadcrumbsView {
-    /// Each component as shown, which escapes what would disguise a name.
+    /// Each component as shown, with disguising characters escaped.
     breadcrumbs: Vec<String>,
-    /// The path each breadcrumb names, index for index. A click resolves
-    /// through these, since the shown text is not always the real name.
+    /// The path each breadcrumb names, index for index, since shown text is not always the real
+    /// name.
     ancestors: Vec<PathBuf>,
-    /// The directory listed behind the bookmarks view, which is the one a
-    /// search walks, so leaving the view for a search shows it again.
+    /// The directory behind the bookmarks view, which a search walks.
     directory: PathBuf,
-    /// Which listing the header describes; transitions come solely from
-    /// `ListingMode::transition`.
     mode: ListingMode,
     area: Rect,
     positions: Vec<Vec<Position>>,
@@ -51,9 +48,7 @@ impl BreadcrumbsView {
     }
 
     fn height(&self, width: u16) -> u16 {
-        // Calculate height based on content length and width, without theme
-        // styling. The tag placeholder must match render(): a tag entry has no
-        // trailing separator, so measuring without one would wrap a column early.
+        // The tag placeholder must match render(): a tag has no trailing separator.
         let tag_style = self.tag().map(|_| Style::default());
         let (container, _) = spans(
             &self.display_breadcrumbs(),
@@ -78,7 +73,6 @@ impl BreadcrumbsView {
         CommandResult::Handled
     }
 
-    /// Shows the directory again after the bookmarks view replaced it.
     fn restore_directory(&mut self) -> CommandResult {
         if !self.directory.as_os_str().is_empty() {
             self.set_path(&self.directory.clone());
@@ -118,9 +112,7 @@ mod tests {
         Config::init_test();
         let mut v = view("/home/bookmarks", ListingMode::Bookmarks);
 
-        // The watcher refreshes the working directory behind the bookmarks
-        // listing. Following it here would put the working directory in the
-        // breadcrumbs above a listing of bookmarks.
+        // Following the watcher would show the working directory above a bookmarks listing.
         v.handle_command(&Command::RefreshedDirectory {
             directory: crate::file_system::path_info::PathInfo::try_from("/tmp").unwrap(),
             generation: 1,
@@ -129,10 +121,7 @@ mod tests {
         assert_eq!(vec!["", "home", "bookmarks"], v.breadcrumbs);
     }
 
-    /// A search from the bookmarks view walks the working directory, so the
-    /// header names it rather than the bookmarks directory. The refresh while
-    /// the bookmarks were shown still counts: it is the directory the search
-    /// walks.
+    /// A search from the bookmarks view walks, and the header names, the working directory.
     #[test]
     fn a_search_from_the_bookmarks_view_shows_the_directory_it_walks() {
         Config::init_test();
@@ -155,8 +144,7 @@ mod tests {
 
     #[test]
     fn height_with_tag_does_not_wrap_at_the_exact_width() {
-        // "[Search] "(9) + ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) fills
-        // exactly 20 columns when the tag has no trailing separator, as in render().
+        // "[Search] "(9) + ""(0+1 sep) + "home"(4+1 sep) + "abcde"(5, last) = 20 columns.
         let v = view("/home/abcde", ListingMode::Search);
         assert_eq!(1, v.height(20));
         assert_eq!(2, v.height(19));
@@ -170,8 +158,6 @@ mod tests {
         assert_eq!(2, v.height(10));
     }
 
-    /// Clicking a breadcrumb navigates to the ancestor it shows, the root's
-    /// empty component included.
     #[test]
     fn clicking_a_breadcrumb_resolves_the_path_it_spells() {
         Config::init_test();
@@ -185,12 +171,10 @@ mod tests {
             Some(std::path::PathBuf::from("/tmp")),
             view.to_path(1).map(|info| info.path)
         );
-        // Past the end of the trail: a click that addresses no breadcrumb.
         assert_eq!(None, view.to_path(2).map(|info| info.path));
     }
 
-    /// The shown component spells the bidi override out, so a path joined
-    /// from the shown text would name a directory that does not exist.
+    /// The shown component escapes the bidi override, so a path joined from it would not exist.
     #[test]
     fn clicking_an_escaped_breadcrumb_resolves_the_real_name() {
         let dir = crate::test_support::TempDir::new("breadcrumbs_escaped");
@@ -204,9 +188,7 @@ mod tests {
         assert_eq!(Some(escaped), view.to_path(index).map(|info| info.path));
     }
 
-    /// Populate `positions` the way `render` does, so a click can be dispatched
-    /// without a terminal. The widget is what maps columns to breadcrumbs, so
-    /// building the positions by hand would test something else.
+    /// Populates `positions` as `render` does, so a click can be dispatched without a terminal.
     fn lay_out(view: &mut BreadcrumbsView, width: u16) {
         let display = view.display_breadcrumbs();
         let tag_style = (view.mode != ListingMode::Normal).then(Style::default);
@@ -218,7 +200,6 @@ mod tests {
             Style::default(),
             Style::default(),
         );
-        // Off the left edge, so a column is read relative to the header.
         view.area = ratatui::layout::Rect {
             x: 5,
             y: 0,
@@ -228,7 +209,6 @@ mod tests {
         view.positions = positions;
     }
 
-    /// A click `x` columns into the header.
     fn click(view: &mut BreadcrumbsView, x: u16) -> CommandResult {
         view.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -238,8 +218,7 @@ mod tests {
         })
     }
 
-    // "[Search] " is 9 columns and "[Bookmarks] " 12; each is followed by the
-    // root's separator, then "tmp".
+    // "[Search] " is 9 columns and "[Bookmarks] " 12, then the root's separator and "tmp".
     #[test_case(ListingMode::Search, 11 ; "search")]
     #[test_case(ListingMode::Bookmarks, 14 ; "bookmarks")]
     fn clicking_a_breadcrumb_while_a_tag_is_shown_addresses_the_directory_under_the_column(
@@ -250,9 +229,7 @@ mod tests {
         let mut v = view("/tmp", mode);
         lay_out(&mut v, 40);
 
-        // The tag occupies the first columns and names no directory, so a
-        // click lands one breadcrumb earlier than its position says. Reading
-        // the position directly would open the root for a click on "tmp".
+        // The tag names no directory, so a click lands one breadcrumb earlier than its position.
         let result = click(&mut v, x);
 
         let Ok(Command::Open(path)) = Command::try_from(result) else {
@@ -267,8 +244,6 @@ mod tests {
         let mut v = view("/tmp", ListingMode::Search);
         lay_out(&mut v, 40);
 
-        // The tag is not a directory, and the breadcrumb before it does not
-        // exist.
         assert_eq!(CommandResult::Handled, click(&mut v, 2));
     }
 

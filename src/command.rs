@@ -32,18 +32,8 @@ pub enum InputMode {
     Normal,
 }
 
-/// What an open prompt is collecting input for.
-///
-/// Each variant is opened via `Command::OpenPrompt` and resolves on submit into
-/// a `Command` (see `PromptView::submit`), sometimes the same-named one
-/// (`Rename`), sometimes not (`Delete` -> `ConfirmDelete`, `Filter` ->
-/// `FilterChanged`, `Goto` -> `Open`, `Search` -> `StartSearch`).
-///
-/// The payloads differ by lifecycle stage, which is why the two are not merged:
-/// a `PromptAction` carries the prompt's *initial* state (`Rename.name` is the
-/// pre-filled text, `Delete(usize)` a count for the message), and the resolved
-/// `Command` the *submitted* result (`Rename.name` is what was typed,
-/// `Delete(Vec<PathInfo>)` the resolved paths).
+/// What an open prompt is collecting input for. Carries the prompt's initial
+/// state; `PromptView::submit` resolves it into a `Command`.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum PromptAction {
     Chmod {
@@ -66,19 +56,15 @@ pub enum PromptAction {
         name: String,
     },
     Search(String),
-    /// A paste of a clipboard entry this window did not write, which could
-    /// have been put there by any program, confirmed before it runs.
+    /// Confirm a paste of a clipboard entry this window did not write.
     ConfirmPaste {
         entry: ClipboardEntry,
         dest: PathInfo,
     },
-    /// Quit while this many file operations are running or queued, which
-    /// quitting would end part way through.
+    /// Quit while this many file operations are running or queued.
     ConfirmQuit(usize),
-    /// A paste found `name` already present in the destination directory.
-    /// `can_overwrite` is false when the existing entry or the source is a
-    /// directory, since a directory is never replaced and never replaces
-    /// anything, so the prompt offers only the skip choices.
+    /// A paste found `name` already present. `can_overwrite` is false when
+    /// either side is a directory.
     Conflict {
         name: String,
         can_overwrite: bool,
@@ -86,8 +72,7 @@ pub enum PromptAction {
 }
 
 impl PromptAction {
-    /// True for the prompts that take a single keypress rather than text, and
-    /// so render as a full-width label with no input area.
+    /// True for the prompts that take a single keypress rather than text.
     pub fn is_confirmation(&self) -> bool {
         matches!(
             self,
@@ -100,8 +85,7 @@ impl PromptAction {
 }
 
 /// How a paste resolves a destination that already exists. The `*All` variants
-/// answer for the rest of the batch as well as for the collision in front of
-/// the user, so a paste of many sources need not be answered many times.
+/// also answer for the rest of the batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum ConflictChoice {
     Overwrite,
@@ -110,24 +94,14 @@ pub enum ConflictChoice {
     SkipAll,
 }
 
-/// The single message type for the whole app: terminal input, navigation,
-/// file operations, view-state notifications, and alerts. Commands are
-/// broadcast to all `CommandHandler`s (see `app::recursively_handle_command`).
-///
-/// Lifecycle conventions used in the annotations below:
-/// - **Intent**: a request that another component resolves into a follow-up
-///   command (e.g. `Paste` -> `Copy`/`Move`). Annotated `// Intent: …`.
-/// - **Result**: emitted in response to an intent, carrying data the
-///   originator could not produce itself (e.g. `Bookmarks`,
-///   `NavigatedDirectory`). Annotated `// Result: …`.
-/// - Everything else is a terminal event, a direct action, or a view-state
-///   notification.
+/// The app's single message type, broadcast to all `CommandHandler`s. An
+/// "Intent" is resolved by another component into a follow-up command; a
+/// "Result" answers an intent.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Command {
     // Terminal input events
     Key(KeyCode, KeyModifiers),
-    /// Text the terminal delivered as one bracketed paste, so a line break in
-    /// it is text rather than Enter.
+    /// A bracketed paste: a line break in it is text, not Enter.
     PasteText(String),
     Mouse(MouseEvent),
     Resize {
@@ -138,10 +112,8 @@ pub enum Command {
     // External commands, handled by FileSystem (shell out via open_in)
     OpenCurrentDirectory,
     OpenNewWindow,
-    // Intent: the "open with" picker resolved a chosen application into a
-    // concrete argv; FileSystem spawns it detached. `label` names the
-    // application and `path` what it opens, in the failure alert. An empty
-    // `argv` is a no-op.
+    // FileSystem spawns `argv` detached; `label` and `path` name it in a
+    // failure. An empty `argv` is a no-op.
     OpenWith {
         argv: Vec<OsString>,
         label: String,
@@ -155,32 +127,26 @@ pub enum Command {
     Open(PathInfo),      // Intent: FileSystem -> NavigatedDirectory (dir) or external open (file)
     OpenWithPrompt(PathInfo), // Intent: RootView shows the "open with" picker for this path
     NavigatedDirectory {
-        // Result: of GoToParentDirectory / GoToPreviousDirectory / Open (emitted by FileSystem).
-        // The entries are not included; they stream in afterward as ListingBatch.
+        // Result: entries stream in afterward as ListingBatch.
         directory: PathInfo,
         generation: u64,
     },
     RefreshDirectory, // Intent: resolved by FileSystem into RefreshedDirectory
     RefreshedDirectory {
-        // Result: of RefreshDirectory. Entries stream in as ListingBatch.
+        // Result: entries stream in as ListingBatch.
         directory: PathInfo,
         generation: u64,
     },
-    // Result: a batch of streamed entries (directory load or search hits),
-    // appended in read order by TableView. `generation` matches the command that
-    // started the stream (Navigated/RefreshedDirectory or SearchStarted), so a
-    // superseded stream's batches are ignored. Both draw from one counter, so a
-    // generation is never ambiguous.
+    // Result: streamed entries of a listing or search. A batch whose
+    // `generation` is superseded is ignored.
     ListingBatch {
         items: Vec<PathInfo>,
         generation: u64,
     },
     DirectoryListingComplete {
-        // Result: the streamed listing finished; TableView sorts and restores selection.
         generation: u64,
     },
-    // Result: of a refresh while ended search results are shown. The results
-    // read again by path, replacing the listing of search `generation`.
+    // Result: ended search results reread by path on a refresh.
     SearchResultsRefreshed {
         items: Vec<PathInfo>,
         generation: u64,
@@ -200,9 +166,7 @@ pub enum Command {
         dest: PathInfo,
     },
     Paste(PathInfo), // Intent: resolved by App into Copy or Move
-    // Intent: answers the conflict prompt FileSystem opened for the source at
-    // the front of the paste it is holding; resolved by FileSystem into the
-    // next task, the next prompt, or the clipboard follow-up.
+    // Intent: answers FileSystem's conflict prompt.
     ResolveConflict(ConflictChoice),
     CreateDirectory(String),
     ConfirmDelete, // Intent: resolved by TableView into Delete
@@ -219,7 +183,6 @@ pub enum Command {
     },
     GetBookmarks, // Intent: resolved by FileSystem into Bookmarks
     Bookmarks {
-        // Result: of GetBookmarks
         bookmarks: Vec<PathInfo>,
     },
 
@@ -234,9 +197,7 @@ pub enum Command {
     SetClipboardText(String), // Handled by App; writes text to the system clipboard
 
     // Search
-    // `generation` is a monotonic id stamped by FileSystem when a search
-    // starts. Consumers ignore results/exits from superseded generations, so
-    // a cancelled search's final messages cannot disturb its replacement.
+    // Messages from a superseded `generation` are ignored.
     CancelSearch, // Intent: stop the search thread non-destructively (keep results and notice)
     ExitedSearch {
         generation: u64,
@@ -249,13 +210,9 @@ pub enum Command {
 
     // View state notifications, emitted by TableView
     FilterChanged(String),
-    // The filter prompt's text after each edit. Applied like `FilterChanged`,
-    // but the prompt stays open.
+    // The filter prompt's text after each edit; the prompt stays open.
     FilterEdited(String),
     SelectionChanged {
-        // Snapshot of the table's cursor, mark count and range mode, taken
-        // whenever any may have changed. StatusView reads `selected`;
-        // NoticesView reads `mark_count` and `range`.
         selected: Option<PathInfo>,
         mark_count: usize,
         range: bool,
@@ -273,8 +230,7 @@ pub enum Command {
 
     // Global
     Quit,
-    // Runs `program` on `path` in the terminal's foreground. Left unclaimed,
-    // like `Quit`: only `App` holds the terminal it has to suspend.
+    // Handled by `App`, which holds the terminal it suspends.
     RunInForeground {
         program: ForegroundProgram,
         path: PathInfo,
@@ -291,8 +247,7 @@ impl Command {
                 Some(Self::Key(*code, *modifiers))
             }
             Event::Mouse(mouse_event) => {
-                // Suppress Move events: they are too noisy and no handler uses them.
-                // Up events are kept: the scrollbar needs them to clear its drag state.
+                // No handler uses Moved events.
                 if mouse_event.kind == MouseEventKind::Moved {
                     None
                 } else {
@@ -311,16 +266,12 @@ impl Command {
 
 impl From<Error> for Command {
     fn from(value: Error) -> Self {
-        // `{:#}` flattens the cause chain onto one line, joined by ": ". An
-        // alert is a single line, so `to_string` would show only the outermost
-        // message and drop the cause that names what actually went wrong.
+        // `{:#}` keeps the cause chain on the alert's one line.
         Self::AlertError(format!("{value:#}"))
     }
 }
 
-/// Test-only downcast to exactly one derived command. Production code must
-/// consume every derived command via `CommandResult::into_commands`, which
-/// cannot silently drop siblings.
+/// Test-only downcast to exactly one derived command.
 #[cfg(test)]
 impl TryFrom<CommandResult> for Command {
     type Error = Error;

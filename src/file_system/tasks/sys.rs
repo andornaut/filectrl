@@ -1,6 +1,5 @@
-//! The file system calls the tasks make, through nix, and the few helpers that
-//! turn its raw `stat` fields into what the walks compare. Every call is
-//! relative to an open directory and never follows a link unless it says so.
+//! Directory-relative file system calls the tasks make, through nix. None follows a link unless it
+//! says so.
 
 pub(super) use nix::{
     dir::Dir,
@@ -21,13 +20,11 @@ pub(super) enum FileType {
     Socket,
     CharacterDevice,
     BlockDevice,
-    /// A directory entry the filesystem did not type, or a mode with no
-    /// recognized type bits.
+    /// An untyped directory entry, or a mode with no recognized type bits.
     Unknown,
 }
 
 impl FileType {
-    /// The type the file type bits of `mode` hold.
     // The constants are u32 on Linux but u16 on macOS.
     #[allow(clippy::useless_conversion)]
     pub(super) fn from_mode(mode: u32) -> Self {
@@ -47,7 +44,6 @@ impl FileType {
         Self::from_mode(stat_mode(stat))
     }
 
-    /// The type a directory entry reports, `Unknown` where it reports none.
     pub(super) fn of_entry(file_type: Option<Type>) -> Self {
         match file_type {
             Some(Type::File) => Self::RegularFile,
@@ -62,14 +58,13 @@ impl FileType {
     }
 }
 
-/// `st_mode` as a u32: it is u32 on Linux but u16 on macOS.
+// `st_mode` is u32 on Linux but u16 on macOS.
 #[allow(clippy::useless_conversion)]
 pub(super) fn stat_mode(stat: &Stat) -> u32 {
     u32::from(stat.st_mode)
 }
 
-/// The permission bits of `mode`, setuid, setgid and sticky included, as a
-/// `Mode`.
+/// The permission bits of `mode`, setuid, setgid and sticky included.
 pub(super) fn mode_bits(mode: u32) -> Mode {
     // `mode_t` is u32 on Linux but u16 on macOS; the permission bits fit.
     #[allow(clippy::cast_possible_truncation)]
@@ -77,13 +72,9 @@ pub(super) fn mode_bits(mode: u32) -> Mode {
     Mode::from_bits_truncate(raw)
 }
 
-/// Sets the mode of `name` in the open directory `dir` (the working
-/// directory through `CWD`) without following a symlink at the name.
-/// `EOPNOTSUPP` is returned as it is, never retried with a change that
-/// follows: it is what Linux answers for a symlink at the name, as well as a
-/// system that cannot change a mode without following (glibc before 2.32),
-/// and a link swapped in again before a retry would have its target changed.
-/// macOS sets the link's own mode instead, which leaves the target alone too.
+/// Sets the mode of `name` in `dir` without following a symlink at the name. `EOPNOTSUPP` is
+/// returned, never retried with a following call: a link swapped in before a retry would have its
+/// target changed.
 pub(in crate::file_system) fn set_mode_at(
     dir: impl std::os::fd::AsFd,
     name: &(impl ?Sized + nix::NixPath),

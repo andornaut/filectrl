@@ -27,15 +27,11 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
-/// A count as a terminal dimension. Terminal geometry is `u16` throughout, and
-/// a count that does not fit is one the terminal could not draw regardless, so
-/// saturating at the maximum is what an oversized listing should render as. An
-/// `as` cast would wrap instead, turning 65_536 rows into none.
+/// A count as a terminal dimension, saturating at `u16::MAX` where `as` would wrap.
 pub(crate) fn as_dimension(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
 }
 
-/// Whether `event` happened inside `area`.
 fn contains(area: Rect, event: MouseEvent) -> bool {
     area.contains(Position {
         x: event.column,
@@ -43,9 +39,7 @@ fn contains(area: Rect, event: MouseEvent) -> bool {
     })
 }
 
-/// The scroll offset that keeps `index` inside a viewport `viewport` long
-/// starting at `scroll`, moving as little as possible. An unmeasured viewport
-/// pins the offset to the start.
+/// The scroll offset that keeps `index` in a `viewport`-long view at `scroll`, moving minimally.
 fn scroll_to_show(viewport: usize, scroll: usize, index: usize) -> usize {
     if viewport == 0 {
         return 0;
@@ -59,10 +53,8 @@ fn scroll_to_show(viewport: usize, scroll: usize, index: usize) -> usize {
     }
 }
 
-/// `area` split into content and a one-column scrollbar on its right, or left
-/// whole when there is nothing to scroll. The zero-size scrollbar area clears
-/// the scrollbar's hit test region, so clicks in that column are not treated
-/// as scrollbar drags.
+/// `area` split into content and a one-column scrollbar, or left whole when nothing scrolls.
+/// The zero-size scrollbar area clears the scrollbar's hit region.
 fn split_scrollbar(area: Rect, scrollable: bool) -> (Rect, Rect) {
     if !scrollable {
         return (area, Rect::default());
@@ -72,10 +64,8 @@ fn split_scrollbar(area: Rect, scrollable: bool) -> (Rect, Rect) {
     (content, scrollbar)
 }
 
-/// Draw `lines`, starting at the one `scroll` lines down. Equivalent to an
-/// unwrapped, left-aligned `Paragraph` (see the equivalence test below), but
-/// takes the lines by reference: `Paragraph` owns its text, so handing it
-/// cached content would clone every span each frame.
+/// Draws `lines` from `scroll` down, like an unwrapped left-aligned `Paragraph` but without cloning
+/// the lines.
 fn render_lines(lines: &[Line<'_>], area: Rect, buf: &mut Buffer, style: Style, scroll: u16) {
     let area = area.intersection(buf.area);
     buf.set_style(area, style);
@@ -99,23 +89,23 @@ use crate::command::{Command, handler::CommandHandler};
 
 pub(super) trait View: CommandHandler {
     fn constraint(&self, area: Rect) -> Constraint;
-    /// The theme is passed down from the one place that reads the config
-    /// rather than reached for here, so a view draws with whatever it is
-    /// handed and nothing below this trait needs a global to be initialized.
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>);
 }
 
-/// What the table lists, counted, for the views that report it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ListingCount {
-    /// The directory's entries, `shown` of them in the table. The directory's
-    /// total is counted as it loads, by the status bar.
-    Directory { shown: usize },
-    /// Search results, `shown` of the `total` found.
-    Results { shown: usize, total: usize },
-    /// The bookmarks, all of them shown: the directory under them is hidden,
-    /// so its count would describe nothing on screen.
-    Bookmarks { shown: usize },
+    /// The directory's entries, `shown` of them in the table.
+    Directory {
+        shown: usize,
+    },
+    Results {
+        shown: usize,
+        total: usize,
+    },
+    /// The bookmarks, all shown.
+    Bookmarks {
+        shown: usize,
+    },
 }
 
 impl Default for ListingCount {
@@ -124,9 +114,7 @@ impl Default for ListingCount {
     }
 }
 
-/// Which listing the table is showing. Search and bookmarks are mutually
-/// exclusive. Every view with mode-dependent state must derive transitions
-/// from [`ListingMode::transition`] so the rules are written exactly once.
+/// Which listing the table shows. Views derive transitions from [`ListingMode::transition`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum ListingMode {
     #[default]
@@ -136,8 +124,7 @@ pub(super) enum ListingMode {
 }
 
 impl ListingMode {
-    /// The mode in effect after `command`, or `None` when the command does
-    /// not change the mode.
+    /// The mode after `command`, or `None` when it does not change the mode.
     pub(super) fn transition(command: &Command) -> Option<Self> {
         match command {
             Command::NavigatedDirectory { .. } | Command::ResetView => Some(Self::Normal),
@@ -172,11 +159,8 @@ fn bordered(
     area.inner(Margin::new(1, 1))
 }
 
-/// The left title/message always takes precedence over the right-aligned
-/// hint: the hint is only rendered when it fits alongside the full left
-/// content, so it never causes the left content to be shortened. `reserved`
-/// accounts for non-content columns (e.g. 2 for left + right borders, 0 for a
-/// borderless block).
+/// Whether the right-aligned hint fits beside the full left content; the hint never shortens it.
+/// `reserved` counts non-content columns (2 for borders).
 fn right_hint_fits(
     total_width: usize,
     left_width: usize,
@@ -200,8 +184,7 @@ mod tests {
     use super::{ListingMode, render_lines, right_hint_fits, scroll_to_show, split_scrollbar};
     use crate::{command::Command, file_system::path_info::PathInfo};
 
-    /// Shaped like real cached content: styled label/value spans, a blank
-    /// separator, and a line wider than the render area.
+    /// Styled spans, a blank separator, and a line wider than the render area.
     fn lines() -> Vec<Line<'static>> {
         vec![
             Line::from(vec![
@@ -244,8 +227,7 @@ mod tests {
     #[test_case(3 ; "scrolled to the last line")]
     #[test_case(9 ; "scrolled past the end")]
     fn render_lines_paints_what_paragraph_painted(scroll: u16) {
-        // A non-zero origin inside a larger buffer, so a row-offset error
-        // would show up as a mismatch rather than being clipped away.
+        // A non-zero origin, so a row-offset error shows rather than being clipped.
         let buffer_area = Rect::new(0, 0, 20, 10);
         let area = Rect::new(2, 3, 12, 3);
         let style = Style::default().fg(Color::Green);
@@ -264,7 +246,6 @@ mod tests {
 
     #[test]
     fn render_lines_clips_an_area_that_overflows_the_buffer() {
-        // The area runs past both the right and the bottom edge.
         let buffer_area = Rect::new(0, 0, 8, 2);
         let area = Rect::new(4, 1, 12, 4);
         let style = Style::default().fg(Color::Green);
@@ -307,7 +288,6 @@ mod tests {
             Some(ListingMode::Bookmarks),
             ListingMode::transition(&Command::Bookmarks { bookmarks: vec![] })
         );
-        // A refresh keeps the current mode.
         assert_eq!(
             None,
             ListingMode::transition(&Command::RefreshedDirectory {
@@ -317,12 +297,9 @@ mod tests {
         );
     }
 
-    // Borderless (reserved = 0): the hint needs at least one spare column
-    // beyond the full left content.
     #[test_case(20, 10, 9, 0, true; "borderless: fits with a spare column")]
     #[test_case(20, 10, 10, 0, false; "borderless: no spare column drops the hint")]
     #[test_case(20, 18, 5, 0, false; "borderless: long left content drops the hint")]
-    // Bordered (reserved = 2): the two borders also count against the width.
     #[test_case(20, 10, 7, 2, true; "bordered: fits once borders are reserved")]
     #[test_case(20, 10, 8, 2, false; "bordered: borders push the hint out")]
     fn right_hint_fits_respects_left_precedence(

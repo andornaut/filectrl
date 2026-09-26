@@ -18,13 +18,10 @@ use crate::{
     },
 };
 
-/// Paths a confirmation of a paste from elsewhere lists, one per line, before
-/// it counts the rest.
+/// Paths listed by a paste-from-elsewhere confirmation before it counts the rest.
 const MAX_LISTED_PASTE_PATHS: usize = 5;
 
-/// Entries of a directory the Goto prompt reads for its suggestions. The read
-/// runs on the UI thread, so a larger directory gets no suggestions rather
-/// than a stall.
+/// Directory size above which Goto offers no suggestions (the read runs on the UI thread).
 const MAX_SUGGESTION_ENTRIES: usize = 10_000;
 
 #[derive(Default)]
@@ -32,36 +29,26 @@ pub(super) struct PromptView {
     actions: PromptAction,
     text_area: TextArea<'static>,
     initial_text: String,
-    /// Filter: the filter the table was last sent, so an edit that leaves the
-    /// text as it was sends nothing.
+    /// Filter: the text last sent to the table, so an unchanged edit sends nothing.
     live_filter: String,
     render_area: Rect,
-    /// Horizontal scroll offset (in display columns), mirroring tui-textarea's internal viewport.
+    /// Horizontal scroll offset in display columns, mirroring tui-textarea's viewport.
     scroll_col: u16,
-    /// Goto: the directory that relative input is resolved against.
     basedir: PathBuf,
-    /// Goto: prefix-matching entries `(name, is_dir)`, sorted ascending.
     suggestions: Vec<(String, bool)>,
-    /// Goto: index of the currently shown suggestion.
     suggestion_index: usize,
-    /// Goto: the directory `cached_entries` was read from. Avoids re-reading
-    /// the filesystem on every keystroke while the directory prefix is unchanged.
+    /// Goto: the directory `cached_entries` was read from.
     cached_dir: Option<PathBuf>,
-    /// Goto: every entry of `cached_dir` as `(name, is_dir)`, sorted ascending.
     cached_entries: Vec<(String, bool)>,
-    /// Delete: the display name of the one entry a delete prompt asks about,
-    /// named in the question. `None` when it asks about several.
+    /// Delete: the display name of the single entry being deleted.
     delete_subject: Option<String>,
 }
 
-/// One line of a prompt's label. A path it names is kept apart from the text
-/// around it, so the widget can trim the path to the width it draws at and
-/// leave the question and its choices visible.
+/// One line of a prompt's label. The path is kept separate so the widget can trim it to fit.
 #[derive(Default)]
 struct LabelLine {
     before: String,
-    /// Already escaped for display, and without its quotes, which are part of
-    /// `before` and `after` so that trimming keeps them.
+    /// Escaped, without its quotes (those are in `before` and `after`).
     path: String,
     after: String,
 }
@@ -74,7 +61,6 @@ impl LabelLine {
         }
     }
 
-    /// `before`, then `path` quoted, then `after`.
     fn quoting(before: &str, path: &str, after: &str) -> Self {
         Self {
             before: format!("{before}\""),
@@ -84,17 +70,15 @@ impl LabelLine {
     }
 }
 
-/// The line untrimmed.
 impl std::fmt::Display for LabelLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}{}{}", self.before, self.path, self.after)
     }
 }
 
-/// `path` escaped and quoted as `quoted` renders it, without the quotes.
+/// `path` escaped as `quoted` renders it, without the quotes.
 fn quoted_inner(path: &Path) -> String {
     let quoted = quoted(path).to_string();
-    // `quoted` always opens and closes with an ASCII quote.
     quoted[1..quoted.len() - 1].to_string()
 }
 
@@ -103,8 +87,7 @@ impl PromptView {
         self.delete_subject = name;
     }
 
-    /// Whether the open prompt is a y/n (or conflict) question about entries
-    /// it already holds, rather than one that takes typed text.
+    /// Whether the open prompt is a y/n or conflict question rather than a text input.
     pub(super) fn is_confirmation(&self) -> bool {
         matches!(
             self.actions,
@@ -123,7 +106,6 @@ impl PromptView {
             }
             PromptAction::AddBookmark { .. } => plain(" Add bookmark ".to_string()),
             PromptAction::CreateDirectory => plain(" New directory ".to_string()),
-            // The display name is already escaped, like the conflict name.
             PromptAction::Delete(1) if let Some(name) = &self.delete_subject => {
                 vec![LabelLine::quoting(" Delete ", name, "? (y/n) ")]
             }
@@ -145,9 +127,8 @@ impl PromptView {
                     ClipboardEntry::Copy(_) => "copy",
                     ClipboardEntry::Move(_) => "move",
                 };
-                // Each path whole, not `compact`ed: another program chose it,
-                // and an elided middle would hide which directory it is in.
-                // Only what the width cannot hold is trimmed, from the left.
+                // Whole paths, trimmed from the left only as the width requires: another program
+                // chose them.
                 let paths = entry.paths();
                 if let [path] = paths {
                     return vec![LabelLine::quoting(
@@ -156,8 +137,6 @@ impl PromptView {
                         " here? (y/n) ",
                     )];
                 }
-                // Every path is named, up to a few lines' worth: the text came
-                // from another program, which chose what follows the first.
                 let mut lines = plain(format!(
                     " Clipboard from elsewhere: {verb} {} here? (y/n) ",
                     pluralize_items(paths.len())
@@ -174,8 +153,7 @@ impl PromptView {
                 }
                 lines
             }
-            // `name` is the table's display name, already escaped, so it is
-            // quoted as it is rather than escaped a second time.
+            // `name` is already escaped.
             PromptAction::Conflict {
                 name,
                 can_overwrite: true,
@@ -216,8 +194,6 @@ impl PromptView {
         if let PromptAction::Goto { directory } = kind {
             self.basedir.clone_from(directory);
             self.suggestion_index = 0;
-            // Drop any cache from a previous prompt so on-disk changes since
-            // it was last open are picked up.
             self.cached_dir = None;
             self.cached_entries.clear();
             self.refresh_suggestions();
@@ -233,8 +209,8 @@ impl PromptView {
         self.scroll_col = 0;
     }
 
-    /// Mirrors tui-textarea's internal `scroll_top_col` logic to track horizontal scroll offset
-    /// without accessing the crate-private `viewport` field. Call after each `render_widget`.
+    /// Mirrors tui-textarea's `scroll_top_col` logic, since `viewport` is private. Call after each
+    /// `render_widget`.
     fn update_scroll_col(&mut self, width: u16) {
         if width == 0 {
             return;
@@ -247,8 +223,8 @@ impl PromptView {
         ));
     }
 
-    /// Converts a display-column offset (viewport-relative + scroll) to a character index
-    /// suitable for `CursorMove::Jump`.
+    /// Converts a display column (viewport-relative plus scroll) to a character index for
+    /// `CursorMove::Jump`.
     fn display_col_to_char_idx(&self, display_col: u16) -> u16 {
         let line = &self.text_area.lines()[0];
         let mut remaining = display_col;
@@ -269,8 +245,7 @@ impl PromptView {
     fn submit(&mut self) -> CommandResult {
         let value = self.text_area.lines().join("");
         match &self.actions {
-            // A mode that is not octal is refused with the prompt still open,
-            // as Go to does for a missing path, so the typo can be corrected.
+            // An invalid mode keeps the prompt open so it can be corrected.
             PromptAction::Chmod { paths, .. } => match chmod_mode(paths, &value) {
                 Ok(_) => Command::Chmod {
                     paths: paths.clone(),
@@ -283,9 +258,7 @@ impl PromptView {
                 name: value,
             },
             PromptAction::CreateDirectory => Command::CreateDirectory(value),
-            // The confirmation prompts resolve in `handle_key` on a single
-            // keypress, so submit never reaches them; treat it as a cancel
-            // rather than guessing an answer on the user's behalf.
+            // Confirmations resolve in `handle_key`, so submit never reaches them.
             PromptAction::Conflict { .. }
             | PromptAction::ConfirmPaste { .. }
             | PromptAction::ConfirmQuit(_) => Command::CancelPrompt,
@@ -305,24 +278,21 @@ impl PromptView {
                     Command::AlertWarn(format!("Path does not exist: {}", compact(&path)))
                 }
             }
-            // Submitting the name as it was offered changes nothing, and for a
-            // name that is not UTF-8 the offered text is a lossy spelling that
-            // names a different file.
+            // For a non-UTF-8 name the offered text is a lossy spelling that names a different
+            // file.
             PromptAction::Rename { .. } if value == self.initial_text => Command::CancelPrompt,
             PromptAction::Rename { path, .. } => Command::Rename {
                 path: path.clone(),
                 name: value,
             },
-            // An empty query would match everything; treat it like Esc.
             PromptAction::Search(_) if value.is_empty() => Command::CancelPrompt,
             PromptAction::Search(_) => Command::StartSearch(value),
         }
         .into()
     }
 
-    /// Resolve user input to a path: `~` alone or a leading `~/` expands to
-    /// home, absolute paths are used as-is, and relative input (`~backup`
-    /// included) is joined onto `basedir`.
+    /// `~` alone or a leading `~/` expands to home; other relative input (`~backup` included) joins
+    /// onto `basedir`.
     fn resolve_path(&self, input: &str) -> PathBuf {
         let home_relative = if input == "~" {
             Some("")
@@ -339,12 +309,10 @@ impl PromptView {
                 home.join(rest)
             };
         }
-        // `join` replaces the base with an absolute input.
         self.basedir.join(input)
     }
 
-    /// Splits the current input into `(dir_prefix, partial)` at the last `/`.
-    /// `dir_prefix` includes the trailing `/`; `partial` is the basename being typed.
+    /// Splits input at the last `/` into `(dir_prefix, partial)`; `dir_prefix` keeps the `/`.
     fn split_input(input: &str) -> (&str, &str) {
         match input.rfind('/') {
             Some(i) => (&input[..=i], &input[i + 1..]),
@@ -352,8 +320,7 @@ impl PromptView {
         }
     }
 
-    /// Re-reads the resolved directory and rebuilds the prefix-matching
-    /// (case-sensitive), alphabetically sorted suggestion list.
+    /// Rebuilds the case-sensitive prefix-matching suggestions, sorted.
     fn refresh_suggestions(&mut self) {
         self.suggestions.clear();
         if !matches!(self.actions, PromptAction::Goto { .. }) {
@@ -361,25 +328,18 @@ impl PromptView {
         }
         let input = self.text_area.lines().join("");
         let (dir_prefix, partial) = Self::split_input(&input);
-        // Only suggest once a basename character has been typed; an empty
-        // partial would otherwise dump the entire directory listing.
         if partial.is_empty() {
             self.suggestion_index = 0;
             return;
         }
         let dir = self.resolve_path(dir_prefix);
-        // Only hit the filesystem when the resolved directory changes; typing
-        // within the same directory just re-filters the cached listing.
         if self.cached_dir.as_deref() != Some(dir.as_path()) {
             self.cached_entries.clear();
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 let entries: Vec<_> = entries.flatten().take(MAX_SUGGESTION_ENTRIES + 1).collect();
-                // A partial listing would suggest some names and silently
-                // omit others, so a directory past the limit gets none.
+                // A directory past the limit gets no suggestions rather than a partial list.
                 if entries.len() <= MAX_SUGGESTION_ENTRIES {
-                    // Completed into the input, so it has to be the name
-                    // itself. A name that is not UTF-8 cannot be, so it is
-                    // not suggested.
+                    // A non-UTF-8 name cannot be typed into the input, so it is not suggested.
                     let mut all: Vec<(String, bool)> = entries
                         .into_iter()
                         .filter_map(|entry| {
@@ -405,8 +365,8 @@ impl PromptView {
         }
     }
 
-    /// The current suggestion as `(suffix, index, total)`, where `suffix` is
-    /// the not-yet-typed remainder (plus a trailing `/` for directories).
+    /// The current suggestion as `(suffix, index, total)`; `suffix` is the untyped remainder,
+    /// `/`-terminated for directories.
     fn current_suggestion(&self) -> Option<(String, usize, usize)> {
         if self.suggestions.is_empty() {
             return None;
@@ -414,8 +374,7 @@ impl PromptView {
         let input = self.text_area.lines().join("");
         let (_, partial) = Self::split_input(&input);
         let (name, is_dir) = &self.suggestions[self.suggestion_index];
-        // The suggestions can lag the input; only slice while the typed
-        // partial is still a prefix of the suggestion.
+        // The suggestions can lag the input.
         let mut suffix = name.strip_prefix(partial)?.to_string();
         if *is_dir {
             suffix.push('/');
@@ -423,12 +382,9 @@ impl PromptView {
         Some((suffix, self.suggestion_index, self.suggestions.len()))
     }
 
-    /// Replace the typed basename with the selected suggestion and move the
-    /// cursor to the end, so typing can continue into an accepted directory.
     fn accept_suggestion(&mut self) {
-        // The suggestion overlay only renders while the cursor is at the end
-        // of the input (see `render`), so acceptance must mirror that guard:
-        // a suggestion that is not displayed must never be applied.
+        // The overlay renders only while the cursor is at the end, so only then does a suggestion
+        // apply.
         if !self.cursor_at_end() {
             return;
         }
@@ -446,11 +402,8 @@ impl PromptView {
         self.refresh_suggestions();
     }
 
-    /// Cycle the active suggestion by `delta` (wrapping).
     fn cycle_suggestion(&mut self, delta: isize) {
-        // The suggestion overlay only renders while the cursor is at the end
-        // of the input (see `render`), so cycling must mirror that guard: the
-        // index must not move while the overlay is hidden.
+        // The overlay renders only while the cursor is at the end.
         if !self.cursor_at_end() {
             return;
         }
@@ -458,14 +411,11 @@ impl PromptView {
         if count == 0 {
             return;
         }
-        // rem_euclid rather than `%`, so stepping back from the first
-        // suggestion wraps to the last instead of going negative.
         let count = isize::try_from(count).unwrap_or(isize::MAX);
         let index = isize::try_from(self.suggestion_index).unwrap_or(0);
         self.suggestion_index = usize::try_from((index + delta).rem_euclid(count)).unwrap_or(0);
     }
 
-    /// Whether the text cursor is at the end of the input line.
     fn cursor_at_end(&self) -> bool {
         let cursor = self.text_area.cursor();
         let (row, col) = (cursor.0, cursor.1);
@@ -511,10 +461,6 @@ mod tests {
             .join("\n")
     }
 
-    // ── delete prompt ────────────────────────────────────────────────────────
-
-    /// One entry is named, so the question says what it deletes; several are
-    /// counted.
     #[test_case(1, Some("a.txt") => " Delete \"a.txt\"? (y/n) " ; "one named entry")]
     #[test_case(1, None => " Delete 1 item? (y/n) " ; "one entry with no name given")]
     #[test_case(2, None => " Delete 2 items? (y/n) " ; "several entries")]
@@ -523,8 +469,6 @@ mod tests {
         view.set_delete_subject(name.map(str::to_string));
         label_text(&view)
     }
-
-    // ── conflict prompt ──────────────────────────────────────────────────────
 
     fn conflict_chord(can_overwrite: bool, key: char, modifiers: KeyModifiers) -> Option<Command> {
         let mut view = prompt_with_action(PromptAction::Conflict {
@@ -558,20 +502,15 @@ mod tests {
     #[test_case('o' ; "overwrite")]
     #[test_case('O' ; "overwrite all")]
     fn a_directory_collision_ignores_the_overwrite_keys(key: char) {
-        // The prompt does not offer replacing a directory, so its keys must not
-        // quietly do it. Ignoring them rather than treating them as the abandon
-        // key keeps the prompt up: someone answering `o` through a batch would
-        // otherwise lose the rest of the paste at the first directory.
+        // Ignored rather than cancelling, so answering `o` through a batch keeps the rest of the
+        // paste.
         assert!(matches!(
             conflict_result(false, key),
             CommandResult::Handled
         ));
     }
 
-    /// Every modifier crossterm can report except Shift, which is how the
-    /// uppercase choices are typed. Enumerated so that a modifier missing from
-    /// the rule is a failure here rather than a way to trigger a destructive
-    /// choice by accident.
+    /// Every modifier crossterm reports except Shift, which types the uppercase choices.
     #[test_case(KeyModifiers::CONTROL ; "ctrl")]
     #[test_case(KeyModifiers::ALT     ; "alt")]
     #[test_case(KeyModifiers::SUPER   ; "super key")]
@@ -579,9 +518,6 @@ mod tests {
     #[test_case(KeyModifiers::META    ; "meta")]
     #[test_case(KeyModifiers::CONTROL.union(KeyModifiers::SHIFT) ; "ctrl and shift")]
     fn a_chord_is_not_one_of_the_offered_choices(modifiers: KeyModifiers) {
-        // Ctrl+O is a different key from o, and o is destructive, so sharing a
-        // letter must not be enough to trigger it. Falling through to cancel
-        // loses nothing: the clipboard is restored.
         for key in ['s', 'S', 'o', 'O'] {
             assert_eq!(
                 Some(Command::CancelPrompt),
@@ -594,13 +530,9 @@ mod tests {
     #[test_case('S' => Some(Command::ResolveConflict(ConflictChoice::SkipAll))      ; "shift skips all")]
     #[test_case('O' => Some(Command::ResolveConflict(ConflictChoice::OverwriteAll)) ; "shift overwrites all")]
     fn shift_still_reaches_the_uppercase_choices(key: char) -> Option<Command> {
-        // Shift is how the uppercase choices are typed at all, so the chord
-        // guard above must not reject it.
         conflict_chord(true, key, KeyModifiers::SHIFT)
     }
 
-    /// The name arrives as the table shows it, escapes included, so the
-    /// prompt must not escape its backslashes a second time.
     #[test_case(true => " \"a\\u{202e}b\" exists: [s]kip, [S]kip all, [o]verwrite, [O]verwrite all " ; "a file")]
     #[test_case(false => " \"a\\u{202e}b\" exists and cannot be replaced: [s]kip, [S]kip all " ; "a directory")]
     fn a_conflict_names_the_entry_as_the_table_shows_it(can_overwrite: bool) -> String {
@@ -613,8 +545,6 @@ mod tests {
 
     #[test]
     fn a_conflict_prompt_renders_as_a_confirmation() {
-        // No text is collected, so it takes the full-width label path rather
-        // than reserving an input area next to the label.
         assert!(
             PromptAction::Conflict {
                 name: "a.txt".to_string(),
@@ -624,8 +554,6 @@ mod tests {
         );
         assert!(!PromptAction::CreateDirectory.is_confirmation());
     }
-
-    // ── delete prompt ────────────────────────────────────────────────────────
 
     #[test_case(KeyCode::Char('y'), KeyModifiers::NONE => Command::Quit ; "y quits")]
     #[test_case(KeyCode::Char('Y'), KeyModifiers::SHIFT => Command::Quit ; "uppercase Y quits")]
@@ -657,8 +585,6 @@ mod tests {
         let mut view = prompt_with_action(PromptAction::Delete(1));
         Command::try_from(view.handle_key(code, modifiers)).unwrap()
     }
-
-    // ── paste of an entry from elsewhere ─────────────────────────────────────
 
     fn foreign_paste(names: &[&str]) -> (crate::test_support::TempDir, ClipboardEntry, PathInfo) {
         let dir = crate::test_support::TempDir::new("prompt_confirm_paste");
@@ -713,7 +639,6 @@ mod tests {
         drop(dir);
     }
 
-    /// Another program chose every path after the first, so each is named.
     #[test]
     fn a_paste_from_elsewhere_lists_its_paths_and_counts_the_rest() {
         let names = ["a", "b", "c", "d", "e", "f", "g"];
@@ -730,8 +655,7 @@ mod tests {
         assert_eq!(expected, label.lines().collect::<Vec<_>>());
     }
 
-    /// Deep enough that `compact` would elide the middle, which is where the
-    /// directory that tells two locations apart would be.
+    /// Deep enough that `compact` would elide the middle directory.
     #[test_case(1 ; "one path")]
     #[test_case(2 ; "a list of paths")]
     fn a_paste_from_elsewhere_names_every_directory_in_the_path(count: usize) {
@@ -752,8 +676,6 @@ mod tests {
         assert_eq!(count, label.matches(&shown).count(), "{label}");
     }
 
-    // ── fitting a confirmation to the width ──────────────────────────────────
-
     /// The rows `view` draws at `width` columns, as text.
     fn rendered(view: &mut PromptView, width: u16) -> Vec<String> {
         use ratatui::{Terminal, backend::TestBackend, layout::Constraint};
@@ -771,8 +693,7 @@ mod tests {
             .collect()
     }
 
-    /// A file named `name` under directories deep enough that its path is
-    /// wider than 150 columns.
+    /// A file named `name` whose path is wider than 150 columns.
     fn deep_file(dir: &TempDir, name: &str) -> PathInfo {
         let parent = dir.join("d".repeat(70)).join("e".repeat(70));
         std::fs::create_dir_all(&parent).unwrap();
@@ -782,8 +703,6 @@ mod tests {
         PathInfo::try_from(path.as_path()).unwrap()
     }
 
-    /// Clipped on the right, the line would lose the file name and the
-    /// question, which are what the answer depends on.
     #[test]
     fn a_long_path_loses_its_start_rather_than_its_name_and_question() {
         let (dir, _, dest) = foreign_paste(&[]);
@@ -841,12 +760,10 @@ mod tests {
         );
     }
 
-    /// Only the path yields to the width: a line that fits is drawn as it is.
     #[test]
     fn a_path_that_fits_is_shown_whole() {
         let (dir, entry, dest) = foreign_paste(&["a"]);
         let mut view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
-        // As wide as the line, so the test holds whatever the temp path's length.
         let width = label_text(&view).cell_width();
 
         let rows = rendered(&mut view, width);
@@ -855,17 +772,12 @@ mod tests {
         drop(dir);
     }
 
-    // ── copy and cut ─────────────────────────────────────────────────────────
-
-    /// A paste is text, so its line break does not submit the prompt and the
-    /// letters after it are not read as keys.
     #[test]
     fn a_paste_is_inserted_as_one_line_of_text() {
         let mut view = prompt_with_action(PromptAction::Filter(String::new()));
 
         let result = view.handle_paste("important\r\n\u{1b}dy");
 
-        // Sent as typed, not submitted.
         assert_eq!(
             CommandResult::from(Command::FilterEdited("importantdy".to_string())),
             result
@@ -890,9 +802,7 @@ mod tests {
         view
     }
 
-    // A key that ratatui-textarea does not treat as copy or cut itself, so only
-    // the binding can make it do either. Ctrl+k deletes to the end of the line
-    // when it reaches the textarea.
+    // Not a textarea copy or cut key, so only the binding can make it do either.
     #[test_case(KeyCode::Char('c'), KeyModifiers::ALT ; "alt c")]
     #[test_case(KeyCode::Char('k'), KeyModifiers::CONTROL ; "ctrl k")]
     fn a_rebound_copy_sets_the_clipboard_to_the_selection(code: KeyCode, modifiers: KeyModifiers) {
@@ -933,9 +843,7 @@ mod tests {
         assert_eq!("hello", view.text_area.lines()[0]);
     }
 
-    // A selection that was started and then moved back to its anchor, as with
-    // Shift+Left then Shift+Right at the end of the input, is still selecting
-    // but empty.
+    // Selecting but empty: Shift+Left then Shift+Right at the end of the input.
     #[test_case(Action::PromptCopy ; "copy")]
     #[test_case(Action::PromptCut ; "cut")]
     fn copy_or_cut_of_an_empty_selection_leaves_the_clipboard_alone(action: Action) {
@@ -950,8 +858,7 @@ mod tests {
         assert_eq!("hello", view.text_area.lines()[0]);
     }
 
-    // The input is one line: `input()` would insert a line break or a tab for
-    // these, and only the first line is drawn while `submit` joins them all.
+    // `input()` would insert these, but only the first line is drawn.
     #[test_case(KeyCode::Tab, KeyModifiers::NONE ; "tab")]
     #[test_case(KeyCode::BackTab, KeyModifiers::SHIFT ; "backtab")]
     #[test_case(KeyCode::Enter, KeyModifiers::SHIFT ; "shift enter")]
@@ -989,8 +896,6 @@ mod tests {
         }
     }
 
-    // ── display_col_to_char_idx ──────────────────────────────────────────────
-
     #[test_case("hello", 0 => 0; "ascii: col 0 maps to char 0")]
     #[test_case("hello", 3 => 3; "ascii: col 3 maps to char 3")]
     #[test_case("hello", 5 => 5; "ascii: col past end clamps to len")]
@@ -1006,8 +911,6 @@ mod tests {
         let view = prompt_with_action(PromptAction::Filter(text.to_string()));
         view.display_col_to_char_idx(col)
     }
-
-    // ── handle_key: Esc / Enter dispatch ─────────────────────────────────────
 
     #[test]
     fn esc_cancels_the_prompt() {
@@ -1036,7 +939,6 @@ mod tests {
             CommandResult::from(Command::FilterEdited("fo".to_string())),
             view.handle_key(KeyCode::Backspace, KeyModifiers::NONE)
         );
-        // Moving the cursor leaves the text as it was, so nothing is sent.
         assert_eq!(
             CommandResult::Handled,
             view.handle_key(KeyCode::Left, KeyModifiers::NONE)
@@ -1045,7 +947,6 @@ mod tests {
             CommandResult::from(Command::FilterEdited("fxo".to_string())),
             view.handle_paste("x")
         );
-        // A cut both copies the selection and narrows to what is left.
         view.handle_key(KeyCode::Char('a'), KeyModifiers::CONTROL);
         assert_eq!(
             CommandResult::from(vec![
@@ -1056,8 +957,6 @@ mod tests {
         );
     }
 
-    /// Ctrl+V reads the clipboard, whose text arrives as a command rather than
-    /// a key.
     #[test]
     fn clipboard_text_pasted_into_the_filter_is_sent_as_typed() {
         let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
@@ -1068,9 +967,8 @@ mod tests {
         );
     }
 
-    /// A close from beneath (a double-click that opens a file) puts the
-    /// opening filter back like Esc; one that follows a submit, a new listing
-    /// or a reset has nothing to put back.
+    /// A close from beneath (e.g. opening a file) restores the filter like Esc; one after a submit,
+    /// new listing, or reset does not.
     #[test_case(None => vec![Command::FilterEdited("fo".to_string())] ; "a close alone")]
     #[test_case(Some(Command::FilterChanged("foo".to_string())) => Vec::<Command>::new() ; "after a submit")]
     #[test_case(Some(Command::ResetView) => Vec::<Command>::new() ; "after a reset")]
@@ -1102,8 +1000,6 @@ mod tests {
         );
     }
 
-    /// Esc puts the filter back itself, so the close it sends finds nothing
-    /// left to restore.
     #[test]
     fn esc_puts_the_filter_back_once() {
         let mut view = prompt_with_action(PromptAction::Filter("fo".into()));
@@ -1161,8 +1057,6 @@ mod tests {
             view.handle_key(KeyCode::Enter, KeyModifiers::NONE)
         );
 
-        // An empty query matches every entry, so submitting one is a way of
-        // changing your mind: it closes the prompt instead of walking the tree.
         let mut view = prompt_with_action(PromptAction::Search(String::new()));
         assert_eq!(
             CommandResult::from(Command::CancelPrompt),
@@ -1178,8 +1072,6 @@ mod tests {
         view.handle_key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(1, view.suggestion_index);
 
-        // Typing on narrows the list to one entry, so the index the user had
-        // moved to no longer addresses a row.
         type_str(&mut view, "r"); // ["Apricot"]
         assert_eq!(1, view.suggestions.len());
         assert_eq!(0, view.suggestion_index);
@@ -1205,15 +1097,12 @@ mod tests {
         );
     }
 
-    /// The prefill of a name that is not UTF-8 is its lossy spelling, so
-    /// renaming to it would name a different file.
     #[test]
     fn submitting_a_rename_unchanged_cancels_it() {
         let mut view = prompt_with_action(PromptAction::Rename {
             path: test_path(),
             name: "caf\u{fffd}.txt".to_string(),
         });
-        // An edit undone before submitting still leaves the name unchanged.
         type_str(&mut view, "x");
         view.handle_key(KeyCode::Backspace, KeyModifiers::NONE);
         assert_eq!(
@@ -1240,8 +1129,6 @@ mod tests {
 
         view.handle_key(KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(view.text_area.lines()[0], "original.txt");
-        // The cursor returns to the end of the restored text, not to where the
-        // edit left it.
         assert_eq!(view.text_area.cursor(), (0, 12));
     }
 
@@ -1264,8 +1151,7 @@ mod tests {
 
     #[test]
     fn update_scroll_col_tracks_cursor_past_viewport() {
-        // 11 ASCII chars, cursor at end (col 11); viewport width = 5
-        // scroll_to_show(5, 0, 11) = 11 + 1 - 5 = 7
+        // Cursor at column 11, width 5: scroll = 11 + 1 - 5 = 7.
         let mut view = prompt_with_action(PromptAction::Filter("hello world".into()));
         view.update_scroll_col(5);
         assert_eq!(view.scroll_col, 7);
@@ -1278,12 +1164,8 @@ mod tests {
         assert_eq!(view.scroll_col, 0);
     }
 
-    // ── Goto type-ahead ──────────────────────────────────────────────────────
-
-    /// A temp directory populated with entries that exercise prefix matching
-    /// and sort order. Names differ by more than case, so the fixture builds on
-    /// a case-insensitive filesystem as well; the test that needs a case-only
-    /// pair adds it itself.
+    /// Entries for prefix matching and sort order, distinct beyond case so it builds on
+    /// case-insensitive filesystems.
     struct GotoFixture {
         dir: TempDir,
     }
@@ -1310,9 +1192,7 @@ mod tests {
         }
     }
 
-    // Linux only: proving that matching is case-sensitive needs "Apple" and
-    // "apple" to exist side by side, which a case-insensitive filesystem cannot
-    // represent. The matching itself carries no platform-specific code.
+    // Linux only: needs "Apple" and "apple" side by side.
     #[cfg(target_os = "linux")]
     #[test]
     fn goto_suggestions_are_prefix_matched_sorted_and_case_sensitive() {
@@ -1332,8 +1212,7 @@ mod tests {
         assert_eq!(None, view.current_suggestion());
     }
 
-    /// Both leave the input empty, where nothing is suggested, so a list left
-    /// over from "Ap" shows they skipped the refresh.
+    /// Both leave the input empty, so a stale "Ap" list shows the refresh was skipped.
     #[test_case(Action::PromptCut ; "cutting all of it")]
     #[test_case(Action::PromptReset ; "resetting to the empty initial text")]
     fn an_edit_outside_the_textarea_refreshes_the_suggestions(action: Action) {
@@ -1364,8 +1243,6 @@ mod tests {
         assert_eq!(Some(("erry".to_string(), 0, 1)), view.current_suggestion());
     }
 
-    /// Filled to the limit and then one past it, reopening in between so the
-    /// directory is read again.
     #[test]
     fn a_directory_past_the_entry_limit_gets_no_suggestions() {
         let dir = TempDir::new("goto_limit");
@@ -1382,8 +1259,6 @@ mod tests {
         assert_eq!(None, view.current_suggestion());
     }
 
-    /// The overlay spells a disguising name out, but the input has to hold
-    /// the name itself for the path to resolve.
     #[test]
     fn accepting_a_disguising_name_inserts_the_name_itself() {
         let dir = TempDir::new("goto_disguising");
@@ -1396,8 +1271,7 @@ mod tests {
         assert_eq!("a\u{202e}txt", view.text_area.lines()[0]);
     }
 
-    // Linux only, here and below: a name that is not UTF-8 needs a filesystem
-    // that stores arbitrary bytes, which APFS does not.
+    // Linux only, here and below: APFS cannot store a non-UTF-8 name.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_name_that_is_not_utf8_is_not_suggested() {
@@ -1412,8 +1286,7 @@ mod tests {
         assert_eq!(vec!["cafe"], names);
     }
 
-    /// The lossy spelling of the base directory names a sibling that exists,
-    /// so resolving against it would open the wrong `sub`.
+    /// The lossy spelling of the base directory names an existing sibling.
     #[cfg(target_os = "linux")]
     #[test]
     fn goto_from_a_directory_that_is_not_utf8_resolves_against_it() {
@@ -1471,8 +1344,6 @@ mod tests {
     fn enter_accepts_the_suggestion_then_opens_it() {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
-        // "Apr" names nothing on disk, so only accepting the "Apricot"
-        // suggestion before submitting can open a directory.
         type_str(&mut view, "Apr");
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         let Command::Open(info) = Command::try_from(result).unwrap() else {
@@ -1500,8 +1371,6 @@ mod tests {
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
         view.text_area.move_cursor(CursorMove::Back);
-        // "Ap" does not exist, so submitting the typed text (rather than the
-        // hidden "Apple/" suggestion) must warn instead of opening a path.
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
         assert!(matches!(
             Command::try_from(result).unwrap(),
@@ -1519,7 +1388,6 @@ mod tests {
 
         let result = view.handle_key(KeyCode::Enter, KeyModifiers::NONE);
 
-        // An alert rather than `Chmod`, which is what closes the prompt.
         let Ok(Command::AlertError(message)) = Command::try_from(result) else {
             panic!("expected Command::AlertError");
         };
@@ -1564,10 +1432,8 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ap");
-        // The untyped rest of the first match, marked as a directory.
         assert_eq!(Some(("ple/".to_string(), 0, 2)), view.current_suggestion());
-        // Mutate the text without refreshing, so the typed partial is no
-        // longer a prefix of any cached suggestion.
+        // The typed partial is no longer a prefix of any cached suggestion.
         view.text_area.insert_str("XYZXYZXYZ");
         assert_eq!(view.current_suggestion(), None);
     }
@@ -1586,8 +1452,6 @@ mod tests {
         assert_eq!(view.current_suggestion(), None);
     }
 
-    // ── split_input ──────────────────────────────────────────────────────────
-
     #[test_case("",          "",      ""    ; "empty input")]
     #[test_case("file",      "",      "file"; "no separator: all partial")]
     #[test_case("dir/",      "dir/",  ""    ; "trailing slash: empty partial")]
@@ -1605,8 +1469,6 @@ mod tests {
             (expected_prefix, expected_partial)
         );
     }
-
-    // ── resolve_path ─────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_path_joins_relative_input_onto_basedir() {
@@ -1634,8 +1496,6 @@ mod tests {
         assert_eq!(view.resolve_path("~/Documents"), home.join("Documents"));
     }
 
-    /// Only `~` alone or followed by a separator names the home directory; a
-    /// name that starts with one is an ordinary relative name.
     #[test]
     fn resolve_path_treats_a_name_starting_with_a_tilde_as_relative() {
         let view = goto_prompt(Path::new("/tmp/base"));

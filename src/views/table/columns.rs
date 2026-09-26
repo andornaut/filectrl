@@ -6,7 +6,6 @@ const MODIFIED_LEN: u16 = 12;
 const SIZE_LEN: u16 = 7;
 
 // Width thresholds (strict greater-than) at which each extra column becomes visible.
-// Each threshold accounts for the name column min, preceding columns, and their separators.
 const MODIFIED_THRESHOLD: u16 = NAME_MIN_LEN; // 39
 const SIZE_THRESHOLD: u16 = MODIFIED_THRESHOLD + MODIFIED_LEN + 1 + SIZE_LEN + 1; // 60
 const MODE_THRESHOLD: u16 = SIZE_THRESHOLD + MODE_LEN + 1; // 71
@@ -36,9 +35,7 @@ pub(super) enum SortColumn {
 }
 
 impl SortColumn {
-    /// The direction a column starts with when it becomes the sort column,
-    /// matching what a user reaches for that column to find: names A-Z,
-    /// newest first, largest first.
+    /// The direction a column starts with when it becomes the sort column.
     fn default_direction(self) -> SortDirection {
         match self {
             Self::Name => SortDirection::Ascending,
@@ -131,7 +128,6 @@ mod tests {
 
     // --- calculate_constraints ---
 
-    // Column count at each threshold boundary (strictly-greater comparisons)
     #[test_case(NAME_MIN_LEN,     1; "at or below min width: name only")]
     #[test_case(NAME_MIN_LEN + 1, 2; "one above min: modified added")]
     #[test_case(60,               2; "at size threshold: no size yet")]
@@ -143,10 +139,6 @@ mod tests {
         assert_eq!(expected_count, constraints.len());
     }
 
-    /// The name column takes whatever the other columns leave, so it has to
-    /// shrink on the same thresholds that admit them. `column_count_for_width`
-    /// pins when a column appears; this pins that the width is reserved at the
-    /// same moment, which is a second comparison against the same constant.
     #[test_case(NAME_MIN_LEN, NAME_MIN_LEN ; "no other column, so the name takes it all")]
     #[test_case(60, 47 ; "at the size threshold only modified is reserved")]
     #[test_case(61, 40 ; "one above, size is reserved too")]
@@ -157,10 +149,7 @@ mod tests {
         assert_eq!(expected, name_width);
     }
 
-    // The name widths are literals rather than the formula the implementation
-    // uses, which would agree with itself however it changed. Each row is the
-    // width at which that column first fits, so the name column is narrower
-    // than the table and its constraint has to be the shrunk width.
+    // Literal widths, not the implementation's formula.
     #[test_case(40, 1, MODIFIED_LEN, 27 ; "modified")]
     #[test_case(61, 2, SIZE_LEN, 40     ; "size")]
     #[test_case(72, 3, MODE_LEN, 40     ; "mode")]

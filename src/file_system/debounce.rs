@@ -1,15 +1,9 @@
 use std::time::{Duration, Instant};
 
-/// Debounces progress updates on units processed and on elapsed time, a unit
-/// being whatever the caller counts: bytes copied, or entries removed.
-///
-/// Count alone bounds updates per unit of work, so a copy fast enough to finish
-/// in a second sends its whole percentage ladder inside that second, each one a
-/// redraw. The floor bounds the rate; the count keeps an operation making no
-/// progress from sending at all.
-///
-/// The first call always triggers, so any total reports at least once. For an
-/// empty total the threshold is 0 and every call past the floor triggers.
+/// Debounces progress updates on units processed (bytes copied, entries
+/// removed) and on elapsed time. The count alone would let a fast copy send its
+/// whole percentage ladder inside one second; the time floor bounds the rate.
+/// The first call always triggers.
 pub struct ProgressDebouncer {
     current_count: u64,
     has_triggered: bool,
@@ -25,8 +19,6 @@ impl ProgressDebouncer {
             has_triggered: false,
             last_triggered: None,
             min_interval,
-            // saturating_mul guards against overflow for very large totals;
-            // the product is divided down to the percentage threshold.
             threshold: total.saturating_mul(debounce_threshold_percentage) / 100,
         }
     }
@@ -37,9 +29,8 @@ impl ProgressDebouncer {
             if self.current_count < self.threshold {
                 return false;
             }
-            // The count is due but the floor has not elapsed. Hold the count
-            // rather than resetting it, so a suppressed update does not cost
-            // another whole threshold's worth of work before the next one.
+            // Due but inside the floor: hold the count, so the next update does not cost
+            // another whole threshold.
             if self
                 .last_triggered
                 .is_some_and(|last| at.duration_since(last) < self.min_interval)
@@ -53,17 +44,14 @@ impl ProgressDebouncer {
         true
     }
 
-    /// The count that makes an update due, for a test to check what a caller
-    /// built the debouncer against.
     #[cfg(test)]
     pub fn threshold(&self) -> u64 {
         self.threshold
     }
 }
 
-/// Enforces a minimum interval between triggers. An event arriving after the
-/// window triggers at once; one arriving inside it is delayed to the end of the
-/// window, and several inside it produce that one delayed trigger.
+/// Enforces a minimum interval between triggers. Events inside the window
+/// produce one trigger delayed to its end.
 pub struct TimeDebouncer {
     last_triggered: Option<Instant>,
     threshold: Duration,
@@ -90,8 +78,8 @@ impl TimeDebouncer {
         }
     }
 
-    /// Time left until the debounce window ends: zero if nothing has
-    /// triggered yet or the window has already elapsed.
+    /// Time left in the debounce window: zero if nothing has triggered yet or the
+    /// window has elapsed.
     pub fn remaining(&self, at: Instant) -> Duration {
         self.last_triggered.map_or(Duration::ZERO, |last| {
             self.threshold.saturating_sub(at.duration_since(last))
@@ -111,8 +99,7 @@ mod tests {
         use super::*;
 
         const FLOOR: Duration = Duration::from_millis(100);
-        /// Long enough that the time floor never suppresses anything, so a test
-        /// exercises the count rule alone.
+        /// Long enough that the time floor never suppresses anything.
         const LATER: Duration = Duration::from_secs(1);
 
         #[test]
@@ -125,8 +112,7 @@ mod tests {
         fn second_call_below_threshold_does_not_trigger() {
             let mut d = ProgressDebouncer::new(5, FLOOR, 1_000_000); // threshold = 50_000 bytes
             let now = Instant::now();
-            // First call always triggers, and a trigger restarts the count: the
-            // 49_999 it carried must not count towards the next threshold.
+            // A trigger restarts the count, so the 49_999 does not carry over.
             d.should_trigger(now, 49_999);
             assert!(!d.should_trigger(now + LATER, 1_000));
         }
@@ -144,14 +130,12 @@ mod tests {
             let mut d = ProgressDebouncer::new(1, FLOOR, 1_000); // threshold = 10
             let now = Instant::now();
             d.should_trigger(now, 1); // first call
-            // The floor has long elapsed, so only the count holds these back.
             assert!(!d.should_trigger(now + LATER, 9));
             assert!(d.should_trigger(now + LATER, 1));
         }
 
         #[test]
         fn zero_total_always_triggers_once_the_floor_elapses() {
-            // threshold = 0, so only the time floor can suppress a call
             let mut d = ProgressDebouncer::new(5, FLOOR, 0);
             let now = Instant::now();
             assert!(d.should_trigger(now, 0));
@@ -160,8 +144,6 @@ mod tests {
 
         #[test]
         fn very_large_total_does_not_overflow() {
-            // total_size * percentage would overflow u64; saturating_mul keeps
-            // the threshold finite instead of panicking (debug) or wrapping.
             let mut d = ProgressDebouncer::new(50, FLOOR, u64::MAX);
             let now = Instant::now();
             assert!(d.should_trigger(now, 1)); // first call always triggers
@@ -183,8 +165,6 @@ mod tests {
             d.should_trigger(now, 1); // first call
             d.should_trigger(now + Duration::from_millis(50), 10); // suppressed
 
-            // The suppressed count is held rather than discarded, so the next
-            // call past the floor triggers without re-earning the threshold.
             assert!(d.should_trigger(now + FLOOR, 0));
         }
 

@@ -1,21 +1,13 @@
-//! Discovery of the applications that can open a given path.
+//! Discovery of the applications that can open a given path, each with the
+//! argv that launches it.
 //!
-//! Each platform module answers "which applications handle this path", and
-//! returns the concrete argv that launches each one, so that nothing
-//! platform-specific has to travel through `Command` or `FileSystem`.
+//! Deliberate limitations:
 //!
-//! Two limitations here are deliberate:
-//!
-//! - **The application database is read, never written.** The picker reports
-//!   the default the desktop resolves to and cannot set one; use `xdg-mime
-//!   default` or the desktop's own settings for that.
-//! - **The index is built once per process** (the `OnceLock`s in `linux.rs`), so
-//!   an application installed while FileCTRL runs is not picked up until it
-//!   restarts. Rebuilding per open would pay the scan repeatedly to catch
-//!   something that changes rarely.
+//! - The application database is read, never written: the picker cannot set a
+//!   default (use `xdg-mime default`).
+//! - The index is built once per process (the `OnceLock`s in `linux.rs`), so an
+//!   application installed while FileCTRL runs appears only after a restart.
 
-// The desktop entry and mime-apps specs are Linux only; macOS answers the same
-// question through Launch Services.
 #[cfg(target_os = "linux")]
 mod exec;
 #[cfg(target_os = "linux")]
@@ -44,23 +36,17 @@ use crate::app::config::{Config, Openers};
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppCandidate {
     pub argv: Vec<OsString>,
-    /// The program or bundle behind `name`, which is what tells two similarly
-    /// named applications apart.
+    /// The program or bundle behind `name`.
     pub detail: String,
-    /// Whether this is the platform's default handler for the path.
     pub is_default: bool,
-    /// Human readable application name.
     pub name: String,
-    /// The `openers` key of the configured opener's row, which names it in a
-    /// failure: its `name` is a shell command, whose first word need not be
-    /// what failed. `None` for an application.
+    /// The `openers` key of the configured opener's row; `None` for an application.
     pub setting: Option<&'static str>,
     pub working_dir: Option<PathBuf>,
 }
 
 impl AppCandidate {
-    /// What a failure to run this row calls it: the `openers` setting, or the
-    /// application's quoted name.
+    /// The name a failure to run this row uses.
     pub fn failure_name(&self) -> String {
         match self.setting {
             Some(key) => opener_setting(key),
@@ -72,9 +58,8 @@ impl AppCandidate {
 /// The applications that can open `path`, most preferred first, always followed
 /// by the configured opener when one is set.
 pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
-    // Resolve symlinks so that the type is sniffed from the target. The result
-    // is always absolute, which desktop entries expect and which keeps a path
-    // from ever being read as a command line flag.
+    // Absolute, so the type is sniffed from a symlink's target and the path is
+    // never read as a flag.
     let path = std::fs::canonicalize(path)
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf());
@@ -90,13 +75,11 @@ pub fn candidates_for(path: &Path) -> Vec<AppCandidate> {
     candidates
 }
 
-/// Longest application name shown, so the detail after it that tells two
-/// entries apart always has room.
+/// Longest application name shown, leaving room for the detail.
 const MAX_NAME_CHARS: usize = 48;
 
-/// An application's name as the picker shows it and compares it: passed
-/// through `crate::visible`, so an invisible character cannot make two names
-/// look the same, and cut at `MAX_NAME_CHARS`.
+/// An application's name escaped through `crate::visible` and cut at
+/// `MAX_NAME_CHARS`.
 fn shown_name(name: &str) -> String {
     let mut name = crate::visible(name).into_owned();
     if let Some((end, _)) = name.char_indices().nth(MAX_NAME_CHARS) {
@@ -106,9 +89,7 @@ fn shown_name(name: &str) -> String {
     name
 }
 
-/// Drop every candidate whose name a better ranked one already used. Several
-/// desktop entries can share a `Name=`, and rows that read identically are not
-/// a choice.
+/// Drop every candidate whose name a better ranked one already used.
 fn dedupe_by_name(candidates: &mut Vec<AppCandidate>) {
     let mut seen = HashSet::new();
     candidates.retain(|candidate| seen.insert(candidate.name.to_lowercase()));
@@ -129,9 +110,7 @@ fn platform_candidates(_: &Path) -> Vec<AppCandidate> {
     Vec::new()
 }
 
-/// The `openers` template for this kind of path, offered last so that the
-/// picker still works on a system with no application database at all. The
-/// template is a shell command rather than an argv, so it runs through `sh`.
+/// The `openers` template for this kind of path, run through `sh`.
 fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
     let (key, template) = if path.is_dir() {
         ("open_directory", &openers.open_directory)
@@ -144,8 +123,6 @@ fn configured_opener(openers: &Openers, path: &Path) -> Option<AppCandidate> {
     }
     Some(AppCandidate {
         argv: shell::command(template, [path.as_os_str().to_os_string()]),
-        // The setting it comes from, so it is obvious which config key to
-        // change.
         detail: format!("openers.{key}"),
         is_default: false,
         name: shown_name(template),
@@ -174,16 +151,12 @@ mod tests {
         }
     }
 
-    /// An invisible character would make two rows read the same, and a long
-    /// name would push the detail that tells them apart off screen.
     #[test_case("Text\u{2063} Editor" => "Text\\u{2063} Editor" ; "an invisible character is spelled out")]
     #[test_case(&"x".repeat(60) => format!("{}…", "x".repeat(48)) ; "a long name is cut")]
     fn shown_name_produces(name: &str) -> String {
         shown_name(name)
     }
 
-    /// The template is shown as the application's name, so it is shown the
-    /// way every other name is.
     #[test]
     fn the_configured_opener_is_named_like_any_other_application() {
         let template = format!("{}\u{202e} %s", "x".repeat(60));
@@ -204,8 +177,6 @@ mod tests {
         assert_eq!("a\\u{202e} %s", opener.name);
     }
 
-    /// The configured opener's name is a shell command, so a failure names
-    /// the setting it came from; an application keeps its quoted name.
     #[test]
     fn a_failure_names_the_setting_or_the_application() {
         let openers = Openers {
@@ -220,8 +191,6 @@ mod tests {
         assert_eq!("\"gedit\"", candidate("gedit", "gedit").failure_name());
     }
 
-    /// Blank reads as unset, as it does when the opener is run directly, so
-    /// the picker does not offer a row that runs nothing.
     #[test_case("" ; "empty")]
     #[test_case("  \t" ; "only whitespace")]
     fn a_blank_opener_is_not_offered(template: &str) {

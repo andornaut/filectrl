@@ -20,31 +20,24 @@ use crate::{
     file_system::{debounce, entry_id::EntryId, path_info::compact},
 };
 
-/// Best-effort recursive entry count for the delete progress total, including
-/// `root` itself. Reads directories only, with no per-entry stat, so it is
-/// cheaper than `dir_total_size`; a directory that cannot be listed counts as
-/// the single entry it is. Returns `None` when the task was cancelled.
+/// Best-effort recursive entry count for the delete progress total, including `root`. Reads
+/// directories only; an unlistable directory counts as one. `None` when cancelled.
 pub(super) fn dir_total_entries(active: &ActiveTask, root: &Path) -> Option<u64> {
     let mut total: u64 = 1; // `root` itself, which appears in no listing.
     scan_tree(active, root, |_, _, _| total += 1)?;
     Some(total)
 }
 
-/// Which operation `remove_path` finishes.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Removal {
-    /// A delete, which a cancel stops between entries and which advances the
-    /// task's progress per entry. Like `rm`, it removes whatever the path names
-    /// when it runs.
+    /// A delete: cancellable between entries, advancing progress per entry.
     Delete,
-    /// The source of a cross-device move, which is past the point where a
-    /// cancel could stop it, and whose progress is already complete. Carries
-    /// the entry the copy read, which is the only one removed.
+    /// The source of a cross-device move, past the point a cancel could stop it. Only the entry the
+    /// copy read is removed.
     MovedSource(EntryId),
 }
 
-/// The refusal to remove the source of a move at `path`, which names another
-/// entry than the one that was copied.
+/// The refusal to remove a moved source whose path names another entry than the one copied.
 pub(super) fn replaced_after_copy(path: &Path) -> String {
     format!(
         "Cannot remove {}: it was replaced after it was copied",
@@ -52,27 +45,16 @@ pub(super) fn replaced_after_copy(path: &Path) -> String {
     )
 }
 
-/// Removes a file or directory tree the way `rm -rf` does: an entry that
-/// cannot be removed is recorded and the walk continues with the next, and the
-/// directories above it are kept without being reported as well. A directory
-/// that cannot be opened is removed if it is empty, and an entry already gone
-/// counts as removed, as `-f` makes it. Only a parent that cannot
-/// be reopened as the directory that was listed ends the walk. Cancelling
-/// mid-delete leaves whatever has not been removed yet. Iterative (`Walk`),
-/// so directory depth cannot overflow the thread stack.
+/// Removes a file or directory tree like `rm -rf`: an entry that cannot be removed is recorded and
+/// the walk continues, keeping the directories above it without reporting them. An unopenable empty
+/// directory is removed, and an entry already gone counts as removed. Only a parent that cannot be
+/// reopened as the one listed ends the walk.
 ///
-/// A moved source is removed only while `path` still names the entry that was
-/// copied, by device and inode: another renamed onto its name since would be
-/// removed in its place. A source its filesystem renumbered is therefore kept
-/// and reported, which loses nothing. The comparison is made on what was
-/// opened relative to the parent's fd, and every removal goes through that fd
-/// rather than the path. For a non-directory the stat and the unlink are two
-/// calls on that fd, which narrows the window rather than closing it, as it
-/// does for `mv`.
+/// A moved source is removed only while `path` still names the entry copied, by device and inode,
+/// compared on what was opened relative to the parent's fd; every removal goes through that fd.
 ///
-/// Returns the task and the errors recorded, leaving finalization to the
-/// caller. Returns `None` when cancelled, in which case the task has already
-/// been finalized via `active.cancelled()`.
+/// Returns the task and the errors, leaving finalization to the caller; `None` when cancelled
+/// (already finalized).
 pub(super) fn remove_path(
     path: &Path,
     is_directory: bool,
@@ -109,22 +91,9 @@ pub(super) fn remove_path(
         return Some((active, errors));
     }
 
-    // Post-order walk, each directory drained into a Vec before anything is
-    // deleted: nothing is unlinked while a directory is still being read, which
-    // on some filesystems (NFS) can skip entries. The trade is peak memory,
-    // which is proportional to the widest root-to-leaf path rather than O(1)
-    // per level. A directory is removed once its entries are done.
-    //
-    // Every open and unlink is relative to the parent directory's fd, and no
-    // directory is opened through a symlink, so a directory swapped for a link
-    // after it was listed fails to open instead of leading the walk outside the
-    // tree.
-    //
-    // Only the directory being worked in holds an fd (see `Walk`).
-    //
-    // A level holds its name rather than its path, and a path is built from
-    // the walk only for a message: one path per level would make memory grow
-    // with the square of the depth.
+    // Post-order walk. Each directory is read fully before anything in it is unlinked, since
+    // unlinking while reading can skip entries on some filesystems (NFS). A level holds its name,
+    // not its path, so memory does not grow with the square of the depth.
     let (dir, id, entries) = match open_root(path, &root, removal) {
         Ok(Some(opened)) => opened,
         Ok(None) => {
@@ -139,9 +108,8 @@ pub(super) fn remove_path(
         }
     };
     let mut walk = Walk::new(Level::open(dir, id, Removing::new(None, entries)));
-    // One unit of progress per entry removed, against the total counted by
-    // `dir_total_entries` before the walk. Debounced so a wide tree does not
-    // put one progress command per entry ahead of terminal input.
+    // Debounced so a wide tree does not queue one progress command per entry ahead of terminal
+    // input.
     let mut debouncer = debounce::ProgressDebouncer::new(
         PROGRESS_DEBOUNCE_PERCENTAGE,
         PROGRESS_MIN_INTERVAL,
@@ -153,7 +121,6 @@ pub(super) fn remove_path(
             return None;
         }
         let Some((name, is_dir)) = level.entries.next() else {
-            // This directory's entries are done; remove it.
             match remove_level(path, &root, &mut walk) {
                 Ok(true) => advance(&mut active, &mut debouncer, cancellable),
                 Ok(false) => {}
@@ -167,7 +134,6 @@ pub(super) fn remove_path(
         };
         match remove_entry(dir, &name, is_dir) {
             Ok(None) => advance(&mut active, &mut debouncer, cancellable),
-            // Descending is not a removal, so it advances no progress.
             Ok(Some((_, id, _))) if walk.holds(|level| *level == id) => {
                 let looped = entry_path(path, &walk, &name);
                 errors.push(format!(
@@ -189,11 +155,8 @@ pub(super) fn remove_path(
     Some((active, errors))
 }
 
-/// Opens the directory `path` is in for `remove_path`, with `path`'s name in
-/// it. `None` when a delete finds that directory gone, which took the entry
-/// with it, as an earlier delete of the same batch may have. A moved source is
-/// removed only once it is compared with what was copied, which a missing one
-/// cannot be. The error is the message to record.
+/// Opens the directory `path` is in, with `path`'s name in it. `None` when a delete finds that
+/// directory gone. The error is the message to record.
 fn open_root_parent(path: &Path, removal: Removal) -> Result<Option<(File, CString)>, String> {
     let Some(name) = c_name(path) else {
         return Err(format!(
@@ -208,11 +171,9 @@ fn open_root_parent(path: &Path, removal: Removal) -> Result<Option<(File, CStri
     }
 }
 
-/// Removes the entry `name` in `parent` for `remove_path`, or opens and lists
-/// it when it is a directory to descend into. An empty directory that cannot
-/// be opened (mode 000) is removed anyway, as `rm -rf` does. Otherwise the
-/// open's error is the one returned, since it is why the entries stayed. The
-/// error names what failed, for the message.
+/// Removes the entry `name` in `parent`, or opens and lists it when it is a directory to descend
+/// into. An empty directory that cannot be opened is removed anyway, like `rm -rf`; otherwise the
+/// open's error is returned.
 fn remove_entry(
     parent: &File,
     name: &CStr,
@@ -233,18 +194,15 @@ fn remove_entry(
     }
 }
 
-/// Opens and lists the directory `root` names for `remove_path`, refusing a
-/// moved source unless it is the entry that was copied. `None` when a delete
-/// could not open it but removed it as an empty directory. The error is the
-/// message to record.
+/// Opens and lists the directory `root` names, refusing a moved source unless it is the entry
+/// copied. `None` when a delete removed it as an unopenable empty directory.
 fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<Opened>, String> {
     let failed =
         |error: std::io::Error| format!("Failed to read directory {}: {error}", compact(path));
     let opened = open_directory(root.dir, root.name).and_then(|dir| Ok((EntryId::of(&dir)?, dir)));
     let (id, dir) = match opened {
         Ok(opened) => opened,
-        // Not a moved source, which is removed only once it is compared, and
-        // one that cannot be opened cannot be.
+        // A moved source that cannot be opened cannot be compared, so it is kept.
         Err(error) if removal == Removal::Delete => {
             return unlink_at(root.dir, root.name, UnlinkatFlags::RemoveDir)
                 .map(|()| None)
@@ -261,8 +219,7 @@ fn open_root(path: &Path, root: &RootAt<'_>, removal: Removal) -> Result<Option<
     Ok(Some((dir, id, entries)))
 }
 
-/// Counts one entry removed by a delete. A move's removals count nothing: its
-/// progress measured the bytes copied, and is complete.
+/// Counts one entry removed by a delete. A move's progress measured bytes and is already complete.
 fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer, counts: bool) {
     if counts {
         active.increment(1);
@@ -272,9 +229,8 @@ fn advance(active: &mut ActiveTask, debouncer: &mut debounce::ProgressDebouncer,
     }
 }
 
-/// `remove_path` for anything that is not a directory. Symlinks are removed as
-/// links (never followed): `is_directory` comes from `symlink_metadata`, so a
-/// link to a directory takes this path. The error is the message to record.
+/// `remove_path` for anything that is not a directory. Symlinks are removed, never followed. The
+/// error is the message to record.
 fn remove_file_entry(path: &Path, at: &RootAt<'_>, removal: Removal) -> Result<(), String> {
     let failed = |error: std::io::Error| format!("Failed to delete {}: {error}", compact(path));
     if let Removal::MovedSource(copied) = removal {
@@ -287,9 +243,8 @@ fn remove_file_entry(path: &Path, at: &RootAt<'_>, removal: Removal) -> Result<(
     unlink_at(at.dir, at.name, UnlinkatFlags::NoRemoveDir).map_err(failed)
 }
 
-/// One directory `remove_path` is inside: its name in the parent (`None` for
-/// the root), the entries not yet removed, and whether one of them could not
-/// be removed.
+/// One directory `remove_path` is inside: its name in the parent (`None` for the root), the entries
+/// left, and whether one could not be removed.
 struct Removing {
     name: Option<CString>,
     entries: <Entries as IntoIterator>::IntoIter,
@@ -306,14 +261,12 @@ impl Removing {
     }
 }
 
-/// The path of `name` in the directory being worked in, for a message.
 fn entry_path(root: &Path, walk: &Walk<File, Removing>, name: &CStr) -> PathBuf {
     let mut path = level_path(root, walk);
     path.push(OsStr::from_bytes(name.to_bytes()));
     path
 }
 
-/// The path of the directory being worked in, for a message.
 fn level_path(root: &Path, walk: &Walk<File, Removing>) -> PathBuf {
     let mut path = root.to_path_buf();
     for name in walk.payloads().filter_map(|level| level.name.as_ref()) {
@@ -322,21 +275,16 @@ fn level_path(root: &Path, walk: &Walk<File, Removing>) -> PathBuf {
     path
 }
 
-/// Why `remove_level` did not remove a directory.
 enum Unremoved {
-    /// Removing it failed, for the reason the message gives. The walk goes on.
+    /// Removing it failed. The walk goes on.
     Failed(String),
-    /// Its parent could not be reopened as the directory that was listed, so
-    /// neither can be reached again and the walk ends.
+    /// Its parent could not be reopened as the directory listed; the walk ends.
     Lost(String),
 }
 
-/// Leaves the directory being worked in, now that its entries are done, and
-/// removes it from its parent, reopening that parent's fd first, or from
-/// `root_at` for the root. Returns whether it was removed: one holding an entry
-/// that could not be removed is kept, since that failure is already recorded
-/// and the directory's `ENOTEMPTY` would only repeat it. Its parent is then
-/// kept too.
+/// Leaves the current directory and removes it from its reopened parent (or `root_at` for the
+/// root). Returns whether it was removed: one holding an unremovable entry is kept without a second
+/// report, and so is its parent.
 fn remove_level(
     root: &Path,
     root_at: &RootAt<'_>,
@@ -351,8 +299,7 @@ fn remove_level(
         if incomplete {
             return Ok(false);
         }
-        // Through the parent the root was opened in, which `rmdir` does not
-        // follow a symlink out of.
+        // Through the parent the root was opened in; `rmdir` does not follow a symlink.
         return unlink_at(root_at.dir, root_at.name, UnlinkatFlags::RemoveDir)
             .map(|()| true)
             .map_err(|error| {
@@ -382,8 +329,6 @@ fn remove_level(
     Ok(true)
 }
 
-/// A directory `remove_path` opened to descend into: its handle, its identity
-/// and its entries.
 type Opened = (File, EntryId, Entries);
 
 /// The directory an operation's root entry was opened in, and its name there.
@@ -442,8 +387,7 @@ mod tests {
         let (tx, _rx) = std::sync::mpsc::channel();
         let active = copy_task(tx);
 
-        // root, a.txt, sub, sub/b.txt: one unit per removal the delete walk
-        // makes, so the bar reaches exactly 100% when the tree is gone.
+        // root, a.txt, sub, sub/b.txt
         assert_eq!(Some(4), dir_total_entries(&active, &root));
         active.done();
     }
@@ -470,7 +414,6 @@ mod tests {
             1,
         );
 
-        // `is_directory` is false for both: it comes from `symlink_metadata`.
         let (active, errors) = remove_path(&entry, false, active, Removal::Delete).unwrap();
         active.done();
         assert!(errors.is_empty(), "{errors:?}");
@@ -482,9 +425,6 @@ mod tests {
         );
     }
 
-    /// The source of a move is renamed away once it is copied and another put
-    /// in its place before the removal opens it. The removal compares what it
-    /// opened with what was copied and leaves the replacement alone.
     #[test_case(true  ; "a directory")]
     #[test_case(false ; "a file")]
     fn a_moved_source_replaced_before_it_was_opened_is_kept(is_directory: bool) {
@@ -500,8 +440,7 @@ mod tests {
             fs::write(&replacement, b"keep").unwrap();
         }
         let copied = EntryId::of_path(&entry).unwrap();
-        // Renamed away rather than removed, so the replacement cannot reuse
-        // the inode.
+        // Renamed away rather than removed, so the replacement cannot reuse the inode.
         fs::rename(&entry, fx.join("renamed")).unwrap();
         fs::rename(&replacement, &entry).unwrap();
         let (tx, _rx) = mpsc::channel();
@@ -519,15 +458,11 @@ mod tests {
         assert_eq!(b"keep".to_vec(), fs::read(kept).unwrap());
     }
 
-    /// Whether the user running the tests is refused what a mode forbids.
-    /// Root is not, so a test that needs a refusal has nothing to show there.
+    /// Root is not refused what a mode forbids, so refusal tests have nothing to show there.
     fn permissions_apply() -> bool {
         !nix::unistd::geteuid().is_root()
     }
 
-    /// Like `rm -rf`: an entry that cannot be removed is reported, every other
-    /// entry is still removed, and the directories holding it are kept without
-    /// a second report of their own.
     #[test]
     fn a_delete_continues_past_an_entry_it_cannot_remove() {
         if !permissions_apply() {
@@ -540,7 +475,6 @@ mod tests {
             fs::create_dir_all(root.join(name)).unwrap();
             fs::write(root.join(name).join("f"), b"x").unwrap();
         }
-        // Listable, so the walk enters it, but its entry cannot be unlinked.
         fs::set_permissions(root.join("a"), fs::Permissions::from_mode(0o500)).unwrap();
 
         let task = run_to_end(TaskCommand::Delete(
@@ -560,8 +494,6 @@ mod tests {
         assert!(!message.contains("more)"), "{message}");
     }
 
-    /// `rm -rf` removes an empty directory it cannot open, since removing it
-    /// needs only the parent's permission.
     #[test_case(true ; "the one selected")]
     #[test_case(false ; "one inside the selection")]
     fn a_delete_removes_an_empty_directory_it_cannot_open(selected: bool) {
@@ -585,9 +517,6 @@ mod tests {
         assert!(doomed.symlink_metadata().is_err());
     }
 
-    /// Only a delete removes a directory it cannot open. A moved source is
-    /// removed once it is compared with what was copied, and an empty
-    /// replacement that cannot be opened cannot be compared.
     #[test]
     fn a_moved_source_replaced_by_a_directory_that_cannot_be_opened_is_kept() {
         if !permissions_apply() {
@@ -622,8 +551,7 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub").join("f.txt"), b"x").unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
-        // Larger than the three entries removed, so an overcount is not
-        // clamped away.
+        // Larger than the three entries removed, so an overcount is not clamped away.
         let (active, _, _) = ActiveTask::new(
             tx,
             TaskKind::Delete {
@@ -643,15 +571,9 @@ mod tests {
         let final_count = rx.try_iter().find_map(completed_of);
         active.done();
 
-        // The bar must advance from the removals themselves rather than from
-        // `done` filling it in at the end, so a long delete shows motion
-        // instead of sitting at 0%.
         assert_eq!(Some(&1), completed.first());
-        // How many updates arrive depends on how much of
-        // `PROGRESS_MIN_INTERVAL` this tree takes to remove. What must hold
-        // either way is that each reports more than the last.
+        // The number of updates depends on timing; each must exceed the last.
         assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
-        // One unit per removal (root, sub, sub/f.txt), none for descending.
         assert_eq!(Some(3), final_count);
     }
 
@@ -675,8 +597,8 @@ mod tests {
         assert!(root.join("sub").join("f.txt").exists());
     }
 
-    /// Run by `remove_path_deletes_a_tree_deeper_than_the_open_file_limit`
-    /// under a low limit; on its own it proves nothing.
+    /// Run by `remove_path_deletes_a_tree_deeper_than_the_open_file_limit` under a low limit; on
+    /// its own it proves nothing.
     #[test]
     #[ignore = "run under a lowered open-file limit by the test below"]
     fn remove_path_under_a_low_open_file_limit() {
@@ -707,8 +629,7 @@ mod tests {
         assert!(!root.exists());
     }
 
-    /// Holding an fd per level would need 200 here, far over the limit of 64
-    /// the tree is deleted under.
+    /// One fd per level would need 200, over the limit of 64.
     #[test]
     fn remove_path_deletes_a_tree_deeper_than_the_open_file_limit() {
         crate::test_support::run_alone(
@@ -740,7 +661,6 @@ mod tests {
         active.done();
         assert!(errors.is_empty(), "{errors:?}");
 
-        // The link goes with the tree; what it points at is outside it.
         assert!(!root.exists());
         assert_eq!(
             b"keep".to_vec(),
@@ -758,8 +678,6 @@ mod tests {
         let copied = EntryId::of(File::open(&src).unwrap()).unwrap();
         fs::remove_file(&src).unwrap();
 
-        // A missing source cannot be compared with what was copied, so unlike
-        // a delete this is not taken as done.
         let (active, errors) =
             remove_path(&src, false, copy_task(tx), Removal::MovedSource(copied)).unwrap();
         active.done();

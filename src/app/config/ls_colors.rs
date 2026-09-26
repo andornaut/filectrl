@@ -1,8 +1,6 @@
 use ratatui::style::{Color, Modifier};
 
-// "08" is listed with an empty body on purpose: the table runs in code order,
-// and a silent gap between 07 and 09 would read as an oversight rather than as
-// a code that is recognised and deliberately unsupported.
+// "08" is listed with an empty body: recognized, deliberately unsupported.
 #[allow(clippy::match_same_arms)]
 pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     let mut fg: Option<Color> = None;
@@ -88,11 +86,9 @@ pub(super) fn parse(line: &str) -> (Option<Color>, Option<Color>, Modifier) {
     (fg, bg, attrs)
 }
 
-/// Parses an extended color sequence starting at `codes[i]` ("38"/"48").
-/// Returns the color (when the sequence is complete and valid) and the number
-/// of extra codes consumed. The whole parameter group is consumed (clamped to
-/// the slice end) even when its values are invalid, so they are not
-/// reinterpreted as standalone SGR codes by the caller.
+/// Parses an extended color sequence at `codes[i]` ("38"/"48"). Returns the
+/// color, if valid, and the number of extra codes consumed. The whole group is
+/// consumed even when invalid, so its values are not read as SGR codes.
 fn parse_extended_color(codes: &[&str], i: usize) -> (Option<Color>, usize) {
     const MODE_256: &str = "5";
     const MODE_RGB: &str = "2";
@@ -113,7 +109,7 @@ fn parse_extended_color(codes: &[&str], i: usize) -> (Option<Color>, usize) {
             let color = (|| Some(Color::Rgb(parse_u8(2)?, parse_u8(3)?, parse_u8(4)?)))();
             (color, VALUES_RGB.min(remaining))
         }
-        // Unrecognized mode byte: consume it so it is not misread as a code
+        // Unrecognized mode: consume it so it is not read as a code.
         _ => (None, 1),
     }
 }
@@ -132,8 +128,7 @@ mod tests {
         (fg, bg, attrs)
     }
 
-    // ratatui's `Gray` is ANSI 7 (normal white) and `White` is ANSI 15 (bright
-    // white), so the normal codes (37/47) must map to the dimmer one.
+    // ratatui's `Gray` is ANSI 7 and `White` is ANSI 15.
     #[test_case("31" => style(Some(Color::Red), None, Modifier::empty()) ; "standard foreground")]
     #[test_case("41" => style(None, Some(Color::Red), Modifier::empty()) ; "standard background")]
     #[test_case("91" => style(Some(Color::LightRed), None, Modifier::empty()) ; "bright foreground")]
@@ -154,23 +149,18 @@ mod tests {
     #[test_case("48;5;100" => style(None, Some(Color::Indexed(100)), Modifier::empty()) ; "extended 256 background")]
     #[test_case("38;2;255;128;0" => style(Some(Color::Rgb(255, 128, 0)), None, Modifier::empty()) ; "extended rgb foreground")]
     #[test_case("48;2;0;64;128" => style(None, Some(Color::Rgb(0, 64, 128)), Modifier::empty()) ; "extended rgb background")]
-    // The index of an extended color must not be consumed as a code of its own.
     #[test_case("38;5;200;01" => style(Some(Color::Indexed(200)), None, Modifier::BOLD) ; "extended color then modifier")]
-    // The trailing "0" belongs to the malformed group, so it is not the reset code.
     #[test_case("01;38;2;255;bad;0" => style(None, None, Modifier::BOLD) ; "a malformed group does not reset the modifiers")]
     fn parse_produces(line: &str) -> Style {
         parse(line)
     }
 
-    // A malformed extended-color group is skipped whole, so the codes inside it
-    // are never read as standalone colors or modifiers.
     #[test_case("" ; "empty input")]
     #[test_case("99" ; "unknown code")]
     #[test_case("38;5" ; "256 sequence missing its index")]
     #[test_case("38;5;300" ; "256 index out of range")]
     #[test_case("38;2;255" ; "rgb sequence missing green and blue")]
     #[test_case("38;2;300;31;40" ; "rgb component out of range")]
-    // "1" is the mode, not bold.
     #[test_case("38;1" ; "an unrecognized extended color mode")]
     fn parse_produces_no_style(line: &str) {
         assert_eq!(NONE, parse(line));

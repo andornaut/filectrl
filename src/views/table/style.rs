@@ -11,10 +11,7 @@ use crate::{
     file_system::path_info::{DateTimeAge, PathInfo, datetime_age},
 };
 
-/// Paths indexed for the membership test the render makes for every visible
-/// row. Built once, when the list it mirrors is set, rather than scanning that
-/// list per row per frame. Keyed by `path`, the only field `PathInfo` equality
-/// compares.
+/// Paths indexed for the render's per-row membership test.
 #[derive(Default)]
 pub(super) struct PathSet(HashSet<PathBuf>);
 
@@ -68,11 +65,9 @@ pub(super) fn header_style(table: &Table, sort_column: SortColumn, column: SortC
     }
 }
 
-/// The style `ls` would give `path`, in its order of precedence. A key
-/// `LS_COLORS` reset to uncolored is skipped, so the entry falls to the next
-/// rule, as `ls` classifies it.
+/// The style `ls` would give `path`, in its order of precedence. A key reset to
+/// uncolored falls through to the next rule, as in `ls`.
 pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
-    // Symlinks should be checked first (highest precedence in ls)
     if path.is_symlink_broken() && theme.is_colored("or") {
         return theme.symlink_broken();
     }
@@ -93,7 +88,6 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
         return theme.directory();
     }
 
-    // Special permission bits (higher precedence than file types in ls)
     if path.is_setuid() && theme.is_colored("su") {
         return theme.setuid();
     }
@@ -101,7 +95,6 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
         return theme.setgid();
     }
 
-    // Special file types
     if path.is_block_device() {
         return theme.block_device();
     }
@@ -122,17 +115,14 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
         return theme.executable();
     }
 
-    // Pattern-based matches
     if let Some(style) = theme.pattern_styles(&path.name()) {
         return style;
     }
 
-    // Regular files (fi) - if the file is a regular file
     if path.is_file() {
         return theme.regular_file();
     }
 
-    // Normal files (no) - default fallback for anything else
     theme.normal_file()
 }
 
@@ -172,8 +162,6 @@ mod tests {
     use super::*;
     use crate::app::config::Config;
 
-    // File type and permission bits, named so the precedence cases below read
-    // as the entries they stand for.
     const REGULAR: u32 = 0o100_644;
     const EXECUTABLE: u32 = 0o100_755;
     const SETUID: u32 = 0o104_755;
@@ -193,14 +181,8 @@ mod tests {
         &Config::global().theme().file_type
     }
 
-    /// `name_style` walks a ladder of type and permission checks in `ls`
-    /// order, and every entry matches more than one rung: a directory is
-    /// executable, a setuid binary is executable, a symlink to a directory is
-    /// both. Reordering the arms is silent, so each rung names the style it
-    /// must reach.
-    ///
-    /// The pattern rung is absent: its styles come from `$LS_COLORS`, which the
-    /// built-in theme does not carry. `theme.rs` covers the lookup itself.
+    /// Every entry matches more than one rung, so each case pins the style it
+    /// must reach. Patterns are covered in `theme.rs`.
     #[test_case(REGULAR, FileType::regular_file ; "a plain file")]
     #[test_case(EXECUTABLE, FileType::executable ; "the execute bit outranks a plain file")]
     #[test_case(SETUID, FileType::setuid ; "setuid outranks the execute bit it implies")]
@@ -222,8 +204,6 @@ mod tests {
         );
     }
 
-    /// `ls` skips a key reset to uncolored and classifies the entry by the next
-    /// rule, so each reset lands on the style below it, not on no style.
     #[test_case("ow=00", DIRECTORY_OTHER_WRITABLE, FileType::directory ; "other-writable falls to a directory")]
     #[test_case("tw=00", DIRECTORY_STICKY_OTHER_WRITABLE, FileType::directory_other_writable ; "sticky other-writable falls to other-writable")]
     #[test_case("st=00", DIRECTORY_STICKY, FileType::directory ; "sticky falls to a directory")]
@@ -256,9 +236,7 @@ mod tests {
         assert_eq!(theme.symlink(), name_style(&theme, &broken));
     }
 
-    /// `ls` falls through only on a value of exactly `0` or `00` (or none):
-    /// `0;00` is a color, which happens to print as none, so the entry stays
-    /// executable and is plain rather than taking the plain-file style.
+    /// `ls` falls through only on exactly `0` or `00`; `0;00` is a color.
     #[test]
     fn reset_codes_that_are_not_exactly_a_reset_render_plain() {
         let theme = file_type().with_ls_colors("ex=0;00");
@@ -270,7 +248,6 @@ mod tests {
         );
     }
 
-    /// Only the keys `ls` falls through on: a reset of `di` is plain.
     #[test]
     fn a_reset_directory_key_is_plain() {
         let theme = file_type().with_ls_colors("di=00");
@@ -295,8 +272,6 @@ mod tests {
         let theme = file_type();
         let broken = PathInfo::with_mode(SYMLINK).broken();
 
-        // Both predicates answer true for this entry, so the order of the two
-        // checks is the whole behavior.
         assert_eq!(theme.symlink_broken(), name_style(theme, &broken));
         assert_ne!(theme.symlink(), name_style(theme, &broken));
     }
@@ -313,8 +288,6 @@ mod tests {
             Some(clipboard.cut()),
             clipboard_style(clipboard, Some(&cut), &held)
         );
-        // Cut and copy are told apart by the style, which is the only thing on
-        // screen that says whether pasting will remove the source.
         assert_eq!(
             Some(clipboard.copy()),
             clipboard_style(

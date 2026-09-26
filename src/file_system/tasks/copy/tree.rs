@@ -11,12 +11,9 @@ use crate::file_system::path_info::compact;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 
-/// Copies the directory tree below `root`, then finishes each directory: its
-/// mode, and its times for a move. The source and destination are walked in
-/// step, holding only the directories being worked in open (see `Walk`).
-///
-/// A cancel stops the walk between entries, and every directory entered is
-/// still finished on the way out, so none is left owner-only.
+/// Copies the directory tree below `root`, walking source and destination in step, then finishes
+/// each directory (mode, and times for a move). Every directory entered is finished even after a
+/// cancel.
 pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &mut Paths) -> bool {
     let mut walk = Walk::new(root);
     let mut cancelled = false;
@@ -29,10 +26,8 @@ pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &
             if let Some(on_leave) = context.on_leave.as_mut() {
                 on_leave(&paths.old);
             }
-            // The parent is reopened through this directory before it gets
-            // its final mode, which may take the owner's search permission
-            // (a umask of 0o177, a default ACL of `u::rw-`) that going
-            // through it needs.
+            // Reopen the parent before this directory gets its final mode, which may
+            // remove the owner's search permission.
             let reopened = walk.reopen(&handles, "it was relocated while it was being read");
             finish_directory(
                 context,
@@ -46,10 +41,8 @@ pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &
             }
             paths.pop();
             if let Err(error) = reopened {
-                // Neither this directory nor any above it can be reached
-                // again, so the walk ends here. They keep the owner-only mode
-                // they were created with. An error with no errno is the walk's
-                // own refusal of a parent that is no longer the one listed.
+                // Nothing above can be reached again, so the walk ends. An error
+                // with no errno is the walk's own refusal of a parent that changed.
                 context.errors.push(refused_or_failed(
                     context.is_move,
                     &compact(&paths.old),
@@ -97,7 +90,6 @@ pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &
                 ));
             } else if let Some(child) = enter_directory(context, &at, paths, &stat) {
                 walk.descend(child);
-                // The child's path stays pushed until it is finished.
                 continue;
             }
         } else if !copy_entry(context, &at, paths, &stat) {
@@ -108,18 +100,9 @@ pub(super) fn copy_tree(context: &mut CopyContext<'_>, root: CopyLevel, paths: &
     !cancelled
 }
 
-/// Creates and opens the destination directory `at` names, then opens and
-/// lists the source. `None` when there is nothing to descend into, having
-/// recorded why.
-///
-/// The destination is created owner-writable and searchable so its children
-/// can be created (`make_directory`), and `finish_directory` gives it its
-/// mode once they are.
-/// For a copy it starts with the other bits `stat` gives the source, which the
-/// umask trims: `finish_directory` reads back what the umask left. The source
-/// opened must be the directory `stat` describes, and its own metadata is what
-/// the copy finishes with. A directory this copy created is refused before
-/// anything is created for it.
+/// Creates and opens the destination directory `at` names, then opens and lists the source. `None`
+/// when there is nothing to descend into, having recorded why. A directory this copy created is
+/// refused.
 pub(super) fn enter_directory(
     context: &mut CopyContext<'_>,
     at: &At<'_>,
@@ -138,8 +121,6 @@ pub(super) fn enter_directory(
     let (dst, dst_id, umask_left) = make_directory(context, at, paths, stat)?;
     context.created.insert(dst_id);
     context.mark_written(at, paths);
-    // Abandons the subtree, leaving the destination directory empty and with
-    // its final mode.
     let give_up = |context: &mut CopyContext<'_>, message: String| {
         context.errors.push(message);
         finish_directory(context, paths, &dst, &Source::of(stat), umask_left);
@@ -186,14 +167,9 @@ pub(super) fn enter_directory(
     ))
 }
 
-/// Makes the destination directory `at` names for the source `stat`
-/// describes and opens it (`open_created`). Returns it, which entry it is,
-/// and the mode the umask left when owner access had to be added; `None` when
-/// it cannot be used, having recorded why.
-///
-/// Like `cp -R`, the directory opened is whatever holds the name once it is
-/// made, without following a symlink there: another user who can write the
-/// parent and swaps a directory in at the name gets it written into.
+/// Makes and opens the destination directory `at` names. Returns it, its identity, and the mode the
+/// umask left when owner access was added; `None` having recorded why. Like `cp -R`, whatever holds
+/// the name once made is used, without following a symlink.
 pub(super) fn make_directory(
     context: &mut CopyContext<'_>,
     at: &At<'_>,
@@ -206,8 +182,7 @@ pub(super) fn make_directory(
         (stat_mode(stat) & 0o777) | 0o700
     };
     let made = match mkdirat(at.dst, at.dst_name, mode_bits(creation)) {
-        // Taken since the name was free, which is never replaced
-        // (`resolve_raced`); skipping drops the subtree.
+        // Taken since the name was free, which is never replaced (`resolve_raced`).
         Err(Errno::EEXIST) => {
             resolve_raced(context, paths);
             return None;
@@ -219,8 +194,6 @@ pub(super) fn make_directory(
     match made {
         Ok(made) => Some(made),
         Err(error) => {
-            // The subtree cannot be copied at all; skip it and continue with
-            // the siblings.
             context.errors.push(format!(
                 "Failed to create directory {}: {error}",
                 compact(&paths.new)
@@ -230,14 +203,9 @@ pub(super) fn make_directory(
     }
 }
 
-/// Opens the directory `name` a copy just created in `parent`, with owner
-/// access added when the umask or a default ACL took it away: a umask such as
-/// `0o277` leaves it unwritable, and no child could be created in it. `cp`
-/// does the same. Returns it, which entry it is, and the mode the umask left
-/// when access was added, which `finish_directory` puts back before computing
-/// the final mode from it. One left without owner read (a umask of `0o477`, a
-/// default ACL of `u::---`) cannot be opened, and is reported: nothing is ever
-/// given a mode by name.
+/// Opens the directory `name` a copy just created in `parent`, adding owner access the umask or a
+/// default ACL removed, like `cp`. One without owner read cannot be opened and is reported: nothing
+/// is given a mode by name.
 pub(super) fn open_created(
     parent: &File,
     name: &CStr,
@@ -248,8 +216,7 @@ pub(super) fn open_created(
     Ok((dir, id, left))
 }
 
-/// Adds owner access to the open directory `dst` when it lacks it, returning
-/// the mode it had.
+/// Adds owner access to `dst` when it lacks it, returning the previous mode.
 pub(super) fn grant_owner_access(dst: &File) -> Option<u32> {
     let mode = stat_mode(&fstat(dst).ok()?) & 0o7777;
     if mode & 0o700 == 0o700 {
@@ -259,11 +226,8 @@ pub(super) fn grant_owner_access(dst: &File) -> Option<u32> {
     Some(mode)
 }
 
-/// Gives a copied directory its final mode, and for a move the source's
-/// times, now that its children are written: writing them is what moved its
-/// own modification time, and a mode without owner-write would have stopped
-/// them being created. Through the handle, so a path swapped since cannot
-/// redirect either. `umask_left` is the mode `grant_owner_access` replaced.
+/// Gives a copied directory its final mode, and for a move the source's times, after its children
+/// are written. `umask_left` is the mode `grant_owner_access` replaced.
 pub(super) fn finish_directory(
     context: &CopyContext<'_>,
     paths: &Paths,
@@ -280,8 +244,7 @@ pub(super) fn finish_directory(
     apply_final_mode(context, paths, dst, source);
 }
 
-/// A source directory and the destination directory it is copied into, or
-/// their identities: `copy_tree` walks the two in step.
+/// A source directory and the destination directory it is copied into, or their identities.
 #[derive(Clone, Copy)]
 pub(super) struct Pair<T> {
     pub(super) src: T,
@@ -299,15 +262,12 @@ impl Handles for Pair<File> {
     }
 }
 
-/// One directory `copy_tree` is inside: the source's metadata for finishing
-/// the copy of it, and the names not yet copied.
+/// A directory `copy_tree` is inside: the source's metadata and the names not yet copied.
 pub(super) struct Copying {
     pub(super) source: Source,
-    /// The mode the umask left on the destination, when owner access was
-    /// added over it.
+    /// The mode the umask left on the destination, when owner access was added over it.
     pub(super) umask_left: Option<u32>,
     pub(super) names: std::vec::IntoIter<CString>,
 }
 
-/// A directory `copy_tree` has entered.
 pub(super) type CopyLevel = Level<Pair<File>, Copying>;

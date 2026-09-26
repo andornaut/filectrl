@@ -11,9 +11,7 @@ use crate::{
 
 impl CommandHandler for NoticesView {
     fn handle_command(&mut self, command: &Command) -> CommandResult {
-        // Any listing-mode transition away from search clears the search
-        // notice; the transition rules live in ListingMode. Every transition
-        // command has an arm below, so the rebuild at the end still runs.
+        // Every listing-mode transition command has an arm below, so the rebuild still runs.
         if let Some(mode) = ListingMode::transition(command)
             && mode != ListingMode::Search
         {
@@ -37,13 +35,12 @@ impl CommandHandler for NoticesView {
                 self.search_query = Some(query.clone());
                 self.search_started_at = Some(Instant::now());
                 self.search_state = SearchState::Running;
-                // Search results are unfiltered (`start_search` clears the
-                // filter), so the notice has to clear with it.
+                // Search results are unfiltered.
                 self.filter.clear();
                 CommandResult::NotHandled
             }
             Command::CancelSearch => {
-                // Keep the search notice visible; relabel it "[Search cancelled]".
+                // Keep the search notice, relabelled "[Search cancelled]".
                 self.search_state = SearchState::Cancelled;
                 self.search_started_at = None;
                 CommandResult::Handled
@@ -53,10 +50,8 @@ impl CommandHandler for NoticesView {
                 CommandResult::Handled
             }
             Command::ExitedSearch { generation } => {
-                // Ignore exits from superseded searches (the current search
-                // is still running). For the current search: a cancelled exit
-                // keeps the relabeled notice, a natural one relabels it with
-                // the result count, and both stay until the listing changes.
+                // Exits from superseded searches are ignored. The notice stays until the listing
+                // changes.
                 if *generation == self.search_generation
                     && self.search_state == SearchState::Running
                 {
@@ -65,10 +60,7 @@ impl CommandHandler for NoticesView {
                 }
                 CommandResult::Handled
             }
-            // The loading indicator's position is a function of elapsed time,
-            // read live in render, so a tick changes no state at all: it exists
-            // only to wake the event loop for the next frame while a search is
-            // running and nothing else is arriving.
+            // The indicator position derives from elapsed time; a tick only wakes the event loop.
             Command::SearchTick => return CommandResult::Handled,
             Command::Progress(task) => self.update_tasks(task.clone()),
             Command::ResetView => {
@@ -85,44 +77,32 @@ impl CommandHandler for NoticesView {
                 self.filter.clone_from(filter);
                 CommandResult::NotHandled
             }
-            // Opening bookmarks cancels any in-flight search; the transition
-            // hook above clears the notice immediately (the walker's eventual
-            // ExitedSearch can lag and is then a no-op).
+            // The transition hook above already cleared the search notice.
             Command::Bookmarks { .. } => {
-                // The bookmarks listing is unfiltered (`set_bookmarks` clears
-                // the filter), so the notice has to clear with it.
+                // The bookmarks listing is unfiltered.
                 self.filter.clear();
                 CommandResult::NotHandled
             }
             Command::SelectionChanged {
                 mark_count, range, ..
             } => {
-                // Every cursor move carries the (usually unchanged) mark
-                // count; skip the rebuild and the derivation below for those.
+                // Most cursor moves carry an unchanged mark count.
                 if *mark_count == self.mark_count && *range == self.range {
                     return CommandResult::Handled;
                 }
                 let marked_more = *mark_count > self.mark_count;
                 self.mark_count = *mark_count;
                 self.range = *range;
-                // Marking clears the clipboard. Fires only when the count
-                // grows: a clipboard set while marks are held (copying marked
-                // files) must survive plain cursor movement, and a reload
-                // that drops a marked entry which is gone is not the user
-                // marking anything.
+                // Marking more clears the clipboard. Only a growing count counts: copying marked
+                // files keeps the marks.
                 if marked_more && self.clipboard_entry.is_some() {
                     Command::SetClipboardEntry(None).into()
                 } else {
                     CommandResult::Handled
                 }
             }
-            // Commands that never touch notice state must not trigger a
-            // rebuild on every broadcast.
             _ => return CommandResult::NotHandled,
         };
-        // Keep the cached notice list in sync with the state the matched arm
-        // just mutated, so `constraint`/`render` can read it without
-        // rebuilding every frame.
         self.rebuild_notices();
         result
     }
@@ -130,9 +110,6 @@ impl CommandHandler for NoticesView {
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ClearProgress) => {
-                // The only key this view handles, and the only one that mutates
-                // notice state, so rebuild the cache here rather than on every
-                // unrelated keystroke.
                 let result = self.clear_progress();
                 self.rebuild_notices();
                 result

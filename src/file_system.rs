@@ -46,19 +46,13 @@ use crate::{
     },
 };
 
-/// How often a running search wakes the event loop to redraw its loading
-/// indicator. Only a heartbeat: the position comes from elapsed time, so this
-/// bounds how coarse the motion gets over a stretch of the walk that finds
-/// nothing, and does nothing at all while batches are arriving to redraw.
+/// Heartbeat for a running search's loading indicator, whose position comes
+/// from elapsed time.
 const SEARCH_TICK_INTERVAL: Duration = Duration::from_millis(150);
 
-/// A cancellable in-flight action. File operations and searches share one list,
-/// in registration order; `cancel_target` decides which entry a cancel keypress
-/// aims at.
+/// A cancellable in-flight action, kept in registration order.
 enum Cancellable {
-    /// A file operation and the batch it belongs to: every source of one
-    /// paste, or every entry of one delete, which one keypress cancels
-    /// together.
+    /// A file operation and its batch (one paste or one delete), cancelled together.
     Task(CancelInfo, u64),
     Search(CancellationToken),
 }
@@ -78,49 +72,35 @@ fn is_cancelled_task(cancellable: &Cancellable) -> bool {
     matches!(cancellable, Cancellable::Task(info, _) if info.token.is_cancelled())
 }
 
-/// A task in a stage that cannot be interrupted (a move removing its
-/// original), which the cancel key passes over to reach the work queued behind
-/// it.
+/// A task in a stage that cannot be interrupted (a move removing its original).
 fn is_uncancellable_task(cancellable: &Cancellable) -> bool {
     matches!(cancellable, Cancellable::Task(info, _) if info.uncancellable.load(Ordering::Relaxed))
 }
 
 pub struct FileSystem {
-    /// Directory holding the bookmark symlinks, resolved from the config once
-    /// so bookmark reads do not depend on the process-global `Config`.
     bookmarks_dir: PathBuf,
     cancellables: Vec<Cancellable>,
-    /// The number the last batch of file operations was given.
     last_batch: u64,
     /// The batch the paste in progress starts its tasks in.
     paste_batch: u64,
     command_tx: Sender<Command>,
     directory: Option<PathInfo>,
     previous_directory: Option<PathInfo>,
-    /// The in-flight streamed directory load: its generation, and the token
-    /// that stops it. Cancelled when a new load starts so stale batches don't
-    /// bleed across, and cleared when the load reports itself complete.
+    /// The in-flight directory load's generation and cancellation token.
     current_load: Option<(u64, CancellationToken)>,
-    /// When the in-flight load started, which paces the watcher by how long a
-    /// listing of this directory takes.
+    /// When the in-flight load started; paces the watcher.
     load_started: Option<Instant>,
-    /// Set when a refresh arrives while a load is already streaming, so the
-    /// load runs to completion and the refresh is re-issued afterwards.
+    /// A refresh arrived during a load; it is re-issued when the load completes.
     reload_pending: bool,
-    /// The latest search's generation. `ExitedSearch` carries it, so every
-    /// consumer can ignore messages from a superseded search instead of
-    /// tearing down its replacement.
+    /// The latest search's generation; an `ExitedSearch` from any other is ignored.
     current_search_generation: u64,
-    /// Monotonic id stamped on each directory load and search so consumers
-    /// can ignore stale `ListingBatch`es. Shared by both stream kinds so a
-    /// generation is never ambiguous between them.
+    /// Generation counter shared by directory loads and searches, so stale
+    /// `ListingBatch`es can be ignored.
     next_generation: u64,
     open_directory_template: String,
     open_file_template: String,
     open_filectrl_window_template: String,
-    /// The paste awaiting a conflict answer, if any. The only thing that ever
-    /// asks: a worker never does (`Conflicts`), so there is never a second
-    /// prompt to route around.
+    /// The paste awaiting a conflict answer. Only the paste queue prompts, never a worker.
     pending_paste: Option<PendingPaste>,
     search_max_depth: u32,
     search_max_results: u32,
@@ -170,9 +150,8 @@ impl FileSystem {
             watcher.run_once(&self.command_tx);
         }
 
-        // Already canonical: the command line's directory is canonicalized when
-        // it is validated, and `getcwd` returns a path with no symlink, `.` or
-        // `..` component.
+        // Already canonical: the argument is canonicalized when validated, and
+        // `getcwd` returns a canonical path.
         let directory = directory
             .or_else(|| {
                 env::current_dir()
@@ -199,10 +178,8 @@ impl FileSystem {
                     .is_ok()
             });
 
-        // Fall back to the home directory when the startup directory cannot
-        // be opened: every navigation command requires a current directory,
-        // so continuing without one is not an option. If home cannot be
-        // opened either, exit rather than run in a broken state.
+        // Every navigation command needs a current directory: fall back to home, and
+        // fail if that cannot be opened either.
         let directory = directory.map_or_else(home_directory, Ok)?;
 
         Ok(self.cd(directory, true).into_commands())
@@ -229,9 +206,7 @@ impl FileSystem {
     }
 
     fn cd(&mut self, directory: PathInfo, navigate: bool) -> CommandResult {
-        // Cheap readability pre-flight so we don't switch into a directory we
-        // cannot open (e.g. permission denied). The full per-entry read happens
-        // asynchronously in `stream_cd` below.
+        // Refuse to switch into a directory that cannot be opened.
         if let Err(error) = fs::read_dir(&directory.path) {
             let verb = if navigate { "change to" } else { "read" };
             return anyhow!(
@@ -247,8 +222,7 @@ impl FileSystem {
         {
             self.previous_directory = Some(current.clone());
         }
-        // A navigation replaces the search results, so the walk's remaining
-        // work is wasted. A reload leaves the listing, and any search, alone.
+        // A navigation replaces the search results; a reload leaves any search alone.
         if navigate {
             self.cancel_search();
             self.shown = Shown::Directory;
@@ -256,8 +230,6 @@ impl FileSystem {
         self.directory = Some(directory.clone());
         self.watch(&directory.path);
 
-        // Cancel any in-flight load so its batches don't bleed into this one,
-        // then start streaming the new directory's entries.
         self.cancel_current_load();
         let generation = self.bump_generation();
         let token = CancellationToken::new();
@@ -301,18 +273,8 @@ impl FileSystem {
     /// so one added or removed elsewhere reloads the view.
     fn show_bookmarks(&mut self) -> CommandResult {
         match read_bookmarks(&self.bookmarks_dir) {
-            // The bookmarks view replaces any in-flight search; cancel it
-            // so its walk stops and its final ExitedSearch clears the
-            // search notice. The in-flight directory load is cancelled
-            // too, so its batches cannot stream into the bookmarks
-            // listing. Both are no-ops when nothing is running.
-            //
-            // Cancel only once the listing is known to replace them: a
-            // failed read broadcasts no Bookmarks command, so nothing
-            // would clear the table's loading flag, and a load cancelled
-            // mid-drain returns without sending DirectoryListingComplete
-            // to clear it instead. The table would be stranded on a
-            // truncated, unsorted listing.
+            // Cancel only once the listing is known to replace them: a failed read sends
+            // no Bookmarks command, which would leave the table's loading flag set.
             Ok(bookmarks) => {
                 self.cancel_search();
                 self.cancel_current_load();
@@ -325,13 +287,11 @@ impl FileSystem {
         }
     }
 
-    /// Starts tracking a new search's results.
     fn searching(&mut self) {
         self.shown = Shown::Search;
         self.search_results.clear();
     }
 
-    /// Records a batch of the current search's results.
     fn search_batch(&mut self, items: &[PathInfo], generation: u64) {
         if self.shown == Shown::Search && generation == self.current_search_generation {
             self.search_results
@@ -339,11 +299,8 @@ impl FileSystem {
         }
     }
 
-    /// Re-reads the results of a search that has ended, by path, off the
-    /// calling thread: one that is gone (deleted, or renamed, which a path
-    /// cannot follow) is dropped, and one that changed is read again. The
-    /// current directory is not listed, since the table would discard it.
-    /// While the walk is still running its results are current anyway.
+    /// Re-reads an ended search's results by path, off the calling thread, dropping
+    /// those that are gone. While the walk runs, its results are current.
     fn refresh_search(&mut self) -> CommandResult {
         if self
             .cancellables
@@ -365,26 +322,19 @@ impl FileSystem {
         CommandResult::Handled
     }
 
-    /// The next stream generation. Shared by directory loads and searches so
-    /// a generation is never ambiguous between the two.
     fn bump_generation(&mut self) -> u64 {
         self.next_generation += 1;
         self.next_generation
     }
 
-    /// Cancels the in-flight streamed directory load, if any. No-op when
-    /// nothing is streaming.
     fn cancel_current_load(&mut self) {
-        // Whatever the pending refresh was going to re-read has been replaced,
-        // so it goes with the load.
         self.reload_pending = false;
         if let Some((_, token)) = self.current_load.take() {
             token.cancel();
         }
     }
 
-    /// Handles a streamed load reporting itself complete. Clears the in-flight
-    /// load and re-issues a refresh that arrived while it was running.
+    /// Clears the finished load and re-issues a refresh that arrived during it.
     fn on_listing_complete(&mut self, generation: u64) -> CommandResult {
         if self
             .current_load
@@ -403,11 +353,8 @@ impl FileSystem {
         CommandResult::NotHandled
     }
 
-    /// Full search teardown (Esc / `ResetView`): cancel and drop every search
-    /// entry. No-op if `cancel_task` already cancelled it. The thread still
-    /// emits one last `ExitedSearch`, which a superseded generation makes every
-    /// consumer ignore, and which is otherwise a no-op because the entry and
-    /// notice state is already cleared.
+    /// Full search teardown (Esc / `ResetView`). The thread's final `ExitedSearch`
+    /// is then ignored.
     fn cancel_search(&mut self) {
         self.cancellables.retain(|c| match c {
             Cancellable::Search(token) => {
@@ -418,18 +365,15 @@ impl FileSystem {
         });
     }
 
-    /// Handles an `ExitedSearch` from a search thread. Only the current
-    /// search's exit drops its entry; exits from superseded searches are
-    /// ignored.
+    /// Drops the current search's entry; exits of superseded searches are ignored.
     fn on_search_exited(&mut self, generation: u64) {
         if generation == self.current_search_generation {
             self.cancel_search();
         }
     }
 
-    /// How many file operations are running or queued. A task stays counted
-    /// until its terminal progress arrives, cancelled or not: a cancelled copy
-    /// is still finishing the directories it entered.
+    /// Running or queued file operations. A cancelled task counts until its
+    /// terminal progress arrives.
     pub(crate) fn task_count(&self) -> usize {
         self.cancellables
             .iter()
@@ -437,20 +381,10 @@ impl FileSystem {
             .count()
     }
 
-    /// The entry a cancel keypress targets, so it always aims at work that is
-    /// actually running or queued rather than at whatever finished last.
-    ///
-    /// A search runs alongside everything else, so the most recent one started
-    /// is what the keypress means. File operations are grouped in batches (one
-    /// paste, one delete of marked entries), and the keypress cancels a whole
-    /// batch: the most recent one that still holds a task it can cancel. The
-    /// entry returned is that batch's oldest such task, which is the one
-    /// running when the batch has started.
-    ///
-    /// A cancelled task stays registered until its terminal progress arrives,
-    /// but is never targeted again. A task in an uninterruptible stage is passed
-    /// over; when nothing else is left, the oldest such task is returned so the
-    /// key can say why nothing was cancelled.
+    /// The entry a cancel keypress targets: the newest search if it is newest,
+    /// otherwise the oldest cancellable task of the newest batch holding one.
+    /// Cancelled tasks are never targeted; if only uncancellable ones remain, the
+    /// oldest is returned so the key can say why nothing was cancelled.
     fn cancel_target(&self) -> Option<usize> {
         let newest = self
             .cancellables
@@ -491,19 +425,13 @@ impl FileSystem {
         };
         match &self.cancellables[index] {
             Cancellable::Task(info, batch) => {
-                // Every task stays on the stack until its terminal Progress
-                // prunes it: a cancelled one is still unwinding, or has yet to
-                // be reached by the worker, and quit counts it. `uncancellable`
-                // covers both a task in an uninterruptible stage and one already
-                // finished whose terminal Progress is in flight; the wording
-                // fits the first and is momentarily imprecise for the second.
+                // `uncancellable` also covers a finished task whose terminal progress is in flight.
                 if info.uncancellable.load(Ordering::Relaxed) {
                     return Command::AlertInfo(format!("Cannot cancel: {}", info.kind.message()))
                         .into();
                 }
                 let (batch, message) = (*batch, info.kind.message());
-                // A queued task whose token is cancelled ends as cancelled
-                // when the worker reaches it, without running.
+                // A queued task with a cancelled token ends as cancelled without running.
                 let mut cancelled = 0;
                 for cancellable in &self.cancellables {
                     if let Cancellable::Task(info, of) = cancellable
@@ -528,17 +456,14 @@ impl FileSystem {
                 Command::AlertInfo(format!("Cancelled: {message}{more}")).into()
             }
             Cancellable::Search(token) => {
-                // A search that already finished cancels its own token on
-                // exit (see `run_search`). Keep the entry (its in-flight
-                // ExitedSearch drops it) and stay silent: the notice
-                // resolves momentarily, unlike a seconds-long task stage.
+                // A finished search cancels its own token on exit, and its
+                // `ExitedSearch` drops the entry.
                 if token.is_cancelled() {
                     return CommandResult::Handled;
                 }
                 token.cancel();
                 self.cancellables.remove(index);
-                // Non-destructive: keep streamed results and the notice,
-                // which NoticesView relabels as cancelled.
+                // Keeps the streamed results; NoticesView relabels the notice as cancelled.
                 Command::CancelSearch.into()
             }
         }
@@ -566,8 +491,7 @@ impl FileSystem {
     }
 
     fn open(&mut self, path: &PathInfo) -> CommandResult {
-        // Name the path in the error: a broken symlink (e.g. a bookmark whose
-        // target was removed) would otherwise surface a bare io error.
+        // Name the path: a broken symlink would otherwise surface a bare io error.
         match fs::canonicalize(&path.path)
             .map_err(|error| anyhow!("Failed to open {}: {error}", compact(&path.path)))
             .and_then(|path| PathInfo::try_from(&path))
@@ -609,8 +533,7 @@ impl FileSystem {
         .into()
     }
 
-    /// Launch an application the "open with" picker already resolved into an
-    /// argv, so no template substitution or shell is involved here.
+    /// Launches an argv the "open with" picker already resolved, without a shell.
     fn open_with(
         &self,
         working_dir: Option<&Path>,
@@ -626,9 +549,7 @@ impl FileSystem {
             Ok(mode) => mode,
             Err(error) => return error.into(),
         };
-        // Return the failures alongside the refresh instead of sending them
-        // separately, so they are ordered against it rather than racing the
-        // channel drain.
+        // Returned with the refresh rather than sent, so they are ordered against it.
         let mut commands: Vec<Command> = paths
             .iter()
             .filter_map(|path| operations::chmod(path, mode).err().map(Into::into))
@@ -664,11 +585,8 @@ impl FileSystem {
             Shown::Bookmarks => return self.show_bookmarks(),
             Shown::Directory => {}
         }
-        // A load for this directory is already streaming and will pick the
-        // change up. Restarting it would cancel it before it can finalize, and
-        // under sustained churn (a build writing into the viewed directory) it
-        // never would: the sort and the end of the loading state both hang off
-        // that completion. The refresh is re-issued when the load reports in.
+        // A load for this directory is streaming; restarting it under sustained churn
+        // would never let it complete. The refresh is re-issued when it completes.
         if self.current_load.is_some() {
             self.reload_pending = true;
             return CommandResult::Handled;
@@ -679,26 +597,21 @@ impl FileSystem {
         if !matches!(commands.as_slice(), [Command::RefreshedDirectory { .. }])
             && let Some(watcher) = &mut self.watcher
         {
-            // The path no longer names a directory that can be read: renamed
-            // away, replaced by a file, or made unreadable. The watch is still
-            // on what it named, and each change there would retry this reload
-            // and report its failure again.
+            // No longer a readable directory: stop watching, or every change there would
+            // retry this reload and report it again.
             watcher.unwatch();
         }
         commands.into()
     }
 
-    /// A new batch number, for the tasks one paste or one delete starts, which
-    /// one cancel keypress stops together.
+    /// A new batch number; one cancel keypress stops a whole batch.
     fn next_batch(&mut self) -> u64 {
         self.last_batch += 1;
         self.last_batch
     }
 
-    /// Runs a task in `batch`, registering it on the cancel stack when it starts. Returns
-    /// whether it started, together with the alerts it produced (a task that
-    /// fails validation produces one and starts nothing). Started tasks send
-    /// their initial progress snapshot themselves, before queueing their work.
+    /// Runs a task in `batch`, registering it for cancel if it starts. Returns
+    /// whether it started, and its alerts.
     fn run_task(&mut self, batch: u64, task: TaskCommand) -> (bool, Vec<Command>) {
         let result = task.run(self.command_tx.clone());
         let started = result.cancel_info.is_some();
@@ -712,18 +625,14 @@ impl FileSystem {
     /// Starts a paste. Sources run one at a time so that a name already taken
     /// in the destination can be answered for before the next source starts.
     fn start_paste(&mut self, is_move: bool, srcs: &[PathInfo], dest: &PathInfo) -> CommandResult {
-        // A paste starts only from a key in the table, which the conflict
-        // prompt captures while it is open, so none is waiting on an answer.
+        // The conflict prompt captures keys while open, so no paste is waiting.
         debug_assert!(self.pending_paste.is_none(), "a paste is still asking");
         self.pending_paste = Some(PendingPaste::new(is_move, dest, srcs));
         self.paste_batch = self.next_batch();
         self.advance_paste()
     }
 
-    /// Runs queued sources until one collides with a destination that has not
-    /// been answered for, or until the batch is done. Returns the alerts the
-    /// tasks produced, plus either the conflict prompt or the clipboard
-    /// follow-up.
+    /// Runs queued sources until one needs a conflict answer or the batch is done.
     fn advance_paste(&mut self) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::Handled;
@@ -746,8 +655,7 @@ impl FileSystem {
                         name: src.display_name.clone(),
                         can_overwrite,
                     }));
-                    // The source stays at the front of the queue: the answer is
-                    // what pops it.
+                    // The answer pops the source.
                     self.pending_paste = Some(pending);
                     return commands.into();
                 }
@@ -773,9 +681,7 @@ impl FileSystem {
         commands.into()
     }
 
-    /// Applies a conflict answer to the source at the front of the queue, then
-    /// keeps going. The front source is never a claimed one, which
-    /// `advance_paste` refuses before asking.
+    /// Applies a conflict answer to the front source, then continues.
     fn resolve_conflict(&mut self, choice: ConflictChoice) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::Handled;
@@ -792,16 +698,9 @@ impl FileSystem {
         commands.into()
     }
 
-    /// Abandons a paste whose conflict prompt was dismissed. Sources never
-    /// reached rejoin the failures in the clipboard, so a retry carries exactly
-    /// what was not pasted. Deliberately skipped sources are not among them:
-    /// skipping was a choice, not a failure.
-    ///
-    /// Every dismissed prompt arrives here, so a paste is abandoned only when
-    /// one is waiting on an answer: dismissing a rename or a filter leaves a
-    /// running paste alone. The standing answer stands, so a "skip all"
-    /// already given still skips a name the sources already handed out find
-    /// taken.
+    /// Abandons a paste whose conflict prompt was dismissed: unreached sources
+    /// rejoin the failures in the clipboard, skipped ones do not. Does nothing
+    /// when no paste is waiting.
     fn cancel_paste(&mut self) -> CommandResult {
         let Some(mut pending) = self.pending_paste.take() else {
             return CommandResult::NotHandled;
@@ -814,13 +713,9 @@ impl FileSystem {
             .map_or(CommandResult::NotHandled, Into::into)
     }
 
-    /// Runs one source of a paste, allowed to replace the entry `overwrite`
-    /// names, recording whether it started so the clipboard follow-up can
-    /// tell a clean run from a partial one.
-    ///
-    /// The name is claimed only once the task is running: a source that failed
-    /// validation writes nothing, so claiming it would make a later source of
-    /// the same name collide with something that will never be there.
+    /// Runs one source of a paste, allowed to replace `overwrite`. The name is
+    /// claimed only once the task starts, since a source that fails validation
+    /// writes nothing.
     fn run_paste_task(
         &mut self,
         pending: &mut PendingPaste,
@@ -847,16 +742,10 @@ impl FileSystem {
     }
 
     fn search(&mut self, query: &str) -> CommandResult {
-        // One search at a time: cancel any previous search. Its stale
-        // results and exit are ignored by generation, not by timing.
+        // One search at a time; a stale search's messages are ignored by generation.
         self.cancel_search();
-        // Also stop the in-flight directory load: the search replaces the
-        // listing, so the load's remaining work is wasted and its batches are
-        // stale (their generation is superseded by the search's).
+        // The search replaces the listing, so the directory load is stale.
         self.cancel_current_load();
-        // Stamped only here: `current_search_generation` tracks the search
-        // whose token is registered below, so an `ExitedSearch` from any
-        // other generation is ignored by `on_search_exited`.
         let generation = self.bump_generation();
         self.current_search_generation = generation;
         self.searching();
@@ -890,8 +779,6 @@ impl FileSystem {
             generation,
         );
 
-        // Tell consumers which generation is now current, so they can ignore
-        // messages from superseded searches.
         Command::SearchStarted { generation }.into()
     }
 
@@ -915,11 +802,8 @@ pub(crate) fn home_directory() -> Result<PathInfo> {
     Ok(directory)
 }
 
-/// Read every entry in the bookmarks directory, creating it if absent.
-/// Synchronous: one small directory of symlinks, no streaming. Returns the
-/// failure message rather than a command, so the caller can tell success from
-/// failure before cancelling the listing the bookmarks would replace. An
-/// unreadable entry is skipped, not fatal.
+/// Reads the bookmarks directory, creating it if absent. Unreadable entries are
+/// skipped.
 pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
     if let Err(error) = fs::create_dir_all(dir) {
         return Err(format!(
@@ -948,9 +832,8 @@ pub(super) fn read_bookmarks(dir: &Path) -> Result<Vec<PathInfo>, String> {
         .collect())
 }
 
-/// The mode a chmod of `paths` to `mode_str` sets, or the refusal naming what
-/// it was for. The chmod prompt checks this before it closes, so that a typo
-/// can be corrected rather than typed again.
+/// The mode a chmod of `paths` to `mode_str` sets, or the refusal. The chmod
+/// prompt checks it before closing, so a typo can be corrected.
 pub(crate) fn chmod_mode(paths: &[PathInfo], mode_str: &str) -> Result<u32> {
     parse_octal_mode(mode_str).ok_or_else(|| {
         let object = match paths {
@@ -961,10 +844,8 @@ pub(crate) fn chmod_mode(paths: &[PathInfo], mode_str: &str) -> Result<u32> {
     })
 }
 
-/// Parses a chmod-style octal mode string. Returns `None` for non-octal input
-/// or values exceeding `0o7777` (the permission + setuid/setgid/sticky bits).
-/// Digits only: `from_str_radix` alone would take a leading `+`, which `chmod`
-/// reads as symbolic notation.
+/// Parses an octal mode up to `0o7777`. Digits only: `from_str_radix` accepts a
+/// leading `+`, which `chmod` reads as symbolic.
 fn parse_octal_mode(mode_str: &str) -> Option<u32> {
     if !mode_str.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -988,7 +869,6 @@ mod tests {
 
     fn test_file_system(bookmarks: &TempDir, command_tx: Sender<Command>) -> FileSystem {
         FileSystem {
-            // A temp path, so bookmark reads never touch the real config dir.
             bookmarks_dir: bookmarks.path().to_path_buf(),
             cancellables: Vec::new(),
             last_batch: 0,
@@ -1033,8 +913,7 @@ mod tests {
             fs::write(src_dir.join("a.txt"), b"src").unwrap();
             fs::write(src_dir.join("b.txt"), b"src").unwrap();
 
-            // A vanished source fails the pre-flight re-stat, so its task
-            // never starts.
+            // A vanished source fails the pre-flight re-stat.
             let mut missing = PathInfo::try_from(Path::new("/")).unwrap();
             missing.path = src_dir.join("missing.txt");
             missing.display_name = "missing.txt".to_string();
@@ -1048,14 +927,10 @@ mod tests {
             }
         }
 
-        /// Puts a file at `name` in the destination, so pasting the matching
-        /// source collides with it.
         pub(super) fn occupy(&self, name: &str) {
             fs::write(self.dest.path.join(name), b"dest").unwrap();
         }
 
-        /// Puts a directory at `name` in the destination: a collision that is
-        /// never replaced, whatever the user answers.
         pub(super) fn occupy_with_directory(&self, name: &str) {
             fs::create_dir_all(self.dest.path.join(name)).unwrap();
         }
@@ -1093,8 +968,6 @@ mod tests {
             })
             .into_commands();
 
-        // Nothing was pasted, so the clipboard must survive untouched for the
-        // paste to be retried as-is.
         assert!(
             matches!(commands.as_slice(), [Command::AlertError(_)]),
             "{commands:?}"
@@ -1139,9 +1012,6 @@ mod tests {
             })
             .into_commands();
 
-        // The failed source's alert rides the same broadcast as the clipboard
-        // follow-up, which keeps the operation and only the failed source, so
-        // a retry carries just what was not pasted.
         let [
             Command::AlertError(_),
             Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths))),
@@ -1169,14 +1039,10 @@ mod tests {
             .into_commands();
 
         assert_eq!(("a.txt", true), conflict_prompt(&commands));
-        // Nothing may run until the collision is answered, and the existing
-        // file must still be intact.
         assert!(file_system.cancellables.is_empty());
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
         assert!(rx.try_recv().is_err());
     }
-
-    // ── the paste loop, which drives the decisions above ─────────────────────
 
     #[test]
     fn overwrite_replaces_the_existing_destination() {
@@ -1202,9 +1068,6 @@ mod tests {
         assert_eq!(b"src".to_vec(), fx.pasted("a.txt"));
     }
 
-    /// "Overwrite all" answered at the first collision replaces a later one
-    /// the queue finds without asking: the entry it found there is the one
-    /// its work may replace.
     #[test]
     fn overwrite_all_replaces_a_later_collision_without_asking() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1263,7 +1126,6 @@ mod tests {
             "{commands:?}"
         );
 
-        // An overwrite the prompt did not offer is refused before it starts.
         let commands = file_system
             .handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite))
             .into_commands();
@@ -1298,8 +1160,7 @@ mod tests {
             .handle_command(&Command::ResolveConflict(ConflictChoice::Skip))
             .into_commands();
 
-        // The skipped source is not a failure, so the clipboard is cleared
-        // rather than reduced to it; the non-colliding source still pasted.
+        // Skipping is not a failure, so the clipboard is cleared.
         assert!(
             matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
             "{commands:?}"
@@ -1332,9 +1193,6 @@ mod tests {
             .handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll))
             .into_commands();
 
-        // The second collision must not prompt. Skipping is a choice, not a
-        // failure, so the clipboard is cleared rather than reduced to the
-        // skipped sources.
         assert!(
             matches!(commands.as_slice(), [Command::SetClipboardEntry(None)]),
             "{commands:?}"
@@ -1353,8 +1211,7 @@ mod tests {
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_conflict_cancel");
         fx.occupy("b.txt");
-        // The first source pastes cleanly; the second collides and is the one
-        // the prompt is asking about.
+        // Only the second source collides.
         file_system.handle_command(&Command::Copy {
             srcs: vec![fx.src.clone(), fx.other.clone()],
             dest: fx.dest.clone(),
@@ -1364,8 +1221,6 @@ mod tests {
             .handle_command(&Command::CancelPrompt)
             .into_commands();
 
-        // A retry must carry exactly what was not pasted, so the source the
-        // prompt was asking about goes back to the clipboard.
         let [Command::SetClipboardEntry(Some(ClipboardEntry::Copy(paths)))] = commands.as_slice()
         else {
             panic!("expected SetClipboardEntry(Copy), got {commands:?}");
@@ -1425,9 +1280,6 @@ mod tests {
     #[test_case("t|u" => Some(0) ; "past a batch that can no longer be cancelled")]
     #[test_case("ut|t" => Some(2) ; "the newer batch, not the one running")]
     fn the_cancel_key_targets(kinds: &str) -> Option<usize> {
-        // File operations share one worker and run in queue order, so the
-        // oldest is the one actually running. Cancelling the newest would stop
-        // work that has not started while the copy on screen carries on.
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
@@ -1442,8 +1294,6 @@ mod tests {
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
 
-        // Every prompt broadcasts CancelPrompt on Esc, so with no paste waiting
-        // this must fall through to the view that owns the prompt.
         let result = file_system.handle_command(&Command::CancelPrompt);
 
         assert!(matches!(result, CommandResult::NotHandled));
@@ -1456,15 +1306,12 @@ mod tests {
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_paste_keeps_nothing");
 
-        // Nothing collides, so the queue hands out every source and is done.
         file_system.handle_command(&Command::Copy {
             srcs: vec![fx.src.clone(), fx.other.clone()],
             dest: fx.dest.clone(),
         });
         assert!(file_system.pending_paste.is_none());
 
-        // The copies may still be running, but nothing here is waiting on an
-        // answer, so dismissing a rename or a filter must not reach them.
         let result = file_system.handle_command(&Command::CancelPrompt);
 
         assert!(matches!(result, CommandResult::NotHandled));
@@ -1485,8 +1332,6 @@ mod tests {
         )
     }
 
-    /// The clipboard entry of `sources`, cut when `is_move` and copied
-    /// otherwise.
     fn entry(is_move: bool, sources: Vec<PathInfo>) -> ClipboardEntry {
         if is_move {
             ClipboardEntry::Move(sources)
@@ -1495,16 +1340,13 @@ mod tests {
         }
     }
 
-    /// The clipboard entry a paste leaves for `sources`, which it did not
-    /// paste.
+    /// The clipboard entry a paste leaves for `sources` it did not paste.
     fn left_over(is_move: bool, sources: Vec<PathInfo>) -> Command {
         Command::SetClipboardEntry(Some(entry(is_move, sources)))
     }
 
-    /// The disk already shows what the first source wrote when its twin comes
-    /// up, since the first ran while the prompt was open, and a standing
-    /// "overwrite all" would cover it: the twin is still refused, before
-    /// anything looks at the disk.
+    /// The first source ran while the prompt was open; its twin is refused before
+    /// the disk is checked.
     #[test_case(true ; "a cut")]
     #[test_case(false ; "a copy")]
     fn a_second_source_of_a_taken_name_is_refused_whatever_the_standing_answer(is_move: bool) {
@@ -1542,8 +1384,6 @@ mod tests {
         assert_eq!(is_move, !fx.src.path.exists());
     }
 
-    /// A source skipped at its prompt takes no name, so a later source of
-    /// the same name is asked about in turn rather than refused.
     #[test]
     fn a_skipped_source_leaves_its_name_for_a_twin_to_be_asked_about() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1581,9 +1421,6 @@ mod tests {
         assert_eq!(b"twin".to_vec(), fs::read(&twin.path).unwrap());
     }
 
-    /// The entry the prompt asked about is the only one an "overwrite" answer
-    /// allows replacing: another that took its place while the prompt was
-    /// open is left alone, and so is the source.
     #[test_case(true ; "a cut")]
     #[test_case(false ; "a copy")]
     fn an_entry_replaced_while_the_prompt_was_open_is_never_replaced(is_move: bool) {
@@ -1596,8 +1433,7 @@ mod tests {
         let commands = file_system.handle_command(&paste).into_commands();
         assert_eq!(("a.txt", true), conflict_prompt(&commands));
         let new = fx.dest.path.join("a.txt");
-        // Kept under another name, so the one written next cannot reuse its
-        // inode number.
+        // Kept, so the new file cannot reuse its inode number.
         fs::rename(&new, fx.dest.path.join("kept")).unwrap();
         fs::write(&new, b"since").unwrap();
 
@@ -1616,9 +1452,7 @@ mod tests {
         assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
     }
 
-    /// A source skipped by a standing "skip all" writes nothing, so it claims
-    /// no name: a later source of that name meets the entry that is really
-    /// there, and is skipped too, rather than refused as a twin.
+    /// It meets the entry really there and is skipped too, not refused as a twin.
     #[test]
     fn a_skipped_source_claims_no_name() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1643,18 +1477,12 @@ mod tests {
             .handle_command(&Command::ResolveConflict(ConflictChoice::SkipAll))
             .into_commands();
 
-        // Nothing started, so nothing is reported and the clipboard is left
-        // as it was.
         assert_eq!(Vec::<Command>::new(), commands);
         assert_eq!(b"dest".to_vec(), fx.pasted("a.txt"));
     }
 
-    /// A source whose name holds an entry made since the paste began is
-    /// refused before it starts, without a prompt, and stays on the clipboard,
-    /// whatever the standing answer: on a destination that treats two names
-    /// as one, that entry is what an earlier source of the paste wrote under
-    /// the other. Stood in for here by an entry written while the prompt was
-    /// open. Needs a filesystem that records birth times; skipped otherwise.
+    /// Stands in for a case-folding destination, where such an entry is an earlier
+    /// source's output. Needs a filesystem that records birth times.
     #[test_case(true ; "a cut")]
     #[test_case(false ; "a copy")]
     fn a_source_meeting_an_entry_made_since_the_paste_began_is_refused(is_move: bool) {
@@ -1696,9 +1524,8 @@ mod tests {
         assert_eq!(b"src".to_vec(), fs::read(&fx.src.path).unwrap());
     }
 
-    /// A standing "skip all" given at a prompt also reaches a source the queue
-    /// handed to the worker before it, whose name was free then and is taken
-    /// by the time it runs: the paste's own answer travels with its work.
+    /// The first source is handed out before the prompt; its name is taken by the
+    /// time it runs.
     #[test]
     fn a_standing_skip_all_reaches_a_source_already_handed_out() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1730,8 +1557,6 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
         let fx = CopyFixture::new("fs_failed_claim");
-        // A second marked source of the same name, which search results make
-        // easy to end up with. This one exists.
         let elsewhere = fx.dest.path.parent().expect("a parent").join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
         fs::write(elsewhere.join("missing.txt"), b"twin").unwrap();
@@ -1742,10 +1567,6 @@ mod tests {
             dest: fx.dest.clone(),
         });
 
-        // The vanished source writes nothing, so the name stays free and the
-        // second source just runs. Claiming a name for a task that never
-        // started would ask about a collision that does not exist, and for a
-        // directory it would offer no way to proceed at all.
         let commands = result.into_commands();
         assert!(
             !commands.iter().any(|command| matches!(
@@ -1763,7 +1584,6 @@ mod tests {
         let base = TempDir::reserved("read_bookmarks_ok");
         let dir = base.join("bookmarks");
 
-        // The directory does not exist yet; reading it creates it.
         let bookmarks = read_bookmarks(&dir).expect("expected the bookmarks to be read");
         assert!(dir.is_dir());
         assert!(bookmarks.is_empty());
@@ -1805,10 +1625,6 @@ mod tests {
 
         let result = file_system.handle_command(&Command::GetBookmarks);
 
-        // Load batches must not stream into the bookmarks listing. The cancel
-        // is paired with the Bookmarks broadcast that replaces it: only that
-        // command clears the table's loading flag, and a load cancelled
-        // mid-drain sends no DirectoryListingComplete to clear it instead.
         let command = Command::try_from(result).expect("expected a derived command");
         assert!(matches!(command, Command::Bookmarks { .. }));
         assert!(load_token.is_cancelled());
@@ -1816,8 +1632,6 @@ mod tests {
         drop(rx);
     }
 
-    /// After a search ends, a refresh re-reads its results by path instead of
-    /// listing the current directory, which the table would discard.
     #[test]
     fn a_refresh_after_a_search_rereads_its_results_without_listing_the_directory() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1853,8 +1667,6 @@ mod tests {
         assert_eq!(vec![(changed.path.clone(), 6)], read);
     }
 
-    /// A file operation finishing re-reads the results, since the watcher sees
-    /// only the directory searched, not a result below it the task removed.
     #[test]
     fn a_task_finishing_after_a_search_rereads_its_results() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1894,7 +1706,6 @@ mod tests {
         assert!(items.is_empty());
     }
 
-    /// While the walk runs its results are current, so a refresh reads nothing.
     #[test]
     fn a_refresh_during_a_search_reads_nothing() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1914,7 +1725,6 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
     }
 
-    /// Only the current search's batches are its results.
     #[test]
     fn only_the_current_searchs_batches_are_recorded() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -1937,8 +1747,6 @@ mod tests {
         assert_eq!(vec![hit.path], file_system.search_results);
     }
 
-    /// The bookmarks view watches the bookmarks directory, and a refresh while
-    /// it is shown reads the bookmarks rather than the current directory.
     #[test]
     fn the_bookmarks_view_watches_and_reloads_the_bookmarks() {
         let bookmarks = TempDir::new("fs_bookmarks_view");
@@ -1961,7 +1769,6 @@ mod tests {
         assert_eq!(1, listed.len());
         assert!(file_system.current_load.is_none());
 
-        // Leaving the view lists the directory again, and watches it.
         file_system.handle_command(&Command::ResetView);
         let _ = file_system.handle_command(&Command::RefreshDirectory);
         let watched = file_system.watcher.as_ref().unwrap().watched_directory();
@@ -1981,8 +1788,6 @@ mod tests {
 
         let result = file_system.handle_command(&Command::RefreshDirectory);
 
-        // Restarting would cancel the load before it can finalize, and the
-        // sort and the end of the loading state both hang off that completion.
         assert!(matches!(result, CommandResult::Handled));
         assert!(!load_token.is_cancelled());
         assert!(file_system.reload_pending);
@@ -2002,9 +1807,7 @@ mod tests {
         let result =
             file_system.handle_command(&Command::DirectoryListingComplete { generation: 7 });
 
-        // The change that triggered the refresh may have landed after the load
-        // opened the directory, so it still has to be re-read; deferring it is
-        // not dropping it.
+        // The change may have landed after the load opened the directory.
         let command = Command::try_from(result).expect("expected a derived command");
         let Command::RefreshedDirectory {
             directory,
@@ -2014,16 +1817,13 @@ mod tests {
             panic!("expected RefreshedDirectory, got {command:?}");
         };
         assert_eq!(root.path(), directory.as_path());
-        // A generation of its own. Reusing the one that just completed would
-        // let the finished load's trailing batches stream into the reload.
+        // Reusing the completed generation would let its trailing batches stream in.
         assert_ne!(7, generation);
         assert_eq!(Some(generation), file_system.current_load.map(|(id, _)| id));
         assert!(!file_system.reload_pending);
         drop(rx);
     }
 
-    /// The directory being viewed stops being one that can be listed. Its path
-    /// is left empty or given a file.
     #[test_case(false ; "renamed away")]
     #[test_case(true ; "replaced by a file")]
     fn a_directory_that_can_no_longer_be_listed_is_no_longer_watched(replaced: bool) {
@@ -2051,8 +1851,6 @@ mod tests {
         };
         // A reload, not a navigation: nothing was changed to.
         assert!(message.starts_with("Failed to read directory"), "{message}");
-        // Otherwise every change to the directory, wherever it went, would
-        // repeat the error.
         let watcher = file_system.watcher.as_ref().unwrap();
         assert_eq!(None, watcher.watched_directory());
     }
@@ -2068,8 +1866,6 @@ mod tests {
         let result =
             file_system.handle_command(&Command::DirectoryListingComplete { generation: 7 });
 
-        // An older load finishing must not clear the current one or consume
-        // the refresh waiting on it.
         assert!(matches!(result, CommandResult::NotHandled));
         assert!(file_system.current_load.is_some());
         assert!(file_system.reload_pending);
@@ -2081,9 +1877,7 @@ mod tests {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_system = test_file_system(&bookmarks, tx);
-        // A fixture rather than the real temp directory: `search` spawns a
-        // detached walk, and rooting it at /tmp would traverse every other
-        // test's fixtures to the full production depth.
+        // Not /tmp: the detached walk would traverse every other test's fixtures.
         let root = TempDir::new("fs_search_root");
         file_system.directory = Some(PathInfo::try_from(root.path()).unwrap());
         let load_token = CancellationToken::new();
@@ -2091,12 +1885,9 @@ mod tests {
 
         let _ = file_system.search("query");
 
-        // A load left running would keep walking the directory for batches
-        // that are already stale (the search generation supersedes theirs).
         assert!(load_token.is_cancelled());
         assert!(file_system.current_load.is_none());
-        // Nothing cancels the spawned walk on drop, and an empty batch never
-        // notices the closed channel, so stop it before the fixture goes away.
+        // Nothing stops the detached walk on drop, so stop it before the fixture goes.
         file_system.cancel_search();
         drop(rx);
     }
@@ -2108,8 +1899,6 @@ mod tests {
         let mut file_system = test_file_system(&bookmarks, tx);
         file_system.cancellables = cancellables("tts");
 
-        // A real task, so its terminal update carries the id the stack entry
-        // has to be matched on.
         let (task_tx, task_rx) = std::sync::mpsc::channel();
         let (active, initial, _token) = crate::command::progress::ActiveTask::new(
             task_tx,
@@ -2123,8 +1912,7 @@ mod tests {
         let Ok(Command::Progress(finished)) = task_rx.recv() else {
             panic!("the task should have reported")
         };
-        // `cancellables` gives every entry id 0, so the second takes the real
-        // one and the first stands for an unrelated operation still running.
+        // `cancellables` gives every entry id 0; the first stands for an unrelated task.
         let Cancellable::Task(second, _) = &mut file_system.cancellables[1] else {
             panic!("expected a task")
         };
@@ -2132,9 +1920,6 @@ mod tests {
 
         file_system.check_progress_for_error(&finished);
 
-        // Only the finished task goes. Dropping the others would leave a
-        // running operation with nothing for the cancel key to target, and the
-        // search entry is not a task at all.
         assert_eq!(2, file_system.cancellables.len());
         assert!(matches!(
             file_system.cancellables[0],
@@ -2154,12 +1939,9 @@ mod tests {
         file_system.current_search_generation = 4;
         file_system.cancellables = cancellables("ts");
 
-        // A superseded search exiting must not drop the entry belonging to the
-        // one that replaced it, or the cancel key would find nothing to stop.
         file_system.on_search_exited(3);
         assert_eq!(2, file_system.cancellables.len());
 
-        // The file operation is not the search's to clear.
         file_system.on_search_exited(4);
         assert!(matches!(
             file_system.cancellables.as_slice(),
@@ -2195,7 +1977,6 @@ mod tests {
 
         file_system.handle_command(&Command::CancelTask);
 
-        // Still unwinding, so quit must still ask; but not a target again.
         assert_eq!(1, file_system.task_count());
         assert_eq!(None, file_system.cancel_target());
 
@@ -2230,8 +2011,6 @@ mod tests {
         assert_eq!(2, file_system.cancellables.len());
     }
 
-    /// One keypress cancels only the newest batch: an earlier paste or delete
-    /// carries on.
     #[test]
     fn the_cancel_key_cancels_only_the_newest_batch() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -2253,8 +2032,6 @@ mod tests {
         );
     }
 
-    /// A task of the batch that can no longer be cancelled (a move removing its
-    /// original) does not keep the rest of its batch from being cancelled.
     #[test]
     fn an_uncancellable_task_does_not_hold_back_its_batch() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
@@ -2282,9 +2059,6 @@ mod tests {
         assert!(message.ends_with(" and 1 more task"), "{message}");
     }
 
-    /// A delete of three marked entries is one batch: one keypress while the
-    /// worker is still busy ends all three as cancelled, and none of them
-    /// removes anything.
     #[test]
     fn one_keypress_cancels_a_whole_delete() {
         let fx = TempDir::new("fs_cancel_batch");
@@ -2328,7 +2102,6 @@ mod tests {
             .handle_command(&Command::CancelTask)
             .into_commands();
 
-        // Its terminal update is what removes it, so it stays on the stack.
         let [Command::AlertInfo(message)] = commands.as_slice() else {
             panic!("expected one notice, got {commands:?}");
         };
@@ -2351,8 +2124,6 @@ mod tests {
 
         let result = file_system.handle_command(&Command::CancelTask);
 
-        // Silent, and still registered: its ExitedSearch is already on the
-        // way and drops the entry.
         assert!(matches!(result, CommandResult::Handled));
         assert_eq!(1, file_system.cancellables.len());
     }
@@ -2375,14 +2146,12 @@ mod tests {
         let [Command::SearchStarted { generation }] = commands.as_slice() else {
             panic!("expected SearchStarted, got {commands:?}");
         };
-        // Only the new search's exit may clear the search state.
         assert_eq!(*generation, file_system.current_search_generation);
         assert!(previous.is_cancelled());
         let [Cancellable::Search(current)] = file_system.cancellables.as_slice() else {
             panic!("expected only the new search to be registered");
         };
-        // Not `!current.is_cancelled()`: the new search's thread cancels its
-        // own token when it finishes, which on an empty root can be at once.
+        // The new search may already have cancelled its own token on an empty root.
         assert!(!current.is_same(&previous));
         file_system.cancel_search();
         drop(rx);
@@ -2441,7 +2210,6 @@ mod tests {
             })
             .into_commands();
 
-        // The failure rides the same broadcast as the refresh, ahead of it.
         let [
             Command::AlertError(message),
             Command::RefreshedDirectory { .. },
@@ -2499,7 +2267,6 @@ mod tests {
             .handle_command(&Command::GoToParentDirectory)
             .into_commands();
 
-        // A navigation rather than a refresh, so "-" can return to sub.
         let [Command::NavigatedDirectory { directory, .. }] = commands.as_slice() else {
             panic!("expected NavigatedDirectory, got {commands:?}");
         };
@@ -2545,8 +2312,6 @@ mod tests {
             true,
         );
 
-        // The new load reads the new directory; re-reading it once that
-        // completes would be a second load for nothing.
         assert!(!file_system.reload_pending);
         file_system.cancel_current_load();
     }
@@ -2567,14 +2332,11 @@ mod tests {
         file_system.cd(second.clone(), true);
         assert_eq!(Some(first.path.clone()), previous_path(&file_system));
 
-        // Re-entering the directory already shown is not a move, so recording
-        // it would make "-" toggle back to where the user already is.
         file_system.cd(second, true);
         assert_eq!(Some(first.path), previous_path(&file_system));
     }
 
-    /// The search's token is registered by hand rather than by a real walk,
-    /// which cancels its own token when it finishes and could do so before
+    /// The token is registered by hand: a real walk may cancel its own token before
     /// the navigation lands.
     #[test]
     fn navigating_away_stops_a_running_search() {
@@ -2592,8 +2354,6 @@ mod tests {
 
         file_system.handle_command(&Command::GoToParentDirectory);
 
-        // Left registered, it would stay the cancel key's target after its
-        // results were replaced.
         assert!(search.is_cancelled());
         assert!(matches!(
             file_system.cancellables.as_slice(),

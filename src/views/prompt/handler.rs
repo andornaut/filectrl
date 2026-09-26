@@ -21,13 +21,9 @@ impl CommandHandler for PromptView {
                 let result = self.insert_text(text);
                 self.filter_as_typed(result)
             }
-            // Whatever closes a filter prompt without submitting it puts back
-            // the filter it opened with, as Esc does: a double-click that opens
-            // a file closes it from beneath, and typing has already applied
-            // what it holds.
+            // Any close of a filter prompt without submitting restores the original filter, as Esc
+            // does.
             Command::CancelPrompt => self.restore_filter(),
-            // Submitted, or replaced by a listing or a reset that clears the
-            // filter anyway, so a close that follows has nothing to put back.
             Command::FilterChanged(_) | Command::NavigatedDirectory { .. } | Command::ResetView => {
                 self.live_filter.clone_from(&self.initial_text);
                 CommandResult::NotHandled
@@ -37,9 +33,7 @@ impl CommandHandler for PromptView {
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        // Delete confirmation: single-keypress y/Y confirms, anything else
-        // cancels. A chord such as Ctrl+y is a different key and must not
-        // confirm a permanent delete, so only Shift may accompany the letter.
+        // Only Shift may accompany y: a chord such as Ctrl+y must not confirm a permanent delete.
         if matches!(self.actions, PromptAction::Delete(_)) {
             let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
@@ -48,8 +42,6 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Quitting with file operations running: confirmed like a delete,
-        // since it ends them part way through.
         if matches!(self.actions, PromptAction::ConfirmQuit(_)) {
             let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
@@ -58,8 +50,7 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Paste of an entry from elsewhere: confirmed like a delete, since the
-        // text could have been put on the clipboard by any program.
+        // Confirmed because any program could have put the text on the clipboard.
         if let PromptAction::ConfirmPaste { entry, dest } = &self.actions {
             let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
@@ -68,16 +59,9 @@ impl CommandHandler for PromptView {
             };
         }
 
-        // Paste conflict: single keypress, uppercase answering for the rest of
-        // the batch too. Overwrite is offered only when neither side is a
-        // directory; `o` and `O` where it is not offered are ignored, and any
-        // other key abandons the paste.
+        // Uppercase answers for the rest of the batch. Only Shift may accompany a choice,
+        // so a chord like Ctrl+O cancels instead of overwriting.
         if let PromptAction::Conflict { can_overwrite, .. } = self.actions {
-            // Shift is what produces the uppercase "all" choices, so it is the
-            // only modifier the offered keys carry. A chord like Ctrl+O is a
-            // different key entirely and must not resolve to the destructive
-            // choice it shares a letter with; it falls through to the cancel
-            // below, which loses nothing because the clipboard is restored.
             let plain = modifiers.difference(KeyModifiers::SHIFT).is_empty();
             return match code {
                 KeyCode::Char('s') if plain => {
@@ -92,10 +76,8 @@ impl CommandHandler for PromptView {
                 KeyCode::Char('O') if plain && can_overwrite => {
                     Command::ResolveConflict(ConflictChoice::OverwriteAll).into()
                 }
-                // A real choice that this collision cannot offer. Ignoring it
-                // keeps the prompt up: treating it as the abandon key would
-                // lose the rest of a batch for someone who has been answering
-                // `o` and reaches the first directory.
+                // Not offered for this collision: ignored so a batch answered with `o` is not
+                // abandoned.
                 KeyCode::Char('o' | 'O') if plain => CommandResult::Handled,
                 _ => Command::CancelPrompt.into(),
             };
@@ -106,8 +88,7 @@ impl CommandHandler for PromptView {
         self.filter_as_typed(result)
     }
 
-    /// A paste into a text prompt is inserted as text. One into a y/n prompt
-    /// is ignored rather than read as answers, whatever letters it holds.
+    /// Text in a y/n prompt is ignored rather than read as answers.
     fn handle_paste(&mut self, text: &str) -> CommandResult {
         if self.actions.is_confirmation() {
             return CommandResult::Handled;
@@ -147,11 +128,8 @@ impl CommandHandler for PromptView {
 }
 
 impl PromptView {
-    /// Narrows the table to the filter prompt's text as it is typed: after a
-    /// key that `result` left the prompt open for, sends the text when it
-    /// differs from what the table was last sent, beside anything the key
-    /// derived (a cut puts its text on the clipboard). Any other prompt, or a
-    /// key that submitted or cancelled, is passed through.
+    /// Sends the filter prompt's text to the table as it is typed, when it differs from what was
+    /// last sent.
     fn filter_as_typed(&mut self, result: CommandResult) -> CommandResult {
         let is_filter = matches!(self.actions, PromptAction::Filter(_));
         if !is_filter || result == CommandResult::NotHandled {
@@ -169,8 +147,7 @@ impl PromptView {
         commands.into()
     }
 
-    /// Closes the prompt. A filter prompt first puts back the filter it opened
-    /// with, since typing has already applied what it holds.
+    /// Closes the prompt, restoring the filter a filter prompt opened with.
     fn cancel(&mut self) -> CommandResult {
         let mut commands = self.restore_filter().into_commands();
         commands.push(Command::CancelPrompt);
@@ -187,31 +164,23 @@ impl PromptView {
         Command::FilterEdited(self.initial_text.clone()).into()
     }
 
-    /// Inserts `text` at the cursor, without its line breaks and other control
-    /// characters: the input is one line, a pasted name that was copied with
-    /// its newline would otherwise not match, and a tab or escape is never
-    /// meant as part of a name.
+    /// Inserts `text` at the cursor without control characters: the input is one line.
     fn insert_text(&mut self, text: &str) -> CommandResult {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
         self.text_area.set_yank_text(text);
         self.text_area.paste();
-        // Pasting changes the input, so the Goto suggestions must be
-        // recomputed like any other edit (no-op for other prompts).
         self.refresh_suggestions();
         CommandResult::Handled
     }
 
-    /// The text-editing half of `handle_key`, after the single-keypress prompts
-    /// have had their turn. `action` is `code` and `modifiers` looked up in the
-    /// prompt keybindings.
+    /// The text-editing half of `handle_key`; `action` is the prompt keybinding for `code` and
+    /// `modifiers`.
     pub(super) fn handle_text_key(
         &mut self,
         action: Option<Action>,
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> CommandResult {
-        // Goto type-ahead: Tab accepts, Enter accepts then submits,
-        // Down/Up cycle through matches
         if matches!(self.actions, PromptAction::Goto { .. }) {
             match action {
                 Some(Action::PromptAcceptSuggestion) => {
@@ -248,12 +217,8 @@ impl PromptView {
                 self.refresh_suggestions();
                 return CommandResult::Handled;
             }
-            // Performed here rather than left to `input()`, whose copy and cut
-            // keys are hardcoded and ignore the keybindings. Without a
-            // selection there is nothing to copy, and the yank buffer still
-            // holds whatever was last cut or pasted. A selection that was
-            // started and moved back to its anchor is empty, and `copy()`
-            // leaves the yank buffer alone for it too.
+            // Handled here because `input()` hardcodes its copy and cut keys. An empty selection
+            // copies nothing.
             Some(Action::PromptCopy) => {
                 if self
                     .text_area
@@ -289,11 +254,7 @@ impl PromptView {
     }
 }
 
-/// Whether `input()` would insert a line break or a tab for this key. The
-/// input is one line (only the first is drawn, while `submit` joins them all),
-/// and a tab is never meant as part of a name, so these keys are dropped
-/// rather than edited in: Enter with any modifier, Ctrl+m, a literal CR or LF,
-/// and Tab. BackTab inserts nothing but is dropped with Tab.
+/// Whether `input()` would insert a line break or tab for this key; the input is one line.
 fn inserts_whitespace(code: KeyCode, modifiers: KeyModifiers) -> bool {
     match code {
         KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('\n' | '\r') => true,

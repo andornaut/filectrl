@@ -1,5 +1,5 @@
-//! What an entry is, apart from what it is named: its device and inode, and
-//! for a paste, the entry as it was seen (`Seen`).
+//! Entry identity apart from the name: device and inode, and for a paste, the
+//! entry as it was seen (`Seen`).
 
 use std::{
     ffi::{CStr, CString},
@@ -19,8 +19,7 @@ pub(super) fn changed(stat: &FileStat) -> (i64, i64) {
     (i64::from(stat.st_ctime), i64::from(stat.st_ctime_nsec))
 }
 
-/// The device and inode of an entry, to tell whether a name still holds the
-/// entry it held, or whether two names hold one entry.
+/// The device and inode of an entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct EntryId {
     dev: libc::dev_t,
@@ -40,14 +39,12 @@ impl EntryId {
         }
     }
 
-    /// The entry `path` names, without following a symlink there. `None` when
-    /// it cannot be read.
+    /// The entry `path` names, without following a symlink. `None` when unreadable.
     pub(super) fn of_path(path: &Path) -> Option<Self> {
         lstat(path).ok().map(|stat| Self::of_stat(&stat))
     }
 
-    /// The entry `name` names in the open directory `dir`, without following a
-    /// symlink there.
+    /// The entry `name` names in the open directory `dir`, without following a symlink.
     pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Self> {
         use nix::{fcntl::AtFlags, sys::stat::fstatat};
         Ok(Self::of_stat(&fstatat(
@@ -58,69 +55,46 @@ impl EntryId {
     }
 }
 
-/// An entry as the paste saw it: which entry it is, its type, when it was
-/// created, when it was last written, and how large it was.
+/// An entry as the paste saw it: identity, type, birth time, modification time
+/// and size.
 ///
-/// A number a removal frees can be given to the next entry created at once
-/// (ext4 and xfs reuse an inode number immediately), so the identity alone
-/// could take a replacement for the entry seen. What tells them apart is when
-/// each was created (`born`): a replacement is created after the queue looked
-/// at the name, so it carries a later birth time, or where the filesystem
-/// records none a later change time, wherever the filesystem's clock resolves
-/// the interval between that look and the replacement's creation. Linux 6.13
-/// and later give ext4, xfs, btrfs and tmpfs timestamps fine enough for any
-/// such interval; elsewhere a timestamp moves in ticks of the kernel's coarse
-/// clock (1 to 10 ms, or whole seconds on ext4 with 128-byte inodes), and a
-/// replacement of the same size created within the same tick, given the same
-/// inode number and modification time, is taken for the entry seen.
-///
-/// The birth time is preferred because it moves only when an entry is
-/// created: another link to the same file being replaced, which changes its
-/// change time, does not make it another entry. An entry written since it was
-/// seen counts as another one too, by its modification time and size.
-///
-/// Attributes a network filesystem caches (NFS, CIFS, sshfs) can still show
-/// an entry replaced from another host as the one seen; that is the same
-/// check-then-replace window another program can race, and is accepted.
+/// ext4 and xfs reuse a freed inode number at once, so identity alone could take
+/// a replacement for the entry seen; the replacement's later birth time (or,
+/// where none is recorded, change time) tells them apart, to the resolution of
+/// the filesystem's clock. The birth time is preferred because replacing
+/// another link to the same file moves the change time but not the birth time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Seen {
     id: EntryId,
-    /// The file type bits of its mode.
     kind: u32,
     born: (i64, i64),
-    /// `born` is a birth time the filesystem recorded, not a change time
-    /// standing in for one.
+    /// `born` is a recorded birth time, not a change time standing in for one.
     recorded: bool,
     modified: (i64, i64),
     size: u64,
 }
 
 impl Seen {
-    /// Whether the entry seen is a directory.
     // `S_IFDIR` is already a `u32` on Linux.
     #[allow(clippy::useless_conversion)]
     pub(super) fn is_directory(&self) -> bool {
         self.kind == u32::from(libc::S_IFDIR)
     }
 
-    /// The entry `path` names, without following a symlink there, or `None`
-    /// when the name is free.
+    /// The entry `path` names, without following a symlink, or `None` when free.
     pub(super) fn of_path(path: &Path) -> std::io::Result<Option<Self>> {
         use std::os::unix::ffi::OsStrExt;
         let path = CString::new(path.as_os_str().as_bytes())?;
         Self::at(rustix::fs::CWD, &path)
     }
 
-    /// The entry `name` names in the open directory `dir`, without following
-    /// a symlink there, or `None` when the name is free.
+    /// The entry `name` names in `dir`, without following a symlink, or `None` when free.
     pub(super) fn at(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
         Self::look(dir, name)
     }
 
-    /// `at`, through `statx` on Linux, for the birth time `fstatat` does not
-    /// give. A kernel without `statx`, or a sandbox that refuses it (EPERM,
-    /// EACCES), gets `fstatat`, and one that has refused it for good (ENOSYS,
-    /// EPERM) is not asked again.
+    /// `at` through `statx` on Linux, for the birth time. Falls back to `fstatat` on
+    /// ENOSYS, EPERM or EACCES, and stops asking after ENOSYS or EPERM.
     #[cfg(target_os = "linux")]
     fn look(dir: impl AsFd, name: &CStr) -> std::io::Result<Option<Self>> {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -139,7 +113,7 @@ impl Seen {
             | StatxFlags::CTIME
             | StatxFlags::SIZE
             | StatxFlags::BTIME;
-        // No automount, as `fstatat` never triggers one: a look is not a use.
+        // No automount, like `fstatat`.
         let flags = AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT;
         match statx(&dir, name, flags, mask) {
             Ok(stat) => Ok(Some(Self::of_statx(&stat))),
@@ -159,13 +133,11 @@ impl Seen {
         Self::by_stat(dir, name)
     }
 
-    /// Which entry it is.
     pub(super) fn id(&self) -> EntryId {
         self.id
     }
 
-    /// When it was created, where the filesystem recorded that: never a change
-    /// time standing in for one, which a write or a mode change moves.
+    /// The recorded birth time, never a change time standing in for one.
     pub(super) fn birth(&self) -> Option<(i64, i64)> {
         self.recorded.then_some(self.born)
     }
@@ -229,23 +201,18 @@ impl Seen {
     }
 }
 
-/// The `birth` time the filesystem recorded, when it gave one (`has_birth`)
-/// and it is not zero, which is none: macOS reports that on a filesystem
-/// without one (NFS, most FUSE), and a Linux filesystem can report it for an
-/// entry it never recorded one for. `Seen` compares the change time, which
-/// only moves forward, where there is none.
+/// `birth` if the filesystem reported one and it is not zero (macOS reports
+/// zero where there is none, and Linux can for an entry it never recorded).
 fn recorded_birth(has_birth: bool, birth: (i64, i64)) -> Option<(i64, i64)> {
     (has_birth && birth != (0, 0)).then_some(birth)
 }
 
-/// The entry `path` names now, as the paste queue would see it.
 #[cfg(test)]
 pub(super) fn seen(path: &Path) -> Option<Seen> {
     Seen::of_path(path).expect("the name can be looked at")
 }
 
-/// Whether the filesystem holding `path` records when an entry was created,
-/// which `Seen` then compares in place of the change time.
+/// Whether the filesystem holding `path` records birth times.
 #[cfg(test)]
 pub(super) fn records_birth_time(path: &Path) -> bool {
     #[cfg(target_os = "linux")]
@@ -295,10 +262,7 @@ mod tests {
         super::seen(path).expect("the entry exists")
     }
 
-    /// Writing to an entry makes it another as far as a paste is concerned:
-    /// the paste agreed to replace what it saw, not what it became. Written
-    /// with as many bytes as before, on the same inode, so only its times can
-    /// tell.
+    /// The same size on the same inode, so only its times tell.
     #[test]
     fn an_entry_written_since_it_was_seen_is_not_the_one_seen() {
         let fx = TempDir::new("seen_written");
@@ -315,9 +279,6 @@ mod tests {
         assert_ne!(before, now);
     }
 
-    /// An entry created at the name after it was seen is another, even when
-    /// it has the same size and the filesystem gives it the freed inode
-    /// number back, as ext4 does.
     #[test]
     fn an_entry_created_in_place_of_the_one_seen_is_another() {
         let fx = TempDir::new("seen_recreated");
@@ -332,12 +293,8 @@ mod tests {
         assert_ne!(before, seen(&path));
     }
 
-    /// An entry created in place of the one seen is another even when it has
-    /// the same inode number, size and modification time: when it was
-    /// created is what tells them apart. Needs a filesystem that gives a
-    /// freed inode number back (ext4 and xfs do; tmpfs and APFS do not, and
-    /// it is skipped there), and a process to itself, so no other test takes
-    /// the number first (the test below).
+    /// Needs a filesystem that reuses a freed inode number (ext4, xfs; skipped on
+    /// tmpfs and APFS), in a process of its own so no other test takes the number.
     #[test]
     #[ignore = "run in a process of its own by the test below"]
     fn a_reused_inode_with_the_same_times_is_another_entry() {
@@ -383,8 +340,6 @@ mod tests {
         );
     }
 
-    /// An entry cut short since it was seen, with its modification time put
-    /// back, is not the one seen either: its size tells.
     #[test]
     fn an_entry_cut_short_since_it_was_seen_is_not_the_one_seen() {
         let fx = TempDir::new("seen_truncated");
@@ -403,10 +358,8 @@ mod tests {
         assert_ne!(before, now);
     }
 
-    /// Replacing another link to the same file changes the file's change
-    /// time, not when it was created, so the entry seen under this link is
-    /// still the one seen. Where the filesystem records no birth time, the
-    /// change time stands in, and this cannot hold; the test says so.
+    /// Replacing another link moves the change time, not the birth time. Skipped
+    /// where no birth time is recorded.
     #[test]
     fn another_link_replaced_leaves_the_entry_the_one_seen() {
         let fx = TempDir::new("seen_other_link");
@@ -426,8 +379,6 @@ mod tests {
         }
     }
 
-    /// A mode change moves only the change time, which the birth time stands
-    /// in for, so the entry is still the one seen where one is recorded.
     #[test]
     fn a_mode_change_leaves_the_entry_the_one_seen() {
         use std::os::unix::fs::PermissionsExt;
@@ -467,9 +418,6 @@ mod tests {
         assert_eq!(u32::from(libc::S_IFLNK), link.kind);
     }
 
-    /// A birth time the filesystem did not report in the mask is not used, and
-    /// the device is part of what an entry is, read from a real `statx` with
-    /// the fields in question changed.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_statx_birth_time_counts_only_when_reported() {
@@ -499,7 +447,6 @@ mod tests {
         assert_ne!(seen, Seen::of_statx(&stat));
     }
 
-    /// A birth time counts only when one is reported and it is not zero.
     #[test]
     fn a_birth_time_is_recorded_only_when_reported_and_not_zero() {
         assert_eq!(Some((5, 6)), recorded_birth(true, (5, 6)));
@@ -524,8 +471,6 @@ mod tests {
         }
     }
 
-    /// An entry created later is another, whatever else it shares with the
-    /// one seen; so is one on another device with the same inode number.
     #[test]
     fn an_entry_is_told_apart_by_when_it_was_created_and_its_device() {
         let seen = entry(1, 10, (100, 0));

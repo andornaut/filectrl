@@ -23,18 +23,15 @@ pub(super) fn split_with_ellipsis(line: &str, width: usize) -> Vec<String> {
     parts
 }
 
-/// The number of lines `split_with_ellipsis` returns, counted without building
-/// them.
+/// The number of lines `split_with_ellipsis` returns, without building them.
 pub(super) fn split_line_count(line: &str, width: usize) -> usize {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
     chunks(line, width).count()
 }
 
-/// `line` cut into lines of `width` columns, each but the last leaving a
-/// column for an ellipsis; a line that fits (an empty one included) is one
-/// line. Cuts fall between graphemes, and a grapheme wider than a line still
-/// gets a line of its own, so no line is empty.
+/// `line` cut at grapheme boundaries into `width`-column lines, each but the last leaving a
+/// column for an ellipsis. No line is empty.
 fn chunks(line: &str, width: usize) -> impl Iterator<Item = &str> {
     let chunk_width = if line.cell_width() as usize <= width {
         usize::MAX
@@ -58,12 +55,8 @@ fn chunks(line: &str, width: usize) -> impl Iterator<Item = &str> {
     })
 }
 
-/// `before`, `text` and `after` as one line of `width` columns. `before` and
-/// `after` are kept whole, and `text` loses its start to an ellipsis when it
-/// does not fit, which keeps the tail of a path (the part that identifies it)
-/// visible. With no room for any of `text` beside the ellipsis, only the
-/// ellipsis shows. When `before` and `after` alone are wider than `width`, the
-/// line is too, and the caller's widget clips it.
+/// `before`, `text` and `after` in `width` columns; `text` loses its start to an ellipsis.
+/// If `before` and `after` alone exceed `width`, the caller's widget clips the line.
 pub(super) fn fit_left(before: &str, text: &str, after: &str, width: usize) -> String {
     let around = before.cell_width() as usize + after.cell_width() as usize;
     let room = width.saturating_sub(around);
@@ -109,18 +102,12 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
-    // ── pluralize_items ───────────────────────────────────────────────────────
-
-    /// Reaches the user in the delete confirmation and the chmod prompt, where
-    /// the count is what says how much the keypress is about to affect.
     #[test_case(0 => "0 items" ; "none")]
     #[test_case(1 => "1 item" ; "exactly one is the only singular case")]
     #[test_case(2 => "2 items" ; "more than one")]
     fn pluralize_items_agrees_with_the_count(count: usize) -> String {
         pluralize_items(count)
     }
-
-    // ── split_with_ellipsis ───────────────────────────────────────────────────
 
     #[test_case(&["example"],              "example", 7; "fits unchanged at exact width")]
     #[test_case(&["examp…", "le"],         "example", 6; "two parts at width minus 1")]
@@ -131,14 +118,13 @@ mod tests {
 
     #[test]
     fn split_with_ellipsis_cjk_measures_display_width_not_bytes() {
-        // "中文" has byte length 6 but display width 4; fits in one part at width 4
+        // "中文" has byte length 6 but display width 4.
         assert_eq!(vec!["中文"], split_with_ellipsis("中文", 4));
     }
 
     #[test]
     fn split_with_ellipsis_breaks_at_grapheme_boundary_not_word() {
-        // Wrapping is character-based, not word-based: spaces are not treated as
-        // preferred break points, so each line is filled to the available width.
+        // Wrapping is character-based, not word-based.
         assert_eq!(
             vec!["ab …", "cd …", "ef"],
             split_with_ellipsis("ab cd ef", 4)
@@ -150,8 +136,6 @@ mod tests {
     fn split_with_ellipsis_panics_when_width_equals_ellipsis_width() {
         split_with_ellipsis("example", 1);
     }
-
-    // ── fit_left ──────────────────────────────────────────────────────────────
 
     #[test_case("[", "abc", "]", 5, "[abc]"; "fits unchanged at exact width")]
     #[test_case("[", "abc", "]", 9, "[abc]"; "fits unchanged when wider than needed")]
@@ -171,21 +155,14 @@ mod tests {
         assert_eq!(expected, fit_left(before, text, after, width));
     }
 
-    // ── truncate_left ─────────────────────────────────────────────────────────
-
     #[test]
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn truncate_left_panics_when_width_equals_ellipsis_width() {
         truncate_left("example", 1);
     }
 
-    /// Both functions cut at grapheme-cluster boundaries, so pin it at every
-    /// width rather than at the handful a table would list.
-    ///
-    /// The fixture is a Devanagari consonant followed by its spacing vowel
-    /// sign, which extended clustering keeps together and legacy clustering
-    /// splits. A combining accent cannot tell the two apart: it is one cluster
-    /// under either rule.
+    /// Devanagari consonant plus spacing vowel sign: extended clustering keeps them together,
+    /// legacy splits them.
     #[test]
     fn neither_cut_splits_a_grapheme_cluster() {
         let text = "ab\u{0915}\u{093F}cd";
@@ -196,8 +173,6 @@ mod tests {
             .collect();
 
         for width in 2..=text.cell_width() as usize + 2 {
-            // What survives a left truncation is a suffix, so its start offset
-            // is what has to land on a boundary.
             let truncated = truncate_left(text, width);
             let tail = truncated
                 .strip_prefix(ELLIPSIS)
@@ -207,8 +182,6 @@ mod tests {
                 "truncate_left at width {width} cut inside a cluster: {truncated:?}"
             );
 
-            // Each wrapped line starts where the previous one ended, so
-            // walking the offsets checks every cut and that none is lost.
             let mut offset = 0;
             for part in split_with_ellipsis(text, width) {
                 assert!(

@@ -17,8 +17,8 @@ use crate::{
     command::{progress::Task, result::CommandResult},
 };
 
-/// Where the current search is. Its notice stays after it ends, relabelled,
-/// until the listing changes.
+/// Search notice state. The notice stays after the search ends, relabelled, until the listing
+/// changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SearchState {
     Running,
@@ -29,8 +29,7 @@ enum SearchState {
 
 pub(super) struct NoticesView {
     area: Rect,
-    /// When the current search began, which is what the loading indicator's
-    /// position is derived from. `None` whenever no search is loading.
+    /// When the current search began, for the loading indicator. `None` when no search is loading.
     search_started_at: Option<Instant>,
     clipboard_entry: Option<ClipboardEntry>,
     hide_marked: bool,
@@ -38,25 +37,20 @@ pub(super) struct NoticesView {
     cancel_hint: String,
     filter: String,
     mark_count: usize,
-    /// Whether the marks are a range being extended, which the marked notice
-    /// names so that range mode is visible.
+    /// Whether the marks are a range being extended.
     range: bool,
     search_query: Option<String>,
     search_state: SearchState,
-    /// How many results the finished search listed, handed over by the root
-    /// before each render. `None` while the table shows no search results.
+    /// Result count of the finished search, set by the root before each render.
     result_count: Option<usize>,
-    /// Generation of the current search (from `SearchStarted`), used to
-    /// ignore `ExitedSearch` from superseded searches.
+    /// Current search generation, to ignore `ExitedSearch` from superseded searches.
     search_generation: u64,
     tasks: HashSet<Task>,
-    /// Tasks that ended since `tasks` was last empty, counted as complete in
-    /// the batch's bar so it does not fall back when one of them finishes.
+    /// Tasks finished since `tasks` was last empty, counted as complete so the batch bar does not
+    /// fall back.
     finished_in_batch: usize,
-    /// Cached notice list, rebuilt by the command handler whenever
-    /// notice-relevant state changes. Both `constraint` and `render` read this
-    /// instead of rebuilding per frame, and the mouse handler uses it to map a
-    /// y-position back to the clicked notice.
+    /// Cached notices, rebuilt when notice-relevant state changes; also maps a clicked row to a
+    /// notice.
     notices: Vec<Notice>,
 }
 
@@ -131,10 +125,7 @@ impl NoticesView {
         .collect()
     }
 
-    /// Recompute the cached `notices` list. Any path that mutates
-    /// notice-relevant state (tasks, clipboard, marks, filter, search) must
-    /// call this so `constraint`/`render` read an up-to-date list; that is why
-    /// `handle_command`/`handle_key` invoke it after dispatch.
+    /// Rebuilds `notices`. Must follow any change to tasks, clipboard, marks, filter, or search.
     fn rebuild_notices(&mut self) {
         self.notices = self.build_notices();
     }
@@ -145,16 +136,13 @@ impl NoticesView {
         CommandResult::Handled
     }
 
-    /// Reset the search-notice state in full: query, cancelled flag, and the
-    /// loading indicator's start time.
     fn clear_search_notice(&mut self) {
         self.search_query = None;
         self.search_state = SearchState::Running;
         self.search_started_at = None;
     }
 
-    /// Hand over how many search results the table lists, which the finished
-    /// search's notice names. Rebuilds the notices only when that changes.
+    /// Sets the result count named by the finished search's notice.
     pub(super) fn set_result_count(&mut self, result_count: Option<usize>) {
         if self.result_count != result_count {
             self.result_count = result_count;
@@ -162,16 +150,14 @@ impl NoticesView {
         }
     }
 
-    /// How long the current search has been loading, which the indicator's
-    /// position is a function of. Zero when none is.
+    /// How long the current search has been loading; zero when none is.
     fn search_elapsed(&self) -> Duration {
         self.search_started_at
             .map_or(Duration::ZERO, |started_at| started_at.elapsed())
     }
 
     fn update_tasks(&mut self, task: Task) -> CommandResult {
-        // If the task is not new and not in our set, it means we previously cleared it.
-        // In this case, we should ignore the update to prevent resurrecting cleared tasks.
+        // A non-new task not in the set was cleared; ignore it so it is not resurrected.
         if !task.is_new() && !self.tasks.contains(&task) {
             return CommandResult::Handled;
         }
@@ -231,8 +217,6 @@ mod tests {
         ClipboardEntry::Copy(vec![PathInfo::try_from("/tmp").unwrap()])
     }
 
-    // --- build_notices ordering / mutual exclusion ---
-
     #[test]
     fn clipboard_suppresses_the_marked_notice() {
         let mut v = view();
@@ -265,14 +249,11 @@ mod tests {
         v.search_query = Some("q".into());
         v.clipboard_entry = Some(clipboard_entry());
         v.filter = "f".into();
-        // No tasks; marked is suppressed by the clipboard entry.
         assert_eq!(
             tags(&v.build_notices()),
             vec!["search_loading", "search", "clipboard", "filter"]
         );
     }
-
-    // --- update_tasks ---
 
     fn copy_kind() -> TaskKind {
         TaskKind::Copy(Transfer {
@@ -309,7 +290,6 @@ mod tests {
         assert!(v.build_notices().is_empty());
     }
 
-    /// The bar's percentage for the tasks `v` tracks.
     fn batch_percentage(v: &NoticesView) -> u32 {
         match v.build_notices().first() {
             Some(Notice::Progress { finished }) => {
@@ -329,8 +309,6 @@ mod tests {
         last
     }
 
-    /// A finished task counts as complete until the batch ends, so the bar
-    /// does not fall back when one of two copies finishes.
     #[test]
     fn the_bar_does_not_fall_back_when_a_task_of_the_batch_ends() {
         let mut v = view();
@@ -350,8 +328,7 @@ mod tests {
         assert_eq!(50, batch_percentage(&v));
     }
 
-    /// Each task counts by its own fraction: a delete's entries are not
-    /// swamped by a copy's bytes.
+    /// Each task counts by its own fraction: a delete's entries are not swamped by a copy's bytes.
     #[test]
     fn a_task_counted_in_entries_is_not_swamped_by_one_counted_in_bytes() {
         let mut v = view();
@@ -369,8 +346,7 @@ mod tests {
         assert_eq!(49, batch_percentage(&v));
     }
 
-    /// A task that has counted everything but not ended stops short of
-    /// complete: only an ended batch reads 100%.
+    /// Only an ended batch reads 100%.
     #[test]
     fn a_task_not_yet_ended_stops_short_of_complete() {
         let mut v = view();
@@ -461,12 +437,9 @@ mod tests {
         v.rebuild_notices();
         assert_eq!(tags(&v.notices), vec!["filter"]);
 
-        // Search results are unfiltered, so a lingering "Filter: ap" notice
-        // would describe a filter that is no longer applied.
         v.handle_command(&Command::StartSearch("q".to_string()));
 
         assert_eq!(v.filter, "");
-        // A just-started search shows its own notices and no filter notice.
         assert_eq!(tags(&v.notices), vec!["search_loading", "search"]);
     }
 
@@ -477,8 +450,6 @@ mod tests {
         v.rebuild_notices();
         assert_eq!(tags(&v.notices), vec!["filter"]);
 
-        // The bookmarks listing is unfiltered, so a lingering "Filter: ap"
-        // notice would describe a filter that is no longer applied.
         v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
 
         assert_eq!(v.filter, "");
@@ -493,11 +464,9 @@ mod tests {
             mark_count: 2,
             range: false,
         });
-        // Copying marked files sets the clipboard while the marks are kept.
         v.clipboard_entry = Some(clipboard_entry());
         let cached = tags(&v.notices);
 
-        // A cursor move re-emits the same mark count.
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 2,
@@ -506,7 +475,6 @@ mod tests {
 
         assert_eq!(result, CommandResult::Handled);
         assert!(v.clipboard_entry.is_some());
-        // No rebuild: the cached notice list is untouched.
         assert_eq!(cached, tags(&v.notices));
     }
 
@@ -515,7 +483,6 @@ mod tests {
         let mut v = view();
         v.clipboard_entry = Some(clipboard_entry());
 
-        // Marks and clipboard are mutually exclusive.
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 1,
@@ -524,9 +491,8 @@ mod tests {
         assert_eq!(result, Command::SetClipboardEntry(None).into());
     }
 
-    /// Copying marked entries keeps the marks. A reload that finds one of
-    /// them gone lowers the count, which is not the user marking anything, so
-    /// the clipboard stays.
+    /// A reload that lowers the mark count is not the user marking anything, so the clipboard
+    /// stays.
     #[test]
     fn a_mark_lost_to_a_reload_keeps_the_clipboard() {
         let mut v = view();
@@ -554,12 +520,10 @@ mod tests {
         v.handle_command(&Command::SearchStarted { generation: 1 });
         assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
 
-        // The cancelled walker's ExitedSearch may lag; the notice must clear
-        // immediately.
+        // The cancelled walker's ExitedSearch may lag.
         v.handle_command(&Command::Bookmarks { bookmarks: vec![] });
         assert!(v.build_notices().is_empty());
 
-        // The eventual exit stays a no-op.
         v.handle_command(&Command::ExitedSearch { generation: 1 });
         assert!(v.build_notices().is_empty());
     }
@@ -570,7 +534,6 @@ mod tests {
         v.handle_command(&Command::StartSearch("q".into()));
         v.handle_command(&Command::SearchStarted { generation: 2 });
 
-        // A superseded search's exit must not clear the current notice.
         v.handle_command(&Command::ExitedSearch { generation: 1 });
         assert_eq!(tags(&v.build_notices()), vec!["search_loading", "search"]);
 
@@ -578,8 +541,6 @@ mod tests {
         assert_eq!(tags(&v.build_notices()), vec!["search_finished"]);
     }
 
-    /// A finished search keeps its query, now with the result count the root
-    /// hands over, until the listing changes.
     #[test]
     fn a_finished_search_keeps_its_query_and_counts_its_results() {
         let mut v = view();
@@ -606,8 +567,6 @@ mod tests {
         v.handle_command(&Command::CancelSearch);
         assert_eq!(tags(&v.notices), vec!["search_cancelled"]);
 
-        // The cancelled walker still exits; the relabelled notice stays until
-        // the user clears it.
         v.handle_command(&Command::ExitedSearch { generation: 1 });
         assert_eq!(tags(&v.notices), vec!["search_cancelled"]);
     }
@@ -622,7 +581,6 @@ mod tests {
         });
         v.clipboard_entry = Some(clipboard_entry());
 
-        // Only marking something displaces the clipboard; unmarking does not.
         let result = v.handle_command(&Command::SelectionChanged {
             selected: None,
             mark_count: 0,
@@ -642,7 +600,6 @@ mod tests {
             range: false,
         });
 
-        // The prompt states the count itself.
         v.handle_command(&Command::OpenPrompt(crate::command::PromptAction::Delete(
             2,
         )));
@@ -664,8 +621,6 @@ mod tests {
             generation: 1,
         });
 
-        // A clipboard survives navigation: that is how a paste reaches another
-        // directory.
         assert_eq!(tags(&v.notices), vec!["clipboard"]);
     }
 
@@ -703,7 +658,6 @@ mod tests {
             })
         };
 
-        // Progress is not something the reset clears.
         assert_eq!(CommandResult::Handled, click(5));
         assert_eq!(CommandResult::from(Command::ResetView), click(7));
     }
@@ -722,7 +676,6 @@ mod tests {
         v.area = Rect::new(0, 5, 40, 1);
         let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
 
-        // Emptied since the last frame: its old rows now belong to the table.
         terminal
             .draw(|frame| v.render(Config::global().theme(), Rect::new(0, 6, 40, 0), frame))
             .unwrap();
@@ -744,9 +697,7 @@ mod tests {
         v.clear_progress();
         assert!(v.build_notices().is_empty());
 
-        // Every later update is non-new, whether it carries progress or a
-        // total the directory size scan only just produced, so none of them
-        // may re-add the cleared task.
+        // Later updates are non-new and must not re-add the cleared task.
         at.increment(10);
         at.send_progress();
         at.set_total(500);

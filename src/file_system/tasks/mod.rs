@@ -42,22 +42,15 @@ use crate::command::{
 };
 
 const PROGRESS_DEBOUNCE_PERCENTAGE: u64 = 1; // 1% of total size
-/// Shortest gap between two progress updates for one task. The percentage above
-/// bounds them per unit of work, which for a fast copy is a hundred redraws
-/// inside a second; this bounds them per unit of time.
+/// Shortest gap between two progress updates for one task. The percentage bounds updates per unit
+/// of work; this bounds them per unit of time.
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(100);
 
 type Job = Box<dyn FnOnce() + Send>;
 
-/// Queues file-operation work on a single background thread, so that pasting or
-/// deleting N marked entries runs one operation at a time rather than spawning N
-/// threads that compete for the same disk. Jobs run in the order they were
-/// queued. The thread is started on first use and lives for the rest of the
-/// process.
-///
-/// Only the worker side is queued: each task still validates and registers
-/// itself on the calling thread, so a batch reports which sources failed before
-/// any of them starts.
+/// Runs file-operation jobs one at a time, in queue order, on a single background thread started on
+/// first use. Each task validates and registers itself on the calling thread, so a batch reports
+/// failed sources before any starts.
 fn queue_operation(job: impl FnOnce() + Send + 'static) {
     static QUEUE: OnceLock<Sender<Job>> = OnceLock::new();
 
@@ -70,9 +63,7 @@ fn queue_operation(job: impl FnOnce() + Send + 'static) {
         });
         tx
     });
-    // The worker never exits, so the receiver outlives the process. Only a
-    // test job that panics can end it (the test profile unwinds), and every
-    // job after that would be dropped without a word.
+    // The worker never exits; only a panicking test job (the test profile unwinds) can end it.
     let sent = queue.send(Box::new(job));
     #[cfg(test)]
     sent.expect("the worker thread ended: an earlier job panicked");
@@ -80,8 +71,8 @@ fn queue_operation(job: impl FnOnce() + Send + 'static) {
     let _ = sent;
 }
 
-/// Holds the shared worker until the returned sender is dropped, so work
-/// queued meanwhile is validated before any of it runs.
+/// Holds the shared worker until the returned sender is dropped, so work queued meanwhile is
+/// validated before any of it runs.
 #[cfg(test)]
 pub(in crate::file_system) fn hold_worker() -> Sender<()> {
     let (release, gate) = mpsc::channel::<()>();
@@ -91,8 +82,7 @@ pub(in crate::file_system) fn hold_worker() -> Sender<()> {
     release
 }
 
-/// Blocks until the task reporting on `rx` ends, and returns how it ended, so
-/// the worker is done with what a test built for it before that is removed.
+/// Blocks until the task reporting on `rx` ends and returns how it ended.
 #[cfg(test)]
 pub(in crate::file_system) fn await_end(rx: &mpsc::Receiver<Command>) -> Task {
     loop {
@@ -108,9 +98,7 @@ pub struct CancelInfo {
     pub id: usize,
     pub token: CancellationToken,
     pub kind: TaskKind,
-    /// Flips to `true` when the task can no longer be meaningfully cancelled
-    /// (terminal state reached, or a non-interruptible stage entered). The
-    /// cancel stack drops such entries without cancelling anything.
+    /// Set when the task can no longer be cancelled; the cancel stack drops such entries.
     pub uncancellable: Arc<AtomicBool>,
 }
 
@@ -127,9 +115,8 @@ impl TaskRunResult {
         }
     }
 
-    /// The initial progress snapshot has already been sent through the task's
-    /// channel (before the worker thread was spawned, so it always precedes
-    /// any terminal update), so no command is returned here.
+    /// The initial progress snapshot was already sent before the worker was spawned, so no command
+    /// is returned.
     fn started(initial: &Task, token: CancellationToken, uncancellable: Arc<AtomicBool>) -> Self {
         Self {
             cancel_info: Some(CancelInfo {
@@ -143,20 +130,15 @@ impl TaskRunResult {
     }
 }
 
-/// A file operation to run.
 pub(in crate::file_system) enum TaskCommand {
     Delete(PathInfo),
     Paste(Box<PasteJob>),
 }
 
-/// One source of a paste: `source` moved into the directory `dest` when
-/// `is_move`, and copied into it otherwise. `overwrite` is the queue's answer to a destination it saw taken:
-/// the entry it may replace, as it saw it, or `None` when it saw the name
-/// free. Only that entry is replaced: one that has taken its place since, or
-/// the same one written since, is refused (`conflicts::changed_refusal`), and
-/// a name taken after the queue saw it free, at the top level or anywhere
-/// inside a directory the copy creates, is never replaced (`paste`'s standing
-/// "skip all" skips it).
+/// One source of a paste: `source` moved (`is_move`) or copied into `dest`. `overwrite` is the
+/// entry the queue saw at the destination and may replace, `None` when it saw the name free. Any
+/// other entry found there is refused (`conflicts::changed_refusal`); a name taken after the queue
+/// saw it free is never replaced.
 pub(in crate::file_system) struct PasteJob {
     pub(in crate::file_system) is_move: bool,
     pub(in crate::file_system) conflicts: Conflicts,
@@ -166,7 +148,6 @@ pub(in crate::file_system) struct PasteJob {
 }
 
 impl TaskCommand {
-    /// The task for one source of a paste.
     pub(in crate::file_system) fn paste(job: PasteJob) -> Self {
         Self::Paste(Box::new(job))
     }
@@ -179,8 +160,7 @@ impl TaskCommand {
     }
 }
 
-/// Starts one source of a paste: validated and registered here, then run on
-/// the worker.
+/// Starts one source of a paste: validated and registered here, then run on the worker.
 fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
     let PasteJob {
         is_move,
@@ -195,11 +175,9 @@ fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
             Err(result) => return TaskRunResult::failed(result),
         };
 
-    // Fail a copy before the task is registered, so an unreadable directory
-    // creates no progress notice. The recursive size walk still runs off the
-    // UI thread. A symlink has `is_directory == false` even when it points at
-    // a directory, so it skips this and is recreated as a link by
-    // `copy_symlink`. A move is a rename first, which needs no listing.
+    // Fail an unreadable directory copy before the task is registered, so it creates no progress
+    // notice. A symlink is never a directory here, and a move is a rename first, which needs no
+    // listing.
     if !is_move
         && path.is_directory()
         && let Err(error) = fs::read_dir(&old_path)
@@ -213,8 +191,7 @@ fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
         );
     }
 
-    // Seed with the entry's own size; a directory's real total is scanned in
-    // the worker, off the UI thread, and applied via `active.set_total`.
+    // A directory's real total is scanned in the worker and applied via `active.set_total`.
     let (active, initial, token) = ActiveTask::new(tx, kind, path.size);
     active.send_progress();
     let uncancellable = active.uncancellable_handle();
@@ -237,9 +214,8 @@ fn run_paste_task(tx: Sender<Command>, job: PasteJob) -> TaskRunResult {
     TaskRunResult::started(&initial, token, uncancellable)
 }
 
-/// The worker side of a move whose paths are validated: a rename, over the
-/// entry `overwrite` names as `PasteJob` allows, or a copy and removal when
-/// the rename crosses devices (`move_across_devices`).
+/// The worker side of a validated move: a rename over the entry `overwrite` names, or a copy and
+/// removal across devices (`move_across_devices`).
 fn move_to(
     settings: CopySettings<'_>,
     overwrite: Option<Seen>,
@@ -255,13 +231,10 @@ fn move_to(
         }
         Renamed::Changed => active.error(changed_refusal(true, old_path, new_path)),
         Renamed::SameFile => active.error(same_file_refusal(true, old_path, new_path)),
-        // A rename cannot cross devices, so the move falls back to a copy and
-        // a removal of the source.
         Renamed::Failed { error, .. } if error.kind() == ErrorKind::CrossesDevices => {
             move_across_devices(settings, overwrite, active, old_path, new_path, path);
         }
-        // The rename replaces atomically or not at all, so a replacing one
-        // that fails leaves what it was to replace (`kept`).
+        // The rename replaces atomically, so a failed one leaves what it was to replace (`kept`).
         Renamed::Failed { error, kept } => {
             match rename_failure(settings.conflicts, true, kept, old_path, new_path, &error) {
                 None => active.done(),
@@ -274,8 +247,7 @@ fn move_to(
 fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     let path = match restat(path, "delete") {
         Ok(fresh) => fresh,
-        // Already gone, like `rm -f`: a delete earlier in the same batch may
-        // have removed it, or the directory it was in, before this one starts.
+        // Already gone, like `rm -f`: an earlier delete of the batch may have removed it.
         Err(_)
             if path
                 .path
@@ -289,10 +261,7 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     let kind = TaskKind::Delete {
         path: display_path(&path.path),
     };
-    // Delete progress counts entries, not bytes: a directory's own size says
-    // nothing about how much work removing it is. Seed with the single entry a
-    // non-directory delete removes; a directory's real total is scanned in the
-    // worker, off the UI thread, and applied via `active.set_total`.
+    // Delete progress counts entries, not bytes. A directory's total is scanned in the worker.
     let (mut active, initial, token) = ActiveTask::new(tx, kind, 1);
     let is_directory = path.is_directory();
     let path = path.path.clone();
@@ -316,9 +285,8 @@ fn run_delete_task(tx: Sender<Command>, path: &PathInfo) -> TaskRunResult {
     TaskRunResult::started(&initial, token, uncancellable)
 }
 
-/// The worker side of a copy whose paths are validated: copies `path`, over
-/// the entry a granted overwrite names if it still holds the name, and reports
-/// how it went.
+/// The worker side of a validated copy, over the entry a granted overwrite names if it still holds
+/// the name.
 fn copy_to(
     settings: CopySettings<'_>,
     overwrite: Option<Seen>,
@@ -330,15 +298,12 @@ fn copy_to(
     if let Some((active, outcome)) =
         copy_with_progress(settings, overwrite, path, active, old_path, new_path)
     {
-        // A skipped entry needs no mention here: nothing is left behind by a
-        // copy that did not make it, and the standing "skip all" that settled
-        // it was the user's own answer.
+        // A skip is the user's own answer and leaves nothing behind, so it is not reported.
         finalize(active, outcome.errors);
     }
 }
 
-/// A move whose rename crossed devices: copies `path`, then removes the
-/// source (`finish_cross_device_move`).
+/// A move whose rename crossed devices: copies `path`, then removes the source.
 fn move_across_devices(
     settings: CopySettings<'_>,
     overwrite: Option<Seen>,
@@ -354,15 +319,9 @@ fn move_across_devices(
     }
 }
 
-/// Finishes a cross-device move once the copy stage is done, removing the
-/// source only when the destination holds every entry of it, like `mv`.
-///
-/// A failed entry keeps the whole source, including the entries that copied,
-/// and the partial destination, which the message says when the destination
-/// received anything. A skipped one does the same: it is no more at the
-/// destination than a failed one, so removing the source would delete what
-/// nothing else holds. A skipped top-level entry copied nothing, which leaves
-/// the source where it is with nothing to report, as a rename that skips does.
+/// Finishes a cross-device move, removing the source only when the destination holds every entry of
+/// it, like `mv`. A failed or skipped entry keeps the whole source and the partial destination; a
+/// skipped top-level entry copied nothing and reports nothing.
 fn finish_cross_device_move(
     active: ActiveTask,
     outcome: CopyOutcome,
@@ -395,23 +354,18 @@ fn finish_cross_device_move(
         ));
         return;
     }
-    // Not cancellable: the copy is complete, so removing the source is the only
-    // way to finish the move. Mark it so a cancel keypress during this stage
-    // does not claim to have cancelled anything.
+    // The copy is complete, so removing the source is the only way to finish; a cancel no longer
+    // applies.
     active.set_uncancellable();
-    // Only the entry that was copied: another renamed onto its name since
-    // would be lost with nothing to show for it. The copy records it whenever
-    // it read the source, which a clean outcome always did.
+    // Remove only the entry that was copied, never another renamed onto its name since.
     let Some(root) = outcome.root else {
         active.error(replaced_after_copy(old_path));
         return;
     };
-    // Like `mv`, an entry written into the source while it was being copied is
-    // removed with the rest, and one that cannot be removed is reported while
-    // the rest still are.
+    // Like `mv`, an entry written into the source during the copy is removed with the rest.
     let removal = Removal::MovedSource(root);
     if let Some((active, errors)) = remove_path(old_path, is_directory, active, removal) {
-        // The destination is whole by now; what failed is only the cleanup.
+        // The destination is whole; only the cleanup failed.
         match summarize(errors) {
             Some(summary) => active.error(format!(
                 "Failed to remove the original {} once it was moved to {}: {summary}",
@@ -423,9 +377,8 @@ fn finish_cross_device_move(
     }
 }
 
-/// Finalizes a copy, move or delete the way coreutils does: success when no
-/// per-entry error was recorded, otherwise one alert summarizing them. Skipped
-/// entries are not failures and do not appear.
+/// Finalizes a copy, move or delete like coreutils: success when no per-entry error was recorded,
+/// otherwise one alert summarizing them.
 fn finalize(active: ActiveTask, errors: Vec<String>) {
     match summarize(errors) {
         Some(summary) => active.error(summary),
@@ -433,8 +386,8 @@ fn finalize(active: ActiveTask, errors: Vec<String>) {
     }
 }
 
-/// One line for the errors a task recorded, the first with a count of the
-/// rest, or `None` when there are none. Every error is logged.
+/// One line for the errors a task recorded, the first with a count of the rest. Every error is
+/// logged.
 fn summarize(errors: Vec<String>) -> Option<String> {
     for error in &errors {
         warn!("{error}");
@@ -448,9 +401,7 @@ fn summarize(errors: Vec<String>) -> Option<String> {
     })
 }
 
-/// Finalizes a task cancelled part way through. The task shows only that it
-/// was cancelled, so each error recorded before the cancel is logged, as
-/// `finalize` logs them.
+/// Finalizes a cancelled task, logging each error recorded before the cancel.
 fn cancel_logging(errors: &[String], active: ActiveTask) {
     for error in errors {
         warn!("{error}");
@@ -458,9 +409,7 @@ fn cancel_logging(errors: &[String], active: ActiveTask) {
     active.cancelled();
 }
 
-/// Honors a cancel that landed while the task sat in the queue, which can be a
-/// long time: a single worker runs every operation in turn. Returns `None` when
-/// the task was finalized here and must not continue.
+/// Honors a cancel that landed while the task was queued. `None` when the task was finalized here.
 fn check_cancelled(active: ActiveTask) -> Option<ActiveTask> {
     if active.is_cancelled() {
         active.cancelled();
@@ -508,8 +457,7 @@ mod tests {
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
 
-        // `cp` does not preserve timestamps without `-p`, so a copy must not
-        // start doing it just because the move path needs to.
+        // `cp` does not preserve timestamps without `-p`.
         let task = run_to_end(TaskCommand::paste(PasteJob {
             is_move: false,
             conflicts: Conflicts::default(),
@@ -532,8 +480,7 @@ mod tests {
         let src = fx.join("locked");
         fs::create_dir(&src).unwrap();
         fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
-        // Root lists a mode-000 directory anyway; probe rather than inspect
-        // the euid.
+        // Root lists a mode-000 directory anyway; probe rather than inspect the euid.
         let is_unreadable = fs::read_dir(&src).is_err();
         let dst = fx.join("dst");
         fs::create_dir(&dst).unwrap();
@@ -548,8 +495,6 @@ mod tests {
         fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
 
         if is_unreadable {
-            // Refused on the calling thread, so no progress notice appears
-            // for a copy that could not have copied anything.
             let Err(commands) = result else {
                 panic!("the copy should have been refused");
             };
@@ -573,9 +518,7 @@ mod tests {
         }
     }
 
-    /// A move is a rename first, which needs no listing, so a directory that
-    /// cannot be listed still moves within its filesystem. Write access stays:
-    /// moving a directory to another parent rewrites its `..`.
+    /// Write access stays: moving a directory to another parent rewrites its `..`.
     #[test]
     fn a_move_of_an_unreadable_directory_is_not_refused_up_front() {
         let fx = TempDir::new("tasks_move_unreadable");
@@ -601,27 +544,19 @@ mod tests {
         assert!(!src.exists());
     }
 
-    // ── a paste replaces only what the queue saw ─────────────────────────────
-
-    /// How a job of a paste reaches the worker.
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Op {
         Copy,
-        /// A move whose rename stays on one device.
         Move,
-        /// A move whose rename crossed devices, which `move_to` hands to
-        /// `move_across_devices`. Queued straight to that function here, so it
-        /// runs on any machine; the tests named `..._across_devices_...` reach
-        /// it through `move_to` where a second filesystem exists.
+        /// A move whose rename crossed devices, queued straight to `move_across_devices` so it runs
+        /// on any machine.
         Across,
     }
 
     const OPS: [Op; 3] = [Op::Copy, Op::Move, Op::Across];
 
-    /// Validates and queues `source` into `dest` as a job of the paste behind
-    /// `conflicts`, with the replacement of `overwrite` granted, the way the
-    /// paste queue does. `Err` carries the alerts of a job refused before it
-    /// was queued.
+    /// Validates and queues `source` into `dest` as the paste queue does. `Err` carries the alerts
+    /// of a job refused before it was queued.
     fn start(
         conflicts: &Conflicts,
         op: Op,
@@ -632,7 +567,6 @@ mod tests {
         start_cancellable(conflicts, op, overwrite, dest, source).map(|(rx, _)| rx)
     }
 
-    /// `start`, with the token that cancels the job.
     fn start_cancellable(
         conflicts: &Conflicts,
         op: Op,
@@ -677,8 +611,7 @@ mod tests {
         }
     }
 
-    /// The refusal of `source`, which found `new` taken after the queue saw
-    /// it free.
+    /// The refusal of `source`, which found `new` taken after the queue saw it free.
     fn raced(is_move: bool, source: &Path, new: &Path) -> String {
         let verb = if is_move { "move" } else { "copy" };
         format!(
@@ -688,8 +621,7 @@ mod tests {
         )
     }
 
-    /// The refusal of `source`, whose granted replacement found another entry
-    /// at `new`.
+    /// The refusal of `source`, whose granted replacement found another entry at `new`.
     fn changed(is_move: bool, source: &Path, new: &Path) -> String {
         let verb = if is_move { "move" } else { "copy" };
         format!(
@@ -699,12 +631,6 @@ mod tests {
         )
     }
 
-    /// Every way a source of a paste can find its destination name taken
-    /// after the queue saw it free (validated while free, taken before its job
-    /// runs), for every operation, every kind of source and of occupant, and
-    /// every standing answer: the occupant is never replaced, the source stays
-    /// where it was, and the outcome is exact: skipped under "skip all" with
-    /// nothing to report, refused otherwise, "overwrite all" included.
     #[test]
     fn a_name_taken_after_the_paste_saw_it_free_is_never_replaced() {
         let cases: Vec<_> = OPS
@@ -730,8 +656,6 @@ mod tests {
             drop(gate);
             let task = await_end(&job);
 
-            // Nothing reached the destination, so a move across devices has
-            // nothing to say about the source it kept.
             let expected = match standing {
                 Some(ConflictChoice::SkipAll) => None,
                 _ => Some(raced(op != Op::Copy, &old, &new)),
@@ -742,10 +666,7 @@ mod tests {
         });
     }
 
-    /// A move that really crosses devices, through `move_to`, whose
-    /// `CrossesDevices` arm has to hand the paste on for "skip all" to reach
-    /// the copy. Needs a writable directory on another filesystem than the
-    /// temporary one; skipped where there is none.
+    /// Needs a writable directory on another filesystem; skipped where there is none.
     #[test]
     fn a_name_taken_across_devices_is_never_replaced() {
         every_case(STANDING, |&standing| {
@@ -775,10 +696,8 @@ mod tests {
         });
     }
 
-    /// Two pastes queued at once: the later one validated its source while the
-    /// name was free, so the earlier one's entry is a name taken since, and
-    /// its standing "overwrite all" does not reach it. Replacing it would lose
-    /// the only copy of what the earlier paste cut.
+    /// The later paste validated while the name was free, so the earlier one's entry is a raced
+    /// name that "overwrite all" does not reach.
     #[test]
     fn a_later_paste_never_replaces_what_an_earlier_one_left() {
         let fx = TempDir::new("tasks_two_pastes");
@@ -808,17 +727,14 @@ mod tests {
         assert!(!x.join("a").exists());
     }
 
-    /// What holds a name the queue was told to replace, by the time the job
-    /// runs.
+    /// What holds a name the queue was told to replace, by the time the job runs.
     #[derive(Clone, Copy, Debug)]
     enum Since {
-        /// The entry the queue saw, untouched.
         Unchanged,
-        /// Nothing: the entry was removed.
         Removed,
-        /// Another entry of this kind, in the one the queue saw's place.
+        /// Another entry of this kind, in the seen entry's place.
         Replaced(Kind),
-        /// The entry the queue saw, written with as many bytes as before.
+        /// The entry the queue saw, rewritten with as many bytes as before.
         Written,
     }
 
@@ -832,9 +748,8 @@ mod tests {
         Since::Replaced(Kind::Directory),
     ];
 
-    /// Puts what `since` describes at `new`, which holds a file, keeping the
-    /// file under another name in `fx` so a new entry cannot reuse its inode
-    /// number. Returns the identity of what is there.
+    /// Puts what `since` describes at `new`, keeping the old file under another name so its inode
+    /// number is not reused. Returns the identity of what is there.
     fn change(fx: &TempDir, since: Since, new: &Path) -> Option<EntryId> {
         match since {
             Since::Unchanged => {}
@@ -851,9 +766,6 @@ mod tests {
         EntryId::of_path(new)
     }
 
-    /// A granted overwrite replaces the entry the queue saw and nothing else,
-    /// by every operation: an entry that took its place since is refused and
-    /// left alone, and a name found free is written as if it had been free.
     #[test]
     fn a_granted_overwrite_replaces_only_the_entry_the_queue_saw() {
         let cases: Vec<_> = OPS
@@ -905,11 +817,7 @@ mod tests {
         });
     }
 
-    /// A granted overwrite whose source is gone by the time it runs fails,
-    /// and says the entry it was to replace was left exactly when that entry
-    /// is still there: not when it was removed too, where nothing granted is
-    /// left to mention. A file source fails where it is opened, before the
-    /// copy; a symlink where the copy reads it.
+    /// A file source fails where it is opened, before the copy; a symlink where the copy reads it.
     #[test]
     fn a_granted_overwrite_whose_source_is_gone_says_whether_it_left_the_entry() {
         let cases: Vec<_> = OPS
@@ -954,8 +862,6 @@ mod tests {
         });
     }
 
-    /// Every kind of entry that can replace another does, staged and landed
-    /// whole: a file, a symlink and a FIFO, by every operation.
     #[test]
     fn a_granted_overwrite_replaces_with_every_kind_of_source() {
         let cases: Vec<_> = OPS
@@ -981,8 +887,6 @@ mod tests {
         });
     }
 
-    /// A granted overwrite of a symlink replaces the link, never the file it
-    /// points at, by every operation.
     #[test]
     fn a_granted_overwrite_of_a_symlink_replaces_the_link() {
         every_case(OPS, |&op| {
@@ -1008,11 +912,8 @@ mod tests {
         });
     }
 
-    /// Two names of one file, both granted: replacing the first changes the
-    /// file's change time but not when it was created, so the second is
-    /// still the entry the queue saw and is replaced too. Where the
-    /// filesystem records no birth time the second is refused instead, which
-    /// loses nothing; the test says so.
+    /// Replacing the first name changes the file's change time, not its birth time, so the second
+    /// is still the entry the queue saw. Without birth times the second is refused instead.
     #[test]
     fn two_granted_links_of_one_file_are_both_replaced() {
         every_case(OPS, |&op| {
@@ -1046,8 +947,7 @@ mod tests {
                     "{case}"
                 );
             } else {
-                // The change time stands in, which replacing the other link
-                // moved, so the second is refused and its entry kept.
+                // The change time stands in, and replacing the other link moved it.
                 assert_eq!(
                     Some(changed(op != Op::Copy, &src.join("b"), &dest.join("b"))),
                     second.error_message(),
@@ -1062,9 +962,6 @@ mod tests {
         });
     }
 
-    /// The same through `move_to` onto another filesystem, where the rename's
-    /// own check runs first and the copy then replaces the entry once it is
-    /// whole.
     /// Skipped where there is no second filesystem.
     #[test]
     fn a_granted_overwrite_across_devices_replaces_only_the_entry_the_queue_saw() {
@@ -1082,8 +979,7 @@ mod tests {
 
             let gate = hold_worker();
             let job = start(&Conflicts::default(), Op::Move, granted, &dest, &old).unwrap();
-            // Kept on the destination's filesystem, as a rename there would
-            // leave it.
+            // Kept on the destination's filesystem, as a rename there would leave it.
             let id = match since {
                 Since::Replaced(kind) => {
                     fs::rename(&new, dest.join("kept")).unwrap();
@@ -1124,9 +1020,6 @@ mod tests {
         });
     }
 
-    /// A granted overwrite cancelled while its job waits in the queue does
-    /// nothing: the entry it was granted for and the source stay as they
-    /// were, through the jobs' own closures.
     #[test]
     fn a_granted_overwrite_cancelled_while_queued_does_nothing() {
         every_case([Op::Copy, Op::Move], |&op| {
@@ -1151,9 +1044,7 @@ mod tests {
         });
     }
 
-    /// Two pastes both told to replace the same entry: the first does, and
-    /// the second finds the first's entry in its place, which it was never
-    /// told to replace. For a cut, that entry is the only copy of the source.
+    /// For a cut, the first paste's entry is the only copy of the source.
     #[test]
     fn a_later_paste_granted_the_same_overwrite_never_replaces_the_earlier_one() {
         every_case(OPS, |&op| {
@@ -1184,9 +1075,7 @@ mod tests {
         });
     }
 
-    /// A granted overwrite that cannot write its replacement beside the entry
-    /// it was granted for reports it and leaves both in place. Probed rather
-    /// than skipped for root, who can write to a read-only directory.
+    /// Probed rather than skipped for root, who can write to a read-only directory.
     #[test]
     fn a_granted_overwrite_that_cannot_write_beside_the_entry_reports_it() {
         every_case([Op::Copy, Op::Across], |&op| {
@@ -1227,9 +1116,6 @@ mod tests {
         });
     }
 
-    /// A granted overwrite whose destination became another link to the
-    /// source before its job ran: `rename(2)` onto it would do nothing and
-    /// report success, so the move is refused and both names stay.
     #[test]
     fn a_granted_move_onto_a_link_to_its_source_is_refused_as_the_same_file() {
         let (_fx, src, dest) = src_and_dest("tasks_granted_same_file");
@@ -1256,8 +1142,6 @@ mod tests {
         assert!(new.exists());
     }
 
-    /// A granted move whose rename fails leaves what it was to replace, which
-    /// the message says: the rename replaces atomically or not at all.
     #[test]
     fn a_granted_move_that_fails_says_what_it_left() {
         let (_fx, src, dest) = src_and_dest("tasks_granted_move_fails");
@@ -1284,7 +1168,6 @@ mod tests {
         assert_eq!(b"seen".to_vec(), fs::read(&new).unwrap());
     }
 
-    /// Jobs run one at a time, in the order they were queued.
     #[test]
     fn a_job_starts_after_the_one_queued_before_it_has_finished() {
         let fx = TempDir::new("tasks_serial");
@@ -1320,14 +1203,10 @@ mod tests {
         assert!(!root.exists());
         assert_eq!(None, task.error_message());
         assert!(!task.is_cancelled());
-        // root, a.txt, sub, sub/b.txt: the unit is an entry removed, not the
-        // single entry the task is seeded with.
+        // root, a.txt, sub, sub/b.txt
         assert_eq!(4, task.progress().total);
     }
 
-    // ── finishing a cross-device move, which is the only path that deletes ───
-
-    /// A source tree, and the channel the finished task reports on.
     fn moved(label: &str) -> (TempDir, PathBuf, mpsc::Receiver<Command>, ActiveTask) {
         let fx = TempDir::new(label);
         let src = fx.join("src");
@@ -1356,8 +1235,6 @@ mod tests {
         assert_eq!(None, finished_task(&rx).error_message());
     }
 
-    /// A source that cannot be removed once its copy is whole: the move is
-    /// done at the destination, so the failure names only the cleanup.
     #[test]
     fn a_cross_device_move_that_cannot_remove_its_source_says_it_was_moved() {
         let (fx, src, rx, active) = moved("tasks_move_unremovable");
@@ -1386,10 +1263,8 @@ mod tests {
         );
     }
 
-    /// Once the copy is complete a cancel can no longer stop the move: the
-    /// cancel key checks the stage first, but one that reaches the token
-    /// anyway must not leave the source part removed, split between two
-    /// places.
+    /// The cancel key checks the stage first, but one that reaches the token anyway must not leave
+    /// the source part removed.
     #[test]
     fn a_cross_device_move_removes_its_whole_source_even_when_cancelled() {
         let (_fx, src, _, _) = moved("tasks_move_cancelled");
@@ -1414,8 +1289,6 @@ mod tests {
         assert_eq!(None, task.error_message());
     }
 
-    /// Something renames another directory onto the source's name once the
-    /// copy is done. That one was never copied, so it is kept.
     #[test]
     fn a_cross_device_move_keeps_a_source_replaced_after_the_copy() {
         let (fx, src, rx, active) = moved("tasks_move_replaced");
@@ -1434,8 +1307,6 @@ mod tests {
         );
     }
 
-    /// The whole fallback `move_to` takes when the rename crosses devices,
-    /// from the copy through the removal.
     #[test_case(false ; "into a free name")]
     #[test_case(true ; "over a file the paste was allowed to replace")]
     fn a_move_across_devices_leaves_only_the_destination(occupied: bool) {
@@ -1475,9 +1346,7 @@ mod tests {
         assert_eq!(b"src".as_slice(), fs::read(&old).unwrap());
     }
 
-    /// The skipped entries never reached the destination, so removing the
-    /// source would delete the only copy of them. A skip is not an error, so
-    /// the emptiness of `errors` must not be what decides this.
+    /// A skip is not an error, so an empty `errors` must not decide the removal.
     #[test_case(1, "Skipped 1 entry" ; "one")]
     #[test_case(2, "Skipped 2 entries" ; "several")]
     fn a_cross_device_move_keeps_its_source_when_an_entry_below_it_was_skipped(
@@ -1509,8 +1378,6 @@ mod tests {
         );
     }
 
-    /// A skipped top-level entry copied nothing, so the move ends as a rename
-    /// that skips does: done, with the source where it was.
     #[test]
     fn a_cross_device_move_whose_entry_was_skipped_keeps_its_source_quietly() {
         let (_fx, src, rx, active) = moved("tasks_move_top_skipped");
@@ -1530,9 +1397,6 @@ mod tests {
         assert_eq!(None, finished_task(&rx).error_message());
     }
 
-    /// A move across devices that failed keeps its source, and says so when
-    /// the destination received part of it; when nothing reached it, the
-    /// failure is the whole story.
     #[test_case(true ; "with part of it at the destination")]
     #[test_case(false ; "with nothing at the destination")]
     fn a_cross_device_move_keeps_its_source_when_an_entry_failed(wrote: bool) {
@@ -1581,8 +1445,6 @@ mod tests {
         );
     }
 
-    /// The queue can hold a task for as long as the operations ahead of it
-    /// take, so a cancel has to be honored before anything is written.
     #[test]
     fn a_cancel_that_lands_while_queued_stops_the_task() {
         let (tx, rx) = mpsc::channel();
@@ -1600,9 +1462,8 @@ mod tests {
         assert!(finished_task(&rx).is_cancelled());
     }
 
-    /// Starts two deletes on the shared worker, both registered before either
-    /// runs, as a batch delete of marks can be, and waits for the second. The
-    /// worker is held until both are registered.
+    /// Starts two deletes on the shared worker, both registered before either runs, and waits for
+    /// the second.
     fn delete_both(first: &Path, second: &Path) -> Task {
         let release = hold_worker();
         let (first_tx, _first_rx) = mpsc::channel();
@@ -1624,8 +1485,7 @@ mod tests {
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("b"), b"x").unwrap();
 
-        // Like `rm -rf a a/b`: the second finds its directory gone, which is
-        // what it asked for.
+        // Like `rm -rf a a/b`.
         let task = delete_both(&dir, &dir.join("b"));
 
         assert!(!dir.exists());
@@ -1643,8 +1503,6 @@ mod tests {
             fs::write(&path, b"x").unwrap();
         }
 
-        // Its directory is still there, so the second reaches the unlink, or
-        // the open, of the entry itself.
         let task = delete_both(&path, &path);
 
         assert!(!path.exists());
@@ -1659,8 +1517,6 @@ mod tests {
         let listed = PathInfo::try_from(path.as_path()).unwrap();
         fs::remove_file(&path).unwrap();
 
-        // An earlier delete of the batch already ran, so there is nothing to
-        // start and nothing to report.
         let result = run_to_end(TaskCommand::Delete(listed));
 
         assert!(matches!(result, Err(commands) if commands.is_empty()));

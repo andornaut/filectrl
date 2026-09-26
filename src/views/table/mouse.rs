@@ -15,7 +15,7 @@ impl TableView {
     }
 
     /// Scrolls the window down by [`WHEEL_ROWS`], leaving the cursor where it
-    /// is, and no further than the window that shows the last row.
+    /// is.
     pub(super) fn scroll_window_down(&mut self) -> CommandResult {
         let heights = &self.cached_heights;
         let last_window = match heights.len() {
@@ -37,7 +37,6 @@ impl TableView {
         let y = y as usize - 1; // -1 for the header
         let line = self.mapper.first_visible_line() + y;
         if line >= self.mapper.total_lines_count() {
-            // Clicked past the table
             return CommandResult::Handled;
         }
 
@@ -45,8 +44,7 @@ impl TableView {
         let Some(path) = self.content.get(item) else {
             return CommandResult::Handled;
         };
-        // Open the entry clicked, not the cursor's: a key or a reload between
-        // the two clicks can move the cursor off the row being double-clicked.
+        // Open the entry clicked, not the cursor's, which may have moved.
         if self.double_click.click_and_is_double_click(path) {
             return Command::Open(path.clone()).into();
         }
@@ -55,11 +53,8 @@ impl TableView {
     }
 
     pub(super) fn handle_scroll(&mut self, event: MouseEvent) -> CommandResult {
-        // Use the same scale as the rendered thumb (line offset over
-        // `total - visible`, see `render_scrollbar`). The dragged-to line
-        // becomes the top of the window, snapped forward across wrapped rows
-        // so the track bottom always reaches the bottom-most window; the
-        // thumb meanwhile renders at `drag_line` so it stays on the cursor.
+        // Same scale as the rendered thumb (see `render_scrollbar`). The window
+        // top snaps forward across wrapped rows; the thumb renders at `drag_line`.
         let max_position = self
             .mapper
             .total_lines_count()
@@ -91,11 +86,8 @@ mod tests {
     use super::super::{TableView, columns::SortDirection, marked_table, row_map::LineItemMap};
     use crate::command::{Command, handler::CommandHandler, result::CommandResult};
 
-    /// A three row listing (`a`, `b`, `c`) laid out the way a render would: the
-    /// header on the table's first row and one line per item below it, in a
-    /// viewport with room to spare so the rows past the end are still inside
-    /// the table area. The table starts below the top of the screen, as it does
-    /// under the breadcrumbs, so a click's row has to be made table-relative.
+    /// A three row listing (`a`, `b`, `c`) laid out as a render would, starting
+    /// below the top of the screen.
     fn table_for_clicks() -> (crate::test_support::TempDir, TableView) {
         let (dir, mut table) = marked_table();
         table.clear_marks();
@@ -128,8 +120,6 @@ mod tests {
         table.selected_path().map(|p| p.display_name.clone())
     }
 
-    /// A frame too small to draw the table leaves nothing to click, however
-    /// it was laid out before.
     #[test]
     fn a_click_after_a_frame_too_small_for_the_table_selects_nothing() {
         use ratatui::{Terminal, backend::TestBackend};
@@ -159,15 +149,12 @@ mod tests {
         let (_dir, mut table) = table_for_clicks();
         table.select(2);
 
-        // Row 1 is the first entry: row 0 is the header.
         click(&mut table, 1);
 
         assert_eq!(Some("a".to_string()), selected(&table));
     }
 
-    /// The three rows `a`, `b`, `c` in a one-line viewport, measured as a
-    /// render measures them, with the cursor on `a`: the last window starts
-    /// at `c`.
+    /// The rows `a`, `b`, `c` in a one-line viewport, with the cursor on `a`.
     fn table_for_the_wheel() -> (crate::test_support::TempDir, TableView) {
         let (dir, mut table) = table_for_clicks();
         table.cached_heights = vec![1, 1, 1];
@@ -182,7 +169,6 @@ mod tests {
 
         table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
 
-        // Three rows down, clamped to the window that shows the last row.
         assert_eq!(2, table.first_visible_item);
         assert_eq!(Some("a".to_string()), selected(&table));
         assert!(table.wheel_scrolled);
@@ -204,8 +190,6 @@ mod tests {
         assert_eq!(marks, table.marks.len());
     }
 
-    /// The next key acts on the cursor, so the window goes back to showing
-    /// it; a reload that keeps the cursor on its row leaves the window alone.
     #[test]
     fn a_key_brings_the_cursor_back_into_view_and_a_reload_does_not() {
         let (_dir, mut table) = table_for_the_wheel();
@@ -214,18 +198,15 @@ mod tests {
         table.select(0);
         assert!(table.wheel_scrolled);
 
-        // F5 refreshes and leaves the cursor where it is.
         table.handle_key(ratatui::crossterm::event::KeyCode::F(5), KeyModifiers::NONE);
         assert!(!table.wheel_scrolled);
         assert_eq!(Some("a".to_string()), selected(&table));
     }
 
-    /// A page is measured from the cursor, not from the window the wheel left.
     #[test]
     fn page_down_after_the_wheel_pages_from_the_cursor() {
         let (_dir, mut table) = table_for_the_wheel();
         table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
-        // As the render following the wheel leaves the line map: `c` is shown.
         table.mapper.set_window(table.first_visible_item, 1);
 
         table.next_page();
@@ -239,7 +220,6 @@ mod tests {
         table.select(2);
         table.first_visible_item = 2;
         table.handle_mouse(mouse(MouseEventKind::ScrollUp, 1, 5));
-        // As the render following the wheel leaves the line map: `a` is shown.
         table.mapper.set_window(table.first_visible_item, 1);
 
         table.previous_page();
@@ -257,9 +237,7 @@ mod tests {
         assert!(!table.wheel_scrolled);
     }
 
-    /// Row `b` wraps to three lines, so the lines are `a`, `b` x3, `c`, and a
-    /// two-line viewport leaves three positions for the thumb. The scrollbar is
-    /// four rows tall, one per position, in the column right of the table.
+    /// Lines `a`, `b` x3, `c` in a two-line viewport: three thumb positions.
     #[test]
     fn dragging_the_scrollbar_moves_the_window_top_and_the_cursor_together() {
         let (_dir, mut table) = table_for_clicks();
@@ -276,20 +254,16 @@ mod tests {
         );
         let top = scrollbar.y;
 
-        // The second track row is line 1, the first line of `b`.
         table.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 80, top + 1));
         assert_eq!(Some("b".to_string()), selected(&table));
         assert_eq!(1, table.first_visible_item);
         assert_eq!(Some(1), table.drag_line);
 
-        // The third is line 2, inside `b`'s wrapped row, which snaps forward to
-        // the next row so the last window is reachable.
+        // Line 2 is inside `b`'s wrapped row, which snaps forward.
         table.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 80, top + 2));
         assert_eq!(Some("c".to_string()), selected(&table));
         assert_eq!(2, table.first_visible_item);
 
-        // A release off the table still reaches it, or the drag would never
-        // end and the thumb would stay pinned to the last dragged line.
         let release = mouse(MouseEventKind::Up(MouseButton::Left), 200, 50);
         assert!(table.should_handle_mouse(release));
         table.handle_mouse(release);
@@ -300,9 +274,6 @@ mod tests {
     fn two_clicks_on_one_row_open_it() {
         let (_dir, mut table) = table_for_clicks();
 
-        // Back to back, so they fall inside the configured double-click
-        // window, which the table is built with rather than reading when the
-        // click arrives.
         click(&mut table, 1);
         let result = click(&mut table, 1);
 
@@ -317,7 +288,6 @@ mod tests {
         let (_dir, mut table) = table_for_clicks();
 
         click(&mut table, 1);
-        // A key press between the clicks moves the cursor off the row.
         table.select(2);
         let result = click(&mut table, 1);
 
@@ -332,9 +302,7 @@ mod tests {
         let (_dir, mut table) = table_for_clicks();
         table.select(1);
 
-        // The first row past the last entry, which is the row the bound has
-        // to exclude: one further out is past any off-by-one. Moving the
-        // cursor here would be a selection the user never aimed at.
+        // The first row past the last entry.
         let result = click(&mut table, 4);
 
         assert_eq!(CommandResult::Handled, result);
@@ -346,19 +314,14 @@ mod tests {
         let (_dir, mut table) = table_for_clicks();
         table.select(1);
 
-        // Row 0 is the header, whatever the listing below it holds.
         click(&mut table, 0);
 
         assert_eq!(SortDirection::Descending, table.columns.sort_direction());
-        // The sort carries the cursor with the entry it was on rather than
-        // leaving it on the row number, which now holds a different entry.
         assert_eq!(Some("b".to_string()), selected(&table));
     }
 
-    /// The release of a scrollbar drag can go to another view (help opened
-    /// with the button held). The next press, on the breadcrumbs above the
-    /// table, still reaches the table while the drag is recorded, and taken
-    /// as a table click it would land on the header row and sort.
+    /// The release of a scrollbar drag can go to another view, so the next
+    /// press elsewhere must not be taken as a header click.
     #[test]
     fn a_press_above_the_table_after_a_lost_release_ends_the_drag_without_sorting() {
         let (_dir, mut table) = table_for_clicks();
@@ -371,7 +334,6 @@ mod tests {
 
         assert!(!table.scrollbar_view.is_dragging());
         assert_eq!(direction, table.columns.sort_direction());
-        // The drag is over, so the table no longer claims presses elsewhere.
         assert!(!table.should_handle_mouse(press));
     }
 }

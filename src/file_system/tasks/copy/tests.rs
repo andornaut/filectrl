@@ -7,8 +7,7 @@ use nix::{
 use rustix::fs::XattrFlags;
 use test_case::test_case;
 
-// The module this tests, with every name the copy code imported, as the tests
-// used them when they lived beside it.
+// Every name the copy code imports, as the tests use them.
 #[allow(clippy::wildcard_imports)]
 use super::{
     super::test_support::{
@@ -48,8 +47,7 @@ use std::{
     time::Instant,
 };
 
-/// The settings of a copy, or of the copy a move across devices makes
-/// when `is_move`, in a paste nobody answered anything for.
+/// The settings of a copy (or a move's copy stage when `is_move`) with no standing answer.
 fn settings(is_move: bool) -> CopySettings<'static> {
     CopySettings {
         is_move,
@@ -57,25 +55,21 @@ fn settings(is_move: bool) -> CopySettings<'static> {
     }
 }
 
-/// A copy context for a test, with no standing answer, so a raced name
-/// is recorded as an error. `is_move` makes it the copy a move makes.
+/// A copy context with no standing answer, so a raced name is recorded as an error.
 fn context<'a>(is_move: bool, active: &'a mut ActiveTask, buffer: &'a mut [u8]) -> CopyContext<'a> {
     CopyContext::new(settings(is_move), active, buffer, None, 0)
 }
 
-/// A copy task for a test that reads nothing it reports.
 fn idle_task() -> ActiveTask {
     let (tx, _rx) = mpsc::channel();
     copy_task(tx)
 }
 
-/// The source at `path` as a task is started for it.
 fn listed(path: impl AsRef<Path>) -> PathInfo {
     PathInfo::try_from(path.as_ref()).unwrap()
 }
 
-/// Copies `src` to `dst` as a copy, or as a move's copy stage when
-/// `is_move`, returning the errors recorded.
+/// Copies `src` to `dst` (as a move's copy stage when `is_move`), returning the errors recorded.
 fn copy_one(is_move: bool, src: &Path, dst: &Path) -> Vec<String> {
     let (tx, _rx) = mpsc::channel();
     let mut active = copy_task(tx);
@@ -87,8 +81,7 @@ fn copy_one(is_move: bool, src: &Path, dst: &Path) -> Vec<String> {
     errors
 }
 
-// Linux only: recreating a socket goes through mknod, which macOS refuses
-// to an unprivileged process with EPERM.
+// Linux only: macOS refuses mknod of a socket to an unprivileged process.
 #[cfg(target_os = "linux")]
 #[test]
 fn copy_path_recreates_socket() {
@@ -128,10 +121,7 @@ fn copy_path_continues_past_unreadable_entries() {
     let mut permissions = std::fs::metadata(src.join("bad")).unwrap().permissions();
     permissions.set_mode(0o000);
     std::fs::set_permissions(src.join("bad"), permissions).unwrap();
-    // A chmod-000 file is still readable by root (CAP_DAC_OVERRIDE) and on
-    // mounts that ignore permissions. Probe what this filesystem actually
-    // does rather than inspecting the euid, so the assertions below match
-    // the environment instead of being skipped in it.
+    // Root and permission-ignoring mounts read a mode-000 file; probe rather than inspect the euid.
     let is_unreadable = std::fs::File::open(src.join("bad")).is_err();
 
     let dst = fx.join("dst");
@@ -139,9 +129,6 @@ fn copy_path_continues_past_unreadable_entries() {
     let errors = copy_one(false, &src, &dst);
 
     if is_unreadable {
-        // Like cp -R: the unreadable entry is recorded, not fatal.
-        // Named relative to both trees: `compact` keeps only the last
-        // components, which would read the same on either side.
         assert_eq!(
             vec![format!(
                 "Failed to copy {} from {} to {}: Permission denied (os error 13)",
@@ -153,12 +140,9 @@ fn copy_path_continues_past_unreadable_entries() {
         );
         assert!(!dst.join("bad").exists());
     } else {
-        // Nothing was unreadable here, so this is a plain full copy.
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         assert!(dst.join("bad").exists());
     }
-    // The walk must reach the entries on both sides of "bad" either way: a
-    // failed entry must not abort the siblings.
     assert!(dst.join("a.txt").exists());
     assert!(dst.join("c.txt").exists());
 }
@@ -172,8 +156,8 @@ fn copy_path_reuses_one_buffer_without_leaking_bytes_between_files() {
     std::fs::write(src.join("b_short.txt"), b"b").unwrap();
     let dst = fx.join("dst");
 
-    // One buffer serves the whole tree, so a short file copied after a
-    // longer one must not pick up the previous file's trailing bytes.
+    // One buffer serves the whole tree, so a short file after a longer one must not get its
+    // trailing bytes.
     let errors = copy_one(false, &src, &dst);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
 
@@ -187,8 +171,7 @@ fn copy_path_reuses_one_buffer_without_leaking_bytes_between_files() {
     );
 }
 
-/// The modification times of `path` and everything under it, by relative
-/// name, so a tree can be compared against its copy.
+/// The modification times of `root` and everything under it, by relative name.
 fn modified_times(root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
     let mut times = vec![(
         PathBuf::from("."),
@@ -219,8 +202,7 @@ fn a_preserving_copy_keeps_the_modification_times_of_the_whole_tree() {
     fs::create_dir_all(src.join("sub")).unwrap();
     fs::write(src.join("a.txt"), b"a").unwrap();
     fs::write(src.join("sub").join("b.txt"), b"b").unwrap();
-    // Backdate everything, deepest first so writing a child does not move
-    // the parent's time again.
+    // Deepest first, so writing a child does not move the parent's time again.
     let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     for relative in ["sub/b.txt", "sub", "a.txt", "."] {
         let file = File::options().read(true).open(src.join(relative)).unwrap();
@@ -230,18 +212,14 @@ fn a_preserving_copy_keeps_the_modification_times_of_the_whole_tree() {
     let before = modified_times(&src);
     let dst = fx.join("dst");
 
-    // A same-device move is a rename, which keeps the timestamps. The
-    // cross-device fallback copies, so it has to put them back or the
-    // result depends on which mount the destination is on.
     let errors = copy_one(true, &src, &dst);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
 
     assert_eq!(before, modified_times(&dst));
 }
 
-/// The outcome a name taken since the copy started must have: skipped
-/// under a standing "skip all", otherwise recorded, and never replaced.
-/// `nested` when it is inside a directory the copy created.
+/// Asserts a raced name was skipped under "skip all", otherwise recorded, and never replaced.
+/// `nested` when inside a directory the copy created.
 fn assert_raced(
     case: &str,
     standing: Option<ConflictChoice>,
@@ -270,8 +248,6 @@ fn assert_raced(
     }
 }
 
-/// Every kind of source against every kind of occupant, under every
-/// standing answer, for a copy and for a move's copy stage.
 fn raced_cases() -> Vec<(Kind, Kind, Option<ConflictChoice>, bool)> {
     kind_matrix()
         .flat_map(|(kind, occupant, standing)| {
@@ -282,10 +258,6 @@ fn raced_cases() -> Vec<(Kind, Kind, Option<ConflictChoice>, bool)> {
         .collect()
 }
 
-/// A name another process took at the top-level destination after the task
-/// started is never replaced, whatever the standing answer: nothing decided
-/// to replace what holds it now. "Skip all" skips it, and says so for the
-/// top-level entry; otherwise it is recorded.
 #[test]
 fn a_name_taken_at_the_top_level_since_the_copy_started_is_never_replaced() {
     every_case(raced_cases(), |&raced| {
@@ -337,11 +309,9 @@ fn top_raced((kind, occupant, standing, is_move): (Kind, Kind, Option<ConflictCh
     assert_made(&case, occupant, "raced", id, &new);
 }
 
-/// Copies the tree `src/tree`, with `depth` directories of `sub` below it
-/// holding one `entry` of `kind`, into `dst/tree` under `standing`, with
-/// `occupant` put at the entry's destination once the copy has created the
-/// directory it goes in and before it copies anything into it. Returns
-/// what the copy left behind and the entry's two paths.
+/// Copies `src/tree` (with `depth` levels of `sub` holding one `entry` of `kind`) into `dst/tree`
+/// under `standing`, putting `occupant` at the entry's destination once its directory exists.
+/// Returns the outcome and the entry's two paths.
 fn copy_into_a_raced_tree(
     (kind, occupant, standing, is_move): (Kind, Kind, Option<ConflictChoice>, bool),
     depth: usize,
@@ -372,8 +342,6 @@ fn copy_into_a_raced_tree(
         None,
         0,
     );
-    // Each directory entered in turn, as the walk enters them, down to the
-    // one the entry goes in.
     let mut level = None;
     for (depth, (src_dir, dst_dir)) in dirs.iter().enumerate() {
         let (src_parent, dst_parent) =
@@ -414,11 +382,6 @@ fn copy_into_a_raced_tree(
     (fx, outcome, old, new)
 }
 
-/// Inside a directory the copy created, at any depth, a name taken is
-/// never replaced, whatever the standing answer: it may be the copy's own
-/// entry under a name the destination folds together with another. "Skip
-/// all" still skips it, and it is not the top-level entry; otherwise it is
-/// recorded, so a move keeps its source.
 #[test]
 fn a_name_taken_inside_a_created_directory_is_never_replaced() {
     let cases: Vec<_> = raced_cases()
@@ -444,8 +407,6 @@ fn nested_raced((raced, depth): ((Kind, Kind, Option<ConflictChoice>, bool), usi
     assert_made(&case, occupant, "raced", None, &new);
 }
 
-/// A move across devices whose copy skipped an entry inside the tree under
-/// "skip all" keeps its whole source, from what the copy itself reports.
 #[test]
 fn a_move_whose_copy_skipped_an_inner_entry_keeps_its_source() {
     let raced = (Kind::File, Kind::File, Some(ConflictChoice::SkipAll), true);
@@ -465,11 +426,6 @@ fn a_move_whose_copy_skipped_an_inner_entry_keeps_its_source() {
     assert!(old.exists());
 }
 
-// ── prepare_destination: the ordering every queued operation depends on ──
-
-/// A granted overwrite whose entry still holds the name hands it to the
-/// copy to replace once its replacement is whole, and removes nothing up
-/// front.
 #[test]
 fn a_granted_overwrite_is_handed_to_the_copy_and_nothing_is_removed() {
     let (_fx, src, dst, active, _token) = destination("tasks_prepare_overwrite");
@@ -485,15 +441,12 @@ fn a_granted_overwrite_is_handed_to_the_copy_and_nothing_is_removed() {
     active.done();
 }
 
-/// An entry changed since the overwrite was granted is refused before
-/// anything is copied, so no copy is made that could never land.
 #[test_case(false ; "a copy")]
 #[test_case(true ; "a move")]
 fn a_granted_entry_changed_since_is_refused_before_anything_is_copied(is_move: bool) {
     let (fx, src, dst, _active, _token) = destination("tasks_prepare_changed");
     let granted = Seen::of_path(&dst).unwrap();
-    // Kept under another name, so the one written next cannot reuse its
-    // inode number.
+    // Kept under another name, so the next entry cannot reuse its inode number.
     fs::rename(&dst, fx.join("kept")).unwrap();
     fs::write(&dst, b"since").unwrap();
     let (tx, rx) = mpsc::channel();
@@ -534,8 +487,6 @@ fn a_destination_survives_when_overwrite_was_not_granted() {
     active.done();
 }
 
-/// Something else removed the entry between the prompt and the worker,
-/// which leaves the name free for the copy to create.
 #[test]
 fn a_destination_that_already_vanished_is_not_an_error() {
     let (_fx, src, dst, active, _token) = destination("tasks_prepare_vanished");
@@ -554,8 +505,7 @@ fn a_destination_that_already_vanished_is_not_an_error() {
 fn an_unreadable_source_leaves_the_destination_it_would_have_replaced() {
     let (_fx, src, dst, active, _token) = destination("tasks_prepare_source_unreadable");
     fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
-    // Root reads a mode-000 file anyway (CAP_DAC_OVERRIDE), as do mounts
-    // that ignore permissions; probe rather than inspect the euid.
+    // Root reads a mode-000 file anyway; probe rather than inspect the euid.
     let is_unreadable = File::open(&src).is_err();
 
     let granted = Seen::of_path(&dst).unwrap();
@@ -578,8 +528,7 @@ fn an_unreadable_source_is_reported_under_the_operation_that_failed(is_move: boo
     let src = fx.join("missing.txt");
     let dst = fx.join("dest.txt");
     let (tx, rx) = mpsc::channel();
-    // A regular-file mode with no file behind it, so opening fails for
-    // root as well.
+    // A regular-file mode with no file behind it, so opening fails for root as well.
     let prepared = prepare_destination(
         copy_task(tx),
         settings(is_move),
@@ -600,10 +549,6 @@ fn an_unreadable_source_is_reported_under_the_operation_that_failed(is_move: boo
     );
 }
 
-/// A move's file is created owner-only and gets the source's other bits
-/// once the copy stops; a copy's gets no more than the source has, which
-/// the umask trims. Either way a file still being written is readable by
-/// no one the source is not.
 #[test_case(true => 0o600 ; "a move is created owner only")]
 #[test_case(false => 0 ; "a copy is created with no bit the source lacks")]
 fn a_copied_file_is_never_more_readable_than_its_source_while_written(is_move: bool) -> u32 {
@@ -616,7 +561,6 @@ fn a_copied_file_is_never_more_readable_than_its_source_while_written(is_move: b
     if is_move { mode } else { mode & !0o640 }
 }
 
-/// A copy task already cancelled, so the walk stops at its first check.
 fn cancelled_copy_task() -> ActiveTask {
     let (tx, rx) = mpsc::channel();
     std::mem::forget(rx);
@@ -634,10 +578,7 @@ fn a_cancelled_file_copy_is_left_with_the_source_mode() {
     let dst = fx.join("dst.txt");
     let mut active = cancelled_copy_task();
 
-    // Cancelled after the destination is created and before a byte is
-    // written. The partial file stays, like an interrupted `cp`, and gets
-    // the source's mode: neither the owner-only mode it was created with
-    // nor anything broader than the source.
+    // Cancelled after the destination is created and before a byte is written.
     assert!(!copy_path(
         &mut context(false, &mut active, &mut [0u8; 64]),
         None,
@@ -661,7 +602,6 @@ fn a_cancelled_directory_copy_is_left_with_the_source_mode() {
     let dst = fx.join("dst");
     let mut active = cancelled_copy_task();
 
-    // Cancelled at the first entry, after the directory is created.
     assert!(!copy_path(
         &mut context(false, &mut active, &mut [0u8; 64]),
         None,
@@ -675,11 +615,7 @@ fn a_cancelled_directory_copy_is_left_with_the_source_mode() {
     assert_eq!(0o750, mode_of(&dst) & 0o7777);
 }
 
-// ── a replacement lands whole or not at all ──────────────────────────────
-
-/// A replacement that cannot be created leaves the entry it was to
-/// replace, and nothing of itself: a device node needs privileges a user
-/// does not have, so creating one fails after the copy began.
+/// Creating a device node fails for a user after the copy began.
 #[test]
 fn a_replacement_that_cannot_be_created_leaves_the_entry_it_would_have_replaced() {
     if nix::unistd::geteuid().is_root() {
@@ -705,8 +641,6 @@ fn a_replacement_that_cannot_be_created_leaves_the_entry_it_would_have_replaced(
     assert_eq!(Vec::<String>::new(), staging_left(fx.path()));
 }
 
-/// A replacement cancelled part way leaves the entry it was to replace,
-/// and nothing of itself.
 #[test]
 fn a_cancelled_replacement_leaves_the_entry_it_would_have_replaced() {
     let (fx, src, dst, active, _token) = destination("tasks_replace_cancelled");
@@ -725,13 +659,6 @@ fn a_cancelled_replacement_leaves_the_entry_it_would_have_replaced() {
     assert_eq!(Vec::<String>::new(), staging_left(fx.path()));
 }
 
-/// The entry granted is checked again just before the replacement takes
-/// its name: one changed while the replacement was written is refused
-/// and left as it is, the replacement is removed, and nothing counts as
-/// written. An entry unchanged is replaced, and that counts.
-///
-/// An entry removed meanwhile leaves the name free, which the replacement
-/// takes without replacing anything.
 #[test_case(false, Landed::Unchanged ; "a copy over the entry granted")]
 #[test_case(true, Landed::Unchanged ; "a move over the entry granted")]
 #[test_case(false, Landed::Changed ; "a copy over an entry changed since")]
@@ -745,8 +672,7 @@ fn a_replacement_lands_only_on_the_entry_granted(is_move: bool, since: Landed) {
     let changed = since == Landed::Changed;
     match since {
         Landed::Unchanged => {}
-        // Kept under another name, so the one written next cannot reuse
-        // its inode number.
+        // Kept under another name, so the next entry cannot reuse its inode number.
         Landed::Changed => {
             fs::rename(&dst, fx.join("kept")).unwrap();
             fs::write(&dst, b"since").unwrap();
@@ -781,11 +707,6 @@ fn a_replacement_lands_only_on_the_entry_granted(is_move: bool, since: Landed) {
     assert_eq!(Vec::<String>::new(), staging_left(fx.path()));
 }
 
-/// A name taken between the last check and the rename that lands a
-/// replacement is refused as raced, never counted as landed, and skipped
-/// under a standing "skip all"; any other failure of that rename is one,
-/// which says the entry granted was left only when the rename was the one
-/// replacing it.
 #[test_case(false ; "a copy")]
 #[test_case(true ; "a move")]
 fn what_the_rename_that_lands_a_replacement_means(is_move: bool) {
@@ -826,8 +747,6 @@ fn what_the_rename_that_lands_a_replacement_means(is_move: bool) {
     assert_eq!(0, context.skipped);
 }
 
-/// Under a standing "skip all" a name taken just before the landing is
-/// skipped, as a raced name anywhere else is: counted, not an error.
 #[test]
 fn a_landing_that_finds_the_name_taken_is_skipped_under_skip_all() {
     let conflicts = answered(Some(ConflictChoice::SkipAll));
@@ -860,7 +779,6 @@ fn a_landing_that_finds_the_name_taken_is_skipped_under_skip_all() {
     assert_eq!(1, context.skipped);
 }
 
-/// What holds a granted name by the time the replacement lands.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Landed {
     Unchanged,
@@ -868,9 +786,6 @@ enum Landed {
     Removed,
 }
 
-/// Landing a staged replacement: over what holds the name only when told
-/// to, onto a free name, and never over a name taken since, which is
-/// refused with the staged entry and the occupant both left as they are.
 #[test_case(true, true => (Ok(()), "staged".to_string(), false) ; "replacing what holds the name")]
 #[test_case(false, false => (Ok(()), "staged".to_string(), false) ; "onto a free name")]
 #[test_case(false, true => (Err(ErrorKind::AlreadyExists), "taken".to_string(), true) ; "onto a taken name without replacing")]
@@ -898,8 +813,6 @@ fn a_staged_replacement_lands(
     )
 }
 
-/// A replacement that lands leaves nothing of its staging behind, and the
-/// destination holds the whole source, for a copy and for a move.
 #[test_case(false ; "a copy")]
 #[test_case(true ; "a move")]
 fn a_replacement_that_lands_leaves_no_staging_behind(is_move: bool) {
@@ -915,10 +828,8 @@ fn a_replacement_that_lands_leaves_no_staging_behind(is_move: bool) {
     assert_eq!(Vec::<String>::new(), staging_left(&dest));
 }
 
-/// A destination whose modification time is in the future (an archive
-/// extracted with such times, a clock stepped back) still takes a
-/// replacement: the staging directory is checked against the change
-/// time, which nobody can set.
+/// The staging directory is checked against the change time, which a future modification time does
+/// not affect.
 #[test]
 fn a_destination_modified_in_the_future_takes_a_replacement() {
     let fx = TempDir::new("tasks_replace_future");
@@ -936,8 +847,6 @@ fn a_destination_modified_in_the_future_takes_a_replacement() {
     assert_eq!(Vec::<String>::new(), staging_left(&dest));
 }
 
-/// A staging directory takes the first name offered that is free, and
-/// never touches an entry that already holds one.
 #[test]
 fn a_staging_directory_never_takes_a_name_already_there() {
     let fx = TempDir::new("tasks_staging_names");
@@ -960,9 +869,6 @@ fn a_staging_directory_never_takes_a_name_already_there() {
     assert_eq!(b"keep".to_vec(), fs::read(fx.join("taken")).unwrap());
 }
 
-/// An entry in the staging directory the copy did not put there is never
-/// taken for the copy, landed, or removed, whatever the standing answer:
-/// the copy is refused, and the entry granted is left as it was.
 #[test_case(None ; "with no standing answer")]
 #[test_case(Some(ConflictChoice::SkipAll) ; "under skip all")]
 fn an_entry_planted_in_the_staging_directory_is_never_landed_or_removed(
@@ -1031,8 +937,6 @@ fn an_entry_planted_in_the_staging_directory_is_never_landed_or_removed(
     assert_eq!(b"dest".to_vec(), fs::read(&dst).unwrap());
 }
 
-/// The entry the copy staged, replaced in the staging directory before it
-/// lands, is refused: what took its place is neither landed nor removed.
 #[test]
 fn a_staged_entry_replaced_before_it_lands_is_refused() {
     let fx = TempDir::new("tasks_staging_replaced_entry");
@@ -1042,8 +946,7 @@ fn a_staged_entry_replaced_before_it_lands_is_refused() {
     let granted = seen(&dest.join("one")).unwrap();
     let handle = File::open(&dest).unwrap();
     let staging = staged_beside(&handle, &dest, b"staged");
-    // Written first under another name, so it cannot reuse the staged
-    // entry's inode number.
+    // Written under another name first, so it cannot reuse the staged entry's inode number.
     fs::write(dest.join("s").join("other"), b"planted").unwrap();
     fs::rename(dest.join("s").join("other"), dest.join("s").join("one")).unwrap();
     let mut active = idle_task();
@@ -1084,8 +987,6 @@ fn a_staged_entry_replaced_before_it_lands_is_refused() {
     assert_eq!(b"granted".to_vec(), fs::read(dest.join("one")).unwrap());
 }
 
-/// An empty directory swapped in at the staging name after the staging
-/// directory was made is not removed in its place.
 #[test]
 fn an_empty_directory_at_the_staging_name_since_is_not_removed() {
     let fx = TempDir::new("tasks_staging_empty_swapped");
@@ -1103,8 +1004,6 @@ fn an_empty_directory_at_the_staging_name_since_is_not_removed() {
     assert!(fx.join("s").is_dir());
 }
 
-/// Owner-only, so what is staged is never reachable by others before it
-/// lands.
 #[test]
 fn a_staging_directory_is_owner_only() {
     let fx = TempDir::new("tasks_staging_mode");
@@ -1116,8 +1015,6 @@ fn a_staging_directory_is_owner_only() {
     drop(staging);
 }
 
-/// A staging directory that is dropped removes the entry staged in it and
-/// then itself.
 #[test]
 fn a_dropped_staging_directory_takes_its_entry_with_it() {
     let fx = TempDir::new("tasks_staging_drop");
@@ -1130,9 +1027,6 @@ fn a_dropped_staging_directory_takes_its_entry_with_it() {
     assert!(!fx.join("s").exists());
 }
 
-/// Removal goes through the staging directory's own handle, then by name
-/// only for an empty directory: one planted at its name since, holding an
-/// entry of the same name, is left alone.
 #[test]
 fn a_staging_directory_swapped_since_is_not_emptied() {
     let fx = TempDir::new("tasks_staging_swapped");
@@ -1152,8 +1046,6 @@ fn a_staging_directory_swapped_since_is_not_emptied() {
     assert!(!fx.join("moved").join("entry").exists());
 }
 
-/// Every name offered is another, within a call and across calls, so no
-/// two replacements can meet in one staging directory.
 #[test]
 fn staging_names_are_never_offered_twice() {
     let first: Vec<CString> = staging_names().collect();
@@ -1170,7 +1062,6 @@ fn staging_names_are_never_offered_twice() {
     );
 }
 
-/// Every name offered taken: nothing is created and nothing is touched.
 #[test]
 fn a_staging_directory_with_no_free_name_is_refused() {
     let fx = TempDir::new("tasks_staging_none");
@@ -1182,15 +1073,11 @@ fn a_staging_directory_with_no_free_name_is_refused() {
         .expect("no name was free");
 
     assert_eq!(ErrorKind::AlreadyExists, error.kind());
-    // No errno: filectrl's own refusal, which `replace_entry` words so.
     assert_eq!(None, error.raw_os_error());
     assert_eq!("no free name for a staging directory", error.to_string());
     assert_eq!(b"keep".to_vec(), fs::read(fx.join("taken")).unwrap());
 }
 
-/// A staging directory is removed from the directory it was made in,
-/// through that directory's handle, even once that directory has been
-/// renamed and another made at its old name holds one of the same name.
 #[test_case(false ; "removed")]
 #[test_case(true ; "dropped")]
 fn a_staging_directory_is_removed_from_the_directory_it_was_made_in(dropped: bool) {
@@ -1212,8 +1099,7 @@ fn a_staging_directory_is_removed_from_the_directory_it_was_made_in(dropped: boo
     assert!(made_in.join("s").is_dir());
 }
 
-/// Writes `contents` as the entry of `staging`, recorded as the one the
-/// copy made, as `copy_entry` records it.
+/// Writes `contents` as the entry of `staging`, recorded as the one the copy made.
 fn stage(staging: &mut Staging<'_>, contents: &[u8]) {
     let entry = staging
         .path
@@ -1222,17 +1108,13 @@ fn stage(staging: &mut Staging<'_>, contents: &[u8]) {
     staging.staged = EntryId::of_path(&entry);
 }
 
-/// A staging directory with `staged` written as its entry, `one`, beside
-/// `dir`'s own `one`, for `land`.
+/// A staging directory with `staged` written as its entry `one`, beside `dir`'s own `one`.
 fn staged_beside<'a>(dir: &'a File, dir_path: &Path, staged: &[u8]) -> Staging<'a> {
     let mut staging = Staging::create(dir, dir_path, [c"s".to_owned()], c"one").unwrap();
     stage(&mut staging, staged);
     staging
 }
 
-/// `land` looks at the name and renames onto it through the directory
-/// handle it is given: the directory renamed away and another made at its
-/// path is not what it lands in.
 #[test]
 fn a_landing_goes_through_the_directory_it_was_given() {
     let fx = TempDir::new("tasks_land_handle");
@@ -1270,9 +1152,6 @@ fn a_landing_goes_through_the_directory_it_was_given() {
     assert_eq!(b"elsewhere".to_vec(), fs::read(dest.join("one")).unwrap());
 }
 
-/// A landing whose rename fails for another reason than a taken name is
-/// a failure that leaves the entry granted, and says so. The staging
-/// directory can then not be removed either, which `remove` reports.
 #[test]
 fn a_landing_that_fails_leaves_the_entry_and_says_so() {
     let fx = TempDir::new("tasks_land_fails");
@@ -1320,10 +1199,6 @@ fn a_landing_that_fails_leaves_the_entry_and_says_so() {
     assert_eq!(b"granted".to_vec(), fs::read(dest.join("one")).unwrap());
 }
 
-/// A symlink at the name of a directory being given access is never
-/// followed: the open is refused, the link's target keeps its mode,
-/// whether it is a directory or a file, and so does a mode change by name
-/// (which only ever acts on a node the copy just made).
 #[test_case(true ; "a link to a directory")]
 #[test_case(false ; "a link to a file")]
 fn giving_a_directory_access_never_follows_a_symlink(to_directory: bool) {
@@ -1331,8 +1206,7 @@ fn giving_a_directory_access_never_follows_a_symlink(to_directory: bool) {
     let (target, mode) = if to_directory {
         let target = fx.join("dir");
         fs::create_dir(&target).unwrap();
-        // Without owner write, so owner access given through the link
-        // would show.
+        // Without owner write, so owner access given through the link would show.
         (target, 0o555)
     } else {
         let target = fx.join("file");
@@ -1347,8 +1221,7 @@ fn giving_a_directory_access_never_follows_a_symlink(to_directory: bool) {
     let set = set_mode_at(&parent, c"link", 0o777);
 
     assert!(opened.is_err());
-    // Linux refuses a mode change on a symlink; macOS changes the link's
-    // own mode. Neither reaches the target.
+    // Linux refuses a mode change on a symlink; macOS changes the link's own mode.
     #[cfg(target_os = "linux")]
     assert_eq!(Some(nix::libc::EOPNOTSUPP), set.unwrap_err().raw_os_error());
     #[cfg(not(target_os = "linux"))]
@@ -1356,8 +1229,6 @@ fn giving_a_directory_access_never_follows_a_symlink(to_directory: bool) {
     assert_eq!(mode, mode_of(&target) & 0o7777);
 }
 
-/// A new directory the owner cannot read stays unreadable: it is
-/// reported, and nothing is changed by name.
 #[test]
 fn an_unreadable_new_directory_is_reported() {
     let fx = TempDir::new("tasks_access_unheld");
@@ -1381,9 +1252,6 @@ fn an_unreadable_new_directory_is_reported() {
     assert_eq!(0o000, mode);
 }
 
-/// A landing that cannot look at the name (a directory without search
-/// permission) cannot tell what holds it, so the entry granted may still
-/// be there, and the message says it was not replaced.
 #[test]
 fn a_landing_that_cannot_look_at_the_name_says_the_entry_was_left() {
     let fx = TempDir::new("tasks_land_unsearchable");
@@ -1430,8 +1298,6 @@ fn a_landing_that_cannot_look_at_the_name_says_the_entry_was_left() {
     assert_eq!(b"granted".to_vec(), fs::read(dest.join("one")).unwrap());
 }
 
-/// A staging directory that cannot be removed is reported to the user as
-/// a warning naming where it was left, not only logged.
 #[test]
 fn a_staging_directory_that_cannot_be_removed_is_reported() {
     let fx = TempDir::new("tasks_staging_left");
@@ -1475,8 +1341,6 @@ fn a_vanished_source_leaves_the_destination_it_would_have_replaced() {
     let (_fx, src, dst, active, _token) = destination("tasks_prepare_source_gone");
     fs::remove_file(&src).unwrap();
 
-    // A task can wait behind a long operation on the shared worker, so the
-    // source it was going to copy may be gone by the time it runs.
     let granted = Seen::of_path(&dst).unwrap();
     let prepared = prepare_destination(active, settings(false), granted, &src, &dst, 0o100_644);
 
@@ -1484,9 +1348,6 @@ fn a_vanished_source_leaves_the_destination_it_would_have_replaced() {
     assert_eq!(b"dest".to_vec(), fs::read(&dst).unwrap());
 }
 
-/// A granted destination that cannot be looked at (its directory has no
-/// search permission) may still hold the entry granted, so the failure
-/// says it was not replaced, and nothing is opened or copied.
 #[test]
 fn a_granted_destination_that_cannot_be_looked_at_says_it_was_left() {
     let fx = TempDir::new("tasks_prepare_unsearchable");
@@ -1534,7 +1395,6 @@ fn dir_total_size_sums_the_files_of_the_whole_tree_but_not_its_symlinks() {
     fs::create_dir_all(root.join("sub")).unwrap();
     fs::write(root.join("a.txt"), b"abc").unwrap();
     fs::write(root.join("sub").join("b.txt"), b"defgh").unwrap();
-    // Recreated as a link, so no bytes are transferred for it.
     std::os::unix::fs::symlink(root.join("a.txt"), root.join("link")).unwrap();
     let (tx, _rx) = mpsc::channel();
     let active = copy_task(tx);
@@ -1567,8 +1427,6 @@ fn copy_path_advances_progress_from_the_bytes_written() {
         })
         .collect();
 
-    // One 64-byte chunk is the first update, before `done` fills the bar,
-    // and each later update reports more than the last.
     assert_eq!(Some(&64), completed.first());
     assert!(completed.windows(2).all(|pair| pair[0] < pair[1]));
 }
@@ -1606,16 +1464,13 @@ fn a_tree_of_small_files_sends_progress_per_share_of_the_total_not_per_file() {
         })
         .collect();
 
-    // `set_total` sends one, the first chunk another, and the floor admits
-    // one more per interval elapsed. One per file would be a thousand.
+    // `set_total` sends one, the first chunk another, and the floor admits one more per interval.
     let bound = 2 + elapsed.as_millis() / PROGRESS_MIN_INTERVAL.as_millis();
     assert!(
         (updates.len() as u128) <= bound,
         "{} updates in {elapsed:?} for {FILES} files",
         updates.len()
     );
-    // The share is of the tree's bytes, so every update reports that total,
-    // and the first chunk counts toward it rather than filling the bar.
     let total = FILES as u64 * 10;
     assert!(
         updates.iter().all(|progress| progress.total == total),
@@ -1626,8 +1481,7 @@ fn a_tree_of_small_files_sends_progress_per_share_of_the_total_not_per_file() {
     };
     assert_eq!(0, first.completed);
     assert_eq!(10, chunk.completed);
-    // The copy finishes inside the floor, so the updates above cannot tell
-    // a share of the total from none at all. The threshold can.
+    // The copy finishes inside the floor, so only the threshold shows the share of the total.
     assert_eq!(
         total * PROGRESS_DEBOUNCE_PERCENTAGE / 100,
         outcome.progress_threshold
@@ -1651,21 +1505,17 @@ fn copy_path_recreates_a_symlink_without_following_it() {
     let errors = copy_one(false, &link, &dst);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
 
-    // The destination must itself be a symlink pointing at the same target,
-    // not a regular file containing the target's bytes.
     let dst_meta = fs::symlink_metadata(&dst).unwrap();
     assert!(dst_meta.is_symlink(), "destination must be a symlink");
     assert_eq!(fs::read_link(&dst).unwrap(), target);
 
-    // The link's target must be untouched: copy must not chmod through the
-    // link or rewrite its contents.
     let target_mode = fs::symlink_metadata(&target).unwrap().permissions().mode() & 0o7777;
     assert_eq!(target_mode, 0o600, "copy must not chmod the symlink target");
     assert_eq!(std::fs::read(&target).unwrap(), b"hello");
 }
 
-/// The permission bits the umask leaves of `0o777`. Probed rather than
-/// read, since reading the umask means setting it for every thread.
+/// The permission bits the umask leaves of `0o777`. Probed, since reading the umask means setting
+/// it for every thread.
 fn umask_leaves(dir: &Path) -> u32 {
     use std::os::unix::fs::OpenOptionsExt;
     let probe = dir.join("umask_probe");
@@ -1680,9 +1530,6 @@ fn umask_leaves(dir: &Path) -> u32 {
     leaves
 }
 
-// A copy is `cp` without `-p`: the umask applies and the special bits go,
-// so a file copied where others can reach it is not a setuid program of
-// the user who copied it. A move is `mv`, which keeps the mode.
 #[test_case(0o4755, false ; "a copy drops setuid")]
 #[test_case(0o2755, false ; "a copy drops setgid")]
 #[test_case(0o777, false ; "a copy takes the umask")]
@@ -1708,11 +1555,8 @@ fn a_copied_file_keeps_the_special_bits_and_ignores_the_umask_only_when_moved(
     assert_eq!(expected, mode_of(&fx.join("dst")) & 0o7777);
 }
 
-/// Run by `a_copy_takes_the_umask_on_the_owner_bits_too` under a umask
-/// that clears owner bits; on its own it proves nothing. The fixture is
-/// made before the umask is set, so the directory can still be written.
-/// The directory's child can only be created if the copy gives the
-/// directory owner access while filling it.
+/// Run by `a_copy_takes_the_umask_on_the_owner_bits_too` under a umask that clears owner bits; on
+/// its own it proves nothing.
 #[test]
 #[ignore = "run under a umask of 0o277 by the test below"]
 fn a_copy_under_a_umask_clearing_owner_bits() {
@@ -1734,14 +1578,11 @@ fn a_copy_under_a_umask_clearing_owner_bits() {
 
     let errors = copy_one(false, &src, &fx.join("dst"));
     let dir_errors = copy_one(false, &src_dir, &fx.join("dst_dir"));
-    // A replacement is staged in a directory the umask leaves without
-    // owner write, which it has to give back to write into it.
     let (new, task) = paste_over(false, &replaced, &src);
 
     let leaves = 0o777 & umask_leaves(fx.path());
     let dir_mode = mode_of(&fx.join("dst_dir")) & 0o7777;
-    // Given back before anything is asserted, so a failure still lets the
-    // fixture be removed.
+    // Given back before asserting, so the fixture can be removed on failure.
     fs::set_permissions(fx.join("dst_dir"), fs::Permissions::from_mode(0o700)).unwrap();
 
     assert!(errors.is_empty(), "{errors:?}");
@@ -1757,8 +1598,6 @@ fn a_copy_under_a_umask_clearing_owner_bits() {
     );
 }
 
-/// A copy's owner bits are the source's as the umask leaves them, like
-/// `cp`: a umask that clears the owner's write bit clears it on the copy.
 /// The umask is process-wide, so the copy runs in a process of its own.
 #[test]
 fn a_copy_takes_the_umask_on_the_owner_bits_too() {
@@ -1769,13 +1608,9 @@ fn a_copy_takes_the_umask_on_the_owner_bits_too() {
     );
 }
 
-/// The umask `a_tree_copy_under_a_umask` runs under, named by this
-/// variable in the process it runs in.
+/// Names the umask `a_tree_copy_under_a_umask` runs under, in its own process.
 const TREE_UMASK: &str = "FILECTRL_TEST_TREE_UMASK";
 
-/// A directory holding another, copied under a umask whose mode leaves
-/// the owner no search permission, which going back up through the
-/// directory needs.
 #[test]
 #[ignore = "run under a umask by the test below"]
 fn a_tree_copy_under_a_umask() {
@@ -1797,7 +1632,6 @@ fn a_tree_copy_under_a_umask() {
     let errors = copy_one(false, &src, &fx.join("dst"));
     let dst = fx.join("dst");
     let modes = (mode_of(&dst) & 0o7777, {
-        // The top directory may leave its owner no search permission.
         fs::set_permissions(&dst, fs::Permissions::from_mode(0o700)).unwrap();
         mode_of(&dst.join("sub")) & 0o7777
     });
@@ -1824,9 +1658,7 @@ fn a_tree_copies_whole_under_a_umask_that_clears_owner_search(umask: &str) {
     );
 }
 
-/// A default ACL that takes the owner's search permission from every new
-/// directory: the copy still reaches the whole tree. Needs `setfacl` and
-/// ACLs on the temporary filesystem; skipped otherwise.
+/// Needs `setfacl` and ACLs on the temporary filesystem; skipped otherwise.
 #[test_case("u::rw-,g::r-x,o::---", 0o600 ; "no search")]
 fn a_tree_copies_whole_under_a_default_acl_taking_owner_access(acl: &str, owner: u32) {
     let fx = TempDir::new("tasks_tree_default_acl");
@@ -1842,12 +1674,8 @@ fn a_tree_copies_whole_under_a_default_acl_taking_owner_access(acl: &str, owner:
 
     let errors = copy_one(false, &src, &dest.join("src"));
     let copied = dest.join("src");
-    // The ACL takes the same access from the copied directories as from
-    // anything created there: the owner access added to write them is
-    // taken back when they are finished. Read before the access is given
-    // back so the tree can be read and removed.
-    // Each from the top down: a directory without search permission
-    // hides what is in it.
+    // Read before access is given back, top down: a directory without search permission hides its
+    // contents.
     let child = copied.join("sub").join("child");
     let owners = [copied.clone(), copied.join("sub"), child].map(|entry| {
         let owner = mode_of(&entry) & 0o700;
@@ -1863,9 +1691,6 @@ fn a_tree_copies_whole_under_a_default_acl_taking_owner_access(acl: &str, owner:
     );
 }
 
-/// A directory copied into a setgid directory whose default ACL takes
-/// owner search from what is created there keeps the setgid bit it
-/// inherits, which giving it owner access to write it must not drop.
 #[test]
 fn a_directory_copied_under_a_default_acl_taking_owner_access_keeps_its_setgid() {
     let fx = TempDir::new("tasks_tree_default_acl_setgid");
@@ -1888,10 +1713,7 @@ fn a_directory_copied_under_a_default_acl_taking_owner_access_keeps_its_setgid()
     assert_eq!(0o2000, mode & 0o2000, "{mode:o}");
 }
 
-/// A default ACL that takes all owner access from new directories leaves
-/// the one the copy makes unreadable: it is reported rather than given
-/// access by name, and the copy of what is below it is skipped. Needs
-/// `setfacl` and ACLs on the temporary filesystem; skipped otherwise.
+/// Needs `setfacl` and ACLs on the temporary filesystem; skipped otherwise.
 #[test]
 fn a_directory_left_unreadable_by_a_default_acl_is_reported() {
     let fx = TempDir::new("tasks_tree_default_acl_none");
@@ -1928,8 +1750,7 @@ fn a_directory_left_unreadable_by_a_default_acl_is_reported() {
     assert!(!copied.join("child").exists());
 }
 
-/// Enters the top-level directory `src`, copied to `dst`, as `copy_path`
-/// does, and returns what the walk starts from.
+/// Enters the top-level directory `src`, copied to `dst`, as `copy_path` does.
 fn enter_top(context: &mut CopyContext<'_>, src: &Path, dst: &Path) -> (Option<CopyLevel>, Paths) {
     let (src_parent, dst_parent) = (open_parent(src).unwrap(), open_parent(dst).unwrap());
     let (src_name, dst_name) = (c_name(src).unwrap(), c_name(dst).unwrap());
@@ -1953,9 +1774,8 @@ fn enter_top(context: &mut CopyContext<'_>, src: &Path, dst: &Path) -> (Option<C
     (enter_directory(context, &at, &paths, &stat), paths)
 }
 
-/// Copies the directory `src` to `dst` through `copy_tree`, with
-/// `on_leave` called as each directory is left, returning whether the walk
-/// finished and the errors it recorded.
+/// Copies `src` to `dst` through `copy_tree`, calling `on_leave` as each directory is left. Returns
+/// whether the walk finished and the errors.
 fn copy_tree_leaving(
     src: &Path,
     dst: &Path,
@@ -1982,9 +1802,6 @@ fn deep_tree(label: &str) -> (TempDir, PathBuf, PathBuf) {
     (fx, tree, dst)
 }
 
-/// A directory moved elsewhere while the copy is inside it cannot be gone
-/// back up through: the walk ends there with filectrl's own refusal,
-/// naming the directory it could not return to.
 #[test]
 fn a_directory_moved_while_its_copy_is_inside_it_ends_the_walk() {
     let (fx, tree, dst) = deep_tree("tasks_walk_relocated");
@@ -2018,8 +1835,6 @@ fn a_directory_moved_while_its_copy_is_inside_it_ends_the_walk() {
     );
 }
 
-/// A directory that cannot be gone back up into for a reason of the
-/// system's is reported in the `Failed to` form, with the reason.
 #[test]
 fn a_directory_that_cannot_be_returned_to_is_reported_with_its_errno() {
     let (fx, tree, dst) = deep_tree("tasks_walk_locked");
@@ -2059,8 +1874,6 @@ fn a_directory_that_cannot_be_returned_to_is_reported_with_its_errno() {
     );
 }
 
-/// A walk cancelled before it meets a directory it cannot return to
-/// still ends as cancelled.
 #[test]
 fn a_cancelled_walk_that_cannot_return_ends_as_cancelled() {
     let (fx, tree, dst) = deep_tree("tasks_walk_relocated_cancelled");
@@ -2095,8 +1908,6 @@ fn a_cancelled_walk_that_cannot_return_ends_as_cancelled() {
     );
 }
 
-/// A plain copy of a directory does not keep its modification time, as
-/// `cp -R` without `-p` does not.
 #[test]
 fn a_plain_copy_does_not_keep_a_directorys_modification_time() {
     let fx = TempDir::new("tasks_copy_dir_mtime");
@@ -2112,8 +1923,6 @@ fn a_plain_copy_does_not_keep_a_directorys_modification_time() {
     assert_ne!(old, fs::metadata(&dst).unwrap().modified().unwrap());
 }
 
-/// A granted overwrite whose source changed type since it was selected
-/// is refused, and the entry granted is left, which the message says.
 #[test]
 fn a_granted_overwrite_of_a_source_whose_type_changed_says_the_entry_was_left() {
     let fx = TempDir::new("tasks_type_changed_granted");
@@ -2144,8 +1953,6 @@ fn a_granted_overwrite_of_a_source_whose_type_changed_says_the_entry_was_left() 
     assert_eq!(b"dest".to_vec(), fs::read(&dst).unwrap());
 }
 
-/// A replacement landing on a name freed since, whose rename fails, never
-/// says an entry was left there: none was.
 #[test]
 fn a_landing_on_a_name_freed_since_that_fails_says_nothing_was_left() {
     let fx = TempDir::new("tasks_land_freed_fails");
@@ -2191,9 +1998,6 @@ fn a_landing_on_a_name_freed_since_that_fails_says_nothing_was_left() {
     );
 }
 
-/// A umask that clears the owner's read bit leaves a new staging
-/// directory impossible to open, and nothing is given a mode by name: the
-/// replacement is refused with the entry left.
 #[test]
 #[ignore = "run under a umask of 0o477 by the test below"]
 fn a_replacement_under_a_umask_clearing_owner_read() {
@@ -2230,8 +2034,7 @@ fn a_replacement_under_a_umask_clearing_owner_read() {
     assert_eq!(Vec::<String>::new(), staging_left(&dest));
 }
 
-/// The umask is process-wide, so the replacement runs in a process of its
-/// own.
+/// The umask is process-wide, so the replacement runs in a process of its own.
 #[test]
 fn a_replacement_whose_staging_directory_cannot_be_read_leaves_the_entry() {
     crate::test_support::run_alone(
@@ -2241,12 +2044,11 @@ fn a_replacement_whose_staging_directory_cannot_be_read_leaves_the_entry() {
     );
 }
 
-/// The fixture `a_replacement_that_fails_part_way_leaves_the_entry` makes,
-/// named by this variable in the process it runs this in.
+/// Names the fixture `a_replacement_that_fails_part_way_leaves_the_entry` makes, in the process it
+/// runs.
 const FAILING_FIXTURE: &str = "FILECTRL_TEST_FAILING_REPLACEMENT";
 
-/// A replacement whose writing fails part way, under a file size limit set
-/// by the test below.
+/// Run by the test below under a file size limit; on its own it proves nothing.
 #[test]
 #[ignore = "run under a file size limit by the test below"]
 fn a_replacement_that_fails_to_write() {
@@ -2272,10 +2074,8 @@ fn a_replacement_that_fails_to_write() {
     assert_eq!(Vec::<String>::new(), staging_left(&dest));
 }
 
-/// A replacement that fails part way leaves the entry it was to replace,
-/// and nothing of itself, whoever runs it: the write fails at a file size
-/// limit, in a process of its own that ignores the signal a write past it
-/// raises.
+/// The write fails at a file size limit, in a process of its own that ignores the signal a write
+/// past it raises.
 #[test]
 fn a_replacement_that_fails_part_way_leaves_the_entry() {
     let fx = TempDir::new("tasks_replace_fails");
@@ -2291,9 +2091,7 @@ fn a_replacement_that_fails_part_way_leaves_the_entry() {
     );
 }
 
-/// A default ACL taking owner write from new directories would leave the
-/// staging directory unwritable. Needs `setfacl` and ACLs on the temporary
-/// filesystem; skipped otherwise.
+/// Needs `setfacl` and ACLs on the temporary filesystem; skipped otherwise.
 #[test]
 fn a_replacement_writes_its_staging_directory_under_a_default_acl() {
     let fx = TempDir::new("tasks_replace_default_acl");
@@ -2314,8 +2112,6 @@ fn a_replacement_writes_its_staging_directory_under_a_default_acl() {
     assert_eq!(Vec::<String>::new(), staging_left(&dest));
 }
 
-// A directory is created owner-writable so its children can be, then
-// given its mode: a copy's owner bits come back to what the source had.
 #[test_case(0o555, false ; "a copy of a read only directory")]
 #[test_case(0o1777, false ; "a copy drops the sticky bit and takes the umask")]
 #[test_case(0o2755, false ; "a copy drops the source's setgid bit")]
@@ -2330,8 +2126,7 @@ fn a_copied_directory_ends_with_the_mode_of_its_kind_of_copy(mode: u32, is_move:
 
     let errors = copy_one(is_move, &src, &dst);
     let copied = mode_of(&dst) & 0o7777;
-    // Writable again before anything can fail, so the fixture can be
-    // removed with the children a read-only mode would keep.
+    // Writable again before anything can fail, so the fixture can be removed.
     for dir in [&src, &dst] {
         fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -2346,9 +2141,6 @@ fn a_copied_directory_ends_with_the_mode_of_its_kind_of_copy(mode: u32, is_move:
     assert_eq!(expected, copied);
 }
 
-/// A directory created in a setgid directory inherits its setgid bit, and a
-/// copy keeps it, like `cp -R`, so what is later created in the copy takes
-/// the shared group. A file created there does not inherit it.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_copied_directory_keeps_the_setgid_bit_its_parent_gives_it() {
@@ -2368,8 +2160,6 @@ fn a_copied_directory_keeps_the_setgid_bit_its_parent_gives_it() {
     assert_eq!(0, mode_of(&shared.join("dst").join("child")) & 0o7000);
 }
 
-/// A node is created with the umask applied, like any other entry, so a
-/// move puts the source's mode back afterwards.
 #[test_case(true ; "a move keeps the mode")]
 #[test_case(false ; "a copy takes the umask")]
 fn a_moved_fifo_keeps_its_mode_whatever_the_umask(is_move: bool) {
@@ -2390,10 +2180,7 @@ fn a_moved_fifo_keeps_its_mode_whatever_the_umask(is_move: bool) {
     assert_eq!(expected, mode_of(&dst) & 0o7777);
 }
 
-/// A moved node gets the source's group before its mode, like a moved
-/// file, so a group-writable FIFO is not writable by whichever group the
-/// destination assigned. Needs a supplementary group to tell the two apart,
-/// and proves nothing for a user without one. Linux only: macOS has no
+/// Needs a supplementary group, and proves nothing for a user without one. Linux only: macOS has no
 /// `getgroups` in nix.
 #[cfg(target_os = "linux")]
 #[test]
@@ -2419,10 +2206,7 @@ fn a_moved_fifo_keeps_its_group() {
     assert_eq!(other.as_raw(), gid);
 }
 
-/// `mv` clears setuid and setgid when it cannot carry the ownership over,
-/// or a program would run as whoever moved it. Another owner cannot be
-/// arranged without root, so the rule is driven with a source that names
-/// one.
+/// Another owner cannot be arranged without root, so the source names one.
 #[test]
 fn a_move_drops_setuid_and_setgid_from_another_users_file() {
     let fx = TempDir::new("tasks_move_other_owner");
@@ -2449,11 +2233,7 @@ fn a_move_drops_setuid_and_setgid_from_another_users_file() {
     assert_eq!(0o755, mode_of(&fx.join("dst")) & 0o7777);
 }
 
-/// A move keeps the group bits, like `mv`, so it keeps the group they were
-/// granted to as well: the copy is otherwise created with whichever group
-/// the destination assigns, and a file readable by one group would become
-/// readable by another. Needs a second group to belong to, which
-/// `getgroups` reports on Linux.
+/// Needs a second group to belong to, which `getgroups` reports on Linux.
 #[cfg(target_os = "linux")]
 #[test_case(false, 0o640 ; "a file")]
 #[test_case(true, 0o750 ; "a directory")]
@@ -2487,9 +2267,6 @@ fn a_move_keeps_the_group_of_its_source(is_directory: bool, mode: u32) {
     assert_eq!(mode, copied.mode() & 0o7777);
 }
 
-/// Another user renames a directory the copy created and leaves a link to
-/// one of the victim's in its place. The copy continues in the directory it
-/// created, and neither writes into nor changes the mode of the victim's.
 #[test]
 fn a_destination_directory_swapped_for_a_symlink_is_not_written_through() {
     let fx = TempDir::new("tasks_destination_swapped");
@@ -2535,9 +2312,6 @@ fn a_destination_directory_swapped_for_a_symlink_is_not_written_through() {
     assert_eq!(0o777, mode_of(&fx.join("moved")) & 0o7777);
 }
 
-/// The source's own owner swaps a directory the copy has listed for a link
-/// to one outside the tree. The link is copied as a link, and nothing
-/// outside the tree is read.
 #[test]
 fn a_source_directory_swapped_for_a_symlink_is_copied_as_the_link() {
     let fx = TempDir::new("tasks_source_swapped");
@@ -2578,9 +2352,6 @@ fn a_source_directory_swapped_for_a_symlink_is_copied_as_the_link() {
     assert_eq!(outside, fs::read_link(dst.join("sub")).unwrap());
 }
 
-/// A regular file swapped for something else between being listed and
-/// being opened. A FIFO would block the open, and with it the one worker
-/// every operation shares; a link to a device would be read without end.
 #[test_case("fifo" ; "a fifo")]
 #[test_case("link" ; "a symlink to a device")]
 #[test_case("file_link" ; "a symlink to a file outside the tree")]
@@ -2599,8 +2370,7 @@ fn a_source_file_that_is_no_longer_a_regular_file_is_refused_at_once(name: &'sta
     let path = fx.join(name);
     let (tx, rx) = mpsc::channel();
 
-    // On a thread, so an open that blocks fails the test instead of
-    // hanging it.
+    // On a thread, so an open that blocks fails the test instead of hanging it.
     thread::spawn(move || {
         let (task_tx, _task_rx) = mpsc::channel();
         let dst = path.with_file_name("dst");
@@ -2618,8 +2388,6 @@ fn a_source_file_that_is_no_longer_a_regular_file_is_refused_at_once(name: &'sta
     assert_eq!(Ok(true), rx.recv_timeout(Duration::from_secs(5)));
 }
 
-/// A FIFO selected for a move is a regular file by the time the worker
-/// runs. Recreating it as a FIFO and removing the file would lose its data.
 #[test]
 fn a_move_refuses_a_source_whose_type_changed_since_it_was_selected() {
     let fx = TempDir::new("tasks_move_type_changed");
@@ -2643,10 +2411,6 @@ fn a_move_refuses_a_source_whose_type_changed_since_it_was_selected() {
     );
 }
 
-/// Another file is renamed over the selected name before the worker runs.
-/// It is copied with its own mode, never the selected file's: a copy of a
-/// 0600 file must not come out readable by others, and a move of one must
-/// not get the other file's setuid or execute bits.
 #[test_case(false ; "a copy")]
 #[test_case(true ; "a move")]
 fn a_file_renamed_over_the_selection_is_copied_with_its_own_mode(is_move: bool) {
@@ -2668,9 +2432,6 @@ fn a_file_renamed_over_the_selection_is_copied_with_its_own_mode(is_move: bool) 
     assert_eq!(0o600, mode_of(&new_path) & 0o7777);
 }
 
-/// The destination directory is swapped for a link into the source after
-/// the paste was validated. The copy refuses to descend into the directory
-/// it created rather than copying its own output without end.
 #[test]
 fn a_copy_never_descends_into_a_directory_it_created() {
     let fx = TempDir::new("tasks_copy_into_itself");
@@ -2678,16 +2439,13 @@ fn a_copy_never_descends_into_a_directory_it_created() {
     fs::create_dir_all(src.join("sub")).unwrap();
     let dest = fx.join("dest");
     fs::create_dir(&dest).unwrap();
-    // The swap lands after the paste was validated and before the copy runs.
     fs::remove_dir(&dest).unwrap();
     std::os::unix::fs::symlink(src.join("sub"), &dest).unwrap();
 
     let mut active = idle_task();
     let mut buffer = [0u8; 64];
     let mut context = context(false, &mut active, &mut buffer);
-    // A copy that did descend would nest `s/sub` without end; the cap stops
-    // the walk a few levels down whatever the timing, so the tree stays
-    // small enough for the fixture to remove.
+    // A copy that did descend would nest without end; the cap keeps the tree removable.
     context.max_depth = Some(8);
     copy_path(&mut context, None, &listed(&src), &src, &dest.join("s"));
     let errors = context.into_outcome().errors;
@@ -2703,9 +2461,6 @@ fn a_copy_never_descends_into_a_directory_it_created() {
     assert!(src.join("sub/s/sub").read_dir().unwrap().next().is_none());
 }
 
-/// Another directory is renamed over one the copy listed, between the
-/// listing and the open. It is refused rather than copied under metadata
-/// that describes a different directory.
 #[test]
 fn a_directory_replaced_after_it_was_listed_is_refused() {
     let fx = TempDir::new("tasks_directory_replaced");
@@ -2744,8 +2499,6 @@ fn a_directory_replaced_after_it_was_listed_is_refused() {
     );
 }
 
-/// The copy returns through both of its directories, and each has to be
-/// the one it left.
 #[test_case(false ; "the source moved")]
 #[test_case(true ; "the destination moved")]
 fn a_copy_returns_only_to_the_parents_it_left(destination_moved: bool) {
@@ -2803,8 +2556,7 @@ fn a_move_keeps_the_access_time_of_a_file() {
     let fx = TempDir::new("tasks_move_file_atime");
     let old = fx.join("f");
     fs::write(&old, b"data").unwrap();
-    // Older than the modification time, which `relatime` updates on the
-    // first read.
+    // Older than the modification time, which `relatime` updates on the first read.
     set_times(&old, 1_000_000_000, 1_000_000_100);
     fs::create_dir(fx.join("dest")).unwrap();
 
@@ -2814,8 +2566,7 @@ fn a_move_keeps_the_access_time_of_a_file() {
     assert_eq!((1_000_000_000, 1_000_000_100), times_of(&new_path));
 }
 
-/// Linux only: macOS has no `O_NOATIME`, so the pre-scan's listing sets a
-/// directory's access time before the copy reads it.
+/// Linux only: macOS has no `O_NOATIME`, so the pre-scan sets a directory's access time.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_move_keeps_the_access_times_of_a_tree_the_scan_listed() {
@@ -2828,7 +2579,6 @@ fn a_move_keeps_the_access_times_of_a_tree_the_scan_listed() {
     set_times(&old, 1_000_000_200, 1_000_000_300);
     fs::create_dir(fx.join("dest")).unwrap();
 
-    // The progress scan lists every directory before the copy does.
     let (new_path, task) = paste_after(true, &fx.join("dest"), &old, || {});
 
     assert_eq!(None, task.error_message());
@@ -2839,8 +2589,8 @@ fn a_move_keeps_the_access_times_of_a_tree_the_scan_listed() {
     );
 }
 
-/// Runs `setfacl` with `args` on `path`. False where it is not installed
-/// or the filesystem has no ACLs, for a test to skip.
+/// Runs `setfacl` with `args` on `path`. False where it is not installed or the filesystem has no
+/// ACLs.
 fn setfacl(args: &[&str], path: &Path) -> bool {
     std::process::Command::new("setfacl")
         .args(args)
@@ -2858,8 +2608,8 @@ fn getfacl(path: &Path) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// A source of mode 600 with a named user granted `rw`, which makes the
-/// mask, and so the group bits of its mode, `rw` too.
+/// A mode 600 source with a named user granted `rw`, which makes the mask (the mode's group bits)
+/// `rw` too.
 fn file_with_an_acl(label: &str) -> Option<(TempDir, PathBuf)> {
     let fx = TempDir::new(label);
     let old = fx.join("secret");
@@ -2880,7 +2630,6 @@ fn a_move_keeps_the_acl_so_the_owning_group_gains_nothing() {
     let (new_path, task) = paste_after(true, &fx.join("dest"), &old, || {});
 
     assert_eq!(None, task.error_message());
-    // Without it the mask would be granted to the owning group instead.
     assert_eq!(before, getfacl(&new_path));
     assert!(before.contains("group::---"), "{before}");
     assert_eq!(0o660, mode_of(&new_path) & 0o7777);
@@ -2895,14 +2644,12 @@ fn a_copy_does_not_keep_the_acl() {
 
     let (new_path, task) = paste_after(false, &fx.join("dest"), &old, || {});
 
-    // Like `cp` without `-p`.
     assert_eq!(None, task.error_message());
     assert!(!getfacl(&new_path).contains("nobody"));
 }
 
-/// Gives `path` the user attributes `user.filectrl`, and `user.empty`
-/// with an empty value. False where the filesystem has no user
-/// attributes, for a test to skip.
+/// Gives `path` the user attributes `user.filectrl`, and `user.empty` with an empty value. False
+/// where the filesystem has no user attributes.
 fn set_user_attribute(path: &Path) -> bool {
     let set = |name, value: &[u8]| rustix::fs::setxattr(path, name, value, XattrFlags::empty());
     set("user.filectrl", b"kept").is_ok() && set("user.empty", b"").is_ok()
@@ -2918,7 +2665,6 @@ fn user_attribute(path: &Path) -> Option<Vec<u8>> {
     attribute(path, "user.filectrl")
 }
 
-/// Like `mv`, which keeps every attribute it can, not only the ACLs.
 #[test_case(false ; "a file")]
 #[test_case(true ; "a directory")]
 fn a_move_keeps_the_extended_attributes(is_directory: bool) {
@@ -2955,13 +2701,11 @@ fn a_copy_does_not_keep_the_extended_attributes() {
 
     let (new_path, task) = paste_after(false, &fx.join("dest"), &old, || {});
 
-    // Like `cp` without `-p`.
     assert_eq!(None, task.error_message());
     assert_eq!(None, user_attribute(&new_path));
 }
 
-/// A value read the way `flistxattr` and `fgetxattr` return one, as the
-/// `n`th call finds it: `grows` gives its length per call.
+/// A value read as `flistxattr` and `fgetxattr` return one; `grows` gives its length per call.
 fn reading(grows: impl Fn(usize) -> usize) -> impl Fn(&mut [u8]) -> rustix::io::Result<usize> {
     let calls = std::cell::Cell::new(0);
     move |buffer: &mut [u8]| {
@@ -2979,14 +2723,11 @@ fn reading(grows: impl Fn(usize) -> usize) -> impl Fn(&mut [u8]) -> rustix::io::
 
 #[test]
 fn a_value_that_grew_while_it_was_read_is_measured_again() {
-    // Measured at 4 bytes, 6 by the time it is read, then stable.
     let read = reading(|call| if call == 0 { 4 } else { 6 });
 
     assert_eq!(Ok(vec![b'v'; 6]), read_sized(read));
 }
 
-/// Measured empty, it is read as empty without asking again: an attribute
-/// added in between would otherwise be read into an empty buffer and lost.
 #[test]
 fn a_value_measured_empty_is_not_read_again() {
     let calls = std::cell::Cell::new(0);
@@ -3006,7 +2747,6 @@ fn a_value_that_keeps_growing_is_given_up_on() {
     assert_eq!(Err(rustix::io::Errno::RANGE), read_sized(read));
 }
 
-/// What is still asked for by name when the list cannot be read.
 #[cfg(target_os = "linux")]
 #[test_case(false => vec![c"system.posix_acl_access".to_owned()] ; "a file")]
 #[test_case(true => vec![
@@ -3017,9 +2757,6 @@ fn the_acls_are_named_by_kind(is_directory: bool) -> Vec<CString> {
     acl_names(is_directory)
 }
 
-/// A list is read as its names. A list that cannot be read, including one
-/// the filesystem does not support listing while it still serves a named
-/// attribute, falls back to the ACL names.
 #[test_case(Ok(b"user.a\0user.b\0".to_vec()) => vec![
     c"user.a".to_owned(),
     c"user.b".to_owned(),
@@ -3050,8 +2787,6 @@ fn a_move_keeps_both_acls_of_a_directory() {
     assert!(before.contains("default:user:nobody:rwx"), "{before}");
 }
 
-/// `O_NOFOLLOW` refuses a symlink swapped in at the name, rather than
-/// reading its target.
 #[test]
 fn a_source_file_is_not_opened_through_a_symlink() {
     let fx = TempDir::new("tasks_source_symlink");
@@ -3064,8 +2799,6 @@ fn a_source_file_is_not_opened_through_a_symlink() {
     assert_eq!(Some(nix::libc::ELOOP), error.raw_os_error());
 }
 
-/// Opened non-blocking so a FIFO cannot hang the open, then switched back
-/// so the copy's reads block as usual.
 #[test]
 fn a_source_file_is_read_blocking() {
     let fx = TempDir::new("tasks_source_blocking");
@@ -3078,8 +2811,6 @@ fn a_source_file_is_read_blocking() {
     assert!(!status.contains(OFlag::O_NONBLOCK), "{status:?}");
 }
 
-/// A name taken, by a file or by a symlink planted there, is reported as
-/// taken, which is what settles it as a raced collision.
 #[test_case(false ; "a file")]
 #[test_case(true ; "a symlink")]
 fn a_destination_file_is_not_created_over_a_taken_name(is_symlink: bool) {

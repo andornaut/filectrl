@@ -19,12 +19,10 @@ const MIN_HEIGHT: u16 = 5;
 
 pub(super) struct HelpView {
     area: Rect,
-    /// Bordered header hint, built once from the keybindings.
     hint: String,
     inner_height: u16,
-    /// The label and key columns, resolved once from the keybindings. The
-    /// styled lines are built per frame from the theme the render is handed,
-    /// so the body and the border it sits in cannot come from two themes.
+    /// Label and key columns, resolved once; styled lines are built per frame from the render's
+    /// theme.
     sections: Vec<Section>,
     max_scroll: u16,
     scroll_offset: u16,
@@ -50,8 +48,7 @@ impl HelpView {
         }
     }
 
-    /// The help text, styled with `theme`. Built per frame rather than cached,
-    /// so every part of the view is drawn with the theme its render was given.
+    /// The help text, styled with `theme` per frame.
     fn lines(&self, theme: &Help) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         for (index, (title, rows)) in self.sections.iter().enumerate() {
@@ -76,8 +73,7 @@ impl HelpView {
             .min(self.max_scroll);
     }
 
-    /// From the offset as drawn: a resize that lowered `max_scroll` leaves the
-    /// stored offset above it, and render clamps only what it draws.
+    /// Uses the drawn offset: after a resize the stored one can exceed `max_scroll`.
     fn scroll_up(&mut self, lines: u16) {
         self.scroll_offset = self
             .scroll_offset
@@ -103,8 +99,6 @@ impl HelpView {
 mod tests {
     use super::*;
 
-    /// Each section lines its keys up by its own labels, so at 80 columns
-    /// (78 inside the border) no row runs past the edge.
     #[test]
     fn every_row_fits_an_80_column_terminal() {
         Config::init_test();
@@ -115,9 +109,8 @@ mod tests {
         }
     }
 
-    /// A help view scrolled to the top of a longer document, with a viewport
-    /// of 4 lines. The two fields are set by the render pass, which no unit
-    /// test runs.
+    /// Scrolled to the top of a longer document with a 4-line viewport (fields the render pass
+    /// sets).
     fn help() -> HelpView {
         Config::init_test();
         let mut view = HelpView::new(Config::global());
@@ -145,8 +138,7 @@ mod tests {
     fn scrolling_up_after_the_document_got_shorter_moves_from_what_is_drawn() {
         let mut view = help();
         view.handle_scroll_action(Action::SelectLast);
-        // A taller terminal: the render pass lowers the maximum, and the view
-        // is drawn at 5 from then on.
+        // The render pass lowers the maximum after a resize.
         view.max_scroll = 5;
 
         view.handle_scroll_action(Action::SelectPrevious);
@@ -198,9 +190,7 @@ mod tests {
         view.handle_scroll_action(Action::PageDown);
         let before = view.scroll_offset;
 
-        // Returning NotHandled without mutating is what lets a key the help
-        // ignores leave the screen alone: `changed_nothing_visible` skips the
-        // redraw for a batch nothing claimed.
+        // Returning NotHandled without mutating lets `changed_nothing_visible` skip the redraw.
         assert_eq!(
             CommandResult::NotHandled,
             view.handle_scroll_action(Action::Quit)
@@ -213,8 +203,6 @@ mod tests {
         let mut view = help();
         view.handle_scroll_action(Action::SelectLast);
 
-        // `RootView` calls this when help is shown, so reopening it does not
-        // resume half way down where the last visit left off.
         view.reset_scroll();
 
         assert_eq!(0, view.scroll_offset);

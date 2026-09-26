@@ -20,13 +20,8 @@ impl Position {
     }
 }
 
-/// Maps a click at column `x` on one rendered row to an index into
-/// `BreadcrumbsView::breadcrumbs`, or `None` when the column addresses no
-/// navigable entry.
-///
-/// When a tag is present it occupies position 0 and names no directory, so it
-/// is not navigable and every following position addresses the breadcrumb one
-/// place before it.
+/// Maps a click at column `x` on one row to an index into `BreadcrumbsView::breadcrumbs`,
+/// or `None`. A tag occupies position 0 and is not navigable, shifting later positions down by one.
 pub(super) fn clicked_index(row: &[Position], x: u16, has_tag: bool) -> Option<usize> {
     row.iter().find_map(|position| {
         if !position.intersects(x) {
@@ -58,7 +53,7 @@ pub(super) fn spans<'a>(
         let is_last = it.peek().is_none();
         let is_tag = i == 0 && tag_style.is_some();
         let name_style = if is_tag {
-            // is_tag is only true when tag_style.is_some(), so this never panics.
+            // is_tag is only true when tag_style.is_some().
             tag_style.unwrap()
         } else if is_last {
             basename_style
@@ -72,8 +67,7 @@ pub(super) fn spans<'a>(
             name
         };
         let name_len = display_name.cell_width();
-        // Tags and the last entry have no trailing separator. Path components
-        // between them occupy name_len + 1 columns (name + separator).
+        // Tags and the last entry have no trailing separator.
         let entry_len = name_len + u16::from(!(is_last || is_tag));
 
         if container.is_empty() || (row_len + entry_len > width && row_len > 0) {
@@ -86,15 +80,14 @@ pub(super) fn spans<'a>(
         let x_end = row_len + name_len.saturating_sub(1);
         row_len += entry_len;
 
-        // The block above pushes a new row whenever the container is empty, so
-        // there is always at least one row here.
+        // The block above pushes a row whenever the container is empty.
         let container_row = container.last_mut().unwrap();
         container_row.push(Span::styled(display_name.to_owned(), name_style));
         if !is_last && !is_tag {
             container_row.push(Span::styled(MAIN_SEPARATOR_STR, separator_style));
         }
 
-        // positions grows in lockstep with container above, so this is non-empty.
+        // positions grows in lockstep with container.
         let positions_row = positions.last_mut().unwrap();
         positions_row.push(Position {
             x_start,
@@ -156,8 +149,6 @@ mod tests {
         (content, positions)
     }
 
-    // ── tag display ───────────────────────────────────────────────────────────
-
     #[test]
     fn tagged_breadcrumb_includes_tag_without_trailing_separator() {
         let (rows, _) = run_tagged_spans(&["[Search] ", "home", "user"], 80, Style::default());
@@ -178,18 +169,11 @@ mod tests {
         assert_eq!(rows, vec![vec!["[Search] ".to_string(), SEP.to_string()]]);
     }
 
-    // ── click hit-test with a tag ─────────────────────────────────────────────
-    //
-    // Layout for &["[Search] ", "", "home", "user"] at width=80. The tag has no
-    // trailing separator, so it occupies exactly its own 9 columns:
+    // Layout for &["[Search] ", "", "home", "user"] at width 80:
     //   col 0..=8   → "[Search] " (position 0, not navigable)
-    //   col 9       → "" (root, width=0, x_end=9 via saturating_sub) + "/" sep
+    //   col 9       → "" (root) + "/" sep
     //   col 10..=13 → "home" (position 2)
-    //   col 14      → "/" separator
     //   col 15..=18 → "user" (position 3)
-    //
-    // `clicked_index` returns an index into the untagged breadcrumbs, so every
-    // position after the tag shifts down by one.
 
     #[test_case(0  => None    ; "click on the tag is not navigable")]
     #[test_case(8  => None    ; "click on the last column of the tag")]
@@ -205,16 +189,12 @@ mod tests {
         clicked_index(&positions[0], x, true)
     }
 
-    // ── row count ─────────────────────────────────────────────────────────────
-
     #[test_case(&[], 80 => 0 ; "empty input yields no rows")]
     #[test_case(&["", "home", "user"], 80 => 1 ; "all fit in one row")]
     #[test_case(&["", "home", "user"], 1 => 3 ; "each entry on its own row when width=1")]
     fn row_count(parts: &[&str], width: u16) -> usize {
         run_spans(parts, width).0.len()
     }
-
-    // ── span content ──────────────────────────────────────────────────────────
 
     #[test_case(
         &[""], 80
@@ -239,16 +219,10 @@ mod tests {
         run_spans(parts, width).0
     }
 
-    // ── click hit-test ────────────────────────────────────────────────────────
-    //
-    // The same column addresses a different breadcrumb depending on whether a
-    // tag is present, so `has_tag` is what shifts the index, not the position.
-    //
-    // Layout for &["", "home", "user"] at width=80:
-    //   col 0       → "" (root, width=0, x_start=0, x_end=0 via saturating_sub) + "/" sep
-    //   col 1..=4   → "home" (x_start=1, x_end=4)
-    //   col 5       → "/" separator
-    //   col 6..=9   → "user" (x_start=6, x_end=9)
+    // Layout for &["", "home", "user"] at width 80:
+    //   col 0       → "" (root) + "/" sep
+    //   col 1..=4   → "home"
+    //   col 6..=9   → "user"
 
     #[test_case(&["", "home", "user"], 80, 0, 0  => Some(0) ; "click on root (col 0)")]
     #[test_case(&["", "home", "user"], 80, 0, 1  => Some(1) ; "click on first char of home")]

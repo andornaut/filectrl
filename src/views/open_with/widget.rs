@@ -9,8 +9,7 @@ use crate::{app::config::theme::OpenWith, file_system::open_with::AppCandidate};
 const DEFAULT_MARKER: &str = "(default)";
 const NO_APPLICATIONS: &str = " No applications found";
 
-/// One line per application: a digit shortcut, the application name, and the
-/// program behind it.
+/// One line per application: digit shortcut, name, and program.
 pub(super) fn build_rows(
     theme: &OpenWith,
     selected: usize,
@@ -54,8 +53,7 @@ fn build_row(
     let padding = " ".repeat((width as usize).saturating_sub(used));
 
     if is_selected {
-        // The whole row is highlighted, so it is one unstyled span that
-        // inherits the line style rather than several competing ones.
+        // One unstyled span, so the highlight line style applies uniformly.
         return Line::styled(
             format!(" {shortcut}{}  {detail}{padding}", candidate.name),
             theme.selected(),
@@ -125,12 +123,10 @@ mod tests {
         let rows = build_rows(theme(), 0, 40, &candidates(11));
         assert!(text(&rows[0]).starts_with(" 1. App0"));
         assert!(text(&rows[8]).starts_with(" 9. App8"));
-        // Rows 10 and up keep the gutter but have no digit to press.
         assert!(text(&rows[9]).starts_with("    App9"));
         assert!(text(&rows[10]).starts_with("    App10"));
     }
 
-    // Unselected, so the row is built from its separate spans.
     #[test_case("prog" => " 2. Viewer  prog (default)" ; "after the program")]
     #[test_case("" => " 2. Viewer  (default)" ; "alone when there is no program")]
     fn the_default_application_is_marked(detail: &str) -> String {

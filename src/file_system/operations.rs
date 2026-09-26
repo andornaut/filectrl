@@ -26,11 +26,8 @@ use crate::{
 
 const CD_BATCH_SIZE: usize = 256;
 
-/// Spawns a background thread that reads `directory` and streams its entries as
-/// `Command::ListingBatch`es, finishing with `Command::DirectoryListingComplete`.
-/// `generation` tags every message so a superseded load (the user navigated away)
-/// can be ignored, and `cancel` stops the walk when that happens. Off the UI
-/// thread, so navigating into a very large directory stays responsive.
+/// Streams `directory`'s entries from a background thread as `ListingBatch`es,
+/// ending with `DirectoryListingComplete`, all tagged with `generation`.
 pub(super) fn stream_cd(
     directory: PathInfo,
     generation: u64,
@@ -56,8 +53,7 @@ pub(super) fn stream_cd(
         let mut error_count: usize = 0;
 
         for entry in entries {
-            // A newer load has superseded this one: stop without sending a
-            // completion (the newer load owns the listing now).
+            // Superseded: the newer load owns the listing, so send no completion.
             if cancel.is_cancelled() {
                 return;
             }
@@ -100,10 +96,8 @@ pub(super) fn stream_cd(
     });
 }
 
-/// The entry a listing found at `path`, or `None` when it is gone by the time
-/// it is read, like `rm -f`: removed between the directory read and this
-/// look, as a paste's staging directory is once the replacement lands. Only
-/// an entry that is there and cannot be read counts as unreadable.
+/// The entry a listing found at `path`, or `None` if it is gone by now, like
+/// `rm -f`.
 fn listed_entry(path: &Path) -> Result<Option<PathInfo>> {
     match PathInfo::try_from(path) {
         Ok(info) => Ok(Some(info)),
@@ -118,10 +112,8 @@ fn listed_entry(path: &Path) -> Result<Option<PathInfo>> {
     }
 }
 
-/// Runs the opener `template` names on `path`. `key` is the `openers` setting
-/// the template came from, which names it in a refusal or a failure: a
-/// template is a shell command, so its first word need not be the program that
-/// failed (`cd %s && exec xterm`).
+/// Runs the opener `template` names on `path`. Failures name the `openers`
+/// setting `key`, since a template's first word need not be what failed.
 pub(super) fn open_in(
     key: &str,
     path: &PathInfo,
@@ -145,35 +137,27 @@ pub(super) fn open_in(
     Ok(())
 }
 
-/// The config setting of the opener `key`, as the README and the "open with"
-/// picker name it.
+/// The config setting of the opener `key`.
 pub(crate) fn opener_setting(key: &str) -> String {
     format!("openers.{key}")
 }
 
-/// A program's name as a failure names it: quoted, since it is not a config
-/// setting. An application's name is already shown text, so it is quoted
-/// rather than formatted with `{:?}`, which would escape its escapes a second
-/// time; `visible` leaves shown text as it is and escapes anything else.
+/// A program's name as a failure names it, quoted. Not `{:?}`: the name is
+/// already shown text, and `visible` would not escape it a second time.
 pub(crate) fn quoted_program(name: &str) -> String {
     format!("\"{}\"", visible(name))
 }
 
-/// The start of every message about a launched program that failed:
-/// `Failed to run "<program>" on <path>`. `program` is the name the user knows
-/// it by: an application's name, or the editor or pager.
+/// `Failed to run "<program>" on <path>`, the start of every launch failure.
 pub(crate) fn failure_prefix(program: &str, path: &Path) -> String {
     run_failure(&quoted_program(program), path)
 }
 
-/// `Failed to run <shown> on <path>`, where `shown` is already rendered: a
-/// quoted program or an `openers` setting.
 fn run_failure(shown: &str, path: &Path) -> String {
     format!("Failed to run {shown} on {}", compact(path))
 }
 
-/// Why a program that ran did not succeed: its exit code, or the signal that
-/// ended it.
+/// Why a program did not succeed: its exit code, or the signal that ended it.
 pub(crate) fn exit_cause(status: ExitStatus) -> String {
     match (status.code(), status.signal()) {
         (Some(code), _) => format!("exit code {code}"),
@@ -182,10 +166,8 @@ pub(crate) fn exit_cause(status: ExitStatus) -> String {
     }
 }
 
-/// Launch `argv` directly, without a shell, so that nothing in a file name can
-/// be reinterpreted. `label` names what runs, already rendered as a failure
-/// shows it (`AppCandidate::failure_name`), and `path` what it opens. An empty
-/// `argv` is a no-op.
+/// Launches `argv` without a shell, so nothing in a file name is reinterpreted.
+/// `label` is already rendered as a failure shows it.
 pub(super) fn spawn_argv(
     working_dir: Option<&Path>,
     label: &str,
@@ -199,10 +181,8 @@ pub(super) fn spawn_argv(
     };
     let mut command = detached_command(program, rest);
     if let Some(working_dir) = working_dir {
-        // A desktop entry's `Path=` key names the directory to run in. Check it
-        // here so a stale one is reported as what it is: `spawn` would fail
-        // with the same ENOENT as a missing program, and the alert would send
-        // the user looking for the wrong thing.
+        // Checked here: `spawn` would report a stale `Path=` with the same ENOENT as a
+        // missing program.
         if !working_dir.is_dir() {
             return Err(anyhow!(
                 "Cannot run {label}: its working directory {} is not a directory",
@@ -219,10 +199,8 @@ pub(super) fn spawn_argv(
     Ok(())
 }
 
-/// Catch commands that fail immediately (e.g. binary not found) without
-/// blocking the TUI. Long-lived processes (e.g. a terminal window) will still
-/// be running after 250ms and are silently ignored. `failure` starts the
-/// alert, which ends with the cause.
+/// Reports a command that fails within 250ms (e.g. binary not found) without
+/// blocking the TUI.
 fn watch_for_immediate_failure(mut child: Child, failure: String, command_tx: Sender<Command>) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
@@ -235,8 +213,7 @@ fn watch_for_immediate_failure(mut child: Child, failure: String, command_tx: Se
                     )));
                 }
             }
-            // Still running: block in this detached thread until it exits so
-            // it is reaped rather than left as a zombie.
+            // Still running: wait here so it is reaped rather than left as a zombie.
             _ => {
                 let _ = child.wait();
             }
@@ -244,9 +221,7 @@ fn watch_for_immediate_failure(mut child: Child, failure: String, command_tx: Se
     });
 }
 
-/// Refuses a symlink rather than changing its target: `chmod(2)` follows the
-/// link, and Linux has no `lchmod`. The type checked is the one the path has
-/// now, which is what the mode is set on.
+/// Refuses a symlink: `chmod(2)` follows the link, and Linux has no `lchmod`.
 pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     let p = path.as_path();
     if restat(path, "chmod")?.is_symlink() {
@@ -256,9 +231,8 @@ pub(super) fn chmod(path: &PathInfo, mode: u32) -> Result<()> {
     set_mode_without_following(p, mode)
 }
 
-/// Sets the mode without following a symlink at `p` (`tasks::set_mode_at`),
-/// so a path swapped for one after `chmod` checked it is refused rather than
-/// followed.
+/// Sets the mode without following a symlink, so a path swapped for one after
+/// the check is refused.
 fn set_mode_without_following(p: &Path, mode: u32) -> Result<()> {
     match set_mode_at(nix::fcntl::AT_FDCWD, p, mode) {
         Ok(()) => Ok(()),
@@ -285,9 +259,8 @@ fn chmod_failure(p: &Path, mode: u32, error: &dyn std::fmt::Display) -> anyhow::
     anyhow!("Failed to chmod {} to {mode:o}: {error}", compact(p))
 }
 
-/// Takes the bookmarks directory rather than reading it from the global
-/// `Config`, so writes resolve against the same directory `read_bookmarks`
-/// reads (`FileSystem::bookmarks_dir`).
+/// Takes the bookmarks directory so writes resolve against the directory
+/// `read_bookmarks` reads.
 pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<()> {
     let refuse = |reason: &dyn std::fmt::Display| anyhow!("Cannot add bookmark {name:?}: {reason}");
     let fail = |error: &dyn std::fmt::Display| anyhow!("Failed to add bookmark {name:?}: {error}");
@@ -299,8 +272,7 @@ pub(super) fn add_bookmark(dir: &Path, target: &PathInfo, name: &str) -> Result<
         link.display(),
         target.path.display()
     );
-    // `symlink(2)` refuses any entry already at the name, a broken symlink
-    // included, in the same call that would create the link.
+    // `symlink(2)` refuses any entry at the name, a broken symlink included.
     std::os::unix::fs::symlink(&target.path, &link).map_err(|error| {
         if error.kind() == ErrorKind::AlreadyExists {
             refuse(&"it already exists")
@@ -318,11 +290,8 @@ pub(super) fn create_directory(parent: &PathInfo, name: &str) -> Result<()> {
     fs::create_dir(&path).map_err(|error| anyhow!("Failed to create directory {name:?}: {error}"))
 }
 
-/// Rejects a name that cannot denote a new entry inside the directory it is
-/// joined to, returning the reason. `Path::join` discards the base when handed
-/// an absolute path, so without this a prompt value can create or rename an
-/// entry anywhere on the filesystem rather than in the directory the user is
-/// looking at.
+/// Rejects a name that is not a single path component. `Path::join` discards
+/// the base for an absolute path, so this keeps entries in the directory shown.
 fn validate_basename(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("a name cannot be empty".into());
@@ -340,8 +309,7 @@ fn validate_basename(name: &str) -> Result<(), String> {
 }
 
 /// Renames `path` to `new_basename` in the same directory, never replacing an
-/// existing entry. Every error is the whole message: `Cannot rename` for a
-/// refusal filectrl decided, `Failed to rename` for one the system reported.
+/// existing entry.
 pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     let old_path = path.as_path();
     let refuse = |reason: &dyn std::fmt::Display| {
@@ -363,8 +331,6 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
     }
     info!("Renaming {} to {}", old_path.display(), new_path.display());
     match rename_no_replace(old_path, &new_path) {
-        // Only NotFound means vanished; other errors (e.g. permission denied)
-        // must not claim the file is gone.
         Err(error) if error.kind() == ErrorKind::NotFound => Err(refuse(&"it no longer exists")),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             if !is_same_file(old_path, &new_path) {
@@ -373,13 +339,9 @@ pub(super) fn rename(path: &PathInfo, new_basename: &str) -> Result<()> {
                     compact(&new_path)
                 )));
             }
-            // Same underlying file. A case-only change is a real rename on a
-            // case-insensitive filesystem, where the new name resolves to the
-            // source and the directory still lists the old spelling, so it is
-            // let through. Renaming onto another hard link of the same inode
-            // is a POSIX no-op, so it is reported instead, including a link
-            // whose name differs only in case on a case-sensitive filesystem,
-            // which the directory lists exactly as typed.
+            // Same file. A case-only change is a real rename on a case-insensitive
+            // filesystem, so it is let through; a rename onto another hard link is a POSIX
+            // no-op, so it is refused.
             if !is_case_only_change(old_path, &new_path) || is_listed(&new_path) {
                 return Err(refuse(&"both names are the same file"));
             }
@@ -398,7 +360,6 @@ fn is_listed(path: &Path) -> bool {
         .is_ok_and(|mut entries| entries.any(|entry| entry.is_ok_and(|e| e.file_name() == name)))
 }
 
-/// True when the two paths' file names differ only by letter case.
 fn is_case_only_change(a: &Path, b: &Path) -> bool {
     match (a.file_name(), b.file_name()) {
         (Some(a), Some(b)) => {
@@ -408,13 +369,9 @@ fn is_case_only_change(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The single place the detach strategy is defined, so that both spawn paths
-/// stay in step.
-///
-/// The child gets a process group of its own, outside the terminal's
-/// foreground group: signals the terminal sends that group (the hangup when
-/// it closes) do not reach it, and it is stopped rather than obeyed if it
-/// tries to read from or reconfigure the terminal filectrl is drawing on.
+/// The child gets its own process group, outside the terminal's foreground
+/// group: it misses the terminal's hangup, and is stopped if it touches the
+/// terminal.
 fn detached_command<P, I, S>(program: P, args: I) -> std::process::Command
 where
     P: AsRef<OsStr>,
@@ -455,14 +412,9 @@ mod tests {
 
         let error = rename(&gone, "new-name").unwrap_err().to_string();
 
-        // Only NotFound means vanished. Any other errno has to keep its own
-        // message, so a permission problem is not reported as a missing file.
         assert!(error.contains("no longer exists"), "{error}");
     }
 
-    /// An entry gone between the directory read and its look is left out of
-    /// the listing, not counted among the entries that could not be read; one
-    /// that is there but cannot be read still is.
     #[test]
     fn a_listed_entry_that_vanished_is_left_out_rather_than_unreadable() {
         let dir = TempDir::new("ops_listed_vanished");
@@ -497,9 +449,8 @@ mod tests {
         assert_eq!(expected, result.to_string_lossy());
     }
 
-    /// Whether `dir` gained an entry, which is how a name that escaped
-    /// validation shows up: it creates something, just not where it was asked
-    /// to.
+    /// Whether `dir` is still empty: a name that escaped validation creates
+    /// something.
     fn is_empty(dir: &TempDir) -> bool {
         fs::read_dir(dir.path()).unwrap().next().is_none()
     }
@@ -512,8 +463,7 @@ mod tests {
         let dir = TempDir::new("ops_create");
         let parent = PathInfo::try_from(dir.path()).unwrap();
 
-        // Every one of these names also fails at `create_dir`, so which rule
-        // refused is the assertion: `is_err` alone holds with no validation.
+        // Each name also fails at `create_dir`, so the message is what is asserted.
         let error = create_directory(&parent, name)
             .expect_err("a name that is not a basename must be refused")
             .to_string();
@@ -525,10 +475,7 @@ mod tests {
     fn create_directory_rejects_an_absolute_name() {
         let dir = TempDir::new("ops_create_absolute");
         let parent = PathInfo::try_from(dir.path()).unwrap();
-        // `Path::join` drops the parent entirely for an absolute name, so an
-        // unvalidated one creates a directory outside the one on screen. The
-        // escape target is a reserved fixture path, so its absence is this
-        // call's doing and not another process's.
+        // A reserved path, so its absence is this call's doing.
         let escape = TempDir::reserved("ops_create_escape");
 
         assert!(create_directory(&parent, escape.path().to_str().unwrap()).is_err());
@@ -545,13 +492,10 @@ mod tests {
         fs::write(&b, b"b").unwrap();
 
         let info = PathInfo::try_from(a.as_path()).unwrap();
-        // Which refusal matters: a destination wrongly taken for the source's
-        // own file is refused too, with the "same file" message instead.
         let error = rename(&info, "b.txt")
             .expect_err("an existing destination must be refused")
             .to_string();
         assert!(error.ends_with("already exists"), "{error}");
-        // The existing destination must be untouched.
         assert_eq!(b"b".to_vec(), fs::read(&b).unwrap());
 
         assert!(rename(&info, "c.txt").is_ok());
@@ -567,8 +511,7 @@ mod tests {
         fs::write(&a, b"a").unwrap();
         let listed = PathInfo::try_from(a.as_path()).unwrap();
         fs::set_permissions(&sub, fs::Permissions::from_mode(0o000)).unwrap();
-        // Root reaches through a mode-000 directory anyway; probe rather than
-        // inspect the euid.
+        // Root reaches through a mode-000 directory; probe rather than check the euid.
         let is_unreachable = a.symlink_metadata().is_err();
 
         let result = rename(&listed, "b.txt");
@@ -577,7 +520,6 @@ mod tests {
         if !is_unreachable {
             return;
         }
-        // EACCES keeps its own message: the entry is still there.
         let error = result.unwrap_err().to_string();
         assert!(error.starts_with("Failed to rename"), "{error}");
         assert!(error.contains("Permission denied"), "{error}");
@@ -592,8 +534,6 @@ mod tests {
         fs::write(&a, b"a").unwrap();
         let info = PathInfo::try_from(a.as_path()).unwrap();
 
-        // Joined onto the parent unvalidated, this renames the file into the
-        // directory above the one on screen.
         let error = rename(&info, "../escaped.txt")
             .expect_err("a name that is not a basename must be refused")
             .to_string();
@@ -616,17 +556,13 @@ mod tests {
         fs::hard_link(&a, &b).unwrap();
 
         let info = PathInfo::try_from(a.as_path()).unwrap();
-        // Renaming onto another hard link of the same inode would be a POSIX
-        // no-op; report it rather than silently succeeding.
         let error = rename(&info, "b.txt").unwrap_err().to_string();
         assert!(error.contains("same file"), "unexpected error: {error}");
         assert!(a.exists());
         assert!(b.exists());
     }
 
-    /// Two hard links whose names differ only in case, which only a
-    /// case-sensitive filesystem can hold. Renaming one onto the other would
-    /// change nothing, like any other pair of hard links.
+    /// Only a case-sensitive filesystem can hold both names.
     #[cfg(target_os = "linux")]
     #[test]
     fn rename_refuses_a_hard_link_whose_name_differs_only_in_case() {
@@ -644,8 +580,7 @@ mod tests {
         assert!(dir.join("foo").exists());
     }
 
-    /// macOS only: the default APFS volume is case-insensitive, where the new
-    /// spelling resolves to the entry itself and the rename changes the name.
+    /// The default APFS volume is case-insensitive.
     #[cfg(target_os = "macos")]
     #[test]
     fn rename_changes_only_the_case_of_a_name_on_a_case_insensitive_filesystem() {
@@ -662,8 +597,6 @@ mod tests {
         assert_eq!(vec![OsString::from("A.TXT")], names);
     }
 
-    // ── chmod ───────────────────────────────────────────────────────────────
-
     fn mode_of(path: &Path) -> u32 {
         fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
     }
@@ -678,8 +611,6 @@ mod tests {
         fs::set_permissions(&inner, fs::Permissions::from_mode(0o644)).unwrap();
         let info = PathInfo::try_from(target.as_path()).unwrap();
 
-        // Deliberately not recursive: it applies to exactly the marked
-        // entries, so a two-keystroke prompt cannot rewrite a whole subtree.
         chmod(&info, 0o700).unwrap();
 
         assert_eq!(0o700, mode_of(&target));
@@ -696,8 +627,6 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         let info = PathInfo::try_from(link.as_path()).unwrap();
 
-        // `set_permissions` follows the link, so without the refusal this
-        // succeeds and makes the target world-writable.
         let error = chmod(&info, 0o777)
             .expect_err("a symlink must be refused")
             .to_string();
@@ -707,10 +636,8 @@ mod tests {
         assert_eq!(0o600, mode_of(&target));
     }
 
-    /// The check in `chmod` runs before the mode is set, so a path swapped for
-    /// a symlink in between reaches this step as a symlink. Linux refuses to
-    /// set a symlink's own mode; macOS sets it. Either way the target is left
-    /// alone.
+    /// Linux refuses to set a symlink's own mode; macOS sets it. Either way the
+    /// target is left alone.
     #[test]
     fn setting_the_mode_does_not_follow_a_symlink_that_passed_the_check() {
         let dir = TempDir::new("ops_chmod_swapped");
@@ -764,12 +691,9 @@ mod tests {
 
         let error = chmod(&info, 0o600).unwrap_err().to_string();
 
-        // The errno is reported, not a refusal filectrl decided.
         assert!(error.starts_with("Failed to chmod"), "{error}");
         assert!(error.contains("No such file"), "{error}");
     }
-
-    // ── create_directory ────────────────────────────────────────────────────
 
     #[test]
     fn create_directory_creates_it_inside_the_parent() {
@@ -787,8 +711,6 @@ mod tests {
         let parent = PathInfo::try_from(dir.path()).unwrap();
         fs::create_dir(dir.join("taken")).unwrap();
 
-        // `create_dir` rather than `create_dir_all`, so an existing directory
-        // is an error instead of silently adopted.
         let error = create_directory(&parent, "taken")
             .expect_err("an existing directory must be refused")
             .to_string();
@@ -798,15 +720,12 @@ mod tests {
         );
     }
 
-    // ── add_bookmark ────────────────────────────────────────────────────────
-
     #[test]
     fn add_bookmark_symlinks_the_named_directory() {
         let base = TempDir::new("ops_bookmark");
         let bookmarks = base.join("bookmarks");
         let target = PathInfo::try_from(base.path()).unwrap();
 
-        // The bookmarks directory does not exist yet; adding one creates it.
         add_bookmark(&bookmarks, &target, "favs").unwrap();
 
         assert_eq!(base.path(), fs::read_link(bookmarks.join("favs")).unwrap());
@@ -819,9 +738,7 @@ mod tests {
         let bookmarks = base.join("bookmarks");
         let target = PathInfo::try_from(base.path()).unwrap();
 
-        // An empty name resolves to the bookmarks directory and a nested one
-        // to a missing parent, so both fail later on anyway: the message is
-        // what says the name was refused rather than the symlink call failing.
+        // Both also fail later, so the message is what shows the name was refused.
         add_bookmark(&bookmarks, &target, name)
             .expect_err("a name that is not a basename must be refused")
             .to_string()
@@ -832,9 +749,7 @@ mod tests {
         let base = TempDir::new("ops_bookmark_absolute");
         let bookmarks = base.join("bookmarks");
         let target = PathInfo::try_from(base.path()).unwrap();
-        // Joined onto the bookmarks directory, an absolute name replaces it,
-        // so the symlink would be planted wherever the name pointed. A
-        // reserved fixture path makes its absence attributable to this call.
+        // A reserved path, so its absence is this call's doing.
         let escape = TempDir::reserved("ops_bookmark_escape");
 
         assert!(add_bookmark(&bookmarks, &target, escape.path().to_str().unwrap()).is_err());
@@ -858,8 +773,7 @@ mod tests {
     #[test]
     fn add_bookmark_names_the_bookmark_when_its_directory_cannot_be_created() {
         let base = TempDir::new("ops_bookmark_no_dir");
-        // A regular file where the bookmarks directory should be, which
-        // `create_dir_all` refuses even for root.
+        // A file where the directory should be, which `create_dir_all` refuses even for root.
         let bookmarks = base.join("bookmarks");
         fs::write(&bookmarks, b"").unwrap();
         let target = PathInfo::try_from(base.path()).unwrap();
@@ -879,8 +793,6 @@ mod tests {
         let base = TempDir::new("ops_bookmark_broken");
         let bookmarks = base.join("bookmarks");
         fs::create_dir_all(&bookmarks).unwrap();
-        // What a bookmark becomes once its target is removed: `exists()`
-        // follows the link and reports false.
         std::os::unix::fs::symlink(base.join("gone"), bookmarks.join("favs")).unwrap();
         let target = PathInfo::try_from(base.path()).unwrap();
 
@@ -888,12 +800,8 @@ mod tests {
             .expect_err("a name held by a broken symlink must be refused")
             .to_string();
 
-        // The refusal, not the bare EEXIST `symlink` raises: asserting only
-        // `is_err` cannot tell the two apart.
         assert_eq!("Cannot add bookmark \"favs\": it already exists", error);
     }
-
-    // ── launching and listing ───────────────────────────────────────────────
 
     #[test]
     fn spawn_argv_refuses_a_working_directory_that_is_not_one() {
@@ -901,8 +809,6 @@ mod tests {
         let missing = dir.join("missing");
         let (tx, _rx) = std::sync::mpsc::channel();
 
-        // `spawn` would fail with the same ENOENT as a missing program, which
-        // would send the user looking for the wrong thing.
         let error = spawn_argv(
             Some(&missing),
             "\"App\"",
@@ -928,8 +834,7 @@ mod tests {
 
         spawn_argv(None, "\"App\"", Path::new("/f"), &argv, tx).unwrap();
 
-        // The watcher thread holds the only sender, so this returns once it
-        // has either reported or dropped it.
+        // The watcher thread holds the only sender.
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Command::AlertError(message)) => Some(message),
             Ok(other) => panic!("unexpected command {other:?}"),
@@ -938,16 +843,12 @@ mod tests {
         }
     }
 
-    /// An application's name arrives already shown, its invisible characters
-    /// spelled out, and is not escaped again. Raw text is still escaped once.
     #[test_case("Text\\u{2063} Editor" => "Failed to run \"Text\\u{2063} Editor\" on \"/f\"" ; "a shown name is kept as it is")]
     #[test_case("Text\u{2063} Editor" => "Failed to run \"Text\\u{2063} Editor\" on \"/f\"" ; "a raw name is escaped once")]
     fn failure_prefix_names(program: &str) -> String {
         failure_prefix(program, Path::new("/f"))
     }
 
-    /// A template's first word need not be what failed (`cd` here), so the
-    /// failure names the setting.
     #[test]
     fn an_opener_template_is_reported_by_its_setting() {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -983,7 +884,6 @@ mod tests {
         );
     }
 
-    /// Linux only: the group is read from `/proc`.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_launched_program_runs_in_a_process_group_of_its_own() {
@@ -1011,7 +911,6 @@ mod tests {
 
         stream_cd(missing, 7, tx, CancellationToken::new());
 
-        // Without the completion the listing would stay in its loading state.
         let commands: Vec<Command> = rx.iter().collect();
         let [
             Command::AlertWarn(message),
@@ -1033,8 +932,6 @@ mod tests {
 
         stream_cd(PathInfo::try_from(dir.path()).unwrap(), 7, tx, cancel);
 
-        // The newer load owns the listing, so neither this one's entries nor
-        // its completion may reach it.
         let commands: Vec<Command> = rx.iter().collect();
         assert!(commands.is_empty(), "{commands:?}");
     }

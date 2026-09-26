@@ -5,9 +5,8 @@ use serde::Deserialize;
 
 use super::serde::{deserialize_color, deserialize_modifier};
 
-/// A triplet of style properties: foreground color, background color, and modifiers.
-/// All fields are optional: omitted fields inherit defaults (no color, no modifiers).
-/// `fg` and `bg` accept `""` in config to explicitly inherit from the parent widget.
+/// Foreground, background and modifiers. Omitted fields inherit; `fg` and
+/// `bg` accept `""` to inherit explicitly.
 #[derive(Copy, Clone, Default, Deserialize)]
 pub struct StyleConfig {
     #[serde(default, deserialize_with = "deserialize_color")]
@@ -47,9 +46,8 @@ macro_rules! style_getter {
     };
 }
 
-/// Declares a theme sub-struct whose fields are all `StyleConfig`, deriving
-/// `Deserialize` and a `Style` getter for each field. Prefix the field list
-/// with `base,` to add a `#[serde(flatten)]`-ed `base` style.
+/// Declares a theme sub-struct of `StyleConfig` fields with a `Style` getter
+/// each. A leading `base,` adds a flattened `base` style.
 macro_rules! style_struct {
     ($name:ident { base, $($field:ident),+ $(,)? }) => {
         #[derive(Deserialize)]
@@ -76,10 +74,8 @@ macro_rules! style_struct {
     };
 }
 
-/// Declares the `FileType` struct from a single `field => "dircolors-key"`
-/// table, generating the `StyleConfig` fields, their `Style` getters, and
-/// `set_ls_color` (the `LS_COLORS` key → field dispatch). This keeps the field
-/// list, getters, and `LS_COLORS` mapping from drifting apart.
+/// Declares `FileType` from one `field => "dircolors-key"` table: the fields,
+/// their getters, and `set_ls_color`.
 macro_rules! file_type {
     ($($field:ident => $ls_key:literal),+ $(,)?) => {
         #[derive(Clone, Deserialize, Default)]
@@ -89,9 +85,8 @@ macro_rules! file_type {
             // `*` patterns, in `LS_COLORS` order (see `pattern_styles`).
             #[serde(skip)]
             suffix_styles: Vec<SuffixStyle>,
-            // Keys in `FALLTHROUGH_KEYS` that `LS_COLORS` reset. `ls` treats
-            // those as uncolored and classifies the entry by the next rule, so
-            // a reset there is not "render plain".
+            // `FALLTHROUGH_KEYS` that `LS_COLORS` reset: `ls` classifies such an entry by
+            // the next rule rather than rendering it plain.
             #[serde(skip)]
             uncolored: HashSet<&'static str>,
         }
@@ -99,8 +94,8 @@ macro_rules! file_type {
         impl FileType {
             $(style_getter!($field);)+
 
-            /// Apply a parsed `LS_COLORS` style for a dircolors file-type key.
-            /// Returns false if `key` is not a recognized file-type key.
+            /// Applies a parsed `LS_COLORS` style for a dircolors file-type key. Returns
+            /// false for an unrecognized key.
             fn set_ls_color(&mut self, key: &str, style: StyleConfig) -> bool {
                 match key {
                     $($ls_key => self.$field = style,)+
@@ -131,8 +126,8 @@ file_type! {
     symlink_broken => "or",
 }
 
-/// An `LS_COLORS` `*` pattern: the suffix after the `*`, and whether it
-/// compares with regard to case.
+/// An `LS_COLORS` `*` pattern: the suffix after `*`, and whether it compares
+/// case-sensitively.
 #[derive(Clone)]
 struct SuffixStyle {
     suffix: String,
@@ -140,14 +135,12 @@ struct SuffixStyle {
     style: StyleConfig,
 }
 
-/// Keys `ls` consults only while they are colored: reset, the entry is
-/// classified by the next rule (`ow` falls back to `di`, `ex` to the patterns
-/// and `fi`, `or` to `ln`) rather than rendered plain.
+/// Keys `ls` consults only while colored; reset, the entry falls to the next
+/// rule (`ow` to `di`, `ex` to the patterns and `fi`, `or` to `ln`).
 const FALLTHROUGH_KEYS: [&str; 7] = ["ex", "or", "ow", "sg", "st", "su", "tw"];
 
 impl FileType {
-    /// This theme with `ls_colors` applied on top, as `ui.ls_colors_take_precedence`
-    /// would apply it.
+    /// This theme with `ls_colors` applied on top.
     #[cfg(test)]
     #[must_use]
     pub fn with_ls_colors(&self, ls_colors: &str) -> Self {
@@ -156,15 +149,13 @@ impl FileType {
         applied
     }
 
-    /// Whether the `LS_COLORS` key `key` still colors its entries, which only a
-    /// reset of one of `FALLTHROUGH_KEYS` undoes.
+    /// Whether `key` still colors its entries; only a reset `FALLTHROUGH_KEYS`
+    /// entry does not.
     pub fn is_colored(&self, key: &str) -> bool {
         !self.uncolored.contains(key)
     }
 
-    /// Applies `LS_COLORS` (passed in by the caller, not read from the
-    /// environment here, so config parsing stays pure) on top of the
-    /// configured colors.
+    /// Applies `LS_COLORS` on top of the configured colors.
     pub(super) fn apply_ls_colors(&mut self, ls_colors: &str, warn_on_rgb: bool) {
         let mut found_rgb = false;
         for entry in ls_colors.split(':') {
@@ -173,12 +164,9 @@ impl FileType {
             };
 
             let (fg, bg, attrs) = super::ls_colors::parse(value);
-            // `ls` counts a key as uncolored only when its value is empty,
-            // `0` or `00` exactly. That renders the entry plain, except for
-            // `FALLTHROUGH_KEYS`. Other values made only of reset codes
-            // (`0;00`) count as colored and print as plain. Anything else that
-            // parses to no style is unrecognized codes, which leave the
-            // configured style alone.
+            // As in `ls`: a value of exactly empty, `0` or `00` is uncolored (plain,
+            // except `FALLTHROUGH_KEYS`); other reset-only values are colored and print
+            // plain; unrecognized codes leave the configured style alone.
             let is_reset = matches!(value, "" | "0" | "00");
             let is_plain = is_reset || value.split(';').all(|code| matches!(code, "0" | "00"));
             if fg.is_none() && bg.is_none() && attrs == Modifier::empty() && !is_plain {
@@ -204,7 +192,6 @@ impl FileType {
 
             let style = StyleConfig::new(fg, bg, attrs);
             if self.set_ls_color(key, style) {
-                // Recognized file-type key, handled by set_ls_color.
             } else if let Some(suffix) = key.strip_prefix('*') {
                 self.suffix_styles.push(SuffixStyle {
                     suffix: suffix.to_string(),
@@ -212,10 +199,10 @@ impl FileType {
                     style,
                 });
             }
-            // Otherwise unrecognized (e.g. "ca" capabilities), ignored.
+            // Unrecognized keys (e.g. "ca") are ignored.
         }
-        // As in `ls`, a pattern compares with regard to case only when
-        // another one differs from it in case alone.
+        // As in `ls`, a pattern is case-sensitive only when another differs from it
+        // in case alone.
         let suffixes: Vec<String> = self
             .suffix_styles
             .iter()
@@ -233,10 +220,9 @@ impl FileType {
         }
     }
 
-    /// The style of the last `*` pattern that `name` ends with, as `ls`
-    /// matches them: a suffix of the whole name (so `*.gitignore` colors the
-    /// dotfile `.gitignore`), without regard to ASCII case unless the pattern
-    /// has a case variant listed too, the last listed match winning.
+    /// The style of the last `*` pattern that `name` ends with, as `ls` matches
+    /// them: a suffix of the whole name, ASCII case-insensitive unless a case
+    /// variant is listed too.
     pub fn pattern_styles(&self, name: &str) -> Option<Style> {
         let name = name.as_bytes();
         self.suffix_styles
@@ -414,8 +400,6 @@ mod tests {
         assert_eq!(Some(Color::Red), fg_of(ls_colors, name));
     }
 
-    /// `ls` compares case only among patterns that differ in case alone, so
-    /// each of them colors its own spelling and a third spelling gets neither.
     #[test_case("a.JPG" => Some(Color::Blue) ; "one spelling")]
     #[test_case("a.jpg" => Some(Color::Red) ; "the other")]
     #[test_case("a.Jpg" => None ; "a third")]
@@ -423,17 +407,13 @@ mod tests {
         fg_of("*.JPG=34:*.jpg=31", name)
     }
 
-    /// The last listed match wins, not the longest, as in `ls`: both orders,
-    /// so neither the first nor the longest pattern can pass for the rule.
+    /// The last listed match wins, not the longest; both orders are tested.
     #[test_case("*.tar.gz=34:*.gz=31" => Some(Color::Red) ; "the shorter listed last")]
     #[test_case("*.gz=31:*.tar.gz=34" => Some(Color::Blue) ; "the longer listed last")]
     fn the_last_listed_match_wins(ls_colors: &str) -> Option<Color> {
         fg_of(ls_colors, "foo.tar.gz")
     }
 
-    /// An empty value, `0` or `00` renders the entry plain, as `ls` does, for
-    /// a file-type key and a pattern alike, and so does a value of reset codes
-    /// alone; codes it does not recognize leave the theme alone.
     #[test_case("di=00:*.txt=0:*README=00" => (Style::default(), Some(Style::default()), Some(Style::default())) ; "an explicit reset")]
     #[test_case("di=:*.txt=:*README=" => (Style::default(), Some(Style::default()), Some(Style::default())) ; "an empty value")]
     #[test_case("di=0;00:*.txt=00;0" => (Style::default(), Some(Style::default()), None) ; "reset codes alone")]
@@ -488,9 +468,7 @@ mod tests {
         let mut ft = FileType::default();
         ft.apply_ls_colors("di=34", false);
 
-        // "99" is not a code this understands, so the entry carries no color
-        // and no modifier. Applying it would replace a color the user
-        // configured with nothing at all.
+        // "99" is unrecognized, so it must not replace the configured color.
         ft.apply_ls_colors("di=99", false);
 
         assert_eq!(ft.directory().fg, Some(Color::Blue));
@@ -498,8 +476,7 @@ mod tests {
 
     #[test]
     fn apply_ls_colors_skips_empty_colon_separated_entries() {
-        // A trailing or doubled colon leaves an empty entry, which GNU `ls`
-        // accepts, so it must be skipped rather than end the parse.
+        // An empty entry is skipped, as GNU `ls` does.
         let mut ft = FileType::default();
         ft.apply_ls_colors("::di=34::", false);
         assert_eq!(ft.directory().fg, Some(Color::Blue));

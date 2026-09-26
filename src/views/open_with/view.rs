@@ -8,16 +8,14 @@ use crate::app::config::theme::Theme;
 use crate::views::{View, as_dimension, bordered, render_lines, scroll_to_show, split_scrollbar};
 
 impl View for OpenWithView {
-    /// The same constraint as `TableView`, so the picker lands in exactly the
-    /// table's slot and nothing above or below it moves.
+    /// The table's constraint, so the picker takes exactly its slot.
     fn constraint(&self, _: Rect) -> Constraint {
         Constraint::Min(MIN_HEIGHT)
     }
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
         if area.height < MIN_HEIGHT {
-            // Zero-size areas clear both hit test regions, so a click on the
-            // sliver that is left cannot be tested against a stale layout.
+            // Zero-size areas clear both hit-test regions.
             self.area = Rect::default();
             self.content_area = Rect::default();
             return;
@@ -30,8 +28,7 @@ impl View for OpenWithView {
 
         self.inner_height = bordered_area.height as usize;
         let max_scroll = self.max_scroll();
-        // The viewport height is only known here, so a selection made before
-        // the first render may still be off screen.
+        // The viewport height is known only here.
         self.scroll_offset =
             scroll_to_show(self.inner_height, self.scroll_offset, self.selected).min(max_scroll);
 

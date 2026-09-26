@@ -2,12 +2,8 @@ use anyhow::Error;
 
 use super::Command;
 
-/// The outcome of `CommandHandler::handle_command`/`handle_key`/`handle_mouse`.
-///
-/// Build the derived-command variants through `From` (`command.into()` for one,
-/// `commands.into()` for a `Vec`) rather than naming them directly: the `Vec`
-/// conversion normalizes by length, and a hand-built `HandledWithMany` holding
-/// zero or one command compares unequal to the `Handled`/`HandledWith` it means.
+/// The outcome of a `CommandHandler` method. Build the derived-command variants
+/// through `From`, which normalizes by length so equality stays canonical.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandResult {
     Handled,
@@ -18,8 +14,6 @@ pub enum CommandResult {
 
 impl CommandResult {
     /// The derived commands, dropping the handled/not-handled distinction.
-    /// The lossless way for production code to consume a result: it never
-    /// assumes a single derived command.
     pub fn into_commands(self) -> Vec<Command> {
         match self {
             Self::HandledWith(command) => vec![*command],
@@ -35,9 +29,6 @@ impl From<Command> for CommandResult {
     }
 }
 
-/// Normalizes by length so equality stays canonical: an empty `Vec` is
-/// `Handled`, a single command is `HandledWith`, and only two or more become
-/// `HandledWithMany`.
 impl From<Vec<Command>> for CommandResult {
     fn from(mut value: Vec<Command>) -> Self {
         match value.len() {
@@ -74,8 +65,6 @@ mod tests {
     fn a_context_chain_is_flattened_onto_the_one_line_an_alert_has() {
         use anyhow::Context;
 
-        // An alert is a single line, so `to_string` would show only the
-        // outermost message and drop the cause that names what went wrong.
         let error = Err::<(), _>(anyhow!("permission denied"))
             .context("Failed to copy /a/b")
             .unwrap_err();

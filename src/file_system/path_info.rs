@@ -27,23 +27,18 @@ pub(crate) fn visible_name(name: &OsStr) -> String {
     crate::visible_os(name).into_owned()
 }
 
-/// A whole path as it is shown, for a view that has room for it, through
-/// `crate::visible_os`.
+/// A whole path as it is shown, through `crate::visible_os`.
 pub(crate) fn visible_path(path: &Path) -> String {
     crate::visible_os(path.as_os_str()).into_owned()
 }
 
-/// Trailing components a compacted path always keeps: the parent and the entry
-/// itself, which together are what identifies it.
+/// Trailing components a compacted path always keeps: the parent and the entry.
 const KEPT_TAIL_COMPONENTS: usize = 2;
-/// Component count above which the middle is elided. At or below it, the
-/// ellipsis would replace no more than it costs.
+/// Component count above which the middle is elided.
 const MAX_PATH_COMPONENTS: usize = 4;
 
-/// A path rendered for a user-facing message: quoted, home directory as `~`, and
-/// a long middle elided to the first component and the last two. A message naming
-/// two paths otherwise wraps across several rows of the alerts view and pushes
-/// everything else off screen; a path's middle costs the most and says least.
+/// A path rendered for a message: quoted, home as `~`, and a long middle elided
+/// to the first component and the last two.
 pub struct Compact<'a> {
     path: &'a Path,
     elide: bool,
@@ -59,10 +54,8 @@ pub fn quoted(path: &Path) -> Compact<'_> {
     Compact { path, elide: false }
 }
 
-/// Quoted, with a quote or backslash in the path escaped so the quotes
-/// delimit it, every character `crate::is_disguising` names spelled out, and
-/// each byte that is not valid UTF-8 spelled `\xNN`, as `crate::visible_os`
-/// does.
+/// Quoted, escaping `"` and `\`, each character `crate::is_disguising` names, and
+/// each byte that is not valid UTF-8 as `\xNN`.
 impl Display for Compact<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use fmt::Write;
@@ -84,17 +77,16 @@ impl Display for Compact<'_> {
     }
 }
 
-/// The home directory, looked up once: `compact` runs per message and the
-/// lookup reads the environment and the password database.
+/// The home directory, looked up once: the lookup reads the environment and the
+/// password database.
 fn home_dir() -> Option<&'static Path> {
     static HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     HOME.get_or_init(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
         .as_deref()
 }
 
-/// The path's bytes with the home directory as `~` and, when `elide` is set, a
-/// long middle replaced by an ellipsis. Bytes rather than a string, so a name
-/// that is not UTF-8 reaches `Compact`'s escaping intact.
+/// The path's bytes with home as `~` and, when `elide` is set, a long middle
+/// elided. Bytes, so a name that is not UTF-8 reaches `Compact`'s escaping intact.
 fn compact_bytes(path: &Path, elide: bool) -> Vec<u8> {
     let separator = MAIN_SEPARATOR_STR.as_bytes();
     let text = match home_dir().and_then(|home| path.strip_prefix(home).ok()) {
@@ -137,17 +129,14 @@ pub(crate) fn breadcrumbs(path: &Path) -> Vec<String> {
 /// User or group names by id, including ids with no name.
 type NameCache = HashMap<u32, Option<String>>;
 
-/// The name for `id`, looked up once per process. The status bar asks on every
-/// redraw, and a lookup can go to the network (LDAP, NIS), so a rename in the
-/// user database shows only after a restart. A lookup that failed (a timeout,
-/// say) is not an answer, so it is asked again next time.
+/// The name for `id`, looked up once per process, since a lookup can go to the
+/// network (LDAP, NIS). A failed lookup is retried next time.
 fn cached_name<E>(
     cache: &Mutex<NameCache>,
     id: u32,
     lookup: impl FnOnce(u32) -> Result<Option<String>, E>,
 ) -> Option<String> {
-    // Nothing panics while the lock is held but the lookup, and a poisoned
-    // cache still holds only complete entries.
+    // A poisoned cache still holds only complete entries.
     let mut names = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -171,22 +160,17 @@ pub struct PathInfo {
     device: u64,
     inode: u64,
     mode: u32,
-    /// Whether this is a symlink whose target does not exist, resolved when the
-    /// entry is read. See `is_symlink_broken`.
+    /// A symlink whose target does not exist, resolved when the entry is read.
     symlink_broken: bool,
-    /// What a symlink names, read with the entry so the status bar never reads
-    /// the link on a redraw. `None` for anything else, or a link that could not
-    /// be read.
+    /// What a symlink names, read with the entry so a redraw never reads the link.
     symlink_target: Option<PathBuf>,
     accessed: Option<DateTime<Local>>,
     created: Option<DateTime<Local>>,
 }
 
 impl PathInfo {
-    /// An entry whose type and permission bits are set directly, for tests of
-    /// code that dispatches on them. Some cannot be created on disk at all (a
-    /// block device needs root, a door needs Solaris), and for the rest the
-    /// mode is what every predicate reads anyway.
+    /// An entry with its type and permission bits set directly, for types that
+    /// cannot be created on disk (a block device needs root, a door needs Solaris).
     #[cfg(test)]
     pub(crate) fn with_mode(mode: u32) -> Self {
         let mut info = Self::try_from(Path::new("/")).expect("the root should be readable");
@@ -283,8 +267,7 @@ impl PathInfo {
         unix_mode::is_dir(self.mode)
     }
 
-    // `self.mode` is read on Solaris; every other target answers false, so
-    // the receiver only looks unused where the cfg below compiles it out.
+    // `self.mode` is read only on Solaris.
     #[allow(clippy::unused_self)]
     pub fn is_door(&self) -> bool {
         #[cfg(target_os = "solaris")]
@@ -315,9 +298,7 @@ impl PathInfo {
     }
 
     pub fn is_same_inode(&self, other: &Self) -> bool {
-        // Inode numbers are only unique within one filesystem; entries from
-        // different mounts (e.g. two mount points in one listing) can share
-        // an inode number, so the device must match too.
+        // Inode numbers are unique only within one filesystem.
         self.device == other.device && self.inode == other.inode
     }
 
@@ -347,11 +328,8 @@ impl PathInfo {
         self.symlink_target.as_deref()
     }
 
-    /// Whether this is a symlink whose target does not exist, as of when the
-    /// entry was read. Answering means following the link, so it is resolved once
-    /// at construction: the renderer asks for every visible symlink on every
-    /// frame, and only a change on disk can invalidate the answer, which is what
-    /// the watcher reloads the listing for.
+    /// Whether this is a symlink whose target does not exist, as of when the entry
+    /// was read. Resolved once, since the renderer asks on every frame.
     pub fn is_symlink_broken(&self) -> bool {
         self.symlink_broken
     }
@@ -399,10 +377,8 @@ impl TryFrom<&Path> for PathInfo {
             modified: maybe_time(metadata.modified()),
             path: path.to_path_buf(),
             size: metadata.len(),
-            // Only a symlink can be broken, so nothing else pays for the
-            // second look at the path. `try_exists` follows the link, so a
-            // permission error on the target (or on a parent component) is not
-            // misreported as broken; only a confirmed "does not exist" counts.
+            // `try_exists` follows the link; only a confirmed "does not exist" counts, not a
+            // permission error.
             symlink_broken: unix_mode::is_symlink(mode) && matches!(path.try_exists(), Ok(false)),
             symlink_target: unix_mode::is_symlink(mode)
                 .then(|| std::fs::read_link(path).ok())
@@ -438,9 +414,7 @@ impl TryFrom<String> for PathInfo {
     }
 }
 
-// Display-only scaling. f64 carries 53 bits of integer precision, so a size
-// would have to exceed 8 exabytes before the rendered figure moved, and the
-// unit index is bounded by UNITS.
+// Display only; f64 is exact for integers below 2^53.
 #[allow(clippy::cast_precision_loss)]
 fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     if bytes == 0 {
@@ -451,9 +425,8 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
     let divisor = FACTOR.pow(exponent) as f64;
     let value = (bytes as f64) / divisor;
 
-    // Show one decimal place only for values below 10 that are not whole once
-    // rounded to it; otherwise round to a whole number. Rounding first keeps
-    // 9.96 from rendering as "10.0" and 1.04 as "1.0".
+    // One decimal only below 10 and when not whole once rounded; rounding first
+    // keeps 9.96 from rendering as "10.0".
     let tenths = (value * 10.0).round() / 10.0;
     let formatted_value = if tenths < 10.0 && tenths.fract() != 0.0 {
         format!("{tenths:.1}")
@@ -465,14 +438,12 @@ fn humanize_bytes(bytes: u64, unit_index: usize) -> String {
 }
 
 fn unit_index(bytes: u64) -> usize {
-    // Below one KiB there is no fractional rendering, so keep these values in
-    // the byte unit; otherwise 1000..=1023 would be mislabelled as "1.0K".
+    // Below 1 KiB stay in bytes, or 1000..=1023 would render as "1.0K".
     if bytes < FACTOR {
         return 0;
     }
-    // For larger values, group by decimal-digit count. This deliberately
-    // promotes to the next unit slightly before it is numerically full (e.g.
-    // 1e9 bytes renders as "0.9G"), which is the intended display style.
+    // Grouped by decimal digit count, so the next unit starts slightly early (1e9
+    // bytes renders as "0.9G").
     let index = (bytes.ilog10() / FACTOR.ilog10()) as usize;
     cmp::min(index, UNITS.len() - 1)
 }
@@ -487,12 +458,9 @@ pub enum DateTimeAge {
     GreaterThanYear,
 }
 
-/// The Name column's sort key: `name_text`, compared with each
-/// run of digits read as a number when `natural`, so `file2` sorts before
-/// `file10`. Two names whose numbers are equal but spelled differently (`01`
-/// and `1`) fall back to the plain text order, and two that differ only in
-/// case or leading dots (`README`, `readme`) to the names themselves, so
-/// distinct names never tie.
+/// The Name column's sort key: `name_text`, with digit runs compared as numbers
+/// when `natural` (`file2` before `file10`). Ties fall back to the text, then
+/// the name, so distinct names never tie.
 pub fn name_key(name: &str, natural: bool) -> NameKey {
     NameKey {
         text: name_text(name),
@@ -501,16 +469,9 @@ pub fn name_key(name: &str, natural: bool) -> NameKey {
     }
 }
 
-/// The Name column's ordering rule: case and leading dots are ignored, so a dot
-/// file sorts next to its undotted neighbours. What `ls -a` does under a UTF-8
-/// locale, whose collation drops the dot rather than hoisting every hidden entry
-/// to the top the way `LC_ALL=C` does.
-///
-/// Takes the name rather than a `PathInfo` because the column shows the path
-/// relative to the search root while searching, and the order has to follow what
-/// is on screen. Applied per segment for the same reason the locale's is, so a
-/// dot file deep in the tree sorts next to its neighbours rather than at the top
-/// of its subtree.
+/// Ignores case and leading dots per path segment, like `ls -a` under a UTF-8
+/// locale. Takes the shown name, which is relative to the search root while
+/// searching.
 fn name_text(name: &str) -> String {
     let mut key = String::with_capacity(name.len());
     for (index, segment) in name.split(MAIN_SEPARATOR).enumerate() {
@@ -555,12 +516,8 @@ impl PartialOrd for NameKey {
     }
 }
 
-/// Compares character by character, except that where both sides reach an
-/// ASCII digit, the two runs of digits are compared as numbers: by length once
-/// leading zeros are dropped, then digit by digit. `01` and `1` compare equal.
-///
-/// It walks bytes, which orders UTF-8 text the way comparing characters does,
-/// and an ASCII digit byte is never part of a longer character.
+/// Compares bytewise, except that two runs of ASCII digits compare as numbers
+/// (leading zeros dropped), so `01` and `1` compare equal.
 fn natural_cmp(left: &str, right: &str) -> Ordering {
     let (left, right) = (left.as_bytes(), right.as_bytes());
     let (mut at_left, mut at_right) = (0, 0);
@@ -644,9 +601,8 @@ fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) ->
     datetime
 }
 
-/// `None` for a time chrono cannot represent, rather than the panic that
-/// `DateTime::from(SystemTime)` raises there. A file's owner sets its times, and
-/// tmpfs or btrfs store 64-bit seconds, so any listing can contain one.
+/// `None` for a time chrono cannot represent, where `DateTime::from(SystemTime)`
+/// would panic. A file's owner sets its times, so any listing can hold one.
 fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
     let (seconds, nanoseconds) = match result.ok()?.duration_since(UNIX_EPOCH) {
         Ok(after) => (i64::try_from(after.as_secs()).ok()?, after.subsec_nanos()),
@@ -757,8 +713,6 @@ mod tests {
         }
     }
 
-    // datetime_age boundary tests
-
     fn age(seconds_ago: i64) -> DateTimeAge {
         let now = to_local_datetime("2024-06-15 12:00:00");
         datetime_age(now - Duration::seconds(seconds_ago), now)
@@ -803,8 +757,6 @@ mod tests {
         assert_eq!(vec![1, 2, 3, 3], lookups);
     }
 
-    // breadcrumbs: root first, the root itself as an empty segment
-
     #[test_case("/" => vec![String::new()] ; "the root alone")]
     #[test_case("/a/b" => vec![String::new(), "a".to_string(), "b".to_string()] ; "root first, leaf last")]
     fn breadcrumbs_run_from_the_root_down(path: &str) -> Vec<String> {
@@ -845,8 +797,6 @@ mod tests {
         assert_eq!("c\\u{200b}d", display_name(path));
         assert_eq!(vec!["", "a\\u{202e}b", "c\\u{200b}d"], breadcrumbs(path));
     }
-
-    // compact: home as `~`, long middles elided to first + last two
 
     #[test_case("/tmp/a.txt" => "\"/tmp/a.txt\"" ; "short absolute path is unchanged")]
     #[test_case("/tmp/one/two/a.txt" => "\"/tmp/one/two/a.txt\"" ; "at the component limit is unchanged")]
@@ -901,7 +851,6 @@ mod tests {
         let a = PathInfo::try_from(Path::new(".")).unwrap();
         let mut b = a.clone();
         assert!(a.is_same_inode(&b));
-        // Same inode number on a different filesystem is a different file.
         b.device = b.device.wrapping_add(1);
         assert!(!a.is_same_inode(&b));
     }
@@ -911,8 +860,7 @@ mod tests {
     #[test_case("Makefile", "makefile"; "lowercases")]
     #[test_case(".README",  "readme"  ; "strips dot and lowercases")]
     #[test_case("Docs/Notes.md", "docs/notes.md" ; "a relative path is normalized whole")]
-    // Per segment, matching `ls -a`: a dot file below the search root sorts
-    // next to its own neighbours, not at the top of its subtree.
+    // Per segment, like `ls -a`.
     #[test_case("projects/.zshrc", "projects/zshrc" ; "strips a dot below the root")]
     #[test_case("a/.b/c", "a/b/c" ; "strips a dot on an interior segment")]
     #[test_case(".a/.b", "a/b" ; "strips a dot on every segment")]
@@ -925,8 +873,7 @@ mod tests {
     #[test_case("v1.9", "v1.10", true => Ordering::Less ; "each run is its own number")]
     #[test_case("a-1", "a1", true => Ordering::Less ; "a character before a digit keeps its place")]
     #[test_case("01", "1", true => Ordering::Less ; "equal numbers fall back to the text")]
-    // The text decides before the raw name: by the raw name alone `a01` would
-    // follow `A1`, since `a` follows `A` in byte order.
+    // By the raw name alone `a01` would follow `A1`.
     #[test_case("a01", "A1", true => Ordering::Less ; "the text decides before the name does")]
     #[test_case("B", "a", true => Ordering::Greater ; "case is still ignored")]
     #[test_case("File", "file", true => Ordering::Less ; "names equal but for case are ordered by the name")]
@@ -935,7 +882,6 @@ mod tests {
         name_key(a, natural).cmp(&name_key(b, natural))
     }
 
-    /// Read as stored in the link, so a relative target stays relative.
     #[test]
     fn a_symlink_carries_its_target_and_nothing_else_does() {
         use std::os::unix::fs::symlink;
@@ -978,15 +924,12 @@ mod tests {
         assert!(broken.is_symlink());
         assert!(broken.is_symlink_broken());
 
-        // A plain file is neither, and never pays for the second look.
         let target = PathInfo::try_from(&target).unwrap();
         assert!(!target.is_symlink());
         assert!(!target.is_symlink_broken());
     }
 
-    /// A link whose target cannot be checked is not reported broken: only a
-    /// confirmed "does not exist" is. Under root the directory stays
-    /// searchable and the case degrades to an intact link.
+    /// Under root the directory stays searchable and this degrades to an intact link.
     #[test]
     fn a_symlink_through_an_unsearchable_directory_is_not_broken() {
         use std::os::unix::fs::{PermissionsExt, symlink};
@@ -1033,8 +976,7 @@ mod tests {
         let info = PathInfo::try_from(&link).unwrap();
         std::fs::remove_file(&target).unwrap();
 
-        // Deliberately stale: the answer is a property of the listing, which a
-        // reload replaces. Rendering must not have to look at the disk again.
+        // Deliberately stale: the answer belongs to the listing, which a reload replaces.
         assert!(!info.is_symlink_broken());
         assert!(PathInfo::try_from(&link).unwrap().is_symlink_broken());
     }

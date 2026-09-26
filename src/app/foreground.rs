@@ -1,5 +1,4 @@
-//! Programs that take the terminal over while they run: the editor and the
-//! pager, opened on the cursor's entry.
+//! Programs that take the terminal over while they run (editor, pager).
 
 use std::{
     ffi::OsString,
@@ -20,16 +19,13 @@ use super::{
 };
 use crate::command::ForegroundProgram;
 
-/// How long to wait for the reader thread to stop before giving up on running
-/// the program. It stops as soon as its poll returns, which the wake-up in
-/// `run` makes immediate; its own poll timeout (2 s) bounds the wait if the
-/// wake-up is lost.
+/// How long to wait for the reader thread to stop. The wake-up in `run` makes
+/// it immediate; the reader's 2 s poll timeout bounds a lost wake-up.
 pub(super) const READER_PAUSE_TIMEOUT: Duration = Duration::from_millis(2500);
 
-/// The command line for `program` on `path`: the first of its environment
-/// variables that is set and not blank, split into words the way a shell would
-/// split it, with the path appended as an argument of its own. `env` reads a
-/// variable, so the order can be tested without the process environment.
+/// The command line for `program` on `path`: the first set, non-blank
+/// environment variable, split into shell words, plus the path. `env` is
+/// injected for tests.
 pub(super) fn argv(
     env: impl Fn(&str) -> Option<OsString>,
     program: ForegroundProgram,
@@ -51,8 +47,7 @@ pub(super) fn argv(
                 .map_err(|_| anyhow!("Cannot run ${name}: it is not valid UTF-8"))?;
             let words = shell_words::split(&value)
                 .map_err(|_| anyhow!("Cannot run ${name}: its quoting is not closed"))?;
-            // A value that is only a comment splits into no words, and the
-            // path appended below would then be run as the program.
+            // A comment-only value has no words; the path would then run as the program.
             if words.is_empty() {
                 return Err(anyhow!("Cannot run ${name}: it names no program"));
             }
@@ -63,10 +58,8 @@ pub(super) fn argv(
     Ok(argv)
 }
 
-/// What the program reads, when not this process's own stdin: the terminal,
-/// if stdin is something else (`filectrl </dev/null`). The interface reads the
-/// terminal whatever stdin is, and so must a program that takes it over. `None`
-/// keeps stdin, including when the terminal cannot be opened.
+/// The terminal to use as the program's stdin when stdin is not a terminal
+/// (`filectrl </dev/null`). `None` keeps stdin.
 fn child_stdin(
     stdin_is_terminal: bool,
     open_terminal: impl FnOnce() -> io::Result<File>,
@@ -83,9 +76,8 @@ pub(super) trait Handover {
 
     fn resume(&mut self) -> io::Result<()>;
 
-    /// Leaves a suspended terminal with the settings the shell had, over any a
-    /// program killed part way left (echo off, raw mode). Best effort: the
-    /// process is quitting, and a terminal that hung up takes no settings.
+    /// Restores the shell's settings on a suspended terminal. Best effort: the
+    /// process is quitting.
     fn release(&mut self);
 }
 
@@ -106,26 +98,17 @@ impl Handover for CleanupOnDropTerminal {
 /// What became of a request to run a program in the foreground.
 #[derive(Debug)]
 pub(super) enum Outcome {
-    /// It ran, or failed to start, with this result.
     Ran(io::Result<ExitStatus>),
-    /// The reader thread did not stop in time, so the program was not run: it
-    /// would have shared the keyboard with it.
+    /// The reader thread did not stop in time, so the program was not run.
     ReaderBusy,
-    /// A termination signal arrived before the program started or while it
-    /// ran. The terminal is left handed back for the quit that follows, with
-    /// the shell's settings put back over any the program left: taking it back
-    /// would only mean leaving it again, and a terminal that hung up cannot be
-    /// taken back at all.
+    /// A termination signal arrived. The terminal is left handed back with the
+    /// shell's settings, for the quit that follows.
     Quit,
 }
 
-/// Runs `argv` in the foreground of the terminal and waits for it, with the
-/// interface suspended: the reader thread stopped, so the program reads the
-/// keyboard alone, and the terminal back in the modes the shell left it in.
-/// The terminal is taken back and cleared whatever the program did.
-///
-/// The error is a terminal that could not be taken back, which leaves nothing
-/// to draw on.
+/// Runs `argv` in the terminal's foreground with the interface suspended (the
+/// reader stopped, the shell's terminal modes), then takes the terminal back
+/// and clears it. The error is a terminal that could not be taken back.
 pub(super) fn run(
     terminal: &mut impl Handover,
     gate: &ReaderGate,
@@ -139,18 +122,15 @@ pub(super) fn run(
     if quit_requested() {
         return Ok(Outcome::Quit);
     }
-    // crossterm answers SIGWINCH by ending its poll with a resize event, so the
-    // reader reaches its checkpoint now rather than at its next timeout. The
-    // request comes first, so the checkpoint the wake-up reaches is the one
-    // that stops.
+    // SIGWINCH makes crossterm's poll return, so the reader reaches its
+    // checkpoint now. The pause is requested first.
     gate.request_pause();
     let _ = raise(Signal::SIGWINCH);
     if !gate.wait_paused(pause_timeout) {
         gate.resume();
         return Ok(Outcome::ReaderBusy);
     }
-    // Set for the whole time the terminal is the program's, cooked mode on
-    // both sides of it included, so Ctrl+C there is never taken as a quit.
+    // Covers cooked mode on both sides, so Ctrl+C is never taken as a quit.
     set_foreground_child(true);
     terminal.suspend();
     let mut command = std::process::Command::new(program);
@@ -236,8 +216,7 @@ mod tests {
         assert_eq!("Cannot run $EDITOR: it names no program", error);
     }
 
-    /// A terminal that records whether a foreground program counted as
-    /// running at each step of the handover.
+    /// Records whether a foreground program counted as running at each step.
     #[derive(Default)]
     struct Recorded {
         child_flag_at: Vec<(&'static str, bool)>,
@@ -283,8 +262,6 @@ mod tests {
         assert!(gate.is_open(), "the reader was left stopped");
     }
 
-    /// Ctrl+C is the program's from before the terminal is handed over until
-    /// after it is taken back.
     #[test]
     fn the_terminal_is_the_programs_across_the_whole_handover() {
         use std::sync::{
@@ -357,9 +334,6 @@ mod tests {
         assert!(terminal.child_flag_at.is_empty());
     }
 
-    /// A quit while the program ran leaves the terminal handed back, with the
-    /// shell's settings over whatever the program left: the process is about
-    /// to exit, and a terminal that hung up cannot be taken back.
     #[test]
     fn a_quit_during_the_program_leaves_the_terminal_to_the_shell() {
         use std::sync::{
@@ -382,8 +356,7 @@ mod tests {
             })
         };
         let mut terminal = Recorded::default();
-        // Checked before the handover, before the start, once the pid is
-        // known, and after the program: only the last finds a quit.
+        // Checked four times; only the last finds a quit.
         let checks = AtomicUsize::new(0);
         let quit_requested = || checks.fetch_add(1, Ordering::SeqCst) >= 3;
 

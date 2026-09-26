@@ -30,13 +30,10 @@ const ALL_FILES: &str = "all/allfiles";
 const ALL: &str = "all/all";
 const TEXT_PLAIN: &str = "text/plain";
 const OCTET_STREAM: &str = "application/octet-stream";
-/// `guess()` returns this for a zero byte file without ever consulting the
-/// glob database, which would otherwise hide every handler for, say, a newly
-/// created and still empty `notes.md`.
+/// `guess()` returns this for an empty file without consulting the globs.
 const ZEROSIZE: &str = "application/x-zerosize";
 
-/// Parsing the shared MIME database reads every glob, magic, alias, and
-/// subclass file, so it is done once for the life of the process.
+/// Parsed once per process.
 static MIME_DB: OnceLock<SharedMimeInfo> = OnceLock::new();
 
 fn mime_db() -> &'static SharedMimeInfo {
@@ -48,11 +45,8 @@ fn mime_db() -> &'static SharedMimeInfo {
     })
 }
 
-/// Child type to its direct parents.
-///
-/// `SharedMimeInfo::get_parents` cannot be used: it resolves through the alias
-/// table first and returns `None` on a miss, which every type that is not itself
-/// an alias produces, cutting those files off from their parents' handlers.
+/// Child type to its direct parents. Not `SharedMimeInfo::get_parents`, which
+/// returns `None` for any type that is not an alias.
 static SUBCLASSES: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
 
 fn subclasses() -> &'static HashMap<String, Vec<String>> {
@@ -81,8 +75,7 @@ fn parse_subclasses(text: &str) -> Vec<(String, String)> {
 
 fn parents_of(mime: &str) -> Vec<String> {
     let mut parents = subclasses().get(mime).cloned().unwrap_or_default();
-    // Every text/* type is a subclass of text/plain whether or not the database
-    // says so explicitly.
+    // Every text/* type is a subclass of text/plain, declared or not.
     if mime.starts_with("text/") && mime != TEXT_PLAIN && !parents.iter().any(|p| p == TEXT_PLAIN) {
         parents.push(TEXT_PLAIN.to_string());
     }
@@ -96,8 +89,7 @@ pub(super) struct Sources {
 }
 
 impl Sources {
-    /// Build from the XDG environment. Returns empty sources rather than
-    /// panicking when the home directory cannot be determined.
+    /// Build from the XDG environment.
     pub(super) fn system() -> Self {
         Self::from_dirs(&config_dirs(), &data_dirs())
     }
@@ -124,9 +116,7 @@ impl Sources {
     }
 }
 
-/// Building the sources walks every `applications` tree and reads every desktop
-/// file in it, so it is done once for the life of the process. An application
-/// installed while FileCTRL is running is not offered until the next start.
+/// Built once per process.
 static SOURCES: OnceLock<Sources> = OnceLock::new();
 
 fn sources() -> &'static Sources {
@@ -165,11 +155,9 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
             .ok()?;
         to_candidate(&locales, path, &entry)
     };
-    // The first configured default that can be offered is listed first,
-    // whatever position the directory scan gave it. One that cannot (not
-    // installed, hidden, or with an `Exec` that is refused or cannot run)
-    // falls through to the next, as `xdg-mime` and `gio` do. Each id is built
-    // at most once, so a refused entry is not reported twice.
+    // The first offerable configured default goes first; one that cannot be
+    // offered falls through to the next, as in `xdg-mime` and `gio`. Each id is
+    // built at most once.
     let mut tried: HashSet<&str> = HashSet::new();
     let mut candidates: Vec<AppCandidate> = associations
         .defaults
@@ -185,19 +173,16 @@ fn candidates_from(sources: &Sources, path: &Path) -> Vec<AppCandidate> {
             .filter(|id| tried.insert(id))
             .filter_map(|id| candidate(id)),
     );
-    // With no configured default offered, the first row is the most preferred
-    // association, the spec's fallback.
+    // Without an offerable default, the spec falls back to the first association.
     if let Some(first) = candidates.first_mut() {
         first.is_default = true;
     }
     candidates
 }
 
-/// The name the glob rules are matched against. Lossy, because the rules are
-/// patterns over a string and `guess` drops a name it cannot convert, leaving
-/// `caf\xe9.txt` unmatched by `*.txt` and openable by nothing. A replacement
-/// character cannot create a false match, since no rule contains one, and the
-/// conversion stops here: the path reaches the program as its own bytes.
+/// The name the glob rules are matched against. Deliberately lossy: `guess`
+/// drops a name it cannot convert, so `caf\xe9.txt` would match no `*.txt` rule.
+/// The program still receives the path's own bytes.
 fn glob_name(path: &Path) -> Option<String> {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -209,17 +194,14 @@ fn mime_chain(path: &Path) -> Vec<String> {
     let db = mime_db();
     let file_name = glob_name(path);
     let mut builder = db.guess_mime_type();
-    // Set before the path, which fills the name in only when it is still
-    // unset, so this is what the globs see.
+    // Set before `path`, which fills in the name only when unset.
     if let Some(file_name) = &file_name {
         builder.file_name(file_name);
     }
     let guessed = builder.path(path).guess();
     let mut queue: VecDeque<String> = VecDeque::new();
-    // An empty file short circuits the guess before the globs are consulted,
-    // so recover what the file name alone implies. The zero size type itself
-    // is then dropped: it says nothing about an empty `notes.md`, and keeping
-    // it would rank it above text/plain.
+    // For an empty file, use the types the name implies instead of the zero
+    // size type.
     let from_name = (guessed.mime_type().essence_str() == ZEROSIZE)
         .then_some(file_name.as_deref())
         .flatten()
@@ -230,7 +212,7 @@ fn mime_chain(path: &Path) -> Vec<String> {
         None => queue.push_back(canonical(guessed.mime_type())),
     }
 
-    // Breadth first, so nearer ancestors stay ahead of more distant ones.
+    // Breadth first, so nearer ancestors rank higher.
     let mut chain = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     while let Some(current) = queue.pop_front() {
@@ -240,9 +222,8 @@ fn mime_chain(path: &Path) -> Vec<String> {
         queue.extend(parents_of(&current));
         chain.push(current);
     }
-    // Every type but the inode/* ones is a subclass of octet-stream whether or
-    // not the database says so. Added after the whole graph rather than as a
-    // parent of each type, so it never ranks above a nearer ancestor.
+    // Every non-inode type is a subclass of octet-stream; added last so it
+    // never ranks above a declared ancestor.
     if chain
         .first()
         .is_some_and(|mime| !mime.starts_with("inode/"))
@@ -268,21 +249,14 @@ fn canonical(mime: &mime::Mime) -> String {
         .to_string()
 }
 
-/// The same, for a type read from a `MimeType=` line or a mimeapps.list key.
-/// Those are matched against the lookup chain by string, so both sides have to
-/// be canonical or an entry that declares an alias never matches.
+/// `canonical` for a type read as text, since the chain is matched by string.
 fn canonical_str(mime: &str) -> String {
     mime.parse::<mime::Mime>()
         .map_or_else(|_| mime.to_string(), |parsed| canonical(&parsed))
 }
 
-/// Whether an entry describes an application this picker can offer: one the
-/// spec says is runnable, is not deleted, and whose `TryExec` program is
-/// installed.
-///
-/// `NoDisplay` entries are deliberately kept: the spec says the key exists so
-/// that an application can be associated with a MIME type without appearing in
-/// menus.
+/// Whether an entry is a non-hidden application whose `TryExec` is installed.
+/// `NoDisplay` entries are kept: the key hides an application from menus only.
 fn is_offerable(entry: &DesktopEntry) -> bool {
     if entry.type_() != Some("Application") || entry.hidden() {
         return false;
@@ -292,10 +266,8 @@ fn is_offerable(entry: &DesktopEntry) -> bool {
         .is_none_or(|program| is_installed(&unescape_value(program)))
 }
 
-/// An entry whose `Exec` `expand` refuses as unsafe or cannot parse is logged
-/// as a warning, since the application is installed and would otherwise have
-/// been offered; any other reason to skip one is logged at debug only. The candidate is not marked
-/// default; `candidates_from` decides that.
+/// A refused or malformed `Exec` is logged as a warning, any other skip at
+/// debug. `candidates_from` decides `is_default`.
 fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option<AppCandidate> {
     let file = entry.path.as_path();
     if !is_offerable(entry) {
@@ -312,8 +284,7 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
         .inspect_err(|error| warn!("Cannot offer {}: {error}", compact(file)))
         .ok()?;
     if entry.terminal() {
-        // A terminal application launched with null stdio does nothing at all,
-        // so it is only worth offering when a terminal is configured to host it.
+        // Offered only when a terminal is configured to host it.
         let template = &Config::global().openers.run_in_terminal;
         argv = in_terminal(template, &argv).or_else(|| {
             debug!(
@@ -324,9 +295,7 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
         })?;
     }
     Some(AppCandidate {
-        // The desktop id is unique by construction, so it always tells two
-        // similarly named entries apart. A program name need not: several
-        // entries can share one wrapper such as `env` or `flatpak`.
+        // The desktop id is unique; a program name can be a shared wrapper.
         detail: entry.appid.clone(),
         is_default: false,
         name,
@@ -339,10 +308,8 @@ fn to_candidate(locales: &[String], path: &Path, entry: &DesktopEntry) -> Option
     })
 }
 
-/// Wrap `argv` in the configured terminal. Unlike the path openers, `%s` stands
-/// for a command, so it takes every word of `argv`, each its own argument:
-/// `xterm -e %s` runs `xterm -e vim '/a b'`, not `xterm -e 'vim /a b'`. `None`
-/// when no terminal is configured.
+/// Wrap `argv` in the configured terminal, `%s` taking each word as its own
+/// argument. `None` when no terminal is configured.
 fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     if template.trim().is_empty() {
         return None;
@@ -350,8 +317,7 @@ fn in_terminal(template: &str, argv: &[OsString]) -> Option<Vec<OsString>> {
     Some(shell::command(template, argv.iter().cloned()))
 }
 
-/// Whether a `TryExec` value names an executable that exists. Only an absolute
-/// value is a path; the spec looks anything else up in `$PATH`.
+/// Whether a `TryExec` value names an executable, absolute or on `$PATH`.
 fn is_installed(program: &str) -> bool {
     let path = Path::new(program);
     if path.is_absolute() {
@@ -367,14 +333,11 @@ fn is_executable(path: &Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
-/// Index the `.desktop` files under `dir`, scanning for `MimeType=` rather than
-/// fully parsing each one: only the handful that end up being offered are
-/// parsed in full.
+/// Index the `.desktop` files under `dir`, scanning only for `MimeType=`.
 fn index_applications(dir: &Path) -> AppDirIndex {
     let mut index = AppDirIndex::default();
     let mut queue = VecDeque::from([dir.to_path_buf()]);
-    // `is_dir` follows symlinks, so without this a link back to an ancestor
-    // would spin forever on the thread that draws the UI.
+    // `is_dir` follows symlinks, so a link to an ancestor would loop.
     let mut visited: HashSet<PathBuf> = HashSet::from([canonical_dir(dir)]);
     while let Some(current) = queue.pop_front() {
         let Ok(entries) = fs::read_dir(&current) else {
@@ -405,14 +368,11 @@ fn index_applications(dir: &Path) -> AppDirIndex {
     index
 }
 
-/// The identity a directory is tracked by while walking, so that two paths
-/// reaching the same directory through a symlink compare equal.
 fn canonical_dir(dir: &Path) -> PathBuf {
     fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
-/// Read the `MimeType=` values from the `[Desktop Entry]` group of a desktop
-/// file. Later groups (`[Desktop Action ...]`) are not associations.
+/// Read the `MimeType=` values from the `[Desktop Entry]` group.
 fn scan_mime_types(text: &str) -> Vec<String> {
     let mut in_desktop_entry = false;
     for line in text.lines() {
@@ -427,7 +387,6 @@ fn scan_mime_types(text: &str) -> Vec<String> {
         if !in_desktop_entry {
             continue;
         }
-        // The spec ignores whitespace around the '='.
         if let Some((key, values)) = line.split_once('=')
             && key.trim_end() == "MimeType"
         {
@@ -465,9 +424,7 @@ fn data_dirs() -> Vec<PathBuf> {
     dedupe_dirs(dirs)
 }
 
-/// Drop repeated directories, comparing through symlinks. `$XDG_DATA_DIRS`
-/// commonly names the same directory twice, which would otherwise be walked and
-/// indexed once per occurrence.
+/// Drop repeated directories, comparing through symlinks.
 fn dedupe_dirs(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     dirs.into_iter()
@@ -483,12 +440,8 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     dir_of(env::var_os(name))
 }
 
-/// An unset variable and one set to the empty string mean the same thing: the
-/// caller falls back to the spec's default rather than to the current
-/// directory, which is what an empty `PathBuf` would name. A relative path is
-/// ignored the same way, as the XDG Base Directory spec requires: it would
-/// resolve against the current directory, and a tree filectrl was started in
-/// (a clone, an unpacked archive) would then supply the applications offered.
+/// `None` for an unset, empty or relative value, as the XDG Base Directory spec
+/// requires.
 fn dir_of(value: Option<OsString>) -> Option<PathBuf> {
     value.map(PathBuf::from).filter(|dir| dir.is_absolute())
 }
@@ -497,10 +450,8 @@ fn env_dirs(name: &str, fallback: &str) -> Vec<PathBuf> {
     dirs_of(env::var_os(name), fallback)
 }
 
-/// Split a `$PATH`-shaped value, falling back to `fallback` when it is unset or
-/// empty. Empty and relative components are dropped, as in `dir_of`: `a::b`
-/// names two directories, not three, and the empty one would resolve to the
-/// current directory.
+/// Split a `$PATH`-shaped value, falling back to `fallback` when unset or
+/// empty. Empty and relative components are dropped.
 fn dirs_of(value: Option<OsString>, fallback: &str) -> Vec<PathBuf> {
     let value = value.filter(|value| !value.is_empty());
     let value = value.unwrap_or_else(|| fallback.into());
@@ -509,16 +460,12 @@ fn dirs_of(value: Option<OsString>, fallback: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Each entry of `$XDG_CURRENT_DESKTOP`, lowercased, in order. These name the
-/// `$desktop-mimeapps.list` files that take precedence over the generic one.
+/// Each entry of `$XDG_CURRENT_DESKTOP`, lowercased, in order.
 fn current_desktops() -> Vec<String> {
     desktops_of(&env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
 }
 
-/// The names in a `$XDG_CURRENT_DESKTOP` value. Empty names are dropped: an
-/// unset variable, a trailing colon and a stray space would each otherwise
-/// produce one, and the name is used to build a `$desktop-mimeapps.list`
-/// filename that would then read the generic list a second time.
+/// The non-empty names in a `$XDG_CURRENT_DESKTOP` value.
 fn desktops_of(value: &str) -> Vec<String> {
     value
         .split(':')
@@ -566,8 +513,6 @@ mod tests {
         values.iter().map(ToString::to_string).collect()
     }
 
-    /// A desktop entry written to disk, since `DesktopEntry` is built from a
-    /// file rather than from text.
     fn desktop_entry(dir: &TempDir, name: &str, body: &str) -> DesktopEntry {
         let file = dir.join(name);
         std::fs::write(&file, body).unwrap();
@@ -595,7 +540,6 @@ mod tests {
 
     #[test]
     fn a_try_exec_path_with_an_escaped_space_is_found() {
-        // The parser returns the value with its escapes intact.
         let dir = TempDir::new("open_with_try_exec_escaped");
         let program = dir.join("my app");
         crate::test_support::write_executable(&program, "#!/bin/sh\n");
@@ -636,7 +580,6 @@ mod tests {
 
         let candidate = to_candidate(&[], Path::new("/tmp/file.txt"), &entry).unwrap();
 
-        // The shipped `run_in_terminal` is `xterm -e %s`.
         assert_eq!(
             vec![
                 OsString::from("sh"),
@@ -699,8 +642,6 @@ mod tests {
         assert!(result.ordered.is_empty(), "{:?}", result.ordered);
     }
 
-    /// The fallback types close every chain whatever the database guesses, and
-    /// only a file matches every file.
     #[test]
     fn the_chain_ends_with_the_fallback_types() {
         let dir = TempDir::new("open_with_chain");
@@ -713,9 +654,6 @@ mod tests {
         assert!(!directory.iter().any(|mime| mime == ALL_FILES));
     }
 
-    /// Every type but the inode/* ones inherits octet-stream, last before the
-    /// fallback types and so after every ancestor the database names: a hex
-    /// editor is offered for any file but never ranks above a text editor.
     #[test]
     fn a_file_inherits_octet_stream_after_its_other_ancestors() {
         let dir = TempDir::new("open_with_octet_stream");
@@ -740,13 +678,8 @@ mod tests {
 
         let path = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt"));
 
-        // The glob rules are patterns over a string, so a name that cannot be
-        // converted has to be converted lossily rather than dropped: dropping
-        // it leaves `*.txt` unmatched and the picker offers nothing.
         let name = glob_name(&path).expect("a file name");
-        // The assertion is over the glob string this builds, not over a
-        // path's extension, so the case-insensitive Path::extension check
-        // the lint suggests would test something else.
+        // Asserts on the glob string, not a path's extension.
         #[allow(clippy::case_sensitive_file_extension_comparisons)]
         let ends_with_txt = name.ends_with(".txt");
         assert!(ends_with_txt, "{name}");
@@ -754,8 +687,7 @@ mod tests {
 
     #[test]
     fn every_text_type_inherits_text_plain() {
-        // A type the shared MIME database has never heard of, so the parent
-        // comes from this rule rather than from the database.
+        // A type unknown to the database, so the parent comes from the rule.
         let parents = parents_of("text/x-filectrl-test");
 
         assert!(
@@ -766,8 +698,6 @@ mod tests {
 
     #[test]
     fn text_plain_is_not_its_own_parent() {
-        // Listing itself would rank text/plain handlers twice, above the ones
-        // registered for the type the file actually is.
         assert!(!parents_of(TEXT_PLAIN).iter().any(|p| p == TEXT_PLAIN));
     }
 
@@ -788,17 +718,12 @@ mod tests {
 
     #[test]
     fn a_directory_with_the_execute_bit_is_not_a_program() {
-        // Every directory carries the execute bit, and TryExec names a file to
-        // run; a directory on $PATH would otherwise pass for one.
         let dir = TempDir::new("open_with_exec_dir");
 
         assert!(!is_executable(dir.path()));
     }
 
-    /// A data directory holding three applications, all associated with
-    /// `all/all` so that what the shared MIME database guesses about the file
-    /// cannot change the outcome, and a mimeapps.list naming one of them the
-    /// default.
+    /// Three applications for `all/all`, with `editor.desktop` the default.
     fn data_dir_with_applications(dir: &TempDir) -> std::path::PathBuf {
         let applications = dir.join("applications");
         std::fs::create_dir_all(&applications).unwrap();
@@ -840,16 +765,12 @@ mod tests {
                 .find(|candidate| candidate.name == name)
                 .unwrap_or_else(|| panic!("{name} should be offered: {candidates:?}"))
         };
-        // mimeapps.list names editor.desktop, so the marker follows the
-        // configuration rather than the order the entries were indexed in.
         assert!(named("Editor").is_default);
         assert!(!named("Viewer").is_default);
         assert!(!named("Blank").is_default);
     }
 
-    // Viewer is not associated, so only the fall-through to the second
-    // configured default can list and mark it; without it the fallback would
-    // mark Editor.
+    // Viewer is not associated, so only the fall-through can list it.
     #[test_case(Some("Exec=gone %f\nHidden=true\n") ; "hidden")]
     #[test_case(Some("Exec=gone %f\nTryExec=/nonexistent/program\n") ; "its TryExec is not installed")]
     #[test_case(Some("Exec=sh -c %f\n") ; "its Exec is refused")]
@@ -893,8 +814,7 @@ mod tests {
         assert_eq!(vec![("Viewer", true), ("Editor", false)], rows);
     }
 
-    // First and Second are offerable but not associated, so only the configured
-    // defaults can list them. Viewer and Editor are associated in that order.
+    // First and Second are not associated, so only the defaults can list them.
     #[test_case("first.desktop;second.desktop", &[("First", true), ("Viewer", false), ("Editor", false)] ; "only the first offerable default is hoisted")]
     #[test_case("editor.desktop", &[("Editor", true), ("Viewer", false)] ; "an associated default is listed once")]
     fn candidates_from_lists_each_entry_once(defaults: &str, expected: &[(&str, bool)]) {
@@ -938,8 +858,6 @@ mod tests {
         assert_eq!(expected, rows.as_slice());
     }
 
-    /// No configured default at all: the fallback is the most preferred
-    /// association, which skips an entry the picker will not show.
     #[test]
     fn a_hidden_top_association_is_not_the_fallback_default() {
         Config::init_test();
@@ -955,7 +873,6 @@ mod tests {
             "viewer.desktop",
             "[Desktop Entry]\nType=Application\nName=Viewer\nExec=view %f\nMimeType=all/all;\n",
         );
-        // Ranks `gone` first, ahead of the directory scan.
         write(
             "mimeapps.list",
             "[Added Associations]\nall/all=gone.desktop;viewer.desktop\n",
@@ -993,8 +910,6 @@ mod tests {
         };
         assert_eq!(Some(PathBuf::from("/var/empty")), working_dir("Editor"));
         assert_eq!(None, working_dir("Viewer"));
-        // An empty `Path=` names no directory. Taking it literally would run
-        // the program in whatever directory FileCTRL happened to be started in.
         assert_eq!(None, working_dir("Blank"));
     }
 

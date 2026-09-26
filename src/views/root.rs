@@ -21,9 +21,7 @@ const MIN_WIDTH: u16 = 14;
 const MIN_HEIGHT: u16 = 5;
 const RESIZE_WINDOW: &str = "Resize window";
 
-/// Forwards broadcast commands to a view covered by an overlay (help or the
-/// "open with" picker) while declining key and mouse dispatch, which must
-/// reach only the overlay.
+/// Passes commands to a view under an overlay while declining its key and mouse input.
 struct CommandOnly<'a>(&'a mut dyn CommandHandler);
 
 impl CommandHandler for CommandOnly<'_> {
@@ -32,8 +30,7 @@ impl CommandHandler for CommandOnly<'_> {
     }
 
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
-        // Wrap children too, so a view that gains child handlers keeps
-        // receiving commands (but not input) while an overlay is open.
+        // Wrap children too, so they also receive commands but not input.
         self.0
             .visit_command_handlers(&mut |child| visitor(&mut CommandOnly(child)));
     }
@@ -43,9 +40,7 @@ impl CommandHandler for CommandOnly<'_> {
     }
 }
 
-/// Forwards everything but mouse events, for the views under the "Resize
-/// window" message: nothing of them is drawn, so a click must not be tested
-/// against the last layout that was.
+/// Passes everything but mouse events, for views hidden by the "Resize window" message.
 struct NoMouse<'a>(&'a mut dyn CommandHandler);
 
 impl CommandHandler for NoMouse<'_> {
@@ -76,8 +71,7 @@ pub struct RootView {
     breadcrumbs: BreadcrumbsView,
     help: HelpView,
     is_help_visible: bool,
-    /// Set while the terminal is too small to draw anything but the "Resize
-    /// window" message.
+    /// Set while the terminal is too small to draw anything but the "Resize window" message.
     is_too_small: bool,
     mode: InputMode,
     notices: NoticesView,
@@ -88,8 +82,6 @@ pub struct RootView {
 }
 
 impl RootView {
-    /// Every view that needs a setting is given it here, so nothing below this
-    /// point reaches for the config to build itself.
     pub fn new(config: &Config) -> Self {
         let keybindings = &config.keybindings;
         Self {
@@ -111,25 +103,21 @@ impl RootView {
         self.mode
     }
 
-    /// Whether help or the "Open with" picker covers the table. Quit and reset
-    /// close it rather than acting on what it covers.
+    /// Whether help or the "Open with" picker covers the table.
     pub fn is_overlay_visible(&self) -> bool {
         self.is_help_visible || self.open_with.is_visible()
     }
 
-    /// Marks where the alerts stand before a batch of input is handled.
     pub fn alerts_mark(&self) -> u64 {
         self.alerts.mark()
     }
 
-    /// Clears the info and warning alerts raised before `mark`, once a key
-    /// after them was claimed. See `AlertsView::expire_before`.
+    /// Clears info and warning alerts raised before `mark`. See `AlertsView::expire_before`.
     pub fn expire_alerts_before(&mut self, mark: u64) {
         self.alerts.expire_before(mark);
     }
 
-    /// Clears every alert, errors included: what Esc does to them. A reset
-    /// from a notice click does not reach here.
+    /// Clears every alert, errors included (Esc).
     pub fn clear_alerts(&mut self) {
         let _ = self.alerts.clear_alerts();
     }
@@ -140,15 +128,13 @@ impl RootView {
     }
 
     fn views(&mut self) -> Vec<&mut dyn View> {
-        // The order is significant for layout
+        // The order is the layout order.
         if self.is_help_visible {
             return vec![&mut self.help];
         }
-        // Read before the mutable borrows below.
         let is_open_with_visible = self.open_with.is_visible();
         let mut views: Vec<&mut dyn View> = vec![&mut self.alerts, &mut self.breadcrumbs];
-        // The picker takes the table's slot, and has the same constraint, so
-        // what is above and below it stays exactly where it was.
+        // The picker takes the table's slot and constraint, so the layout is unchanged.
         if is_open_with_visible {
             views.push(&mut self.open_with);
         } else {
@@ -164,15 +150,10 @@ impl RootView {
 }
 
 impl RootView {
-    /// Returns to Normal mode, yielding `CancelPrompt` when that closed a
-    /// prompt which was still open.
+    /// Returns to Normal mode, yielding `CancelPrompt` if a prompt was open.
     ///
-    /// Mouse events are not mode-gated, so a click on the breadcrumbs or a
-    /// notice reaches the view under the prompt and closes it from beneath
-    /// whoever is holding state for it. `CancelPrompt` is how they are told to
-    /// drop it: without it a paste waiting on a conflict answer would stall
-    /// with no clipboard follow-up, and its stale answer would arrive at
-    /// whatever prompt the user opened next.
+    /// Mouse events are not mode-gated, so a click can close a prompt from beneath;
+    /// `CancelPrompt` tells its state holder (e.g. a paste awaiting a conflict answer) to drop it.
     fn close_prompt(&mut self) -> Option<Command> {
         let was_open = matches!(self.mode, InputMode::Prompt);
         self.mode = InputMode::Normal;
@@ -193,11 +174,8 @@ impl CommandHandler for RootView {
             | Command::StartSearch(_) => self
                 .close_prompt()
                 .map_or(CommandResult::NotHandled, Into::into),
-            // An answer that resolves the prompt and starts work: the conflict
-            // prompt's own answer (the paste may reopen it for the next
-            // collision), or the paste a "clipboard from elsewhere" prompt
-            // confirmed (which may open a conflict prompt in the same cycle).
-            // Neither is announced as the prompt being abandoned.
+            // An answer that resolves the prompt and starts work, so it is not announced as
+            // abandoned.
             Command::ResolveConflict(_) | Command::Copy { .. } | Command::Move { .. } => {
                 self.mode = InputMode::Normal;
                 CommandResult::NotHandled
@@ -207,8 +185,6 @@ impl CommandHandler for RootView {
                 CommandResult::Handled
             }
             Command::OpenPrompt(action) => {
-                // The table has stashed what a delete asks about; the prompt
-                // names it when it is a single entry.
                 self.prompt.set_delete_subject(match action {
                     PromptAction::Delete(_) => self.table.pending_delete_name(),
                     _ => None,
@@ -217,8 +193,6 @@ impl CommandHandler for RootView {
                 CommandResult::Handled
             }
             Command::OpenWithPrompt(path) => {
-                // RootView owns the picker, so showing it is a direct call
-                // rather than a broadcast.
                 self.open_with.show(path);
                 CommandResult::Handled
             }
@@ -233,13 +207,10 @@ impl CommandHandler for RootView {
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        // Rebindable keys
         match Config::global().keybindings.normal_action(code, modifiers) {
             Some(Action::ToggleHelp) => {
                 self.is_help_visible = !self.is_help_visible;
                 if self.is_help_visible {
-                    // RootView owns the help view, so the scroll reset is a
-                    // direct call rather than a broadcast command.
                     self.help.reset_scroll();
                 }
                 CommandResult::Handled
@@ -276,9 +247,7 @@ impl RootView {
             }
             return;
         }
-        // An overlay is the only key and mouse handler while it is shown, but
-        // async commands (task progress, watcher refreshes, streamed listings)
-        // keep arriving, so every view it covers must still receive them.
+        // An overlay takes all key and mouse input, but covered views still receive async commands.
         let overlay: &mut dyn CommandHandler = if self.is_help_visible {
             &mut self.help
         } else {
@@ -314,15 +283,12 @@ impl View for RootView {
             return;
         }
 
-        // Fill the entire frame with the base background color so that uncovered areas
-        // (e.g. continuation lines of wrapped filenames, empty space below the last row)
-        // show the correct color rather than the terminal default.
+        // Fill with the base background so uncovered areas (wrapped-name continuation lines, space
+        // below the last row) are not the terminal default.
         Fill::new(" ")
             .style(theme.base())
             .render(area, frame.buffer_mut());
 
-        // RootView owns both, so the count is handed over directly rather
-        // than broadcast after every change that could alter it.
         let listing_count = self.table.listing_count();
         self.status.set_listing_count(listing_count);
         self.notices.set_result_count(match listing_count {
@@ -369,8 +335,6 @@ mod tests {
         RootView::new(Config::global())
     }
 
-    /// Whether any handler the root dispatches to takes a left click at
-    /// `(column, row)`.
     fn takes_click(root: &mut RootView, column: u16, row: u16) -> bool {
         use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
@@ -396,9 +360,6 @@ mod tests {
             .unwrap();
     }
 
-    /// An alert raised while help covers the pane, or while the terminal is
-    /// too small to draw it, survives the key that uncovers it and expires on
-    /// the first claimed key after it has been drawn.
     #[test_case(true ; "under help")]
     #[test_case(false ; "while the terminal is too small")]
     fn an_alert_raised_while_hidden_expires_only_once_drawn(under_help: bool) {
@@ -429,8 +390,6 @@ mod tests {
         assert_eq!(0, root.alerts.alert_count(), "drawn, then a key followed");
     }
 
-    /// Under the "Resize window" message nothing is drawn, so a click on it
-    /// must not reach a view laid out by an earlier frame. Keys still do.
     #[test]
     fn a_click_reaches_no_view_while_the_terminal_is_too_small() {
         let mut root = view();
@@ -449,9 +408,8 @@ mod tests {
         assert!(takes_click(&mut root, 1, 5));
     }
 
-    /// The resize message stands in for every view, so a release arriving
-    /// under it never reaches the scrollbar. Were the drag to survive, the
-    /// table would claim every later click, wherever it landed.
+    /// A release under the resize message never reaches the scrollbar, so a drag must not survive
+    /// it.
     #[test]
     fn a_terminal_too_small_to_draw_the_table_ends_a_scrollbar_drag() {
         let mut root = view();
@@ -468,7 +426,6 @@ mod tests {
         let mut root = view();
         root.is_help_visible = true;
 
-        // AlertError is only handled by the (hidden) AlertsView.
         let mut handled = false;
         root.visit_command_handlers(&mut |handler| {
             if handler.handle_command(&Command::AlertError("boom".into()))
@@ -480,11 +437,8 @@ mod tests {
         assert!(handled);
     }
 
-    /// Opening a prompt is what routes keys to `PromptView`, and every prompt
-    /// resolves through a command that has to bring the mode back. The paste
-    /// conflict prompt is the only one opened by a handler that is not a view,
-    /// so `FileSystem` depends on both halves of this holding for a command it
-    /// cannot observe.
+    /// Every prompt is opened by a command that sets Prompt mode and resolved by one that restores
+    /// Normal.
     #[test_case(&Command::OpenPrompt(PromptAction::Conflict {
         name: "a.txt".to_string(),
         can_overwrite: true,
@@ -501,7 +455,7 @@ mod tests {
     }, InputMode::Normal ; "confirming a cut from elsewhere gives them back")]
     fn a_command_leaves_the_root_in_mode(command: &Command, expected: InputMode) {
         let mut root = view();
-        // Start from the opposite mode so a no-op arm cannot pass by accident.
+        // Start from the opposite mode so a no-op arm cannot pass.
         root.mode = match expected {
             InputMode::Prompt => InputMode::Normal,
             InputMode::Normal => InputMode::Prompt,
@@ -512,8 +466,6 @@ mod tests {
         assert_eq!(expected, root.mode());
     }
 
-    /// A click that closes a prompt from beneath it must still tell whoever
-    /// holds state for that prompt; see `close_prompt`.
     #[test_case(&Command::Open(PathInfo::try_from("/tmp").unwrap()) ; "a breadcrumb click")]
     #[test_case(&Command::ResetView ; "a notice click")]
     fn closing_an_open_prompt_from_underneath_announces_it(command: &Command) {
@@ -539,17 +491,13 @@ mod tests {
         let mut root = view();
         root.mode = InputMode::Prompt;
 
-        // The paste is waiting on this answer and may reopen the prompt for the
-        // next collision. Announcing a dismissal would cancel the very paste
-        // being answered.
+        // Announcing a dismissal would cancel the paste being answered.
         let result = root.handle_command(&Command::ResolveConflict(ConflictChoice::Overwrite));
 
         assert_eq!(None, Command::try_from(result).ok());
     }
 
     /// What every handler that takes keys in `mode` makes of one keypress.
-    /// A count alone cannot say *which* handler that is, so each caller
-    /// presses a key whose result only the expected view produces.
     fn press(
         root: &mut RootView,
         mode: InputMode,
@@ -568,13 +516,8 @@ mod tests {
     #[test]
     fn only_the_prompt_view_takes_keys_in_prompt_mode() {
         let mut root = view();
-        // Prompt mode both adds PromptView to the visited views and makes it
-        // the only key handler. That pairing is the other half of the routing:
-        // it is what carries the conflict prompt's keypress to PromptView
-        // rather than to the table.
         root.mode = InputMode::Prompt;
 
-        // Esc dismisses a prompt, which is PromptView's answer and no other's.
         assert_eq!(
             vec![CommandResult::from(Command::CancelPrompt)],
             press(
@@ -591,8 +534,7 @@ mod tests {
         let mut root = view();
         root.is_help_visible = true;
 
-        // The delete key: HelpView implements only the scroll actions and
-        // declines it, where the table beneath would open the delete prompt.
+        // HelpView declines delete; the table beneath would open the delete prompt.
         assert_eq!(
             vec![CommandResult::NotHandled],
             press(
@@ -615,7 +557,6 @@ mod tests {
     fn commands_reach_hidden_views_while_open_with_is_visible() {
         let mut root = showing_open_with();
 
-        // AlertError is only handled by the (hidden) AlertsView.
         let mut handled = false;
         root.visit_command_handlers(&mut |handler| {
             if handler.handle_command(&Command::AlertError("boom".into()))
@@ -631,7 +572,6 @@ mod tests {
     fn keys_reach_only_the_open_with_view_while_open_with_is_visible() {
         let mut root = showing_open_with();
 
-        // The open-with key closes the picker, which only the picker does.
         assert_eq!(
             vec![CommandResult::Handled],
             press(
@@ -709,9 +649,6 @@ mod tests {
         assert!(!root.open_with.is_visible());
     }
 
-    /// A y/n prompt already holds what it asks about: a wheel over the table
-    /// must not move the cursor under it. A prompt that takes text leaves the
-    /// table alone.
     #[test_case(PromptAction::Delete(1) => false ; "a delete confirmation")]
     #[test_case(PromptAction::ConfirmQuit(2) => false ; "a quit confirmation")]
     #[test_case(PromptAction::CreateDirectory => true ; "a prompt that takes text")]
@@ -729,8 +666,6 @@ mod tests {
         })
     }
 
-    /// `q` and `Esc` close an overlay, as in a pager, rather than acting on
-    /// the view it covers.
     #[test_case(KeyCode::Char('q') ; "the quit key")]
     #[test_case(KeyCode::Esc ; "the reset key")]
     fn a_closing_key_closes_help(code: KeyCode) {

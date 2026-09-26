@@ -15,14 +15,12 @@ use notify::{Event, RecommendedWatcher, Watcher, recommended_watcher};
 
 use crate::{command::Command, file_system::debounce};
 
-/// How many times its own duration a directory listing waits before the next
-/// refresh may start, so a listing that is slow to read (a huge directory)
-/// takes at most a fifth of the time while something keeps writing to it.
+/// A refresh waits this many times the last listing's duration, so a slow
+/// listing takes at most a fifth of the time under constant writes.
 const LISTING_COST_FACTOR: u32 = 4;
 
-/// The watched directory, shared with the watcher thread: an event on the
-/// directory itself (removed, renamed away) leaves the watch on an inode the
-/// path may no longer name, so the next watch of that path renews it.
+/// The watched directory, shared with the watcher thread. An event on the
+/// directory itself marks the watch stale, so the next watch of the path renews it.
 #[derive(Default)]
 struct Watched {
     path: Mutex<Option<PathBuf>>,
@@ -38,7 +36,6 @@ impl Watched {
         *self.path.lock().unwrap() = path;
     }
 
-    /// Marks the watch stale when `event` names the watched directory itself.
     fn note(&self, event: &Event) {
         let path = self.path.lock().unwrap();
         if path
@@ -52,14 +49,12 @@ impl Watched {
 
 pub struct DirectoryWatcher {
     debounce_threshold: Duration,
-    /// Shared with the watcher thread, which reads the current window from it.
     debouncer: Arc<Mutex<debounce::TimeDebouncer>>,
     handle: Option<thread::JoinHandle<()>>,
     notify_rx: Option<Receiver<std::result::Result<Event, notify::Error>>>,
     watched: Arc<Watched>,
-    /// Option so `Drop` can `.take()` it before joining the watcher thread.
-    /// Dropping the watcher closes the notify channel sender, which unblocks
-    /// the thread waiting on the receiver so it can exit.
+    /// Taken in `Drop` before joining the thread: dropping it closes the notify
+    /// channel, which lets the thread exit.
     watcher: Option<RecommendedWatcher>,
 }
 
@@ -79,7 +74,6 @@ impl DirectoryWatcher {
     }
 
     pub fn run_once(&mut self, command_tx: &Sender<Command>) {
-        // Already running, do nothing
         let Some(notify_rx) = self.notify_rx.take() else {
             return;
         };
@@ -92,8 +86,8 @@ impl DirectoryWatcher {
         }));
     }
 
-    /// Widens the refresh window to `LISTING_COST_FACTOR` times what the last
-    /// listing took, never below the configured one.
+    /// Widens the refresh window to `LISTING_COST_FACTOR` times the last listing,
+    /// never below the configured one.
     pub(super) fn pace(&self, listing: Duration) {
         let threshold = self
             .debounce_threshold
@@ -101,12 +95,10 @@ impl DirectoryWatcher {
         self.debouncer.lock().unwrap().set_threshold(threshold);
     }
 
-    /// Watches `path`, keeping the watch already on it unless an event on the
-    /// directory itself marked it stale: an external delete and recreate
-    /// leaves the watch on the old inode. Re-registering on every refresh
-    /// would restart the watch (on macOS the whole FSEvents stream) for
-    /// nothing. The path is cleared before unwatching and set only after a
-    /// successful watch, so it never names a path without an active watch.
+    /// Watches `path`, keeping an existing watch on it unless marked stale (a
+    /// delete and recreate leaves the watch on the old inode). Re-registering would
+    /// restart the watch, on macOS the whole FSEvents stream. The path is recorded
+    /// only after a successful watch.
     pub(super) fn watch_directory(&mut self, path: PathBuf) -> Result<()> {
         if self.watched.path().as_ref() == Some(&path)
             && !self.watched.stale.swap(false, Ordering::Relaxed)
@@ -125,7 +117,6 @@ impl DirectoryWatcher {
 }
 
 impl DirectoryWatcher {
-    /// Drops the watch on the watched directory, if there is one.
     pub(super) fn unwatch(&mut self) {
         let path = self.watched.path.lock().unwrap().take();
         if let Some(watcher) = &mut self.watcher
@@ -144,10 +135,8 @@ impl DirectoryWatcher {
 
 impl Drop for DirectoryWatcher {
     fn drop(&mut self) {
-        // Drop the watcher first: it owns the notify channel sender. Dropping it
-        // disconnects notify_rx, which exits watch_for_notify_events, including
-        // one waiting out a debounce window. Without this, handle.join() below
-        // would block forever.
+        // Drop the watcher first: it owns the notify sender, and the thread exits only
+        // once that disconnects.
         self.watcher.take();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -155,15 +144,10 @@ impl Drop for DirectoryWatcher {
     }
 }
 
-/// Debounces file system events into refreshes, on a background thread. An event
-/// arriving after the debounce window refreshes at once; one arriving inside it
-/// leaves a trailing refresh pending until the window ends, so a burst produces
-/// one refresh at the front and one at the end rather than one per event.
-///
-/// While a refresh is pending the wait for the next event times out at the end
-/// of the window, read again on every pass: `pace` may have widened it
-/// meanwhile, in which case the refresh waits out the rest rather than being
-/// dropped. An event that refreshes at once makes a pending one redundant.
+/// Debounces file system events into refreshes: the first event refreshes at
+/// once, and events inside the window leave one trailing refresh. The window is
+/// read again on every pass, so a widening by `pace` postpones rather than drops
+/// a pending refresh.
 fn watch_for_notify_events(
     command_tx: &Sender<Command>,
     notify_rx: &Receiver<std::result::Result<Event, notify::Error>>,
@@ -181,8 +165,7 @@ fn watch_for_notify_events(
         match received {
             Ok(Ok(event)) => {
                 watched.note(&event);
-                // A rescan (an overflowed inotify queue, dropped FSEvents) means
-                // changes went unreported, whatever the event's kind.
+                // A rescan means changes went unreported, whatever the event's kind.
                 if event.need_rescan()
                     || matches!(
                         event.kind,
@@ -209,8 +192,7 @@ fn watch_for_notify_events(
     }
 }
 
-/// Sends a refresh if the debounce window allows one now, returning whether it
-/// did.
+/// Sends a refresh if the debounce window allows one, returning whether it did.
 fn refresh(command_tx: &Sender<Command>, debouncer: &Mutex<debounce::TimeDebouncer>) -> bool {
     if !debouncer.lock().unwrap().should_trigger(Instant::now()) {
         return false;
@@ -226,8 +208,7 @@ mod tests {
     use super::*;
     use crate::test_support::TempDir;
 
-    /// The window a refresh triggered at `at` waits out, read from the shared
-    /// debouncer the way the watcher thread reads it.
+    /// The window a refresh triggered at `at` waits out.
     fn window(watcher: &DirectoryWatcher, at: Instant) -> Duration {
         let mut debouncer = watcher.debouncer.lock().unwrap();
         assert!(debouncer.should_trigger(at));
@@ -251,13 +232,10 @@ mod tests {
         Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
     }
 
-    /// A listing that finishes while a trailing refresh waits widens the
-    /// window under it. The refresh is postponed to the new end, not dropped:
-    /// dropping it would leave the last change of a burst unshown.
+    /// Dropping the postponed refresh would leave the last change of a burst unshown.
     #[test]
     fn a_delayed_refresh_outlasts_a_window_widened_while_it_waits() {
-        // The widen must land inside the window, so it is wide enough for a
-        // loaded runner to reach it well before the trailing refresh fires.
+        // Wide enough for a loaded runner to widen it before the trailing refresh fires.
         const WINDOW: Duration = Duration::from_millis(500);
         const WIDENED: Duration = Duration::from_secs(1);
         let debouncer = Arc::new(Mutex::new(debounce::TimeDebouncer::new(WINDOW)));
@@ -269,8 +247,6 @@ mod tests {
         });
         let start = Instant::now();
 
-        // The first event of the burst refreshes at once, and the second,
-        // inside the window, leaves the trailing refresh pending.
         notify_tx.send(Ok(created())).unwrap();
         let leading = command_rx.recv_timeout(Duration::from_secs(2));
         assert!(matches!(leading, Ok(Command::RefreshDirectory)));
@@ -286,8 +262,7 @@ mod tests {
         assert!(waited >= WIDENED, "refreshed after {waited:?}");
     }
 
-    /// Listing the watched directory opens it, which inotify reports as an
-    /// access. Refreshing on one would make every reload trigger the next.
+    /// Listing the directory opens it, so refreshing on an access would loop.
     #[test]
     fn opening_or_closing_the_directory_does_not_refresh() {
         use notify::event::{AccessKind, AccessMode};
@@ -309,7 +284,6 @@ mod tests {
         assert_eq!(0, command_rx.try_iter().count());
     }
 
-    /// An overflowed event queue reports only that changes went unseen.
     #[test]
     fn a_rescan_refreshes() {
         use notify::event::Flag;
@@ -331,8 +305,6 @@ mod tests {
         ));
     }
 
-    /// An event on the watched directory itself marks the watch stale, and
-    /// one on an entry inside it does not.
     #[test]
     fn only_an_event_on_the_directory_itself_marks_the_watch_stale() {
         let watched = Watched::default();
@@ -358,15 +330,11 @@ mod tests {
         watcher.watch_directory(dir.clone()).unwrap();
         assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
 
-        // A stale watch of the unchanged path is renewed, so the second
-        // registration must not fail.
         watcher.watched.stale.store(true, Ordering::Relaxed);
         watcher.watch_directory(dir.clone()).unwrap();
         assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
         assert!(!watcher.watched.stale.load(Ordering::Relaxed));
 
-        // A failed watch must not record its path: there is no active watch,
-        // so a later return to the previous directory must re-register.
         let missing = dir.join("missing");
         assert!(watcher.watch_directory(missing).is_err());
         assert!(watcher.watched_directory().is_none());
@@ -375,16 +343,13 @@ mod tests {
         assert_eq!(Some(&dir), watcher.watched_directory().as_ref());
     }
 
-    /// A refresh of the directory already watched keeps the watch, rather
-    /// than restarting it (on macOS the whole FSEvents stream) each time.
     #[test]
     fn watching_the_watched_directory_again_keeps_its_watch() {
         let temp = TempDir::new("watch_again");
         let dir = temp.path().to_path_buf();
         let mut watcher = DirectoryWatcher::try_new(100).unwrap();
         watcher.watch_directory(dir.clone()).unwrap();
-        // Without a notify watcher a re-registration clears the path and sets
-        // nothing, so only keeping the existing watch leaves it recorded.
+        // Without a notify watcher, a re-registration would clear the recorded path.
         watcher.watcher = None;
 
         assert!(watcher.watch_directory(dir.clone()).is_ok());
