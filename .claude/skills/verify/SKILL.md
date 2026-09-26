@@ -40,8 +40,11 @@ Useful keys: `V`+`j` range-mark, `y` copy, `x` cut, `p` paste, `d` delete
 (`y` confirms), `K` cancel operation, `c` new directory, `/` search, `Ctrl+l`
 clear alerts, `Esc` clear clipboard/marks.
 
-Pane rows on a 30-row session: 1-2 breadcrumbs, 3 header, 4+ listing,
-26-28 notices (progress bar and operation), 29 prompt, 30 status.
+Row positions depend on content. From the top: the breadcrumbs (one row, more
+when the path wraps), the column header, then the listing. From the bottom: the
+status bar on the last row, the prompt above it while one is open, and the
+notices (clipboard, marks, progress) above that. Locate rows by their text, not
+by fixed numbers.
 
 ## Mouse
 

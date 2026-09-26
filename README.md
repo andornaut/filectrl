@@ -554,7 +554,6 @@ Collisions:
 
 - Modifier chords are not choices at a collision: <kbd>Ctrl</kbd>+<kbd>o</kbd> abandons the paste.
 - A move within one filesystem replaces an entry with a single rename. A copy, or a cut across filesystems, is written under a hidden name beside the entry, `.filectrl-<pid>-<n>`, and renamed over it once complete: one that fails or is cancelled leaves the old entry as it was. One left behind by a process that was killed part way can be deleted. A replacement needs room for both entries at once.
-- A cut across filesystems that failed to copy an entry keeps its whole original: that entry is not at the destination, so removing the source would take the only copy of it.
 - <kbd>K</kbd> stops the entry being copied, moved or removed at its next check, and the ones queued behind it end without running.
 - Entries you skip deliberately are not put back on the clipboard. If nothing started at all, the clipboard is unchanged. An entry that fails or is cancelled after it started, including while it waits behind other operations, is reported and is not put back on the clipboard; its original is left where it was.
 
@@ -594,6 +593,14 @@ Some cases need fixtures git cannot store; create them locally:
 
 The pre-commit hook runs `cargo fmt --check`, the test suite in a container ([`scripts/test-in-container`](./scripts/test-in-container)) and `cargo clippy --locked --all-targets -- -D warnings`, then the same clippy for `aarch64-apple-darwin` when that target is installed (`rustup target add aarch64-apple-darwin`). It does not format for you: run `cargo fmt` and stage the result when the check fails.
 
+[Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
+
+1. Edit the hook script in [`.cargo-husky/hooks/`](./.cargo-husky/hooks/), or the `cargo-husky` entry under `[dev-dependencies]` in [Cargo.toml](./Cargo.toml)
+1. `rm .git/hooks/pre-commit` (or other hook file)
+1. `cargo clean`
+1. `cargo check --tests`, which builds `cargo-husky` and installs the hook
+1. Verify that the changes have been applied to `.git/hooks/pre-commit`
+
 ### Running the tests
 
 The tests create, copy and delete files, so run them in a container rather than directly on the host:
@@ -604,14 +611,6 @@ scripts/test-in-container copy       # arguments are passed to `cargo test`
 ```
 
 It needs Docker. The checkout is mounted read-only, the tests run without network access, and the only writable mount is the `filectrl-test` Docker volume, which holds the cargo cache, the build output and `TMPDIR`. Remove it with `docker volume rm filectrl-test`.
-
-[Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
-
-1. Edit the hook script in [`.cargo-husky/hooks/`](./.cargo-husky/hooks/), or the `cargo-husky` entry under `[dev-dependencies]` in [Cargo.toml](./Cargo.toml)
-1. `rm .git/hooks/pre-commit` (or other hook file)
-1. `cargo clean`
-1. `cargo check --tests`, which builds `cargo-husky` and installs the hook
-1. Verify that the changes have been applied to `.git/hooks/pre-commit`
 
 ### Releasing
 
