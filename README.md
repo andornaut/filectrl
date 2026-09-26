@@ -203,7 +203,7 @@ Permissions and times, moves across filesystems, and the edge cases above are de
 
 ### Chmod
 
-Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than having its target changed. Setting a mode without following links needs glibc 2.32 or newer, or `/proc` mounted; where neither holds (an old distribution, or a container without `/proc`), chmod fails with "Operation not supported".
+Chmod (<kbd>P</kbd>) never follows a symlink: a symlink is refused rather than having its target changed. Setting a mode without following links needs glibc 2.32 or newer with `/proc` mounted, or glibc 2.39 or newer on Linux 6.6 or newer; otherwise (an old distribution, or a container without `/proc`), chmod fails with "Operation not supported".
 
 ### Entries that change after they are listed
 
@@ -211,7 +211,7 @@ Rename, chmod, delete, copy and cut act on whatever the path names when they run
 
 A delete continues past an entry it cannot remove, like `rm -rf`: it removes everything else, keeps the directories holding what failed, and reports the failures when it finishes. An empty directory it cannot open (mode 000) is removed, and an entry already gone counts as removed, so deleting marked entries that include both a directory and something inside it succeeds.
 
-When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>R</kbd> tries again. The bookmarks view watches the bookmarks directory instead, so one added or removed elsewhere shows up.
+When the directory being viewed is renamed away, removed, or made unreadable, the next refresh reports it and stops watching it; <kbd>Ctrl</kbd>+<kbd>r</kbd> tries again. The bookmarks view watches the bookmarks directory instead, so one added or removed elsewhere shows up.
 
 ### Multi-select
 
@@ -253,7 +253,7 @@ While a filter or hidden files leave entries out of a directory listing, the sta
 
 Search (<kbd>/</kbd>) walks the current directory recursively, matching a case-insensitive substring against each entry's name. Symlinked directories are not descended into. `search_max_depth` and `search_max_results` in `[file_system]` bound the walk; on reaching either, FileCTRL keeps the results it has and says so. Directories below the one searched that the walk cannot read are skipped and counted in one warning when it ends; a directory that cannot be searched at all is reported as an error.
 
-Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. The cursor then goes to the top row, unless you moved it or marked a row while the results streamed in, in which case it stays on that entry. Navigating to another directory stops the walk; a reload does not. Once the walk has ended, a reload (<kbd>Ctrl</kbd>+<kbd>R</kbd>, an operation finishing, or a watcher refresh) reads the results again by path: one deleted or renamed since drops out, and the rest show what they hold now. A finished search keeps its notice, with the query and how many results it found (`[Search: 42 results] query`), and the status bar's `# Items` counts the results while they are listed.
+Results appear as the walk finds them and settle into the sort order once it ends, whether it finished or was cancelled. The cursor then goes to the top row, unless you moved it or marked a row while the results streamed in, in which case it stays on that entry. Navigating to another directory stops the walk; a reload does not. Once the walk has ended, a reload (<kbd>Ctrl</kbd>+<kbd>r</kbd>, an operation finishing, or a watcher refresh) reads the results again by path: one deleted or renamed since drops out, and the rest show what they hold now. A finished search keeps its notice, with the query and how many results it found (`[Search: 42 results] query`), and the status bar's `# Items` counts the results while they are listed.
 
 ### Sorting
 
@@ -516,19 +516,21 @@ Delete | There is no trash and no undo: a delete is permanent.
 Delete | A large delete shows 0% while it counts the entries to remove.
 Delete, copy | A tree that contains a bind mount of one of its own ancestors is walked until paths grow too long, and a delete through it removes files in that ancestor.
 All operations | Rename, chmod, delete, copy and cut act on whatever the path names when they run, not on the entry as it was listed.
-Chmod | Applies only to the selected entries, never recursively. A symlink is refused. Needs glibc 2.32 or newer, or `/proc` mounted.
+Chmod | Applies only to the selected entries, never recursively. A symlink is refused. On Linux, needs glibc 2.32 or newer with `/proc` mounted, or glibc 2.39 or newer on Linux 6.6 or newer.
+Copy | Copies like `cp -R` without `-p`: the umask applies, setuid, setgid and sticky bits are dropped, and no times are kept.
 Paste | Directories are never merged, and a directory never replaces or is replaced by another entry.
 Paste | Overwrite replaces whatever holds the name when that entry is pasted, like `cp -f` and `mv -f`.
-Paste | A name taken after you answered the collision prompt fails that entry; it is not asked about again.
+Paste | A name that was free when the paste reached it and is taken before that entry is written fails the entry; it is not asked about. On a filesystem without an atomic no-replace rename, a move can replace it instead.
 Paste | Replacing an entry needs room for the old and new entries at once.
 Paste | A cancelled copy leaves a partial file under its final name, unless it was replacing an entry.
 Paste | A process killed while replacing an entry leaves a hidden `.filectrl-<pid>-<n>` file beside it.
 Paste | A later "all" answer at the collision prompt replaces an earlier one, and any key that is not a choice abandons the paste.
 Move across filesystems | Keeps mode and modification time only: not owner, group, access time, extended attributes or ACLs. Hard links become separate files.
-Move across filesystems | The original is removed once everything is copied, so anything written into it during the copy is lost. If any entry fails, the whole original is kept.
+Move across filesystems | The original is removed once everything is copied, so anything written into it during the copy is lost. If any entry fails, the whole original is kept. Once removal starts, the move cannot be cancelled.
 Clipboard | Only absolute paths are pasted. Without a system clipboard (over SSH, on a console), copy and paste work within one window only.
-Open with | Cannot set a default application (use `gio mime <type> <application>` or `xdg-mime default`). It opens the entry under the cursor and ignores marks.
+Open with | Cannot set a default application (use `gio mime <type> <application>` or `xdg-mime default`). It opens the entry under the cursor and ignores marks. On macOS, requires macOS 12 or newer.
 Open with | On Linux, requires the `gio` command from GLib, and application names are shown unlocalized.
+Display | The truecolor theme is used only when `$COLORTERM` contains `truecolor` or `24bit`; no flag forces it.
 Display | A shortened path is not fitted to the terminal width, so it can wrap on a narrow terminal.
 Signals | <kbd>Ctrl</kbd>+<kbd>z</kbd> is ignored except while an editor or pager runs. A program that stops only itself, rather than its process group, leaves FileCTRL waiting.
 Signals | Terminal settings an editor or pager leaves changed (such as echo off) stay changed after it exits.

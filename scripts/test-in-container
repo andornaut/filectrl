@@ -3,9 +3,7 @@
 # Run the test suite inside a container. The tests create, copy and delete
 # files, so a regression in a path guard must not be able to reach the host:
 # the checkout is mounted read-only, and the only writable mount is a Docker
-# volume that holds the cargo cache, the build output and TMPDIR. The volume
-# lives under /var/lib/docker, so it has the host filesystem's semantics (birth
-# times included) even when the checkout is on an encrypted home directory.
+# volume that holds the cargo cache, the build output and TMPDIR.
 #
 # Usage: scripts/test-in-container [cargo test arguments...]
 # Environment: FILECTRL_TEST_VOLUME (default: filectrl-test)
