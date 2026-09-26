@@ -52,13 +52,12 @@ filectrl [OPTIONS] [DIRECTORY]
 
 Option | Description
 --- | ---
-`-c`, `--config <PATH>` | Read the config from `PATH`, or write it there when combined with a `--write-default-*` flag
+`-c`, `--config <PATH>` | Read the config from `PATH`
 `-i`, `--include <PATH>` | Merge a TOML file on top of the config. Repeatable; later files take precedence
 `--no-truecolor` | Use the 256-color theme instead of detecting truecolor support
-`--force` | Replace an existing file when writing defaults, which fails without it. A symlink is refused even with `--force`, so a config linked into a dotfiles repository is left alone
+`--print-default-config` | Print the default config, then exit
+`--print-default-theme` | Print the default theme, then exit
 `--print-keybindings` | Print the keybindings, then exit
-`--write-default-config` | Write the default config, then exit
-`--write-default-themes` | Write the default theme as `theme.toml` beside the config, then exit
 `-V`, `--version` | Print the version, then exit
 `-h`, `--help` | Print usage, then exit
 
@@ -68,12 +67,12 @@ The four flags below act and exit. They are mutually exclusive, and each accepts
 
 Flag | Also accepts
 --- | ---
+`--print-default-config` | nothing
+`--print-default-theme` | nothing
 `--print-keybindings` | `--config`, `--include`
-`--write-default-config` | `--config`, `--force`
-`--write-default-themes` | `--config`, `--force`
 `--version` | nothing
 
-Anything else is reported rather than ignored. Both write flags print the path they wrote, which follows `$XDG_CONFIG_HOME` on Linux and so is not always under `~/.config`.
+Anything else is reported rather than ignored.
 
 Signal handling and exit statuses are described under [Signals](#signals).
 
@@ -272,11 +271,15 @@ The Name column orders by the text it displays (while searching, the path relati
 The built-in [default configuration](./src/app/config/default_config.toml) is always the base. A config file merges on top of it, read from the first of:
 
 1. The path given by `--config`
-1. `config.toml` in the config directory, if it exists: `~/.config/filectrl/` on Linux, `~/Library/Application Support/filectrl/` on macOS. The examples below use the Linux path. A symlink there whose target is missing is an error, not an absent config
+1. `config.toml` in the config directory, if it exists: `~/.config/filectrl/` on Linux (`$XDG_CONFIG_HOME/filectrl/` when that is set), `~/Library/Application Support/filectrl/` on macOS. The examples below use the Linux path. A symlink there whose target is missing is an error, not an absent config
 
 `--config` replaces the user config rather than adding to it, so a key the given file leaves out falls back to the built-in default, not to the config directory's `config.toml`.
 
-`filectrl --write-default-config` writes the defaults to whichever of those two paths applies. It writes the configuration keys only; the theme keys are a separate file written by `--write-default-themes`.
+`filectrl --print-default-config` prints the defaults to redirect into a file. It prints the configuration keys only; `--print-default-theme` prints the theme keys:
+
+```bash
+filectrl --print-default-config > ~/.config/filectrl/config.toml
+```
 
 Override only what you want to change:
 
@@ -418,11 +421,10 @@ include_files = ["theme.toml"]
 - Files merge in order, later ones taking precedence over the base config and over earlier files
 - The value must be an array of strings, and every listed file must exist, be a regular file (or a symlink to one), and parse, or FileCTRL exits with an error. The same holds for the config file and for `--include`
 
-Export the defaults, then copy and edit:
+Export the default theme, then edit it:
 
 ```bash
-filectrl --write-default-themes  # writes ~/.config/filectrl/theme.toml
-cp ~/.config/filectrl/theme.toml ~/.config/filectrl/solarized.toml
+filectrl --print-default-theme > ~/.config/filectrl/solarized.toml
 ```
 
 `--include`/`-i` applies a theme without editing the config. It is repeatable and merges in order, later ones taking precedence. Unlike `include_files`, relative paths resolve against the current directory:
@@ -435,7 +437,7 @@ filectrl -i ~/.config/filectrl/solarized.toml -i overrides.toml
 
 Theme | Inspired by | Screenshot
 ----- | ----------- | ----------
-[IBM1970](./themes/ibm1970.toml) (default) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme) | [![IBM1970](./screenshots/IBM1970.png)](./screenshots/IBM1970.png)
+IBM1970 (default, `--print-default-theme`) | [vscode-ibm1970-theme](https://github.com/andornaut/vscode-ibm1970-theme) | [![IBM1970](./screenshots/IBM1970.png)](./screenshots/IBM1970.png)
 [42KM](./themes/42km.toml) | [vscode-42km-theme](https://github.com/andornaut/vscode-42km-theme) | [![42KM](./screenshots/42KM.png)](./screenshots/42KM.png)
 
 The release archives do not include the theme files, so from a source checkout:

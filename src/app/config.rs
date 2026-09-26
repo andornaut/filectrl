@@ -14,7 +14,7 @@ use std::{
 use ::serde::Deserialize;
 use anyhow::{Result, anyhow};
 use directories::ProjectDirs;
-use log::{LevelFilter, debug, info};
+use log::{LevelFilter, debug};
 use toml::Value;
 
 use self::keybindings::{KeyBindings, TomlKeybindings};
@@ -24,9 +24,10 @@ use crate::file_system::path_info::quoted;
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
 const CONFIG_RELATIVE_PATH: &str = "config.toml";
-const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
-const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
-const DEFAULT_THEME_FILENAME: &str = "theme.toml";
+/// The embedded default config, without the theme keys.
+pub const DEFAULT_CONFIG_BASE: &str = include_str!("config/default_config.toml");
+/// The embedded default theme (IBM1970).
+pub const DEFAULT_THEME: &str = include_str!("config/default_theme.toml");
 /// The floor shared by every recurring UI timer.
 const MIN_REFRESH_DEBOUNCE_MILLISECONDS: u64 = 100;
 
@@ -140,13 +141,11 @@ impl Config {
         config_path: Option<PathBuf>,
         include_paths: &[PathBuf],
     ) -> Result<Self> {
-        let is_default = config_path.is_none();
-        Self::load_from(
-            env,
-            &Self::target_path(config_path)?,
-            is_default,
-            include_paths,
-        )
+        let (path, is_default) = match config_path {
+            Some(path) => (absolute_path(&path)?, false),
+            None => (Self::default_path()?, true),
+        };
+        Self::load_from(env, &path, is_default, include_paths)
     }
 
     /// `path` is absolute, so its parent is never empty. `is_default` means a
@@ -187,38 +186,6 @@ impl Config {
             .ok_or_else(|| anyhow!("Cannot determine the config directory"))?
             .config_dir()
             .join(CONFIG_RELATIVE_PATH))
-    }
-
-    /// The config file the CLI acts on: `--config`, or the default. Absolutized.
-    fn target_path(config_path: Option<PathBuf>) -> Result<PathBuf> {
-        match config_path {
-            Some(path) => absolute_path(&path),
-            None => Self::default_path(),
-        }
-    }
-
-    /// Writes the config keys only; the theme is written by
-    /// [`Config::write_default_themes`].
-    pub fn write_default(config_path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
-        let path = Self::target_path(config_path)?;
-        write_new(&path, DEFAULT_CONFIG_BASE, force)?;
-        info!("Wrote the default config to {}", path.display());
-        Ok(path)
-    }
-
-    /// Writes the theme beside the config, where a relative include resolves from.
-    pub fn write_default_themes(config_path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
-        let config = Self::target_path(config_path)?;
-        let dir = config.parent().ok_or_else(|| {
-            anyhow!(
-                "Cannot write the theme: {} has no parent directory",
-                quoted(&config)
-            )
-        })?;
-        let path = dir.join(DEFAULT_THEME_FILENAME);
-        write_new(&path, DEFAULT_THEME, force)?;
-        info!("Wrote the default theme to {}", path.display());
-        Ok(path)
     }
 
     /// `config_file` is the file `content` was read from, if any; an include cycle
@@ -382,75 +349,6 @@ fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
     let mut content = String::new();
     file.read_to_string(&mut content).map_err(ReadFailure::Io)?;
     Ok(content)
-}
-
-/// Writes `content` to `path`, creating the parent directory. An existing file
-/// is replaced only with `force`; anything but a regular file (a symlink
-/// included) is always refused. A replacement is written beside the file with
-/// its permission bits and renamed over it, so a failed write keeps the old one.
-fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot write {}: it has no parent directory", quoted(path)))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| anyhow!("Failed to create directory {}: {error}", quoted(parent)))?;
-    let existing = path.symlink_metadata().ok();
-    // Refused even with `force`, so the message never suggests the flag.
-    if let Some(metadata) = &existing {
-        let file_type = metadata.file_type();
-        if !file_type.is_file() {
-            let what = if file_type.is_symlink() {
-                "a symbolic link"
-            } else if file_type.is_dir() {
-                "a directory"
-            } else {
-                "not a regular file"
-            };
-            return Err(anyhow!("Cannot write {}: it is {what}", quoted(path)));
-        }
-    }
-    let Some(metadata) = existing.filter(|_| force) else {
-        return create_and_write(path, content).map_err(|error| {
-            if error.kind() == ErrorKind::AlreadyExists {
-                anyhow!(
-                    "Cannot write {}: it already exists; pass --force to replace it",
-                    quoted(path)
-                )
-            } else {
-                anyhow!("Failed to write {}: {error}", quoted(path))
-            }
-        });
-    };
-    let mut staged = path.as_os_str().to_owned();
-    staged.push(format!(".{}.tmp", std::process::id()));
-    let staged = PathBuf::from(staged);
-    let failed = |error: std::io::Error| anyhow!("Failed to replace {}: {error}", quoted(path));
-    let written = create_and_write(&staged, content).and_then(|()| {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = metadata.permissions().mode() & 0o777;
-        fs::set_permissions(&staged, fs::Permissions::from_mode(mode))
-    });
-    // Removed only if this call created it.
-    if let Err(error) = written.and_then(|()| fs::rename(&staged, path)) {
-        if error.kind() != ErrorKind::AlreadyExists {
-            let _ = fs::remove_file(&staged);
-        }
-        return Err(failed(error));
-    }
-    Ok(())
-}
-
-/// Creates `path` exclusively and writes `content` to it.
-fn create_and_write(path: &Path, content: &str) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(content.as_bytes())?;
-    // Synced before a rename can put it in place of the old file.
-    file.sync_all()
 }
 
 /// Merges `include_paths` onto `value`, recursing into each file's own
@@ -793,23 +691,17 @@ open_directory = "alacritty --working-directory %s"
         .unwrap();
     }
 
-    /// Embedded source, so comments survive being written out.
+    /// Embedded source, so comments survive being printed.
     #[test_case(DEFAULT_CONFIG_BASE ; "config")]
     #[test_case(DEFAULT_THEME ; "theme")]
-    fn a_written_default_parses_and_keeps_its_comments(content: &str) {
+    fn a_printed_default_parses_and_keeps_its_comments(content: &str) {
         Config::parse(RuntimeEnv::default(), None, content, &inert_dir(), &[]).unwrap();
         assert!(content.contains('#'), "comments should be preserved");
     }
 
     #[test_case(include_str!("../../themes/42km.toml") ; "42km")]
-    #[test_case(include_str!("../../themes/ibm1970.toml") ; "ibm1970")]
     fn a_bundled_theme_parses(content: &str) {
         Config::parse(RuntimeEnv::default(), None, content, &inert_dir(), &[]).unwrap();
-    }
-
-    #[test]
-    fn the_ibm1970_theme_is_the_default_theme() {
-        assert_eq!(DEFAULT_THEME, include_str!("../../themes/ibm1970.toml"));
     }
 
     #[test]
@@ -938,183 +830,6 @@ open_directory = "alacritty --working-directory %s"
 
         assert_eq!(expected, config.theme.file_type.directory().fg);
         assert_eq!(expected256, config.theme256.file_type.directory().fg);
-    }
-
-    // Writing the defaults: always to an explicit path, never the user's config.
-
-    #[test]
-    fn write_default_writes_the_config_and_reports_where() {
-        let dir = TempDir::reserved("config_write");
-        let path = dir.join("sub").join("config.toml");
-
-        let written = Config::write_default(Some(path.clone()), false).unwrap();
-
-        assert_eq!(path, written);
-        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
-    }
-
-    #[test]
-    fn write_default_themes_writes_the_theme_beside_the_config() {
-        let dir = TempDir::reserved("config_write_theme");
-        let config = dir.join("mine.toml");
-
-        let written = Config::write_default_themes(Some(config), false).unwrap();
-
-        assert_eq!(dir.join(DEFAULT_THEME_FILENAME), written);
-        assert_eq!(DEFAULT_THEME, fs::read_to_string(&written).unwrap());
-    }
-
-    #[test]
-    fn a_written_default_is_a_config_the_loader_accepts() {
-        let dir = TempDir::reserved("config_round_trip");
-        let config = Config::write_default(Some(dir.join("config.toml")), false).unwrap();
-        let theme = Config::write_default_themes(Some(config.clone()), false).unwrap();
-
-        Config::load(RuntimeEnv::default(), Some(config.clone()), &[]).unwrap();
-        Config::load(RuntimeEnv::default(), Some(config), &[theme]).unwrap();
-    }
-
-    #[test]
-    fn writing_a_default_refuses_to_replace_an_existing_file() {
-        let dir = TempDir::new("config_no_clobber");
-        let path = dir.join("config.toml");
-        fs::write(&path, b"# hand written\n").unwrap();
-
-        let error = Config::write_default(Some(path.clone()), false)
-            .expect_err("an existing config must not be replaced")
-            .to_string();
-
-        assert!(error.contains("already exists; pass --force"), "{error}");
-        assert_eq!("# hand written\n", fs::read_to_string(&path).unwrap());
-    }
-
-    #[test]
-    fn force_replaces_an_existing_file() {
-        let dir = TempDir::new("config_force");
-        let path = dir.join("config.toml");
-        fs::write(&path, b"# hand written\n").unwrap();
-
-        Config::write_default(Some(path.clone()), true).unwrap();
-
-        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
-    }
-
-    #[test]
-    fn force_keeps_the_replaced_files_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = TempDir::new("config_force_mode");
-        let path = dir.join("config.toml");
-        fs::write(&path, b"# hand written\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-
-        Config::write_default(Some(path.clone()), true).unwrap();
-
-        assert_eq!(
-            0o600,
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777
-        );
-    }
-
-    #[test]
-    fn writing_a_default_refuses_to_follow_a_symlink() {
-        let dir = TempDir::new("config_symlink");
-        let target = dir.join("dotfiles.toml");
-        let link = dir.join("config.toml");
-        // Dangling, so only a check that does not follow the link finds it.
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-
-        let error = Config::write_default(Some(link.clone()), false)
-            .expect_err("a symlink must not be written through")
-            .to_string();
-
-        assert_eq!(
-            format!("Cannot write {}: it is a symbolic link", quoted(&link)),
-            error
-        );
-        assert!(!target.exists());
-    }
-
-    #[test]
-    fn force_keeps_the_old_file_when_the_new_one_cannot_be_written() {
-        let dir = TempDir::new("config_force_failed");
-        let path = dir.join("config.toml");
-        fs::write(&path, "old").unwrap();
-        let mut staged = path.as_os_str().to_owned();
-        staged.push(format!(".{}.tmp", std::process::id()));
-        fs::create_dir(&staged).unwrap();
-
-        let error = write_new(&path, "new", true)
-            .expect_err("the staged name is taken")
-            .to_string();
-
-        assert!(error.starts_with("Failed to replace"), "{error}");
-        assert_eq!("old", fs::read_to_string(&path).unwrap());
-        assert!(Path::new(&staged).is_dir());
-    }
-
-    /// Dangling, so only a check that does not follow the link finds it.
-    #[test]
-    fn force_refuses_a_symlink() {
-        let dir = TempDir::new("config_force_symlink");
-        let target = dir.join("dotfiles.toml");
-        let link = dir.join("config.toml");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-
-        let error = Config::write_default(Some(link.clone()), true)
-            .expect_err("a symlink must be refused even with --force")
-            .to_string();
-
-        assert_eq!(
-            format!("Cannot write {}: it is a symbolic link", quoted(&link)),
-            error
-        );
-        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        assert!(!target.exists());
-    }
-
-    #[test_case(false, false ; "a directory")]
-    #[test_case(true, false ; "a directory with force")]
-    #[test_case(false, true ; "a fifo")]
-    #[test_case(true, true ; "a fifo with force")]
-    fn writing_a_default_refuses_what_is_not_a_regular_file(force: bool, fifo: bool) {
-        let dir = TempDir::new("config_not_a_file");
-        let path = dir.join("config.toml");
-        if fifo {
-            nix::unistd::mkfifo(&path, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
-        } else {
-            fs::create_dir(&path).unwrap();
-        }
-
-        let error = Config::write_default(Some(path.clone()), force)
-            .expect_err("only a regular file is replaced")
-            .to_string();
-
-        let what = if fifo {
-            "not a regular file"
-        } else {
-            "a directory"
-        };
-        assert_eq!(
-            format!("Cannot write {}: it is {what}", quoted(&path)),
-            error
-        );
-        let file_type = path.symlink_metadata().unwrap().file_type();
-        assert!(if fifo {
-            !file_type.is_file() && !file_type.is_dir()
-        } else {
-            file_type.is_dir()
-        });
-    }
-
-    #[test]
-    fn force_writes_a_missing_file() {
-        let dir = TempDir::new("config_force_missing");
-        let path = dir.join("config.toml");
-
-        Config::write_default(Some(path.clone()), true).unwrap();
-
-        assert_eq!(DEFAULT_CONFIG_BASE, fs::read_to_string(&path).unwrap());
     }
 
     // Loading, and what a bad path reports.

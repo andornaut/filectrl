@@ -12,7 +12,10 @@ use anyhow::{Context, Result};
 use argh::FromArgs;
 
 use filectrl::{
-    app::{config::Config, events::quit_signal},
+    app::{
+        config::{DEFAULT_CONFIG_BASE, DEFAULT_THEME},
+        events::quit_signal,
+    },
     escape_for_terminal, print_keybindings, run, visible_os,
 };
 
@@ -34,21 +37,17 @@ struct Args {
     #[argh(switch)]
     no_truecolor: bool,
 
+    /// print the default config, then exit
+    #[argh(switch)]
+    print_default_config: bool,
+
+    /// print the default theme, then exit
+    #[argh(switch)]
+    print_default_theme: bool,
+
     /// print the keybindings, then exit
     #[argh(switch)]
     print_keybindings: bool,
-
-    /// write the default config to the config path, then exit
-    #[argh(switch)]
-    write_default_config: bool,
-
-    /// write the default theme beside the config as theme.toml, then exit
-    #[argh(switch)]
-    write_default_themes: bool,
-
-    /// replace an existing file when writing defaults
-    #[argh(switch)]
-    force: bool,
 
     /// print the version, then exit
     #[argh(switch, short = 'V')]
@@ -79,32 +78,26 @@ fn usage(message: impl Into<String>) -> anyhow::Error {
 /// the arguments that can change what it does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Action {
-    PrintKeybindings,
-    PrintVersion,
-    WriteDefaultConfig,
-    WriteDefaultThemes,
+    DefaultConfig,
+    DefaultTheme,
+    Keybindings,
+    Version,
 }
 
 impl Action {
     fn flag(self) -> &'static str {
         match self {
-            Self::PrintKeybindings => "--print-keybindings",
-            Self::PrintVersion => "--version",
-            Self::WriteDefaultConfig => "--write-default-config",
-            Self::WriteDefaultThemes => "--write-default-themes",
+            Self::DefaultConfig => "--print-default-config",
+            Self::DefaultTheme => "--print-default-theme",
+            Self::Keybindings => "--print-keybindings",
+            Self::Version => "--version",
         }
     }
 
-    /// `--config` applies to all but `--version`; `--include` only to printing;
-    /// `--force` only to writing; `--no-truecolor` to none.
+    /// Only `--print-keybindings` reads the config, so only it accepts
+    /// `--config` and `--include`; nothing accepts `--no-truecolor`.
     fn accepts(self, argument: &str) -> bool {
-        match self {
-            Self::PrintKeybindings => matches!(argument, "--config" | "--include"),
-            Self::PrintVersion => false,
-            Self::WriteDefaultConfig | Self::WriteDefaultThemes => {
-                matches!(argument, "--config" | "--force")
-            }
-        }
+        self == Self::Keybindings && matches!(argument, "--config" | "--include")
     }
 }
 
@@ -198,13 +191,16 @@ fn shown_argh_output(output: &str) -> String {
         .join("\n")
 }
 
-/// Writes a line to stdout, returning a failure where `println!` would panic.
-fn print_line(args: fmt::Arguments<'_>) -> Result<()> {
+/// Writes to stdout, returning a failure where `print!` would panic.
+fn print(text: &str) -> Result<()> {
     let mut out = io::stdout().lock();
-    out.write_fmt(args)
-        .and_then(|()| out.write_all(b"\n"))
+    out.write_all(text.as_bytes())
         .and_then(|()| out.flush())
         .context("Failed to write to standard output")
+}
+
+fn print_line(args: fmt::Arguments<'_>) -> Result<()> {
+    print(&format!("{args}\n"))
 }
 
 /// Writes a line to stderr, ignoring a failure: `eprintln!` would panic on a
@@ -254,18 +250,14 @@ fn dispatch(args: &Args) -> Result<()> {
     let config = args.config.clone();
 
     match action {
-        Some(Action::PrintVersion) => print_line(format_args!(
+        Some(Action::DefaultConfig) => print(DEFAULT_CONFIG_BASE),
+        Some(Action::DefaultTheme) => print(DEFAULT_THEME),
+        Some(Action::Version) => print_line(format_args!(
             "{} {}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         )),
-        Some(Action::PrintKeybindings) => print_keybindings(config, &args.include),
-        Some(Action::WriteDefaultConfig) => {
-            report_written(&Config::write_default(config, args.force)?)
-        }
-        Some(Action::WriteDefaultThemes) => {
-            report_written(&Config::write_default_themes(config, args.force)?)
-        }
+        Some(Action::Keybindings) => print_keybindings(config, &args.include),
         None => run(
             config,
             &args.include,
@@ -275,32 +267,19 @@ fn dispatch(args: &Args) -> Result<()> {
     }
 }
 
-/// Prints the resolved path, since the config directory follows
-/// `$XDG_CONFIG_HOME`.
-fn report_written(path: &Path) -> Result<()> {
-    print_line(format_args!("Wrote {}", visible_os(path.as_os_str())))
-}
-
 fn selected_action(args: &Args) -> Result<Option<Action>> {
     let selected: Vec<Action> = [
-        (args.print_keybindings, Action::PrintKeybindings),
-        (args.version, Action::PrintVersion),
-        (args.write_default_config, Action::WriteDefaultConfig),
-        (args.write_default_themes, Action::WriteDefaultThemes),
+        (args.print_default_config, Action::DefaultConfig),
+        (args.print_default_theme, Action::DefaultTheme),
+        (args.print_keybindings, Action::Keybindings),
+        (args.version, Action::Version),
     ]
     .into_iter()
     .filter_map(|(given, action)| given.then_some(action))
     .collect();
 
     match selected.as_slice() {
-        [] => {
-            if args.force {
-                return Err(usage(
-                    "--force has no effect without --write-default-config or --write-default-themes.",
-                ));
-            }
-            Ok(None)
-        }
+        [] => Ok(None),
         [action] => {
             reject_unused(args, *action)?;
             Ok(Some(*action))
@@ -318,7 +297,6 @@ fn reject_unused(args: &Args, action: Action) -> Result<()> {
     let given = [
         (args.config.is_some(), "--config"),
         (!args.include.is_empty(), "--include"),
-        (args.force, "--force"),
         (args.no_truecolor, "--no-truecolor"),
     ];
     for (present, argument) in given {
@@ -356,10 +334,9 @@ mod tests {
             config: None,
             include: Vec::new(),
             no_truecolor: false,
+            print_default_config: false,
+            print_default_theme: false,
             print_keybindings: false,
-            write_default_config: false,
-            write_default_themes: false,
-            force: false,
             version: false,
             directory: None,
         }
@@ -389,34 +366,33 @@ mod tests {
             version: true,
             ..args()
         };
-        assert_eq!(Some(Action::PrintVersion), selected_action(&args).unwrap());
+        assert_eq!(Some(Action::Version), selected_action(&args).unwrap());
     }
 
     #[test]
     fn two_action_flags_are_rejected() {
         let args = Args {
-            write_default_config: true,
-            write_default_themes: true,
+            print_default_config: true,
+            print_default_theme: true,
             ..args()
         };
         let error = usage_error(&args);
-        assert!(error.contains("--write-default-config"), "{error}");
-        assert!(error.contains("--write-default-themes"), "{error}");
+        assert!(error.contains("--print-default-config"), "{error}");
+        assert!(error.contains("--print-default-theme"), "{error}");
     }
 
     /// `action`'s flag, plus the argument `name` names in the usage error.
     fn args_with(action: Action, name: &str) -> Args {
         let mut args = args();
         match action {
-            Action::PrintKeybindings => args.print_keybindings = true,
-            Action::PrintVersion => args.version = true,
-            Action::WriteDefaultConfig => args.write_default_config = true,
-            Action::WriteDefaultThemes => args.write_default_themes = true,
+            Action::DefaultConfig => args.print_default_config = true,
+            Action::DefaultTheme => args.print_default_theme = true,
+            Action::Keybindings => args.print_keybindings = true,
+            Action::Version => args.version = true,
         }
         match name {
             "--config" => args.config = Some(PathBuf::from("config.toml")),
             "--include" => args.include = vec![PathBuf::from("theme.toml")],
-            "--force" => args.force = true,
             "--no-truecolor" => args.no_truecolor = true,
             "A directory argument" => args.directory = Some(PathBuf::from("/tmp")),
             _ => unreachable!("no such argument: {name}"),
@@ -424,29 +400,15 @@ mod tests {
         args
     }
 
-    #[test_case(Action::WriteDefaultConfig, "--include" ; "include with a write")]
-    #[test_case(Action::PrintKeybindings, "--force" ; "force with printing")]
-    #[test_case(Action::PrintKeybindings, "--no-truecolor" ; "a run-only flag with printing")]
-    #[test_case(Action::PrintVersion, "--config" ; "config with version")]
-    #[test_case(Action::PrintKeybindings, "A directory argument" ; "a directory with printing")]
+    #[test_case(Action::DefaultConfig, "--config" ; "config with the default config")]
+    #[test_case(Action::DefaultTheme, "--include" ; "include with the default theme")]
+    #[test_case(Action::Keybindings, "--no-truecolor" ; "a run-only flag with printing")]
+    #[test_case(Action::Version, "--config" ; "config with version")]
+    #[test_case(Action::Keybindings, "A directory argument" ; "a directory with printing")]
     fn an_argument_the_action_ignores_is_rejected(action: Action, name: &str) {
         assert_eq!(
             format!("{name} has no effect with {}.", action.flag()),
             usage_error(&args_with(action, name))
-        );
-    }
-
-    #[test]
-    fn writing_accepts_the_config_path_and_force() {
-        let args = Args {
-            write_default_config: true,
-            config: Some(PathBuf::from("/tmp/config.toml")),
-            force: true,
-            ..args()
-        };
-        assert_eq!(
-            Some(Action::WriteDefaultConfig),
-            selected_action(&args).unwrap()
         );
     }
 
@@ -458,19 +420,7 @@ mod tests {
             include: vec![PathBuf::from("theme.toml")],
             ..args()
         };
-        assert_eq!(
-            Some(Action::PrintKeybindings),
-            selected_action(&args).unwrap()
-        );
-    }
-
-    #[test]
-    fn force_without_a_write_flag_is_rejected() {
-        let args = Args {
-            force: true,
-            ..args()
-        };
-        assert!(usage_error(&args).contains("--force"));
+        assert_eq!(Some(Action::Keybindings), selected_action(&args).unwrap());
     }
 
     #[test]
