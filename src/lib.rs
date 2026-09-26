@@ -24,7 +24,7 @@ use self::file_system::path_info::quoted;
 use self::app::{
     App,
     config::{Config, RuntimeEnv},
-    events::install_signal_handlers,
+    events::block_signals,
     terminal::{CleanupOnDropTerminal, supports_truecolor},
 };
 
@@ -36,6 +36,9 @@ pub fn run(
     initial_directory: Option<&Path>,
     no_truecolor: bool,
 ) -> Result<()> {
+    // Before any thread is spawned, so every thread inherits the mask.
+    block_signals().context("Failed to block the signals")?;
+
     // A default level before the config loads, so its Info messages are logged.
     configure_logging();
 
@@ -65,9 +68,6 @@ pub fn run(
         info!("Terminal truecolor support: {is_truecolor}");
     }
     Config::init(config);
-
-    // Before raw mode, so a signal restores the terminal.
-    install_signal_handlers().context("Failed to install the signal handlers")?;
 
     // After the user's input is validated. Without it a redirected stdout
     // surfaces from crossterm as a bare ENXIO.

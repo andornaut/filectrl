@@ -14,20 +14,21 @@ use std::{
     },
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ratatui::Frame;
 
 use self::{
     clipboard::Clipboard,
     config::Config,
     events::{
-        ReaderGate, quit_requested, receive_commands, spawn_command_sender, spawn_signal_watcher,
+        ReaderGate, receive_commands, spawn_command_sender, spawn_hangup_watcher,
+        spawn_signal_thread,
     },
     terminal::CleanupOnDropTerminal,
 };
 use crate::{
     command::{Command, InputMode, handler::CommandHandler, result::CommandResult},
-    file_system::{FileSystem, exit_cause, failure_prefix, path_info::compact},
+    file_system::{FileSystem, exit_cause, failure_prefix},
     views::{View, root::RootView},
 };
 
@@ -94,8 +95,9 @@ impl App {
         warn_unhandled(&broadcast_commands(&mut self.handlers, initial));
         self.render()?;
 
+        spawn_signal_thread(self.tx.clone()).context("Failed to spawn the signal thread")?;
+        spawn_hangup_watcher(self.tx.clone());
         spawn_command_sender(&self.tx, self.reader_gate.clone());
-        spawn_signal_watcher(self.tx.clone());
 
         loop {
             let commands = receive_commands(&self.rx);
@@ -120,9 +122,7 @@ impl App {
                 .partition(|command| matches!(command, Command::RunInForeground { .. }));
             warn_unhandled(&remaining_commands);
             for command in foreground {
-                if self.run_in_foreground(command)? {
-                    return Ok(());
-                }
+                self.run_in_foreground(command)?;
             }
             if changed_nothing_visible(received, &remaining_commands) {
                 continue;
@@ -132,11 +132,10 @@ impl App {
     }
 
     /// Runs an editor or pager on an entry, then queues a refresh and any failure
-    /// alert. Returns whether a termination signal arrived, in which case the
-    /// caller quits. Only a terminal that cannot be taken back is an error.
-    fn run_in_foreground(&mut self, command: Command) -> Result<bool> {
+    /// alert. Only a terminal that cannot be taken back is an error.
+    fn run_in_foreground(&mut self, command: Command) -> Result<()> {
         let Command::RunInForeground { program, path } = command else {
-            return Ok(false);
+            return Ok(());
         };
         let alert = match foreground::argv(|name| std::env::var_os(name), program, &path.path) {
             Err(error) => Some(Command::AlertWarn(format!("{error:#}"))),
@@ -144,27 +143,13 @@ impl App {
                 // Built from a variable that was valid UTF-8.
                 let program = argv[0].to_string_lossy().into_owned();
                 let failure = failure_prefix(&program, &path.path);
-                let outcome = foreground::run(
-                    &mut self.terminal,
-                    &self.reader_gate,
-                    foreground::READER_PAUSE_TIMEOUT,
-                    &quit_requested,
-                    &argv,
-                )?;
-                match outcome {
-                    foreground::Outcome::Ran(Ok(status)) if status.success() => None,
-                    foreground::Outcome::Ran(Ok(status)) => Some(Command::AlertError(format!(
+                match foreground::run(&mut self.terminal, &self.reader_gate, &argv)? {
+                    Ok(status) if status.success() => None,
+                    Ok(status) => Some(Command::AlertError(format!(
                         "{failure}: {}",
                         exit_cause(status)
                     ))),
-                    foreground::Outcome::Ran(Err(error)) => {
-                        Some(Command::AlertError(format!("{failure}: {error}")))
-                    }
-                    foreground::Outcome::ReaderBusy => Some(Command::AlertError(format!(
-                        "Cannot run {program:?} on {}: the input reader did not stop",
-                        compact(&path.path)
-                    ))),
-                    foreground::Outcome::Quit => return Ok(true),
+                    Err(error) => Some(Command::AlertError(format!("{failure}: {error}"))),
                 }
             }
         };
@@ -172,7 +157,7 @@ impl App {
         if let Some(alert) = alert {
             let _ = self.tx.send(alert);
         }
-        Ok(false)
+        Ok(())
     }
 
     fn render(&mut self) -> Result<()> {

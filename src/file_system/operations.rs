@@ -385,6 +385,7 @@ where
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .process_group(0);
+    crate::app::events::unblock_in_child(&mut command);
     command
 }
 
@@ -882,6 +883,25 @@ mod tests {
             format!("Cannot open {}: openers.open_file is empty", compact(&file)),
             error
         );
+    }
+
+    /// The signals are blocked on this test's thread only, as filectrl blocks
+    /// them for the whole process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_launched_program_receives_the_signals_filectrl_blocks() {
+        let mut blocked = nix::sys::signal::SigSet::empty();
+        blocked.add(nix::sys::signal::Signal::SIGTERM);
+        blocked.thread_block().unwrap();
+        let spawned = detached_command("sleep", ["10"]).spawn();
+        blocked.thread_unblock().unwrap();
+        let mut child = spawned.unwrap();
+        let status = fs::read_to_string(format!("/proc/{}/status", child.id()));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let status = status.unwrap();
+        assert!(status.contains("SigBlk:\t0000000000000000\n"), "{status}");
     }
 
     #[cfg(target_os = "linux")]

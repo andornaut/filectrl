@@ -1,9 +1,8 @@
 use std::{
     io,
-    os::fd::{AsFd, BorrowedFd, IntoRawFd, OwnedFd},
-    process::ExitStatus,
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
     sync::{
-        Arc, Condvar, Mutex, OnceLock,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicI32, Ordering},
         mpsc::{Receiver, Sender},
     },
@@ -11,58 +10,71 @@ use std::{
     time::Duration,
 };
 
-use nix::errno::Errno;
+use nix::{
+    errno::Errno,
+    poll::PollTimeout,
+    sys::signal::{SigSet, Signal, raise},
+};
 use ratatui::crossterm::event::{Event, poll, read};
 
 use crate::command::Command;
 
-// Termination signals (SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2,
-// SIGALRM) quit cleanly so the terminal is restored. Raw mode disables ISIG, so
-// only externally sent signals arrive here.
-//
-// SIGTSTP gets a no-op handler rather than SIG_IGN: an ignored disposition is
-// inherited across exec, a caught one is reset to the default.
-//
-// The handler records the signal and writes a byte to a self-pipe. A watcher
-// thread blocks on that pipe (and on the terminal, for a hangup) and sends
-// `Command::Quit`. The event reader's check between polls is the fallback for a
-// watcher that never started.
-//
-// Removing SA_RESTART would not replace the watcher: at EOF the reader spins in
-// userspace without blocking, so there is no syscall for EINTR to interrupt.
+// The signals below are blocked in every thread and taken by one thread with
+// `sigwait`, so nothing runs in a signal handler. Raw mode disables ISIG, so
+// while the interface is up only externally sent signals arrive.
+// A child inherits the mask, so every spawn goes through `unblock_in_child`.
 
-/// Set while a program runs in the terminal's foreground. Ctrl+C and Ctrl+\
-/// then belong to the child, so the handler ignores them, as `system(3)` does.
-static FOREGROUND_CHILD: AtomicBool = AtomicBool::new(false);
-
-/// Serializes tests that change a signal's action.
-#[cfg(test)]
-pub(super) static SIGNAL_ACTIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
-pub(super) fn is_foreground_child() -> bool {
-    FOREGROUND_CHILD.load(Ordering::SeqCst)
+/// The signals `block_signals` blocks and the signal thread answers.
+fn handled_signals() -> SigSet {
+    let mut signals = SigSet::empty();
+    for signal in [
+        Signal::SIGTERM,
+        Signal::SIGINT,
+        Signal::SIGHUP,
+        Signal::SIGQUIT,
+        Signal::SIGTSTP,
+        Signal::SIGUSR1,
+        Signal::SIGUSR2,
+        Signal::SIGALRM,
+    ] {
+        signals.add(signal);
+    }
+    signals
 }
+
+/// Blocks the handled signals in the calling thread and every thread it
+/// spawns afterwards. Call before any thread is spawned.
+pub fn block_signals() -> nix::Result<()> {
+    handled_signals().thread_block()
+}
+
+/// Unblocks the handled signals in the child `command` starts, which would
+/// otherwise inherit the mask and never receive them.
+pub(crate) fn unblock_in_child(command: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::unix::process::CommandExt;
+
+    let signals = handled_signals();
+    // SAFETY: `pthread_sigmask` is async-signal-safe and `signals` is built
+    // before the fork, so the closure neither allocates nor locks.
+    #[allow(unsafe_code)]
+    unsafe {
+        command.pre_exec(move || signals.thread_unblock().map_err(io::Error::from))
+    }
+}
+
+/// Set while a program runs in the terminal's foreground.
+static FOREGROUND_CHILD: AtomicBool = AtomicBool::new(false);
 
 /// Marks the start or end of a program running in the terminal's foreground.
 pub(super) fn set_foreground_child(running: bool) {
     FOREGROUND_CHILD.store(running, Ordering::SeqCst);
 }
 
-/// Whether a termination signal has arrived, or the terminal hung up.
-pub(super) fn quit_requested() -> bool {
-    QUIT_SIGNAL.load(Ordering::SeqCst) != 0
-}
-
-/// The first termination signal to arrive, 0 before any has.
+/// The first quit signal to arrive, 0 before any has.
 static QUIT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
-/// Keeps the first signal recorded, so the exit status names the cause.
-fn record_first(slot: &AtomicI32, signal: i32) {
-    let _ = slot.compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
-}
-
-/// The termination signal that ended the run, if one did.
+/// The signal that ended the run, if one did. A terminal hangup counts as
+/// SIGHUP.
 pub fn quit_signal() -> Option<i32> {
     match QUIT_SIGNAL.load(Ordering::SeqCst) {
         0 => None,
@@ -70,143 +82,129 @@ pub fn quit_signal() -> Option<i32> {
     }
 }
 
-/// The foreground program's pid while one runs, else 0; a quit signal is
-/// forwarded to it. Cleared before the program is reaped, so a recycled pid is
-/// never signalled.
-static FOREGROUND_PID: AtomicI32 = AtomicI32::new(0);
+/// Records `signal` as the cause of the quit, keeping the first, and asks the
+/// app to quit.
+fn quit(tx: &Sender<Command>, signal: Signal) {
+    let _ = QUIT_SIGNAL.compare_exchange(0, signal as i32, Ordering::SeqCst, Ordering::SeqCst);
+    let _ = tx.send(Command::Quit);
+}
 
-/// Runs `command` in the terminal's foreground and waits for it. A quit that
-/// arrives before the pid is known is checked for and forwarded.
-///
-/// SIGTSTP has its default action meanwhile, so Ctrl+Z stops both processes.
-/// A program that stops only itself is followed: this process stops its group
-/// too, so the shell regains the terminal.
-pub(super) fn run_foreground_child(
-    command: &mut std::process::Command,
-    quit_requested: impl Fn() -> bool,
-) -> io::Result<ExitStatus> {
-    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+#[derive(Debug, PartialEq)]
+enum Answer {
+    Ignore,
+    /// Stop this process, so the shell regains the terminal and `fg` resumes
+    /// it together with the program, which shares its process group.
+    Stop,
+    Quit,
+}
 
-    let default = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
-    // SAFETY: the default action runs no code in this process.
-    #[allow(unsafe_code)]
-    let previous = unsafe { sigaction(Signal::SIGTSTP, &default) }.map_err(io::Error::from)?;
-    let status = if quit_requested() {
-        Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "a quit arrived before it started",
-        ))
-    } else {
-        command.spawn().and_then(|child| {
-            let pid = i32::try_from(child.id()).unwrap_or(0);
-            FOREGROUND_PID.store(pid, Ordering::SeqCst);
-            // A quit between the spawn and the store found no pid to forward.
-            if quit_requested() {
-                forward_signal(pid, nix::libc::SIGTERM);
+/// While a program runs, Ctrl+C and Ctrl+\ are its own (as with `system(3)`)
+/// and Ctrl+Z stops both. Otherwise SIGTSTP is ignored, since a stopped process
+/// would leave the terminal in raw mode.
+fn answer(child_running: bool, signal: Signal) -> Answer {
+    match signal {
+        Signal::SIGTSTP if child_running => Answer::Stop,
+        Signal::SIGTSTP => Answer::Ignore,
+        Signal::SIGINT | Signal::SIGQUIT if child_running => Answer::Ignore,
+        _ => Answer::Quit,
+    }
+}
+
+/// Answers the handled signals until the process exits. They are blocked, so
+/// one that arrived before this thread started is answered once it does.
+pub(super) fn spawn_signal_thread(tx: Sender<Command>) -> io::Result<()> {
+    let signals = handled_signals();
+    thread::Builder::new()
+        .name("filectrl-signals".into())
+        .spawn(move || {
+            loop {
+                let signal = match signals.wait() {
+                    Ok(signal) => signal,
+                    Err(err) => {
+                        log::error!("Failed to wait for a signal: {err}");
+                        return;
+                    }
+                };
+                match answer(FOREGROUND_CHILD.load(Ordering::SeqCst), signal) {
+                    Answer::Ignore => (),
+                    // SIGSTOP rather than SIGTSTP, which is blocked here.
+                    Answer::Stop => {
+                        let _ = raise(Signal::SIGSTOP);
+                    }
+                    Answer::Quit => {
+                        log::info!("Quitting on {signal}");
+                        quit(&tx, signal);
+                    }
+                }
             }
-            wait_for_exit(pid)
         })
-    };
-    // SAFETY: restores the previous action.
-    #[allow(unsafe_code)]
-    let restored = unsafe { sigaction(Signal::SIGTSTP, &previous) };
-    restored.map_err(io::Error::from)?;
-    status
+        .map(drop)
 }
 
-/// Waits for `pid` to exit, following it through stops, then clears
-/// `FOREGROUND_PID` before reaping it.
-fn wait_for_exit(pid: i32) -> io::Result<ExitStatus> {
-    use nix::{
-        libc,
-        sys::{
-            signal::{Signal, kill},
-            wait::{WaitStatus, waitpid},
-        },
-        unistd::Pid,
+/// Sends `Command::Quit` when the terminal hangs up, recorded as SIGHUP.
+///
+/// WORKAROUND: at EOF crossterm re-reads a permanently readable fd forever, so
+/// the reader's `poll` never returns and that thread spins; this thread still
+/// quits the process. It is needed even with the signal thread, since the
+/// kernel sends SIGHUP only to the session leader, which may ignore it
+/// (`trap "" HUP`). https://github.com/crossterm-rs/crossterm/issues/793
+pub(super) fn spawn_hangup_watcher(tx: Sender<Command>) {
+    let Some(terminal) = reader_terminal() else {
+        log::debug!("Cannot watch for a hangup: no terminal to poll");
+        return;
     };
-    use std::os::unix::process::ExitStatusExt;
-
-    let child = Pid::from_raw(pid);
-    // WNOWAIT, so the pid stays the program's while the handler may signal it.
-    while peek_child(pid, libc::WEXITED | libc::WSTOPPED | libc::WNOWAIT)? == libc::CLD_STOPPED {
-        // Still stopped: this process was not stopped along with it.
-        if peek_child(pid, libc::WSTOPPED | libc::WNOHANG)? == libc::CLD_STOPPED {
-            // In an orphaned process group the kernel discards this.
-            let _ = kill(Pid::from_raw(0), Signal::SIGTSTP);
-            let _ = kill(child, Signal::SIGCONT);
-        }
-    }
-    FOREGROUND_PID.store(0, Ordering::SeqCst);
-    match waitpid(child, None).map_err(io::Error::from)? {
-        WaitStatus::Exited(_, code) => Ok(ExitStatus::from_raw(code << 8)),
-        WaitStatus::Signaled(_, signal, core) => Ok(ExitStatus::from_raw(
-            signal as i32 | if core { 0x80 } else { 0 },
-        )),
-        other => Err(io::Error::other(format!("unexpected status {other:?}"))),
+    let spawned = thread::Builder::new()
+        .name("filectrl-hangup".into())
+        .spawn(move || {
+            if wait_for_hangup(PollTimeout::NONE, terminal.as_fd()) {
+                log::info!("The terminal hung up");
+                quit(&tx, Signal::SIGHUP);
+            }
+        });
+    if let Err(err) = spawned {
+        log::error!("Failed to spawn the hangup watcher thread: {err}");
     }
 }
 
-/// `waitid(2)` on `pid`, returning `si_code`, or 0 when `WNOHANG` found
-/// nothing. Called directly because nix's `waitid` is missing on macOS.
-fn peek_child(pid: i32, options: i32) -> io::Result<i32> {
-    use nix::libc;
+/// The terminal crossterm reads: stdin if it is a terminal, else /dev/tty.
+fn reader_terminal() -> Option<OwnedFd> {
+    use std::io::IsTerminal;
 
-    let id = libc::id_t::try_from(pid).map_err(io::Error::other)?;
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        return stdin.as_fd().try_clone_to_owned().ok();
+    }
+    std::fs::File::open("/dev/tty").ok().map(OwnedFd::from)
+}
+
+/// Waits up to `timeout` for `terminal` to hang up, returning whether it did.
+/// A terminal that cannot be polled (macOS answers `POLLNVAL` for a terminal
+/// device) returns false at once.
+fn wait_for_hangup(timeout: PollTimeout, terminal: BorrowedFd<'_>) -> bool {
+    use nix::poll::{PollFd, PollFlags, poll};
+
     loop {
-        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-        // SAFETY: `info` is a zeroed siginfo_t that outlives the call.
-        #[allow(unsafe_code)]
-        let result = unsafe { libc::waitid(libc::P_PID, id, info.as_mut_ptr(), options) };
-        if result == 0 {
-            // SAFETY: zeroed is a valid siginfo_t, and the call filled it in.
-            #[allow(unsafe_code)]
-            let info = unsafe { info.assume_init() };
-            return Ok(info.si_code);
+        let mut fds = [PollFd::new(terminal, PollFlags::empty())];
+        match poll(&mut fds, timeout) {
+            Ok(0) => return false,
+            Ok(_) => (),
+            // SIGWINCH is not blocked, so it can land on this thread.
+            Err(Errno::EINTR) => continue,
+            Err(err) => {
+                log::error!("Failed to poll the terminal for a hangup: {err}");
+                return false;
+            }
         }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(error);
+        let events = fds[0].revents().unwrap_or(PollFlags::empty());
+        if events.contains(PollFlags::POLLNVAL) {
+            log::debug!("The terminal cannot be polled for a hangup");
+            return false;
         }
-    }
-}
-
-/// Sends `signal` to `pid` if positive. Async-signal-safe.
-fn forward_signal(pid: i32, signal: i32) {
-    if pid > 0 {
-        // SAFETY: kill(2) is async-signal-safe and takes no pointers.
-        #[allow(unsafe_code)]
-        unsafe {
-            nix::libc::kill(pid, signal);
+        if events.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
+            return true;
         }
     }
 }
-
-/// SIGHUP is forwarded as itself, everything else as SIGTERM: a program may
-/// treat SIGUSR1, SIGUSR2 or SIGALRM as something other than a quit.
-fn forwarded(signal: i32) -> i32 {
-    if signal == nix::libc::SIGHUP {
-        signal
-    } else {
-        nix::libc::SIGTERM
-    }
-}
-
-fn forward_quit(signal: i32) {
-    forward_signal(FOREGROUND_PID.load(Ordering::SeqCst), forwarded(signal));
-}
-
-/// Whether `signal` is keyboard input meant for a running foreground child.
-fn is_the_childs(signal: i32, child_running: bool) -> bool {
-    child_running && (signal == nix::libc::SIGINT || signal == nix::libc::SIGQUIT)
-}
-
-/// Read end of the self-pipe. Set once by `install_signal_handlers`.
-static SIGNAL_PIPE_READ: OnceLock<OwnedFd> = OnceLock::new();
-
-/// Write end of the self-pipe, raw so the handler can reach it. Negative until
-/// the pipe exists: a signal can arrive before the store.
-static SIGNAL_PIPE_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 
 /// Terminal input, abstracted for tests.
 trait EventSource {
@@ -227,110 +225,6 @@ impl EventSource for TerminalEventSource {
     }
 }
 
-// SAFETY: atomics, `write(2)` and `kill(2)` are async-signal-safe.
-extern "C" fn handle_signal(signal: i32) {
-    // The handler must not clobber the interrupted thread's errno.
-    keeping_errno(|| answer_signal(signal));
-}
-
-/// Runs `act` and puts errno back as it found it.
-fn keeping_errno(act: impl FnOnce()) {
-    let errno = Errno::last_raw();
-    act();
-    Errno::set_raw(errno);
-}
-
-fn answer_signal(signal: i32) {
-    if is_the_childs(signal, FOREGROUND_CHILD.load(Ordering::SeqCst)) {
-        return;
-    }
-    note_quit(signal);
-
-    let fd = SIGNAL_PIPE_WRITE_FD.load(Ordering::Relaxed);
-    if fd < 0 {
-        return;
-    }
-    // Non-blocking: a full pipe already holds a byte to wake the watcher.
-    #[allow(unsafe_code)]
-    unsafe {
-        let byte: u8 = 0;
-        let _ = nix::libc::write(fd, std::ptr::addr_of!(byte).cast(), 1);
-    }
-}
-
-/// Records `signal` as the quit and forwards it to a foreground program.
-/// SeqCst, paired with `run_foreground_child`, so a quit is never missed by
-/// both sides.
-fn note_quit(signal: i32) {
-    record_first(&QUIT_SIGNAL, signal);
-    forward_quit(signal);
-}
-
-/// Treats a terminal hangup as SIGHUP: the kernel sends SIGHUP only to the
-/// session leader, which may ignore it (`trap "" HUP`).
-fn quit_on_hangup() {
-    note_quit(nix::libc::SIGHUP);
-}
-
-/// Creates the self-pipe the signal handler writes to.
-fn install_signal_pipe() -> Result<(), Errno> {
-    use nix::fcntl::{FcntlArg, FdFlag, OFlag, fcntl};
-
-    let (read_fd, write_fd) = nix::unistd::pipe()?;
-    // CLOEXEC set after creation because `pipe2` is missing on macOS.
-    fcntl(&read_fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-    fcntl(&write_fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-    // Only the write end is non-blocking: a handler must never wait.
-    fcntl(&write_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
-
-    // The write end is leaked: a closed fd in a signal handler would be a
-    // use-after-close.
-    SIGNAL_PIPE_WRITE_FD.store(write_fd.into_raw_fd(), Ordering::Relaxed);
-    let _ = SIGNAL_PIPE_READ.set(read_fd);
-    Ok(())
-}
-
-/// Installs handlers for the termination signals and a no-op one for SIGTSTP.
-pub fn install_signal_handlers() -> Result<(), Errno> {
-    // Before `sigaction`, so an early signal finds the pipe.
-    install_signal_pipe()?;
-
-    // SAFETY: installed once at startup, never removed, and the handler does only
-    // async-signal-safe work.
-    #[allow(unsafe_code)]
-    unsafe {
-        use nix::sys::signal::{SigAction, SigHandler, Signal, sigaction};
-
-        let action = SigAction::new(
-            SigHandler::Handler(handle_signal),
-            nix::sys::signal::SaFlags::SA_RESTART,
-            nix::sys::signal::SigSet::empty(),
-        );
-        for signal in [
-            Signal::SIGTERM,
-            Signal::SIGINT,
-            Signal::SIGHUP,
-            Signal::SIGQUIT,
-            Signal::SIGUSR1,
-            Signal::SIGUSR2,
-            Signal::SIGALRM,
-        ] {
-            sigaction(signal, &action)?;
-        }
-
-        let ignore = SigAction::new(
-            SigHandler::Handler(ignore_signal),
-            nix::sys::signal::SaFlags::SA_RESTART,
-            nix::sys::signal::SigSet::empty(),
-        );
-        sigaction(Signal::SIGTSTP, &ignore)?;
-    }
-    Ok(())
-}
-
-/// Catches a signal only to suppress its default action.
-extern "C" fn ignore_signal(_: i32) {}
-
 pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
     let Ok(first) = rx.recv() else {
         // Unreachable while App holds `tx`. An empty Vec would spin App::run, since
@@ -344,104 +238,6 @@ pub(super) fn receive_commands(rx: &Receiver<Command>) -> Vec<Command> {
         commands.push(command);
     }
     commands
-}
-
-/// Sends `Command::Quit` on a termination signal or a terminal hangup,
-/// independently of the event reader, which never returns from `poll` at EOF.
-pub(super) fn spawn_signal_watcher(tx: Sender<Command>) {
-    // Not fatal: the reader still answers signals for a live terminal.
-    let Some(read_fd) = SIGNAL_PIPE_READ.get() else {
-        log::error!("Cannot watch for signals: the self-pipe was not created");
-        return;
-    };
-    let read_fd = read_fd.as_fd();
-    let terminal = reader_terminal();
-
-    let builder = thread::Builder::new().name("filectrl-signal-watcher".into());
-    let spawn_result = builder.spawn(move || {
-        let wake = watch_signal_pipe(read_fd, terminal.as_ref().map(AsFd::as_fd));
-        match wake {
-            Wake::Signal => (),
-            Wake::HangUp => quit_on_hangup(),
-            Wake::Stopped => return,
-        }
-        let _ = tx.send(Command::Quit);
-    });
-
-    if let Err(err) = spawn_result {
-        log::error!("Failed to spawn signal watcher thread: {err}");
-    }
-}
-
-/// The terminal crossterm reads: stdin if it is a terminal, else /dev/tty.
-fn reader_terminal() -> Option<OwnedFd> {
-    use std::io::IsTerminal;
-
-    let stdin = io::stdin();
-    if stdin.is_terminal() {
-        return stdin.as_fd().try_clone_to_owned().ok();
-    }
-    std::fs::File::open("/dev/tty").ok().map(OwnedFd::from)
-}
-
-#[derive(Debug, PartialEq)]
-enum Wake {
-    Signal,
-    HangUp,
-    /// The self-pipe closed or failed.
-    Stopped,
-}
-
-/// The watcher's body, over caller-supplied fds for tests. Blocks until a
-/// byte arrives or `terminal` hangs up. A terminal answering `POLLNVAL` (macOS)
-/// is dropped from the wait.
-fn watch_signal_pipe(read_fd: BorrowedFd<'_>, mut terminal: Option<BorrowedFd<'_>>) -> Wake {
-    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-
-    loop {
-        let mut fds = vec![PollFd::new(read_fd, PollFlags::POLLIN)];
-        fds.extend(terminal.map(|fd| PollFd::new(fd, PollFlags::empty())));
-        match poll(&mut fds, PollTimeout::NONE) {
-            // `poll` is never restarted after a handler; its byte is still in the pipe.
-            Ok(_) | Err(Errno::EINTR) => (),
-            Err(err) => {
-                log::error!("Failed to wait for a signal: {err}");
-                return Wake::Stopped;
-            }
-        }
-        let events =
-            |fd: Option<&PollFd>| fd.and_then(PollFd::revents).unwrap_or(PollFlags::empty());
-        let (pipe, tty) = (events(fds.first()), events(fds.get(1)));
-        if !pipe.is_empty() {
-            match read_signal_byte(read_fd) {
-                Some(wake) => return wake,
-                None => continue,
-            }
-        }
-        if tty.contains(PollFlags::POLLNVAL) {
-            log::debug!("The terminal cannot be polled for a hangup");
-            terminal = None;
-        } else if tty.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
-            return Wake::HangUp;
-        }
-    }
-}
-
-/// Reads the handler's byte. `None` for EINTR.
-fn read_signal_byte(read_fd: BorrowedFd<'_>) -> Option<Wake> {
-    match nix::unistd::read(read_fd, &mut [0u8; 1]) {
-        Ok(0) => {
-            // Unreachable: the write end is leaked open.
-            log::error!("The signal self-pipe reached end of file");
-            Some(Wake::Stopped)
-        }
-        Ok(_) => Some(Wake::Signal),
-        Err(Errno::EINTR) => None,
-        Err(err) => {
-            log::error!("Failed to read the signal self-pipe: {err}");
-            Some(Wake::Stopped)
-        }
-    }
 }
 
 /// Pauses the reader thread so a foreground program reads the terminal alone.
@@ -460,25 +256,17 @@ enum GateState {
 }
 
 impl ReaderGate {
-    /// Asks the reader to stop at its next checkpoint. Call before waking the
-    /// reader, then `wait_paused`.
-    pub(super) fn request_pause(&self) {
-        *self.lock() = GateState::PauseRequested;
-    }
-
-    /// Waits up to `timeout` for the reader to stop. Returns whether it did.
-    pub(super) fn wait_paused(&self, timeout: Duration) -> bool {
-        let state = self.lock();
-        let (state, _) = self
+    /// Stops the reader at its next checkpoint and waits until it has.
+    pub(super) fn pause(&self) {
+        let mut state = self.lock();
+        *state = GateState::PauseRequested;
+        // Makes crossterm's poll return, so the reader reaches its checkpoint now
+        // rather than at the poll timeout.
+        let _ = raise(Signal::SIGWINCH);
+        let _state = self
             .changed
-            .wait_timeout_while(state, timeout, |state| *state != GateState::Paused)
+            .wait_while(state, |state| *state != GateState::Paused)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *state == GateState::Paused
-    }
-
-    #[cfg(test)]
-    pub(super) fn is_open(&self) -> bool {
-        *self.lock() == GateState::Open
     }
 
     pub(super) fn resume(&self) {
@@ -508,7 +296,7 @@ impl ReaderGate {
 }
 
 pub(super) fn spawn_command_sender(tx: &Sender<Command>, gate: Arc<ReaderGate>) {
-    // Only bounds how often a recorded quit is checked when no watcher runs.
+    // Only bounds a pause whose wake-up was lost.
     let poll_interval = Duration::from_secs(2);
 
     let builder = thread::Builder::new().name("filectrl-event-reader".into());
@@ -533,17 +321,8 @@ fn event_loop<S: EventSource>(
     loop {
         gate.checkpoint();
 
-        // Fallback for a watcher that is not running.
-        if quit_requested() {
-            let _ = tx.send(Command::Quit);
-            return;
-        }
-
-        // A poll or read error means stdin is unusable, so quit.
-        //
-        // WORKAROUND: at EOF crossterm re-reads a permanently readable fd forever, so
-        // `poll` never returns and this thread spins; the signal watcher still quits
-        // the process. https://github.com/crossterm-rs/crossterm/issues/793
+        // A poll or read error means stdin is unusable, so quit. At EOF the poll
+        // never returns instead; see `spawn_hangup_watcher`.
         let event = match source.poll(poll_interval) {
             Ok(true) => match source.read() {
                 Ok(event) => event,
@@ -572,29 +351,26 @@ fn event_loop<S: EventSource>(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, sync::mpsc, time::Duration};
-
-    use ratatui::crossterm::event::Event;
-
-    use std::os::{
-        fd::{AsFd, BorrowedFd},
-        unix::process::ExitStatusExt,
+    use std::{
+        collections::VecDeque,
+        os::fd::{AsFd, BorrowedFd},
+        sync::mpsc,
+        time::Duration,
     };
 
-    use nix::{libc, sys::signal::Signal};
+    use nix::{poll::PollTimeout, sys::signal::Signal};
+    use ratatui::crossterm::event::Event;
+    use test_case::test_case;
 
     use super::{
-        Command, EventSource, FOREGROUND_PID, ReaderGate, SIGNAL_ACTIONS, Wake, event_loop,
-        forward_quit, forward_signal, forwarded, handle_signal, ignore_signal,
-        install_signal_handlers, is_the_childs, keeping_errno, receive_commands, record_first,
-        run_foreground_child, wait_for_exit, watch_signal_pipe,
+        Answer, Command, EventSource, ReaderGate, answer, event_loop, receive_commands,
+        wait_for_hangup,
     };
 
     const INTERVAL: Duration = Duration::from_millis(500);
-    const WRITE_DELAY: Duration = Duration::from_millis(5);
 
     /// Scripted input. An exhausted poll script ends `event_loop` through its error
-    /// path, independently of the shared global quit.
+    /// path.
     struct FakeEventSource {
         polls: VecDeque<std::io::Result<bool>>,
         events: VecDeque<Event>,
@@ -711,38 +487,6 @@ mod tests {
         assert_eq!(vec![Command::Quit], receive_commands(&rx));
     }
 
-    #[test]
-    fn a_byte_already_written_is_a_signal() {
-        let (read_fd, write_fd) = nix::unistd::pipe().expect("a pipe should be creatable");
-        nix::unistd::write(&write_fd, &[0]).expect("the pipe should accept a byte");
-
-        assert_eq!(Wake::Signal, watch_signal_pipe(read_fd.as_fd(), None));
-    }
-
-    /// Runs the watcher, writing the signal byte after `delay` so a missed wake
-    /// still returns instead of hanging.
-    fn watch_with_byte_after(terminal: Option<BorrowedFd<'_>>, delay: Duration) -> Wake {
-        let (read_fd, write_fd) = nix::unistd::pipe().expect("a pipe should be creatable");
-        std::thread::spawn(move || {
-            std::thread::sleep(delay);
-            let _ = nix::unistd::write(&write_fd, &[0]);
-        });
-        watch_signal_pipe(read_fd.as_fd(), terminal)
-    }
-
-    #[test]
-    fn a_byte_written_while_waiting_is_a_signal() {
-        assert_eq!(Wake::Signal, watch_with_byte_after(None, WRITE_DELAY));
-    }
-
-    #[test]
-    fn a_closed_pipe_stops_the_watcher() {
-        let (read_fd, write_fd) = nix::unistd::pipe().expect("a pipe should be creatable");
-        drop(write_fd);
-
-        assert_eq!(Wake::Stopped, watch_signal_pipe(read_fd.as_fd(), None));
-    }
-
     fn pty() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
         let pty = nix::pty::openpty(None, None).expect("a pty should be creatable");
         (pty.master, pty.slave)
@@ -751,25 +495,19 @@ mod tests {
     // macOS cannot poll a terminal device.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_terminal_that_hangs_up_wakes_the_watcher() {
+    fn a_terminal_that_hangs_up_is_a_hangup() {
         let (master, slave) = pty();
         drop(master);
 
-        assert_eq!(
-            Wake::HangUp,
-            watch_with_byte_after(Some(slave.as_fd()), Duration::from_secs(1))
-        );
+        assert!(wait_for_hangup(PollTimeout::from(1000u16), slave.as_fd()));
     }
 
     #[test]
-    fn a_live_terminal_with_input_does_not_wake_the_watcher() {
+    fn a_live_terminal_with_input_is_not_a_hangup() {
         let (master, slave) = pty();
         nix::unistd::write(&master, b"q\n").expect("the pty should accept input");
 
-        assert_eq!(
-            Wake::Signal,
-            watch_with_byte_after(Some(slave.as_fd()), WRITE_DELAY)
-        );
+        assert!(!wait_for_hangup(PollTimeout::from(50u16), slave.as_fd()));
     }
 
     #[test]
@@ -778,63 +516,58 @@ mod tests {
         #[allow(unsafe_code)]
         let closed = unsafe { BorrowedFd::borrow_raw(1 << 20) };
 
-        assert_eq!(
-            Wake::Signal,
-            watch_with_byte_after(Some(closed), WRITE_DELAY)
-        );
+        assert!(!wait_for_hangup(PollTimeout::NONE, closed));
     }
 
-    #[allow(unsafe_code)]
-    fn current_action(signal: Signal) -> libc::sigaction {
-        let mut action = std::mem::MaybeUninit::<libc::sigaction>::zeroed();
-        // SAFETY: a null new action only reads the current one.
-        let result =
-            unsafe { libc::sigaction(signal as i32, std::ptr::null(), action.as_mut_ptr()) };
-        assert_eq!(0, result, "{signal} should have a readable action");
-        // SAFETY: zeroed is valid, and the call filled it in.
-        unsafe { action.assume_init() }
-    }
-
-    /// Restores the actions before asserting, so the test binary still dies on
-    /// SIGINT and SIGTERM.
+    /// A signal left unblocked kills the process with the terminal still raw.
     #[test]
-    fn the_handlers_are_installed_for_every_signal_they_cover() {
-        const TERMINATING: [Signal; 7] = [
+    fn every_terminating_signal_is_answered() {
+        let handled = super::handled_signals();
+        for signal in [
             Signal::SIGTERM,
             Signal::SIGINT,
             Signal::SIGHUP,
             Signal::SIGQUIT,
+            Signal::SIGTSTP,
             Signal::SIGUSR1,
             Signal::SIGUSR2,
             Signal::SIGALRM,
-        ];
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let signals: Vec<Signal> = TERMINATING.into_iter().chain([Signal::SIGTSTP]).collect();
-        let saved: Vec<libc::sigaction> = signals.iter().map(|&s| current_action(s)).collect();
-
-        let installed = install_signal_handlers();
-        let handlers: Vec<libc::sighandler_t> = signals
-            .iter()
-            .map(|&s| current_action(s).sa_sigaction)
-            .collect();
-        for (&signal, action) in signals.iter().zip(&saved) {
-            // SAFETY: restores a previous action.
-            #[allow(unsafe_code)]
-            let result = unsafe { libc::sigaction(signal as i32, action, std::ptr::null_mut()) };
-            assert_eq!(0, result, "{signal} should be restored");
+        ] {
+            assert!(handled.contains(signal), "{signal:?}");
         }
+    }
 
-        installed.unwrap();
-        for (signal, handler) in signals.iter().zip(&handlers) {
-            let expected = if *signal == Signal::SIGTSTP {
-                ignore_signal as *const () as libc::sighandler_t
-            } else {
-                handle_signal as *const () as libc::sighandler_t
-            };
-            assert_eq!(expected, *handler, "{signal}");
-        }
+    #[test_case(false, Signal::SIGTERM => Answer::Quit ; "sigterm quits")]
+    #[test_case(false, Signal::SIGHUP => Answer::Quit ; "sighup quits")]
+    #[test_case(false, Signal::SIGINT => Answer::Quit ; "sigint quits")]
+    #[test_case(false, Signal::SIGQUIT => Answer::Quit ; "sigquit quits")]
+    #[test_case(false, Signal::SIGTSTP => Answer::Ignore ; "sigtstp is ignored")]
+    #[test_case(true, Signal::SIGTERM => Answer::Quit ; "sigterm quits during a program")]
+    #[test_case(true, Signal::SIGHUP => Answer::Quit ; "sighup quits during a program")]
+    #[test_case(true, Signal::SIGINT => Answer::Ignore ; "sigint is the programs")]
+    #[test_case(true, Signal::SIGQUIT => Answer::Ignore ; "sigquit is the programs")]
+    #[test_case(true, Signal::SIGTSTP => Answer::Stop ; "sigtstp stops with the program")]
+    fn a_signal_is_answered_by(child_running: bool, signal: Signal) -> Answer {
+        answer(child_running, signal)
+    }
+
+    /// Blocks the handled signals on this test's thread only, as `block_signals`
+    /// does for the whole process. `sleep` rather than a shell, which may clear
+    /// its own mask.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_child_receives_the_signals_this_process_blocks() {
+        super::handled_signals().thread_block().unwrap();
+        let spawned =
+            super::unblock_in_child(std::process::Command::new("sleep").arg("10")).spawn();
+        super::handled_signals().thread_unblock().unwrap();
+        let mut child = spawned.unwrap();
+        let status = std::fs::read_to_string(format!("/proc/{}/status", child.id()));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let status = status.unwrap();
+        assert!(status.contains("SigBlk:\t0000000000000000\n"), "{status}");
     }
 
     #[test]
@@ -849,176 +582,28 @@ mod tests {
         let reader = {
             let (gate, passes) = (gate.clone(), passes.clone());
             std::thread::spawn(move || {
+                // Counts between sleeping and the checkpoint, so a pause that
+                // returns while the reader sleeps sees the count move.
                 while passes.load(Ordering::SeqCst) < 1_000_000 {
-                    gate.checkpoint();
+                    std::thread::sleep(Duration::from_millis(10));
                     passes.fetch_add(1, Ordering::SeqCst);
-                    std::thread::yield_now();
+                    gate.checkpoint();
                 }
             })
         };
+        // Into the reader's second sleep.
+        while passes.load(Ordering::SeqCst) == 0 {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(Duration::from_millis(2));
 
-        gate.request_pause();
-        assert!(gate.wait_paused(Duration::from_secs(5)), "the reader stops");
+        gate.pause();
         let stopped_at = passes.load(Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(50));
         assert_eq!(stopped_at, passes.load(Ordering::SeqCst));
 
         gate.resume();
         passes.store(1_000_000, Ordering::SeqCst);
         reader.join().unwrap();
-    }
-
-    #[test]
-    fn the_first_quit_signal_is_the_one_kept() {
-        let slot = std::sync::atomic::AtomicI32::new(0);
-
-        record_first(&slot, libc::SIGTERM);
-        record_first(&slot, libc::SIGHUP);
-
-        assert_eq!(
-            libc::SIGTERM,
-            slot.load(std::sync::atomic::Ordering::SeqCst)
-        );
-    }
-
-    #[test]
-    fn the_handler_leaves_errno_as_it_found_it() {
-        nix::errno::Errno::set_raw(libc::EINTR);
-
-        keeping_errno(|| nix::errno::Errno::set_raw(libc::ESRCH));
-
-        assert_eq!(libc::EINTR, nix::errno::Errno::last_raw());
-    }
-
-    #[test]
-    fn a_pause_with_no_reader_gives_up() {
-        let gate = ReaderGate::default();
-        gate.request_pause();
-        assert!(!gate.wait_paused(Duration::from_millis(10)));
-    }
-
-    #[test]
-    fn a_forwarded_signal_reaches_the_program() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        forward_signal(i32::try_from(child.id()).unwrap(), libc::SIGTERM);
-
-        assert_eq!(Some(libc::SIGTERM), child.wait().unwrap().signal());
-    }
-
-    #[test]
-    fn no_program_is_signalled_without_a_pid() {
-        // kill(0) would signal this process's group.
-        forward_signal(0, libc::SIGTERM);
-    }
-
-    #[test]
-    fn running_a_foreground_program_puts_the_stop_action_back() {
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let before = current_action(Signal::SIGTSTP).sa_sigaction;
-
-        let status =
-            run_foreground_child(&mut std::process::Command::new("true"), || false).unwrap();
-
-        assert!(status.success());
-        assert_eq!(before, current_action(Signal::SIGTSTP).sa_sigaction);
-    }
-
-    fn sleeping_program() -> (
-        i32,
-        std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>,
-    ) {
-        let running = std::thread::spawn(|| {
-            run_foreground_child(std::process::Command::new("sleep").arg("30"), || false)
-        });
-        let pid = loop {
-            let pid = FOREGROUND_PID.load(std::sync::atomic::Ordering::SeqCst);
-            if pid > 0 {
-                break pid;
-            }
-            std::thread::yield_now();
-        };
-        (pid, running)
-    }
-
-    #[test]
-    fn the_stop_action_is_the_default_while_a_program_runs() {
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (pid, running) = sleeping_program();
-
-        let during = current_action(Signal::SIGTSTP).sa_sigaction;
-        forward_signal(pid, libc::SIGTERM);
-        running.join().unwrap().unwrap();
-
-        assert_eq!(libc::SIG_DFL, during);
-    }
-
-    #[test]
-    fn a_quit_is_passed_on_to_the_running_program() {
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (_pid, running) = sleeping_program();
-
-        forward_quit(libc::SIGUSR1);
-        let status = running.join().unwrap().unwrap();
-
-        assert_eq!(Some(libc::SIGTERM), status.signal());
-        assert_eq!(0, FOREGROUND_PID.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[test_case::test_case(libc::SIGHUP => libc::SIGHUP ; "a hangup as itself")]
-    #[test_case::test_case(libc::SIGTERM => libc::SIGTERM ; "a termination as itself")]
-    #[test_case::test_case(libc::SIGUSR1 => libc::SIGTERM ; "a user signal as a termination")]
-    #[test_case::test_case(libc::SIGALRM => libc::SIGTERM ; "an alarm as a termination")]
-    fn a_quit_reaches_the_program_as(signal: i32) -> i32 {
-        forwarded(signal)
-    }
-
-    #[test]
-    fn a_program_is_not_started_after_a_quit() {
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let started = std::time::Instant::now();
-
-        let error = run_foreground_child(std::process::Command::new("sleep").arg("30"), || true)
-            .unwrap_err();
-
-        assert_eq!(std::io::ErrorKind::Interrupted, error.kind());
-        assert!(started.elapsed() < Duration::from_secs(5));
-    }
-
-    #[test_case::test_case("exit 3" => (Some(3), None) ; "an exit code")]
-    #[test_case::test_case("kill -TERM $$" => (None, Some(libc::SIGTERM)) ; "a signal")]
-    fn the_status_is_the_programs(script: &str) -> (Option<i32>, Option<i32>) {
-        // `wait_for_exit` clears `FOREGROUND_PID`, which other tests wait on.
-        let _serial = SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Reaped by `wait_for_exit`, the function under test.
-        #[allow(clippy::zombie_processes)]
-        let child = std::process::Command::new("sh")
-            .args(["-c", script])
-            .spawn()
-            .unwrap();
-        let status = wait_for_exit(i32::try_from(child.id()).unwrap()).unwrap();
-
-        (status.code(), status.signal())
-    }
-
-    #[test]
-    fn keyboard_signals_are_the_childs_only_while_one_runs() {
-        assert!(is_the_childs(libc::SIGINT, true));
-        assert!(is_the_childs(libc::SIGQUIT, true));
-        assert!(!is_the_childs(libc::SIGTERM, true));
-        assert!(!is_the_childs(libc::SIGHUP, true));
-        assert!(!is_the_childs(libc::SIGINT, false));
     }
 }

@@ -2,26 +2,18 @@
 
 use std::{
     ffi::OsString,
-    fs::File,
-    io::{self, IsTerminal},
+    io,
     path::Path,
-    process::{ExitStatus, Stdio},
-    time::Duration,
+    process::{Command, ExitStatus},
 };
 
 use anyhow::{Result, anyhow};
-use nix::sys::signal::{Signal, raise};
 
 use super::{
-    events::{ReaderGate, run_foreground_child, set_foreground_child},
+    events::{ReaderGate, set_foreground_child, unblock_in_child},
     terminal::CleanupOnDropTerminal,
-    terminal::controlling_terminal,
 };
 use crate::command::ForegroundProgram;
-
-/// How long to wait for the reader thread to stop. The wake-up in `run` makes
-/// it immediate; the reader's 2 s poll timeout bounds a lost wake-up.
-pub(super) const READER_PAUSE_TIMEOUT: Duration = Duration::from_millis(2500);
 
 /// The command line for `program` on `path`: the first set, non-blank
 /// environment variable, split into shell words, plus the path. `env` is
@@ -58,96 +50,25 @@ pub(super) fn argv(
     Ok(argv)
 }
 
-/// The terminal to use as the program's stdin when stdin is not a terminal
-/// (`filectrl </dev/null`). `None` keeps stdin.
-fn child_stdin(
-    stdin_is_terminal: bool,
-    open_terminal: impl FnOnce() -> io::Result<File>,
-) -> Option<File> {
-    if stdin_is_terminal {
-        return None;
-    }
-    open_terminal().ok()
-}
-
-/// A terminal that can be handed to another program and taken back.
-pub(super) trait Handover {
-    fn suspend(&mut self);
-
-    fn resume(&mut self) -> io::Result<()>;
-
-    /// Restores the shell's settings on a suspended terminal. Best effort: the
-    /// process is quitting.
-    fn release(&mut self);
-}
-
-impl Handover for CleanupOnDropTerminal {
-    fn suspend(&mut self) {
-        CleanupOnDropTerminal::suspend(self);
-    }
-
-    fn release(&mut self) {
-        CleanupOnDropTerminal::release(self);
-    }
-
-    fn resume(&mut self) -> io::Result<()> {
-        CleanupOnDropTerminal::resume(self)
-    }
-}
-
-/// What became of a request to run a program in the foreground.
-#[derive(Debug)]
-pub(super) enum Outcome {
-    Ran(io::Result<ExitStatus>),
-    /// The reader thread did not stop in time, so the program was not run.
-    ReaderBusy,
-    /// A termination signal arrived. The terminal is left handed back with the
-    /// shell's settings, for the quit that follows.
-    Quit,
-}
-
-/// Runs `argv` in the terminal's foreground with the interface suspended (the
-/// reader stopped, the shell's terminal modes), then takes the terminal back
-/// and clears it. The error is a terminal that could not be taken back.
+/// Runs `argv` in the terminal's foreground and waits for it, with the reader
+/// stopped (so the program reads the keyboard alone) and the terminal in the
+/// shell's modes, then takes the terminal back. The outer error is a terminal
+/// that could not be taken back; the inner result is the program's.
 pub(super) fn run(
-    terminal: &mut impl Handover,
+    terminal: &mut CleanupOnDropTerminal,
     gate: &ReaderGate,
-    pause_timeout: Duration,
-    quit_requested: &dyn Fn() -> bool,
     argv: &[OsString],
-) -> Result<Outcome> {
-    let Some((program, arguments)) = argv.split_first() else {
-        return Ok(Outcome::Ran(Err(io::Error::other("the command is empty"))));
-    };
-    if quit_requested() {
-        return Ok(Outcome::Quit);
-    }
-    // SIGWINCH makes crossterm's poll return, so the reader reaches its
-    // checkpoint now. The pause is requested first.
-    gate.request_pause();
-    let _ = raise(Signal::SIGWINCH);
-    if !gate.wait_paused(pause_timeout) {
-        gate.resume();
-        return Ok(Outcome::ReaderBusy);
-    }
+) -> io::Result<io::Result<ExitStatus>> {
+    gate.pause();
     // Covers cooked mode on both sides, so Ctrl+C is never taken as a quit.
     set_foreground_child(true);
     terminal.suspend();
-    let mut command = std::process::Command::new(program);
-    command.args(arguments);
-    if let Some(tty) = child_stdin(io::stdin().is_terminal(), controlling_terminal) {
-        command.stdin(Stdio::from(tty));
-    }
-    let status = run_foreground_child(&mut command, quit_requested);
-    if quit_requested() {
-        terminal.release();
-        return Ok(Outcome::Quit);
-    }
+    // `argv` holds at least the program and the path.
+    let status = unblock_in_child(Command::new(&argv[0]).args(&argv[1..])).status();
     let resumed = terminal.resume();
     set_foreground_child(false);
     gate.resume();
-    resumed?;
-    Ok(Outcome::Ran(status))
+    resumed.map(|()| status)
 }
 
 #[cfg(test)]
@@ -214,169 +135,5 @@ mod tests {
         .to_string();
 
         assert_eq!("Cannot run $EDITOR: it names no program", error);
-    }
-
-    /// Records whether a foreground program counted as running at each step.
-    #[derive(Default)]
-    struct Recorded {
-        child_flag_at: Vec<(&'static str, bool)>,
-    }
-
-    impl super::Handover for Recorded {
-        fn suspend(&mut self) {
-            self.child_flag_at
-                .push(("suspend", crate::app::events::is_foreground_child()));
-        }
-
-        fn resume(&mut self) -> std::io::Result<()> {
-            self.child_flag_at
-                .push(("resume", crate::app::events::is_foreground_child()));
-            Ok(())
-        }
-
-        fn release(&mut self) {
-            self.child_flag_at
-                .push(("release", crate::app::events::is_foreground_child()));
-        }
-    }
-
-    #[test]
-    fn a_program_is_not_run_while_the_reader_still_reads() {
-        let gate = crate::app::events::ReaderGate::default();
-        let mut terminal = Recorded::default();
-
-        let outcome = super::run(
-            &mut terminal,
-            &gate,
-            std::time::Duration::from_millis(10),
-            &|| false,
-            &["true".into()],
-        )
-        .unwrap();
-
-        assert!(matches!(outcome, super::Outcome::ReaderBusy), "{outcome:?}");
-        assert!(
-            terminal.child_flag_at.is_empty(),
-            "the terminal was handed over"
-        );
-        assert!(gate.is_open(), "the reader was left stopped");
-    }
-
-    #[test]
-    fn the_terminal_is_the_programs_across_the_whole_handover() {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        };
-
-        let _serial = crate::app::events::SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let gate = Arc::new(crate::app::events::ReaderGate::default());
-        let done = Arc::new(AtomicBool::new(false));
-        let reader = {
-            let (gate, done) = (gate.clone(), done.clone());
-            std::thread::spawn(move || {
-                while !done.load(Ordering::SeqCst) {
-                    gate.checkpoint();
-                    std::thread::yield_now();
-                }
-            })
-        };
-        let mut terminal = Recorded::default();
-
-        let outcome = super::run(
-            &mut terminal,
-            &gate,
-            std::time::Duration::from_secs(5),
-            &|| false,
-            &["true".into()],
-        )
-        .unwrap();
-        done.store(true, Ordering::SeqCst);
-        reader.join().unwrap();
-
-        assert!(
-            matches!(&outcome, super::Outcome::Ran(Ok(status)) if status.success()),
-            "{outcome:?}"
-        );
-        assert_eq!(
-            vec![("suspend", true), ("resume", true)],
-            terminal.child_flag_at
-        );
-        assert!(!crate::app::events::is_foreground_child());
-    }
-
-    #[test]
-    fn a_program_reads_the_terminal_only_when_stdin_is_something_else() {
-        let terminal = || std::fs::File::open("/dev/null");
-
-        assert!(super::child_stdin(true, terminal).is_none());
-        assert!(super::child_stdin(false, terminal).is_some());
-        assert!(super::child_stdin(false, || Err(std::io::Error::other("no terminal"))).is_none());
-    }
-
-    #[test]
-    fn nothing_is_handed_over_after_a_quit() {
-        let gate = crate::app::events::ReaderGate::default();
-        let mut terminal = Recorded::default();
-
-        let outcome = super::run(
-            &mut terminal,
-            &gate,
-            std::time::Duration::from_millis(10),
-            &|| true,
-            &["true".into()],
-        )
-        .unwrap();
-
-        assert!(matches!(outcome, super::Outcome::Quit), "{outcome:?}");
-        assert!(terminal.child_flag_at.is_empty());
-    }
-
-    #[test]
-    fn a_quit_during_the_program_leaves_the_terminal_to_the_shell() {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
-        };
-
-        let _serial = crate::app::events::SIGNAL_ACTIONS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let gate = Arc::new(crate::app::events::ReaderGate::default());
-        let done = Arc::new(AtomicBool::new(false));
-        let reader = {
-            let (gate, done) = (gate.clone(), done.clone());
-            std::thread::spawn(move || {
-                while !done.load(Ordering::SeqCst) {
-                    gate.checkpoint();
-                    std::thread::yield_now();
-                }
-            })
-        };
-        let mut terminal = Recorded::default();
-        // Checked four times; only the last finds a quit.
-        let checks = AtomicUsize::new(0);
-        let quit_requested = || checks.fetch_add(1, Ordering::SeqCst) >= 3;
-
-        let outcome = super::run(
-            &mut terminal,
-            &gate,
-            std::time::Duration::from_secs(5),
-            &quit_requested,
-            &["true".into()],
-        )
-        .unwrap();
-        gate.resume();
-        done.store(true, Ordering::SeqCst);
-        reader.join().unwrap();
-        crate::app::events::set_foreground_child(false);
-
-        assert!(matches!(outcome, super::Outcome::Quit), "{outcome:?}");
-        assert_eq!(
-            vec![("suspend", true), ("release", true)],
-            terminal.child_flag_at
-        );
     }
 }
