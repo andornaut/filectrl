@@ -2014,7 +2014,10 @@ fn a_replacement_under_a_umask_clearing_owner_read() {
     nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o477));
     let probe = fx.join("probe");
     fs::create_dir(&probe).unwrap();
-    if fs::read_dir(&probe).is_ok() {
+    let readable = fs::read_dir(&probe).is_ok();
+    // Restored so the fixture can be removed.
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o700)).unwrap();
+    if readable {
         eprintln!("skipped: a directory without owner read can be read here");
         return;
     }

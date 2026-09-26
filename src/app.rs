@@ -1,13 +1,12 @@
 pub mod clipboard;
 pub mod config;
-#[cfg(debug_assertions)]
-mod debug;
 pub mod events;
 mod foreground;
 mod handler;
 pub mod terminal;
 
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         Arc,
@@ -15,7 +14,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use ratatui::Frame;
 
 use self::{
@@ -32,88 +31,33 @@ use crate::{
     views::{View, root::RootView},
 };
 
-/// Maximum broadcast cycles per input command, each resolving one link of an
-/// intent → result chain. The longest is renaming a bookmark in the bookmarks
-/// view (4 cycles):
-///
-///   1. `Key`                - terminal input
-///   2. `Rename`             - submitted by the prompt
-///   3. `Bookmarks`          - `FileSystem` renames, then reads the bookmarks
-///   4. `SelectionChanged`   - `TableView` re-sorts and selects the top entry
-///
-/// Streamed listing batches start their own chains. Exceeding the bound is an
-/// error (see `broadcast_command`).
-const MAX_BROADCAST_CHAIN_LENGTH: u8 = 7;
-
 /// The command-handling half of the app, separate from `App` so it can be
 /// driven without a terminal.
 struct Handlers {
     clipboard: Clipboard,
-    #[cfg(debug_assertions)]
-    debug: debug::DebugHandler,
     file_system: FileSystem,
     root: RootView,
 }
 
-/// A handler tree the broadcast loop can drive. Exists so the loop can be
-/// tested against a handler that does nothing else.
-trait Broadcast: CommandHandler {
-    fn mode(&self) -> InputMode;
-}
-
-impl Broadcast for Handlers {
-    fn mode(&self) -> InputMode {
-        self.root.mode()
-    }
-}
-
-fn broadcast_commands<H: Broadcast>(
-    handlers: &mut H,
-    commands: Vec<Command>,
-) -> Result<Vec<Command>> {
+/// Resolves each of `commands` and everything it derives, in order, returning
+/// what no handler claimed.
+fn broadcast_commands(handlers: &mut Handlers, commands: Vec<Command>) -> Vec<Command> {
     let mut unhandled = Vec::new();
     for command in commands {
-        unhandled.extend(broadcast_command(handlers, command)?);
-    }
-    Ok(unhandled)
-}
-
-/// Resolves `command` and everything it derives, returning what no handler
-/// claimed. Exceeding `MAX_BROADCAST_CHAIN_LENGTH` is an error that ends the
-/// session, like an unhandled command.
-fn broadcast_command<H: Broadcast>(handlers: &mut H, command: Command) -> Result<Vec<Command>> {
-    let mut pending = vec![command];
-    let mut unhandled = Vec::new();
-
-    for _ in 0..MAX_BROADCAST_CHAIN_LENGTH {
-        if pending.is_empty() {
-            break;
-        }
-        // Re-read each cycle: a derived command may change the mode.
-        let mode = handlers.mode();
-        let mut next_pending = Vec::new();
-        for cmd in pending {
+        let mut pending = VecDeque::from([command]);
+        while let Some(command) = pending.pop_front() {
+            // Read per command: a derived command may change the mode.
+            let mode = handlers.root.mode();
             let mut derived = Vec::new();
-            let handled = recursively_handle_command(&mut derived, &cmd, mode, handlers);
-            if handled {
-                next_pending.append(&mut derived);
+            if recursively_handle_command(&mut derived, &command, mode, handlers) {
+                pending.extend(derived);
             } else {
                 // `derived` is empty here: only a claim can derive.
-                unhandled.push(cmd);
+                unhandled.push(command);
             }
         }
-        pending = next_pending;
     }
-
-    if !pending.is_empty() {
-        return Err(anyhow!(
-            "Broadcast cycle limit ({MAX_BROADCAST_CHAIN_LENGTH}) exceeded; dropped {} derived command(s): {:?}",
-            pending.len(),
-            pending
-        ));
-    }
-
-    Ok(unhandled)
+    unhandled
 }
 
 pub struct App {
@@ -131,8 +75,6 @@ impl App {
         let config = Config::global();
         let handlers = Handlers {
             clipboard: Clipboard::default(),
-            #[cfg(debug_assertions)]
-            debug: debug::DebugHandler,
             file_system: FileSystem::new(config, tx.clone()),
             root: RootView::new(config),
         };
@@ -149,8 +91,7 @@ impl App {
         // Handled before the loop so the `NavigatedDirectory` registers its generation
         // before the loader's first `ListingBatch`es are drained.
         let initial = self.handlers.file_system.run_once(initial_directory)?;
-        let remaining = broadcast_commands(&mut self.handlers, initial)?;
-        must_not_contain_unhandled(&remaining)?;
+        warn_unhandled(&broadcast_commands(&mut self.handlers, initial));
         self.render()?;
 
         spawn_command_sender(&self.tx, self.reader_gate.clone());
@@ -165,7 +106,7 @@ impl App {
                 .count();
             let alerts_mark = self.handlers.root.alerts_mark();
 
-            let remaining_commands = broadcast_commands(&mut self.handlers, commands)?;
+            let remaining_commands = broadcast_commands(&mut self.handlers, commands);
             if claimed_a_key(keys, &remaining_commands) {
                 self.handlers.root.expire_alerts_before(alerts_mark);
             }
@@ -177,7 +118,7 @@ impl App {
             let (foreground, remaining_commands): (Vec<_>, Vec<_>) = remaining_commands
                 .into_iter()
                 .partition(|command| matches!(command, Command::RunInForeground { .. }));
-            must_not_contain_unhandled(&remaining_commands)?;
+            warn_unhandled(&remaining_commands);
             for command in foreground {
                 if self.run_in_foreground(command)? {
                     return Ok(());
@@ -298,27 +239,16 @@ fn recursively_handle_command(
     claimed
 }
 
-// Unhandled terminal input is normal; Resize only wakes the render loop.
-fn is_ignorable_unhandled(command: &Command) -> bool {
-    matches!(
-        command,
-        Command::Key(_, _) | Command::PasteText(_) | Command::Mouse(_) | Command::Resize { .. }
-    )
-}
-
-fn must_not_contain_unhandled(commands: &[Command]) -> Result<()> {
-    let unhandled: Vec<_> = commands
-        .iter()
-        .filter(|command| !is_ignorable_unhandled(command))
-        .collect();
-    if !unhandled.is_empty() {
-        return Err(anyhow!(
-            "Unhandled {} command(s): {:?}",
-            unhandled.len(),
-            unhandled
-        ));
+fn warn_unhandled(commands: &[Command]) {
+    for command in commands {
+        // Unclaimed terminal input is normal; Resize only wakes the render loop.
+        if !matches!(
+            command,
+            Command::Key(_, _) | Command::PasteText(_) | Command::Mouse(_) | Command::Resize { .. }
+        ) {
+            log::warn!("No handler claimed {command:?}");
+        }
     }
-    Ok(())
 }
 
 /// Whether a batch can be drained without redrawing: every command came back
@@ -356,9 +286,6 @@ fn should_quit(commands: &[Command]) -> bool {
 }
 
 #[cfg(test)]
-mod claims;
-
-#[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
@@ -367,6 +294,64 @@ mod tests {
     };
 
     use super::*;
+    use crate::{
+        app::{clipboard::ClipboardEntry, config::Openers},
+        test_support::TempDir,
+    };
+
+    /// The real handler tree with blank openers (so nothing shells out) and
+    /// `config_dir` in `dir`.
+    pub(super) fn test_handlers(dir: &TempDir) -> Handlers {
+        let mut config = Config::builtin();
+        config.config_dir = dir.path().to_path_buf();
+        config.openers = Openers {
+            open_directory: String::new(),
+            open_file: String::new(),
+            open_filectrl_window: String::new(),
+            run_in_terminal: String::new(),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let file_system = FileSystem::new(&config, tx);
+        Config::init_test();
+        Handlers {
+            clipboard: Clipboard::disabled(),
+            file_system,
+            root: RootView::new(Config::global()),
+        }
+    }
+
+    #[test]
+    fn a_derived_command_is_broadcast_in_turn() {
+        let dir = TempDir::new("app_derived");
+        let mut handlers = test_handlers(&dir);
+        let entry = ClipboardEntry::Copy(vec![dir.file("file.txt", 1)]);
+        handlers.handle_command(&Command::SetClipboardEntry(Some(entry)));
+
+        // Esc derives `ResetView`, which clears the clipboard entry.
+        let unhandled = broadcast_commands(
+            &mut handlers,
+            vec![Command::Key(KeyCode::Esc, KeyModifiers::NONE)],
+        );
+
+        assert_eq!(Vec::<Command>::new(), unhandled);
+        assert!(matches!(
+            Command::try_from(handlers.handle_command(&Command::Paste(dir.directory()))),
+            Ok(Command::AlertWarn(_))
+        ));
+    }
+
+    #[test]
+    fn only_unclaimed_commands_are_returned() {
+        let dir = TempDir::new("app_unclaimed");
+        let mut handlers = test_handlers(&dir);
+
+        let unhandled = broadcast_commands(
+            &mut handlers,
+            vec![Command::Quit, Command::AlertInfo("x".into()), Command::Quit],
+        );
+
+        assert_eq!(vec![Command::Quit, Command::Quit], unhandled);
+    }
 
     /// A handler that logs visits and can consume keys or derive commands.
     struct Spy {
@@ -601,53 +586,6 @@ mod tests {
         assert_eq!(vec![Command::CancelTask, Command::Quit], derived);
     }
 
-    impl Broadcast for Spy {
-        fn mode(&self) -> InputMode {
-            InputMode::Normal
-        }
-    }
-
-    #[test]
-    fn a_derived_command_is_broadcast_in_turn() {
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let mut root = Spy::new("root", &log);
-        root.derive_on = Some((Command::SearchTick, Command::ResetView));
-
-        let unhandled = broadcast_command(&mut root, Command::SearchTick).unwrap();
-
-        assert_eq!(vec!["root", "root"], *log.borrow());
-        assert_eq!(vec![Command::ResetView], unhandled);
-    }
-
-    #[test]
-    fn an_unclaimed_command_is_returned_rather_than_re_queued() {
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let mut root = Spy::new("root", &log);
-
-        let unhandled = broadcast_command(&mut root, Command::Quit).unwrap();
-
-        assert_eq!(vec!["root"], *log.borrow());
-        assert_eq!(vec![Command::Quit], unhandled);
-    }
-
-    #[test]
-    fn a_chain_is_bounded_by_the_cycle_limit() {
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let mut root = Spy::new("root", &log);
-        root.derive_on = Some((Command::SearchTick, Command::SearchTick));
-
-        let error = broadcast_command(&mut root, Command::SearchTick)
-            .expect_err("the cycle limit ends the session, like an unhandled command")
-            .to_string();
-
-        assert_eq!(
-            MAX_BROADCAST_CHAIN_LENGTH as usize,
-            log.borrow().len(),
-            "the loop must stop at the limit rather than run on"
-        );
-        assert!(error.contains("Broadcast cycle limit"), "{error}");
-    }
-
     #[test]
     fn maybe_from_maps_terminal_events() {
         assert_eq!(
@@ -679,40 +617,6 @@ mod tests {
             Command::maybe_from(&Event::Paste("a\nb".into()))
         );
         assert_eq!(None, Command::maybe_from(&Event::FocusGained));
-    }
-
-    #[test]
-    fn ignorable_unhandled_only_for_terminal_input() {
-        assert!(is_ignorable_unhandled(&Command::Key(
-            KeyCode::Esc,
-            KeyModifiers::NONE
-        )));
-        assert!(is_ignorable_unhandled(&Command::Mouse(mouse(
-            MouseEventKind::Moved
-        ))));
-        assert!(is_ignorable_unhandled(&Command::Resize {
-            width: 1,
-            height: 1
-        }));
-        assert!(is_ignorable_unhandled(&Command::PasteText("x".into())));
-        assert!(!is_ignorable_unhandled(&Command::Quit));
-        assert!(!is_ignorable_unhandled(&Command::AlertInfo("x".into())));
-    }
-
-    #[test]
-    fn must_not_contain_unhandled_rejects_non_ignorable() {
-        assert!(
-            must_not_contain_unhandled(&[
-                Command::Key(KeyCode::Esc, KeyModifiers::NONE),
-                Command::Resize {
-                    width: 1,
-                    height: 1
-                },
-            ])
-            .is_ok()
-        );
-        assert!(must_not_contain_unhandled(&[]).is_ok());
-        assert!(must_not_contain_unhandled(&[Command::AlertInfo("x".into())]).is_err());
     }
 
     #[test]
@@ -755,67 +659,5 @@ mod tests {
         ]));
         assert!(!should_quit(&[Command::AlertInfo("x".into())]));
         assert!(!should_quit(&[]));
-    }
-
-    /// The real handler tree, counting cycles through `mode` reads.
-    struct CountingCycles<'a> {
-        handlers: &'a mut Handlers,
-        cycles: std::cell::Cell<usize>,
-    }
-
-    impl CommandHandler for CountingCycles<'_> {
-        fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
-            visitor(self.handlers);
-        }
-    }
-
-    impl Broadcast for CountingCycles<'_> {
-        fn mode(&self) -> InputMode {
-            self.cycles.set(self.cycles.get() + 1);
-            self.handlers.mode()
-        }
-    }
-
-    /// The longest chain documented on `MAX_BROADCAST_CHAIN_LENGTH`, through the
-    /// real handlers.
-    #[test]
-    fn renaming_a_bookmark_is_the_documented_chain() {
-        let fixture = claims::Fixture::new();
-        let (tx, _rx) = mpsc::channel();
-        let mut handlers = claims::test_handlers(tx, &fixture);
-        handlers.file_system.run_once(Some(fixture.cwd())).unwrap();
-        let key = |c| Command::Key(KeyCode::Char(c), KeyModifiers::NONE);
-        broadcast_command(
-            &mut handlers,
-            Command::AddBookmark {
-                directory: fixture.directory(),
-                name: "mark".to_string(),
-            },
-        )
-        .unwrap();
-        for command in [Command::GetBookmarks, key('r'), key('x')] {
-            broadcast_command(&mut handlers, command).unwrap();
-        }
-
-        let mut counting = CountingCycles {
-            handlers: &mut handlers,
-            cycles: std::cell::Cell::new(0),
-        };
-        let unhandled = broadcast_command(
-            &mut counting,
-            Command::Key(KeyCode::Enter, KeyModifiers::NONE),
-        )
-        .unwrap();
-
-        assert_eq!(Vec::<Command>::new(), unhandled);
-        assert!(
-            fixture.bookmarks().join("markx").symlink_metadata().is_ok(),
-            "the bookmark was not renamed, so the chain under test did not run"
-        );
-        assert_eq!(
-            4,
-            counting.cycles.get(),
-            "update the chain documented on MAX_BROADCAST_CHAIN_LENGTH"
-        );
     }
 }

@@ -13,8 +13,6 @@ impl CommandHandler for Handlers {
     fn visit_command_handlers(&mut self, visitor: &mut dyn FnMut(&mut dyn CommandHandler)) {
         visitor(&mut self.file_system);
         visitor(&mut self.root);
-        #[cfg(debug_assertions)]
-        visitor(&mut self.debug);
     }
 
     fn handle_command(&mut self, command: &Command) -> CommandResult {
@@ -113,27 +111,18 @@ fn nothing_to_paste(system_clipboard: bool) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
-
     use test_case::test_case;
 
     use super::*;
     use crate::{
-        app::{
-            claims::{Fixture, test_handlers},
-            clipboard::ClipboardEntry,
-        },
+        app::{broadcast_commands, clipboard::ClipboardEntry, tests::test_handlers as handlers},
         file_system::path_info::PathInfo,
+        test_support::TempDir,
     };
-
-    fn handlers(fixture: &Fixture) -> Handlers {
-        let (tx, _rx) = mpsc::channel();
-        test_handlers(tx, fixture)
-    }
 
     #[test]
     fn the_reset_key_resets_the_view_unless_help_is_shown() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
         assert_eq!(
             CommandResult::from(Command::ResetView),
@@ -152,7 +141,7 @@ mod tests {
     #[test_case(KeyCode::Char('q') ; "the quit key")]
     #[test_case(KeyCode::Esc ; "the reset key")]
     fn a_closing_key_over_help_is_left_to_the_overlay(code: KeyCode) {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
         handlers
             .root
@@ -166,9 +155,9 @@ mod tests {
 
     #[test]
     fn a_paste_becomes_the_operation_the_clipboard_entry_names() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
-        let (srcs, dest) = (vec![fixture.file()], fixture.directory());
+        let (srcs, dest) = (vec![fixture.file("file.txt", 1)], fixture.directory());
 
         handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
             srcs.clone(),
@@ -195,9 +184,9 @@ mod tests {
 
     #[test]
     fn a_paste_of_an_entry_this_window_did_not_write_asks_first() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
-        let (file, dest) = (fixture.file(), fixture.directory());
+        let (file, dest) = (fixture.file("file.txt", 1), fixture.directory());
         let text = format!("mv {}", shell_words::quote(&file.path.to_string_lossy()));
         handlers.handle_command(&Command::SetClipboardText(text));
 
@@ -214,43 +203,42 @@ mod tests {
     /// again.
     #[test]
     fn confirming_a_paste_from_elsewhere_closes_its_prompt() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
-        let (file, dest) = (fixture.file(), fixture.directory());
+        let (file, dest) = (fixture.file("file.txt", 1), fixture.directory());
         let text = format!("cp {}", shell_words::quote(&file.path.to_string_lossy()));
         handlers.handle_command(&Command::SetClipboardText(text));
         let key = |c| Command::Key(KeyCode::Char(c), KeyModifiers::NONE);
-        crate::app::broadcast_command(&mut handlers, Command::Paste(dest)).unwrap();
+        broadcast_commands(&mut handlers, vec![Command::Paste(dest)]);
         assert_eq!(crate::command::InputMode::Prompt, handlers.root.mode());
 
-        crate::app::broadcast_command(&mut handlers, key('y')).unwrap();
+        broadcast_commands(&mut handlers, vec![key('y')]);
 
         assert_eq!(crate::command::InputMode::Normal, handlers.root.mode());
     }
 
     #[test]
     fn only_esc_clears_the_alerts() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
         let error = Command::AlertError("boom".into());
 
-        crate::app::broadcast_command(&mut handlers, error.clone()).unwrap();
-        crate::app::broadcast_command(&mut handlers, Command::ResetView).unwrap();
+        broadcast_commands(&mut handlers, vec![error.clone()]);
+        broadcast_commands(&mut handlers, vec![Command::ResetView]);
         assert_eq!(1, handlers.root.alert_count(), "a notice click");
 
-        crate::app::broadcast_command(
+        broadcast_commands(
             &mut handlers,
-            Command::Key(KeyCode::Esc, KeyModifiers::NONE),
-        )
-        .unwrap();
+            vec![Command::Key(KeyCode::Esc, KeyModifiers::NONE)],
+        );
         assert_eq!(0, handlers.root.alert_count(), "Esc");
     }
 
     #[test]
     fn a_clean_paste_of_an_entry_from_elsewhere_consumes_it() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
-        let (file, dest) = (fixture.file(), fixture.directory());
+        let (file, dest) = (fixture.file("file.txt", 1), fixture.directory());
         let text = format!("mv {}", shell_words::quote(&file.path.to_string_lossy()));
         handlers.handle_command(&Command::SetClipboardText(text));
         let paste = ClipboardEntry::Move(vec![file]).into_paste(dest.clone());
@@ -268,7 +256,7 @@ mod tests {
 
     #[test]
     fn a_paste_with_nothing_to_paste_and_no_system_clipboard_warns() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
 
         assert_eq!(
@@ -282,10 +270,10 @@ mod tests {
     #[test_case(&Command::ResetView ; "resetting the view")]
     #[test_case(&Command::SetClipboardEntry(None) ; "clearing the entry")]
     fn the_clipboard_entry_is_cleared_by(clear: &Command) {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
         handlers.handle_command(&Command::SetClipboardEntry(Some(ClipboardEntry::Copy(
-            vec![fixture.file()],
+            vec![fixture.file("file.txt", 1)],
         ))));
 
         assert_eq!(CommandResult::Handled, handlers.handle_command(clear));
@@ -298,9 +286,9 @@ mod tests {
 
     #[test]
     fn only_a_confirmed_delete_clears_the_clipboard() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
-        let entry = ClipboardEntry::Copy(vec![fixture.file()]);
+        let entry = ClipboardEntry::Copy(vec![fixture.file("file.txt", 1)]);
         handlers.handle_command(&Command::SetClipboardEntry(Some(entry.clone())));
 
         assert_eq!(
@@ -330,7 +318,7 @@ mod tests {
 
     #[test]
     fn clipboard_text_is_read_back_as_written() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
 
         handlers.handle_command(&Command::SetClipboardText("text".into()));
@@ -345,11 +333,11 @@ mod tests {
     /// back here.
     #[test]
     fn quit_asks_first_while_file_operations_are_running() {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         let mut handlers = handlers(&fixture);
         let paths: Vec<_> = ["a.txt", "b.txt"]
             .map(|name| {
-                let path = fixture.cwd().join(name);
+                let path = fixture.path().join(name);
                 std::fs::write(&path, b"x").unwrap();
                 PathInfo::try_from(path.as_path()).unwrap()
             })
@@ -367,7 +355,7 @@ mod tests {
     #[test_case(KeyCode::Esc, KeyModifiers::NONE => CommandResult::from(Command::ResetView) ; "reset view")]
     #[test_case(KeyCode::Char('j'), KeyModifiers::NONE => CommandResult::NotHandled ; "an action another handler owns")]
     fn a_global_key_becomes_its_command(code: KeyCode, modifiers: KeyModifiers) -> CommandResult {
-        let fixture = Fixture::new();
+        let fixture = TempDir::new("handler");
         handlers(&fixture).handle_key(code, modifiers)
     }
 }
