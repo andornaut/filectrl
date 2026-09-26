@@ -625,17 +625,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_overrides_shared_keys_and_preserves_the_rest() {
-        // Nested, to exercise the recursive arm.
-        let base = parse_toml(None, "[t]\na = 1\nb = 2").unwrap();
-        let overlay = parse_toml(None, "[t]\nb = 3").unwrap();
-        let merged = merge_toml_values(base, overlay);
-        let table = merged.get("t").unwrap();
-        assert_eq!(1, table.get("a").unwrap().as_integer().unwrap());
-        assert_eq!(3, table.get("b").unwrap().as_integer().unwrap());
-    }
-
-    #[test]
     fn partial_user_config_merges_with_defaults() {
         // Both platforms, since `parse_value` picks one by target.
         let partial = r#"

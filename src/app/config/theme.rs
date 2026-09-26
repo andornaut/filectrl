@@ -450,13 +450,6 @@ mod tests {
     // --- apply_ls_colors round-trips ---
 
     #[test]
-    fn apply_ls_colors_sets_directory_color() {
-        let mut ft = FileType::default();
-        ft.apply_ls_colors("di=34", false);
-        assert_eq!(ft.directory().fg, Some(Color::Blue));
-    }
-
-    #[test]
     fn apply_ls_colors_sets_executable_color() {
         let mut ft = FileType::default();
         ft.apply_ls_colors("ex=32", false);

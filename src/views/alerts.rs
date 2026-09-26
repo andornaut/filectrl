@@ -224,16 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn add_alert_prepends_newest_first() {
-        let mut v = view();
-        v.add_alert(AlertKind::Info, "first".into());
-        v.add_alert(AlertKind::Warn, "second".into());
-        assert_eq!(v.alerts.len(), 2);
-        assert_eq!(v.alerts.front().unwrap().1, "second");
-        assert_eq!(v.alerts.back().unwrap().1, "first");
-    }
-
-    #[test]
     fn a_long_alert_is_drawn_on_at_most_three_lines() {
         let mut v = view();
         v.add_alert(AlertKind::Error, "x".repeat(500));

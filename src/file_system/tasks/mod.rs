@@ -423,6 +423,8 @@ mod tests {
         }))
         .expect("the copy should start");
         fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+        // The copy takes the source's mode; restore it so the fixture can be removed.
+        let _ = fs::set_permissions(dst.join("locked"), fs::Permissions::from_mode(0o755));
 
         if is_unreadable {
             assert_eq!(

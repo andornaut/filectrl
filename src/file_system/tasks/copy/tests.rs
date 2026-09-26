@@ -92,18 +92,20 @@ fn copy_path_recreates_socket() {
     assert!(src.exists());
 }
 
+/// Mode 0o666, so a copy that kept the source's mode instead of taking the umask differs.
 #[test]
-fn copy_path_recreates_fifo() {
+fn a_copied_fifo_is_a_fifo_that_takes_the_umask() {
     let fx = TempDir::new("tasks");
     let src = fx.join("fifo");
-    nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o644)).unwrap();
+    nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o666)).unwrap();
     let dst = fx.join("fifo_copy");
 
     let errors = copy_one(false, &src, &dst);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     let dst_mode = mode_of(&dst);
     assert!(unix_mode::is_fifo(dst_mode));
-    assert_eq!(0o644 & umask_leaves(fx.path()), dst_mode & 0o7777);
+    assert_eq!(0o666 & umask_leaves(fx.path()), dst_mode & 0o7777);
 }
 
 #[test]
@@ -562,24 +564,18 @@ fn a_copied_directory_keeps_the_setgid_bit_its_parent_gives_it() {
     assert_eq!(0, mode_of(&shared.join("dst").join("child")) & 0o7000);
 }
 
-#[test_case(true ; "a move keeps the mode")]
-#[test_case(false ; "a copy takes the umask")]
-fn a_moved_fifo_keeps_its_mode_whatever_the_umask(is_move: bool) {
+#[test]
+fn a_moved_fifo_keeps_its_mode_whatever_the_umask() {
     let fx = TempDir::new("tasks_fifo_mode");
     let src = fx.join("fifo");
     nix::unistd::mkfifo(&src, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
     fs::set_permissions(&src, fs::Permissions::from_mode(0o666)).unwrap();
     let dst = fx.join("moved");
 
-    let errors = copy_one(is_move, &src, &dst);
+    let errors = copy_one(true, &src, &dst);
 
     assert!(errors.is_empty(), "{errors:?}");
-    let expected = if is_move {
-        0o666
-    } else {
-        0o666 & umask_leaves(fx.path())
-    };
-    assert_eq!(expected, mode_of(&dst) & 0o7777);
+    assert_eq!(0o666, mode_of(&dst) & 0o7777);
 }
 
 #[test]

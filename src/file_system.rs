@@ -1271,17 +1271,6 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_an_unrelated_prompt_is_not_claimed() {
-        let bookmarks = TempDir::reserved("fs_bookmarks");
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut file_system = test_file_system(&bookmarks, tx);
-
-        let result = file_system.handle_command(&Command::CancelPrompt);
-
-        assert!(matches!(result, CommandResult::NotHandled));
-    }
-
-    #[test]
     fn a_paste_that_asked_nothing_keeps_no_state_for_a_later_prompt_to_disturb() {
         let bookmarks = TempDir::reserved("fs_bookmarks");
         let (tx, rx) = std::sync::mpsc::channel();

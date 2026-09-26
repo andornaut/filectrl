@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn from_err_result_is_alert_error() {
+    fn an_err_result_becomes_an_error_alert() {
         assert_eq!(
             CommandResult::HandledWith(Box::new(Command::AlertError("oops".to_string()))),
             Err::<(), _>(anyhow!("oops")).into()

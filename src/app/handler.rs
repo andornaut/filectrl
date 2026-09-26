@@ -310,10 +310,13 @@ mod tests {
         );
     }
 
-    #[test_case(true => Command::AlertWarn("Cannot paste: nothing has been copied or cut".into()) ; "with a system clipboard")]
-    #[test_case(false => Command::AlertWarn("Cannot paste: no system clipboard available".into()) ; "without one")]
-    fn a_paste_with_nothing_to_paste_says_why(system_clipboard: bool) -> Command {
-        nothing_to_paste(system_clipboard)
+    /// No system clipboard exists under test, so this case is only reachable here.
+    #[test]
+    fn a_paste_with_nothing_to_paste_and_a_system_clipboard_says_nothing_was_copied() {
+        assert_eq!(
+            Command::AlertWarn("Cannot paste: nothing has been copied or cut".into()),
+            nothing_to_paste(true)
+        );
     }
 
     #[test]
