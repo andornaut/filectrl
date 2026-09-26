@@ -625,6 +625,10 @@ mod tests {
     /// Linux, EROFS on macOS's sealed system volume), so it is read from the kernel.
     #[test]
     fn setting_the_mode_reports_a_failure_it_did_not_decide() {
+        if nix::unistd::geteuid().is_root() {
+            eprintln!("skipped: root may chmod /");
+            return;
+        }
         let root = PathInfo::try_from(Path::new("/")).unwrap();
         let cause = fs::set_permissions("/", fs::Permissions::from_mode(0o755)).unwrap_err();
 

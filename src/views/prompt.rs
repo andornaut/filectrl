@@ -1435,6 +1435,10 @@ mod tests {
     fn goto_submit_under_an_unsearchable_directory_names_the_permission_error() {
         use std::os::unix::fs::PermissionsExt;
 
+        if nix::unistd::geteuid().is_root() {
+            eprintln!("skipped: root searches a mode-000 directory");
+            return;
+        }
         let fixture = GotoFixture::new();
         let locked = fixture.dir.join("locked");
         std::fs::create_dir(&locked).unwrap();
