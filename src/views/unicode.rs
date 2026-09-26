@@ -15,42 +15,47 @@ pub(super) fn pluralize_items(count: usize) -> String {
 pub(super) fn split_with_ellipsis(line: &str, width: usize) -> Vec<String> {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
-    let mut parts = split(line, width);
-    let len = parts.len();
-    if len > 1 {
-        for part in &mut parts[..len - 1] {
-            part.push_str(ELLIPSIS);
-        }
+    let mut parts: Vec<String> = chunks(line, width).map(String::from).collect();
+    let last = parts.len() - 1;
+    for part in &mut parts[..last] {
+        part.push_str(ELLIPSIS);
     }
     parts
 }
 
 /// The number of lines `split_with_ellipsis` returns, counted without building
-/// them. Walks the graphemes with the same break rule as `split`.
+/// them.
 pub(super) fn split_line_count(line: &str, width: usize) -> usize {
     assert!(width > ELLIPSIS_WIDTH, "width > ELLIPSIS_WIDTH");
 
-    if line.cell_width() as usize <= width {
-        return 1;
-    }
+    chunks(line, width).count()
+}
 
-    let chunk_width = width.saturating_sub(ELLIPSIS_WIDTH);
-    let mut count = 0;
-    let mut current_width = 0;
-    let mut current_is_empty = true;
-    for g in line.graphemes(true) {
-        let g_width = g.cell_width() as usize;
-        if current_width + g_width > chunk_width && !current_is_empty {
-            count += 1;
-            current_width = 0;
-        }
-        current_is_empty = false;
-        current_width += g_width;
-    }
-    if !current_is_empty {
-        count += 1;
-    }
-    count
+/// `line` cut into lines of `width` columns, each but the last leaving a
+/// column for an ellipsis; a line that fits (an empty one included) is one
+/// line. Cuts fall between graphemes, and a grapheme wider than a line still
+/// gets a line of its own, so no line is empty.
+fn chunks(line: &str, width: usize) -> impl Iterator<Item = &str> {
+    let chunk_width = if line.cell_width() as usize <= width {
+        usize::MAX
+    } else {
+        width - ELLIPSIS_WIDTH
+    };
+    let mut rest = Some(line);
+    std::iter::from_fn(move || {
+        let current = rest?;
+        let mut used = 0;
+        let end = current
+            .grapheme_indices(true)
+            .find_map(|(index, g)| {
+                used += g.cell_width() as usize;
+                (used > chunk_width && index > 0).then_some(index)
+            })
+            .unwrap_or(current.len());
+        let (chunk, tail) = current.split_at(end);
+        rest = (!tail.is_empty()).then_some(tail);
+        Some(chunk)
+    })
 }
 
 /// `before`, `text` and `after` as one line of `width` columns. `before` and
@@ -99,32 +104,6 @@ fn truncate_left(line: &str, width: usize) -> String {
     result
 }
 
-fn split(line: &str, width: usize) -> Vec<String> {
-    if line.cell_width() as usize <= width {
-        return vec![line.into()];
-    }
-
-    let chunk_width = width.saturating_sub(ELLIPSIS_WIDTH);
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-    for g in line.graphemes(true) {
-        let g_width = g.cell_width() as usize;
-        // Break before this grapheme would overflow, but never emit an empty
-        // line: a single grapheme wider than chunk_width still gets its own line.
-        if current_width + g_width > chunk_width && !current.is_empty() {
-            parts.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        current.push_str(g);
-        current_width += g_width;
-    }
-    if !current.is_empty() {
-        parts.push(current);
-    }
-    parts
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,30 +149,6 @@ mod tests {
     #[should_panic(expected = "width > ELLIPSIS_WIDTH")]
     fn split_with_ellipsis_panics_when_width_equals_ellipsis_width() {
         split_with_ellipsis("example", 1);
-    }
-
-    #[test]
-    fn split_line_count_agrees_with_split_with_ellipsis() {
-        let texts = [
-            "",
-            "example",
-            "a_very_long_file_name_that_must_wrap_across_several_lines.txt",
-            "ab cd ef",
-            "中文文件名称非常长非常长非常长.txt",
-            "a中b文c字d",
-            "e\u{0301}e\u{0301}e\u{0301}e\u{0301}e\u{0301}",
-            "ab\u{0915}\u{093F}cd\u{0915}\u{093F}ef",
-            "\u{200B}\u{200B}abc",
-        ];
-        for text in texts {
-            for width in 2..=text.cell_width() as usize + 2 {
-                assert_eq!(
-                    split_with_ellipsis(text, width).len(),
-                    split_line_count(text, width),
-                    "{text:?} at width {width}"
-                );
-            }
-        }
     }
 
     // ── fit_left ──────────────────────────────────────────────────────────────

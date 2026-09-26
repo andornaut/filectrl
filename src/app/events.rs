@@ -870,16 +870,16 @@ mod tests {
 
     /// Runs the watcher over a fresh self-pipe and `terminal`, writing the
     /// handler's byte after `delay`, so a watcher that misses what it should
-    /// have woken for still returns (as a signal) rather than hanging.
+    /// have woken for still returns (as a signal) rather than hanging. The
+    /// writer is not joined, so a watcher that returns at once is not held
+    /// for `delay`; its write then fails on the closed pipe, and is ignored.
     fn watch_with_byte_after(terminal: Option<BorrowedFd<'_>>, delay: Duration) -> Wake {
         let (read_fd, write_fd) = nix::unistd::pipe().expect("a pipe should be creatable");
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                std::thread::sleep(delay);
-                nix::unistd::write(&write_fd, &[0]).expect("the pipe should accept a byte");
-            });
-            watch_signal_pipe(read_fd.as_fd(), terminal)
-        })
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            let _ = nix::unistd::write(&write_fd, &[0]);
+        });
+        watch_signal_pipe(read_fd.as_fd(), terminal)
     }
 
     // The watcher must wake on a byte written after it began blocking, which

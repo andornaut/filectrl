@@ -220,6 +220,33 @@ mod tests {
         assert_eq!(Some("a".to_string()), selected(&table));
     }
 
+    /// A page is measured from the cursor, not from the window the wheel left.
+    #[test]
+    fn page_down_after_the_wheel_pages_from_the_cursor() {
+        let (_dir, mut table) = table_for_the_wheel();
+        table.handle_mouse(mouse(MouseEventKind::ScrollDown, 1, 5));
+        // As the render following the wheel leaves the line map: `c` is shown.
+        table.mapper.set_window(table.first_visible_item, 1);
+
+        table.next_page();
+
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
+    #[test]
+    fn page_up_after_the_wheel_pages_from_the_cursor() {
+        let (_dir, mut table) = table_for_the_wheel();
+        table.select(2);
+        table.first_visible_item = 2;
+        table.handle_mouse(mouse(MouseEventKind::ScrollUp, 1, 5));
+        // As the render following the wheel leaves the line map: `a` is shown.
+        table.mapper.set_window(table.first_visible_item, 1);
+
+        table.previous_page();
+
+        assert_eq!(Some("b".to_string()), selected(&table));
+    }
+
     #[test]
     fn moving_the_cursor_shows_it() {
         let (_dir, mut table) = table_for_the_wheel();

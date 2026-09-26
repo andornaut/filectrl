@@ -256,8 +256,10 @@ mod tests {
     /// dropping it would leave the last change of a burst unshown.
     #[test]
     fn a_delayed_refresh_outlasts_a_window_widened_while_it_waits() {
-        const WINDOW: Duration = Duration::from_millis(200);
-        const WIDENED: Duration = Duration::from_millis(400);
+        // The widen must land inside the window, so it is wide enough for a
+        // loaded runner to reach it well before the trailing refresh fires.
+        const WINDOW: Duration = Duration::from_millis(500);
+        const WIDENED: Duration = Duration::from_secs(1);
         let debouncer = Arc::new(Mutex::new(debounce::TimeDebouncer::new(WINDOW)));
         let (command_tx, command_rx) = channel();
         let (notify_tx, notify_rx) = channel();

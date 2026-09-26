@@ -29,6 +29,7 @@ use crate::{
 const ALL_FILES: &str = "all/allfiles";
 const ALL: &str = "all/all";
 const TEXT_PLAIN: &str = "text/plain";
+const OCTET_STREAM: &str = "application/octet-stream";
 /// `guess()` returns this for a zero byte file without ever consulting the
 /// glob database, which would otherwise hide every handler for, say, a newly
 /// created and still empty `notes.md`.
@@ -238,6 +239,16 @@ fn mime_chain(path: &Path) -> Vec<String> {
         }
         queue.extend(parents_of(&current));
         chain.push(current);
+    }
+    // Every type but the inode/* ones is a subclass of octet-stream whether or
+    // not the database says so. Added after the whole graph rather than as a
+    // parent of each type, so it never ranks above a nearer ancestor.
+    if chain
+        .first()
+        .is_some_and(|mime| !mime.starts_with("inode/"))
+        && !seen.contains(OCTET_STREAM)
+    {
+        chain.push(OCTET_STREAM.to_string());
     }
 
     if path.is_file() {
@@ -544,10 +555,10 @@ mod tests {
     };
 
     use super::{
-        ALL, ALL_FILES, DesktopEntry, Sources, TEXT_PLAIN, candidates_from, dedupe_dirs,
-        desktops_of, dir_of, dirs_of, glob_name, in_terminal, index_applications, is_executable,
-        is_offerable, lists_in, mime_chain, parents_of, parse_subclasses, scan_mime_types,
-        to_candidate,
+        ALL, ALL_FILES, DesktopEntry, OCTET_STREAM, Sources, TEXT_PLAIN, candidates_from,
+        dedupe_dirs, desktops_of, dir_of, dirs_of, glob_name, in_terminal, index_applications,
+        is_executable, is_offerable, lists_in, mime_chain, parents_of, parse_subclasses,
+        scan_mime_types, to_candidate,
     };
     use crate::{app::config::Config, test_support::TempDir};
 
@@ -700,6 +711,27 @@ mod tests {
         let directory = mime_chain(dir.path());
         assert_eq!(Some(&ALL.to_string()), directory.last());
         assert!(!directory.iter().any(|mime| mime == ALL_FILES));
+    }
+
+    /// Every type but the inode/* ones inherits octet-stream, last before the
+    /// fallback types and so after every ancestor the database names: a hex
+    /// editor is offered for any file but never ranks above a text editor.
+    #[test]
+    fn a_file_inherits_octet_stream_after_its_other_ancestors() {
+        let dir = TempDir::new("open_with_octet_stream");
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(
+            mime_chain(&file).ends_with(&strings(&[OCTET_STREAM, ALL_FILES, ALL])),
+            "{:?}",
+            mime_chain(&file)
+        );
+        assert!(
+            !mime_chain(dir.path())
+                .iter()
+                .any(|mime| mime == OCTET_STREAM)
+        );
     }
 
     #[test]

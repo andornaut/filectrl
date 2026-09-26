@@ -1313,6 +1313,54 @@ mod tests {
     }
 
     #[test]
+    fn starting_a_search_reports_the_cleared_cursor() {
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[fx.file("a", 1)]);
+        table.select(0);
+
+        let result = table.handle_command(&Command::StartSearch("a".into()));
+
+        // Nothing is marked, so only this snapshot stops the status bar naming
+        // the entry the cursor left.
+        assert_eq!(
+            result,
+            Command::SelectionChanged {
+                selected: None,
+                mark_count: 0,
+                range: false,
+            }
+            .into()
+        );
+    }
+
+    #[test]
+    fn leaving_a_search_reports_the_cleared_cursor_before_reloading() {
+        let fx = TempDir::new("nav");
+        let mut table = listed(&fx, &[]);
+        table.handle_command(&Command::StartSearch("a".into()));
+        table.handle_command(&Command::SearchStarted { generation: 1 });
+        table.handle_command(&Command::ListingBatch {
+            items: vec![fx.file("a", 1)],
+            generation: 1,
+        });
+        table.select(0);
+
+        let result = table.handle_command(&Command::ResetView);
+
+        assert_eq!(
+            result.into_commands(),
+            vec![
+                Command::SelectionChanged {
+                    selected: None,
+                    mark_count: 0,
+                    range: false,
+                },
+                Command::RefreshDirectory,
+            ]
+        );
+    }
+
+    #[test]
     fn toggle_show_hidden_is_a_noop_during_a_search() {
         let fx = TempDir::new("nav");
         let mut table = listed(&fx, &[fx.file("a", 1), fx.file(".b", 1)]);

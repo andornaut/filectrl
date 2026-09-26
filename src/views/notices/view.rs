@@ -16,11 +16,10 @@ impl View for NoticesView {
     }
 
     fn render(&mut self, theme: &Theme, area: Rect, frame: &mut Frame<'_>) {
+        self.area = area;
         if self.notices.is_empty() {
             return;
         }
-
-        self.area = area;
 
         let search_elapsed = self.search_elapsed();
         let constraints = vec![Constraint::Length(1); self.notices.len()];

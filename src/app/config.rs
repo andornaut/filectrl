@@ -19,6 +19,7 @@ use toml::Value;
 
 use self::keybindings::{KeyBindings, TomlKeybindings};
 use self::theme::Theme;
+use crate::file_system::path_info::quoted;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
@@ -199,7 +200,7 @@ impl Config {
         let config_dir = path.parent().ok_or_else(|| {
             anyhow!(
                 "Cannot load config file {}: it has no parent directory",
-                path.display()
+                quoted(path)
             )
         })?;
         // Canonical, so that a `..` or `.` in the path does not reach the
@@ -242,7 +243,7 @@ impl Config {
         let dir = config.parent().ok_or_else(|| {
             anyhow!(
                 "Cannot write the theme: {} has no parent directory",
-                config.display()
+                quoted(&config)
             )
         })?;
         let path = dir.join(DEFAULT_THEME_FILENAME);
@@ -295,24 +296,7 @@ impl Config {
     /// Resolves the config's `include_files` array. Relative entries resolve
     /// against `config_dir`.
     fn resolve_include_files(value: &Value, config_dir: &Path) -> Result<Vec<PathBuf>> {
-        let Some(include_value) = value.get("include_files") else {
-            return Ok(Vec::new());
-        };
-        // A malformed value must fail the load rather than silently yielding
-        // no includes.
-        let entries = include_value
-            .as_array()
-            .ok_or_else(|| anyhow!("'include_files' must be an array of file paths"))?;
-        let include_files: Vec<PathBuf> = entries
-            .iter()
-            .map(|entry| {
-                entry.as_str().map(PathBuf::from).ok_or_else(|| {
-                    anyhow!("'include_files' entries must be strings, but found: {entry}")
-                })
-            })
-            .collect::<Result<_>>()?;
-
-        Ok(include_files
+        Ok(include_entries(value)?
             .into_iter()
             .map(|path| {
                 if path.is_absolute() {
@@ -369,23 +353,37 @@ impl Config {
     }
 }
 
+/// The paths a file's `include_files` lists, as written. A malformed value
+/// must fail the load rather than silently yielding no includes.
+fn include_entries(value: &Value) -> Result<Vec<PathBuf>> {
+    let Some(include_value) = value.get("include_files") else {
+        return Ok(Vec::new());
+    };
+    include_value
+        .as_array()
+        .ok_or_else(|| anyhow!("'include_files' must be an array of file paths"))?
+        .iter()
+        .map(|entry| {
+            entry.as_str().map(PathBuf::from).ok_or_else(|| {
+                anyhow!("'include_files' entries must be strings, but found: {entry}")
+            })
+        })
+        .collect()
+}
+
 /// `file` names the file `content` was read from, so that a mistake in one of
 /// several included files says which.
 fn parse_toml(file: Option<&Path>, content: &str) -> Result<Value> {
     toml::from_str::<Value>(content).map_err(|error| match file {
-        Some(file) => anyhow!("Failed to parse {}: {error}", file.display()),
+        Some(file) => anyhow!("Failed to parse {}: {error}", quoted(file)),
         None => anyhow!("Failed to parse TOML: {error}"),
     })
 }
 
 /// Absolutizes without requiring the path to exist, which `canonicalize` does.
 fn absolute_path(path: &Path) -> Result<PathBuf> {
-    std::path::absolute(path).map_err(|error| {
-        anyhow!(
-            "Failed to resolve {}: {error}",
-            crate::file_system::path_info::quoted(path)
-        )
-    })
+    std::path::absolute(path)
+        .map_err(|error| anyhow!("Failed to resolve {}: {error}", quoted(path)))
 }
 
 const CONFIG_FILE: &str = "config file";
@@ -402,9 +400,9 @@ impl ReadFailure {
     /// files they passed to go and look at.
     fn describe(self, kind: &str, path: &Path) -> anyhow::Error {
         match self {
-            Self::Io(error) => anyhow!("Failed to read {kind} {}: {error}", path.display()),
+            Self::Io(error) => anyhow!("Failed to read {kind} {}: {error}", quoted(path)),
             Self::NotRegular => {
-                anyhow!("Cannot read {kind} {}: not a regular file", path.display())
+                anyhow!("Cannot read {kind} {}: not a regular file", quoted(path))
             }
         }
     }
@@ -447,14 +445,11 @@ fn read_regular_file(path: &Path) -> std::result::Result<String, ReadFailure> {
 /// old file in place, and the new file keeps the old one's permission bits, so
 /// a private config does not become readable by others.
 fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        anyhow!(
-            "Cannot write {}: it has no parent directory",
-            path.display()
-        )
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot write {}: it has no parent directory", quoted(path)))?;
     fs::create_dir_all(parent)
-        .map_err(|error| anyhow!("Failed to create directory {}: {error}", parent.display()))?;
+        .map_err(|error| anyhow!("Failed to create directory {}: {error}", quoted(parent)))?;
     // A failed lookup leaves the path to `create_new`, which reports whatever
     // is there.
     let existing = path.symlink_metadata().ok();
@@ -471,7 +466,7 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
             } else {
                 "not a regular file"
             };
-            return Err(anyhow!("Cannot write {}: it is {what}", path.display()));
+            return Err(anyhow!("Cannot write {}: it is {what}", quoted(path)));
         }
     }
     let Some(metadata) = existing.filter(|_| force) else {
@@ -479,17 +474,17 @@ fn write_new(path: &Path, content: &str, force: bool) -> Result<()> {
             if error.kind() == ErrorKind::AlreadyExists {
                 anyhow!(
                     "Cannot write {}: it already exists; pass --force to replace it",
-                    path.display()
+                    quoted(path)
                 )
             } else {
-                anyhow!("Failed to write {}: {error}", path.display())
+                anyhow!("Failed to write {}: {error}", quoted(path))
             }
         });
     };
     let mut staged = path.as_os_str().to_owned();
     staged.push(format!(".{}.tmp", std::process::id()));
     let staged = PathBuf::from(staged);
-    let failed = |error: std::io::Error| anyhow!("Failed to replace {}: {error}", path.display());
+    let failed = |error: std::io::Error| anyhow!("Failed to replace {}: {error}", quoted(path));
     let written = create_and_write(&staged, content).and_then(|()| {
         use std::os::unix::fs::PermissionsExt;
         let mode = metadata.permissions().mode() & 0o777;
@@ -642,12 +637,13 @@ fn is_theme_path(path: &str) -> bool {
 /// in the merged config.
 fn validate_file(file: Option<&Path>, value: &Value, defaults: &Value) -> Result<()> {
     let located = |error: anyhow::Error| match file {
-        Some(file) => anyhow!("{error:#} in {}", file.display()),
+        Some(file) => anyhow!("Cannot load {}: {error:#}", quoted(file)),
         None => error,
     };
     // Unknown keys first, so a typo fails loudly instead of falling back to
     // the default the typo left in place.
     reject_unknown_keys(value, defaults, "").map_err(located)?;
+    include_entries(value).map_err(located)?;
     if let Some(theme256) = value.get("theme256") {
         reject_unindexed_colors(theme256, "theme256").map_err(located)?;
     }
@@ -716,13 +712,15 @@ fn has_unquoted_placeholder(template: &str) -> bool {
 }
 
 /// A deserialization failure, naming the file it came from when there is one.
-/// The toml error's message ends with a newline, which is trimmed.
+/// The toml error's message puts the key path on a line of its own and ends
+/// with a newline, so its lines are joined into one.
 fn deserialize_error(file: Option<&Path>, error: &toml::de::Error) -> anyhow::Error {
     let message = error.to_string();
+    let message = message.lines().map(str::trim).collect::<Vec<_>>().join(" ");
     let message = message.trim_end();
     match file {
-        Some(file) => anyhow!("Failed to deserialize {}: {message}", file.display()),
-        None => anyhow!("Failed to deserialize the config: {message}"),
+        Some(file) => anyhow!("Cannot load {}: {message}", quoted(file)),
+        None => anyhow!("Cannot load the config: {message}"),
     }
 }
 
@@ -936,10 +934,7 @@ open_directory = "alacritty --working-directory %s"
     fn a_type_error_has_no_trailing_newline() {
         let error = parse_err("[file_system]\nsearch_max_depth = \"deep\"\n");
 
-        assert!(
-            error.starts_with("Failed to deserialize the config:"),
-            "{error}"
-        );
+        assert!(error.starts_with("Cannot load the config:"), "{error}");
         assert_eq!(error.trim_end(), error);
     }
 
@@ -1175,7 +1170,7 @@ open_directory = "alacritty --working-directory %s"
 
         // Not "pass --force", which refuses a symlink too.
         assert_eq!(
-            format!("Cannot write {}: it is a symbolic link", link.display()),
+            format!("Cannot write {}: it is a symbolic link", quoted(&link)),
             error
         );
         assert!(!target.exists());
@@ -1217,7 +1212,7 @@ open_directory = "alacritty --working-directory %s"
             .to_string();
 
         assert_eq!(
-            format!("Cannot write {}: it is a symbolic link", link.display()),
+            format!("Cannot write {}: it is a symbolic link", quoted(&link)),
             error
         );
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
@@ -1249,7 +1244,7 @@ open_directory = "alacritty --working-directory %s"
             "a directory"
         };
         assert_eq!(
-            format!("Cannot write {}: it is {what}", path.display()),
+            format!("Cannot write {}: it is {what}", quoted(&path)),
             error
         );
         let file_type = path.symlink_metadata().unwrap().file_type();
@@ -1291,7 +1286,7 @@ open_directory = "alacritty --working-directory %s"
         let error = load_err(Some(path.clone()), &[]);
 
         assert!(error.starts_with("Failed to read config file"), "{error}");
-        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains(&quoted(&path).to_string()), "{error}");
     }
 
     /// Only the default path may be absent: `--config` names a file the user
@@ -1323,7 +1318,7 @@ open_directory = "alacritty --working-directory %s"
         };
 
         assert!(
-            error.starts_with(&format!("Failed to read config file {}:", path.display())),
+            error.starts_with(&format!("Failed to read config file {}:", quoted(&path))),
             "{error}"
         );
     }
@@ -1344,7 +1339,7 @@ open_directory = "alacritty --working-directory %s"
         };
 
         assert!(
-            error.starts_with(&format!("Failed to read config file {}:", path.display())),
+            error.starts_with(&format!("Failed to read config file {}:", quoted(&path))),
             "{error}"
         );
     }
@@ -1361,7 +1356,7 @@ open_directory = "alacritty --working-directory %s"
         // Named as an include rather than as the config, so the user knows
         // which of the two files to go and look at.
         assert!(error.starts_with("Failed to read include file"), "{error}");
-        assert!(error.contains(&include.display().to_string()), "{error}");
+        assert!(error.contains(&quoted(&include).to_string()), "{error}");
     }
 
     /// A FIFO would block the read until a writer appeared, and a device can
@@ -1389,7 +1384,7 @@ open_directory = "alacritty --working-directory %s"
         assert_eq!(
             format!(
                 "Cannot read config file {}: not a regular file",
-                path.display()
+                quoted(&path)
             ),
             error
         );
@@ -1408,7 +1403,7 @@ open_directory = "alacritty --working-directory %s"
         assert_eq!(
             format!(
                 "Cannot read include file {}: not a regular file",
-                include.display()
+                quoted(&include)
             ),
             error
         );
@@ -1648,7 +1643,7 @@ open_directory = "alacritty --working-directory %s"
         // Includes resolve from the canonical config directory, which differs
         // where the temporary directory is reached through a symlink (macOS).
         let bad = dir.path().canonicalize().unwrap().join("bad.toml");
-        let expected = format!("Failed to parse {}: ", bad.display());
+        let expected = format!("Failed to parse {}: ", quoted(&bad));
         assert!(error.starts_with(&expected), "{error}");
     }
 
@@ -1677,14 +1672,17 @@ open_directory = "alacritty --working-directory %s"
 
     /// Each file is validated before the merge, so a mistake names the file
     /// it is in: the config itself, or the second of two includes.
-    #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in the config")]
-    #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Unknown configuration key: 'theme.table.bodyy' in {}" ; "an unknown key in an include")]
-    #[test_case(false, "[theme256.table.body]\nfg = \"#ff0000\"\n" => "theme256.table.body.fg: \"#ff0000\" is not a 256-color index (0-255) in {}" ; "a hex color under theme256 in an include")]
-    #[test_case(false, "[file_system]\nsearch_max_depth = \"deep\"\n" => "Failed to deserialize {}: " ; "a type error in an include")]
-    #[test_case(false, "[file_system]\nrefresh_debounce_milliseconds = 50\n" => "file_system.refresh_debounce_milliseconds (50) must be at least 100 in {}" ; "a value out of range in an include")]
-    #[test_case(false, "[keybindings]\nquit = \"Nope\"\n" => "Invalid keybinding for quit: Unknown key: 'Nope' in {}" ; "an invalid key in an include")]
-    #[test_case(false, "[keybindings]\nquit = []\n" => "Invalid keybinding for quit: no key given in {}" ; "an empty key list in an include")]
-    #[test_case(false, "[openers.linux]\nopen_file = \"xdg-open\"\n" => "openers.linux.open_file (\"xdg-open\") must contain %s as its own unquoted word in {}" ; "an opener without its placeholder in an include")]
+    #[test_case(true, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: 'theme.table.bodyy'" ; "an unknown key in the config")]
+    #[test_case(false, "[theme.table]\nbodyy = {}\n" => "Cannot load {}: Unknown configuration key: 'theme.table.bodyy'" ; "an unknown key in an include")]
+    #[test_case(false, "[theme256.table.body]\nfg = \"#ff0000\"\n" => "Cannot load {}: theme256.table.body.fg: \"#ff0000\" is not a 256-color index (0-255)" ; "a hex color under theme256 in an include")]
+    #[test_case(false, "[file_system]\nsearch_max_depth = \"deep\"\n" => "Cannot load {}: invalid type: string \"deep\", expected u32 in `file_system.search_max_depth`" ; "a type error in an include")]
+    #[test_case(false, "[keybindings]\nquit = 1\n" => "Cannot load {}: expected a key string or an array of key strings in `keybindings.quit`" ; "a key that is not a string in an include")]
+    #[test_case(false, "include_files = \"c.toml\"\n" => "Cannot load {}: 'include_files' must be an array of file paths" ; "an include list that is not an array in an include")]
+    #[test_case(false, "include_files = [1]\n" => "Cannot load {}: 'include_files' entries must be strings, but found: 1" ; "an include entry that is not a string in an include")]
+    #[test_case(false, "[file_system]\nrefresh_debounce_milliseconds = 50\n" => "Cannot load {}: file_system.refresh_debounce_milliseconds (50) must be at least 100" ; "a value out of range in an include")]
+    #[test_case(false, "[keybindings]\nquit = \"Nope\"\n" => "Cannot load {}: Invalid keybinding for quit: Unknown key: 'Nope'" ; "an invalid key in an include")]
+    #[test_case(false, "[keybindings]\nquit = []\n" => "Cannot load {}: Invalid keybinding for quit: no key given" ; "an empty key list in an include")]
+    #[test_case(false, "[openers.linux]\nopen_file = \"xdg-open\"\n" => "Cannot load {}: openers.linux.open_file (\"xdg-open\") must contain %s as its own unquoted word" ; "an opener without its placeholder in an include")]
     fn a_mistake_names_the_file_it_is_in(in_config: bool, mistake: &str) -> String {
         let dir = TempDir::new("config_mistake_names_file");
         let config = dir.join("config.toml");
@@ -1707,15 +1705,7 @@ open_directory = "alacritty --working-directory %s"
         } else {
             dir.path().canonicalize().unwrap().join("bad.toml")
         };
-        let named = named.display().to_string();
-        // Only the start of a type error is fixed; the rest is the toml
-        // crate's.
-        match error.split_once(&named) {
-            Some((before, after)) if after.is_empty() || after.starts_with(": ") => {
-                format!("{before}{{}}{}", if after.is_empty() { "" } else { ": " })
-            }
-            _ => error,
-        }
+        error.replacen(&quoted(&named).to_string(), "{}", 1)
     }
 
     /// An empty path is quoted, so the message still shows what was given.
@@ -1741,7 +1731,7 @@ open_directory = "alacritty --working-directory %s"
         assert!(
             error.starts_with(&format!(
                 "Failed to read config file {}:",
-                absolute.display()
+                quoted(&absolute)
             )),
             "{error}"
         );

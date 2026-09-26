@@ -406,10 +406,7 @@ mod tests {
         *,
     };
     use crate::{
-        command::{
-            Command,
-            progress::{Progress, TaskKind},
-        },
+        command::{Command, progress::TaskKind},
         file_system::path_info::PathInfo,
         test_support::TempDir,
     };
@@ -638,7 +635,7 @@ mod tests {
         let (active, errors) = remove_path(&root, true, active, Removal::Delete).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
         let completed_of = |command| match command {
-            Command::Progress(task) => Some(task.combine_progress(&Progress::default()).completed),
+            Command::Progress(task) => Some(task.progress().completed),
             _ => None,
         };
         let completed: Vec<u64> = rx.try_iter().filter_map(completed_of).collect();

@@ -187,7 +187,7 @@ impl TableView {
 /// item stays within `viewport_lines`, preferring to keep `prev_first` as the
 /// top item (stable scrolling). Walks at most a viewport's worth of items, so it
 /// is O(viewport), not O(items).
-fn visible_window(
+pub(super) fn visible_window(
     item_heights: &[usize],
     viewport_lines: usize,
     selected: usize,

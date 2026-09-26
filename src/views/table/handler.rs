@@ -77,7 +77,8 @@ impl CommandHandler for TableView {
                 self.content.start_search();
                 self.table_state.select(None);
                 self.search_cursor_chosen = false;
-                self.clear_marks_notifying()
+                self.clear_marks();
+                self.selection_snapshot()
             }
             Command::SearchStarted { generation } => {
                 self.stream_generation = *generation;
@@ -352,7 +353,7 @@ impl TableView {
             // The search/bookmarks index is meaningless in the directory.
             ListingMode::Search | ListingMode::Bookmarks => {
                 self.table_state.select(None);
-                Command::RefreshDirectory.into()
+                vec![self.selection_changed(), Command::RefreshDirectory].into()
             }
             ListingMode::Normal if had_filter => self.sort(),
             ListingMode::Normal => CommandResult::Handled,

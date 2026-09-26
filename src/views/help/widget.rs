@@ -8,8 +8,11 @@ use crate::app::config::{
     theme::Help,
 };
 
-/// A titled group of `(label, keys)` rows.
-pub(super) type Section = (&'static str, Vec<(String, String)>);
+/// One `(label, keys)` row.
+type Row = (&'static str, String);
+
+/// A titled group of rows.
+pub(super) type Section = (&'static str, Vec<Row>);
 
 /// Every section of the help, in the order shown.
 pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
@@ -25,41 +28,48 @@ pub(super) fn build_sections(kb: &KeyBindings) -> Vec<Section> {
 /// The widest label in one section. Each section lines up its own key column,
 /// so one long label does not push every other section's keys off a narrow
 /// terminal.
-pub(super) fn label_width(rows: &[(String, String)]) -> usize {
+pub(super) fn label_width(rows: &[Row]) -> usize {
     rows.iter()
         .map(|(label, _)| label.cell_width() as usize)
         .max()
         .unwrap_or(0)
 }
 
+/// Spaces after a section title, so "Keybindings" starts where the rows'
+/// keys do: rows insert ": " (2 columns) between label and keys.
+fn header_padding(title: &str, label_width: usize) -> String {
+    " ".repeat((label_width + 2).saturating_sub(title.cell_width() as usize))
+}
+
+/// Spaces after a row's ": ", so its keys start in the section's key column.
+fn row_padding(label: &str, label_width: usize) -> String {
+    " ".repeat(label_width.saturating_sub(label.cell_width() as usize))
+}
+
 pub(super) fn add_section_header(
     lines: &mut Vec<Line<'static>>,
-    title: &str,
-    max_label_width: usize,
+    title: &'static str,
+    label_width: usize,
     help: &Help,
 ) {
-    // Body rows insert ": " (2 cols) between label and keys; match that here.
-    let header_padding =
-        " ".repeat((max_label_width + 2).saturating_sub(title.cell_width() as usize));
     lines.push(Line::from(vec![
-        Span::styled(title.to_string(), help.header()),
-        Span::raw(header_padding),
+        Span::styled(title, help.header()),
+        Span::raw(header_padding(title, label_width)),
         Span::styled("Keybindings", help.header()),
     ]));
 }
 
 pub(super) fn add_keybinding_lines(
     lines: &mut Vec<Line<'static>>,
-    keybindings: &[(String, String)],
-    max_label_width: usize,
+    rows: &[Row],
+    label_width: usize,
     help: &Help,
 ) {
-    lines.extend(keybindings.iter().map(|(label, keys)| {
-        let padding = " ".repeat(max_label_width.saturating_sub(label.cell_width() as usize));
+    lines.extend(rows.iter().map(|(label, keys)| {
         Line::from(vec![
-            Span::styled(label.clone(), help.actions()),
+            Span::styled(*label, help.actions()),
             Span::raw(": "),
-            Span::raw(padding),
+            Span::raw(row_padding(label, label_width)),
             Span::styled(keys.clone(), help.shortcuts()),
         ])
     }));
@@ -81,227 +91,216 @@ fn annotate_uppercase(display: &str) -> String {
         .join("/")
 }
 
+/// The keys bound to each of `actions`, joined by `separator`.
+fn keys(kb: &KeyBindings, actions: &[Action], separator: &str) -> String {
+    actions
+        .iter()
+        .map(|action| annotate_uppercase(kb.display_for(*action)))
+        .collect::<Vec<_>>()
+        .join(separator)
+}
+
 /// Build the plain-text keybindings help content for the `--print-keybindings` CLI flag.
 /// Section headers are emitted with ANSI bold when `bold` is true (i.e. stdout is a terminal).
 pub fn keybindings_help_text(kb: &KeyBindings, bold: bool) -> String {
-    const BOLD: &str = "\x1b[1m";
-    const RESET: &str = "\x1b[0m";
-
-    fn append_section(
-        out: &mut String,
-        title: &str,
-        bindings: &[(String, String)],
-        max_width: usize,
-        bold: bool,
-    ) {
-        let header_padding =
-            " ".repeat((max_width + 2).saturating_sub(title.cell_width() as usize));
-        if bold {
-            out.push_str(BOLD);
-        }
-        out.push_str(title);
-        out.push_str(&header_padding);
-        out.push_str("Keybindings");
-        if bold {
-            out.push_str(RESET);
-        }
-        out.push('\n');
-        for (label, keys) in bindings {
-            let padding = " ".repeat(max_width.saturating_sub(label.cell_width() as usize));
-            // Writing to a String is infallible, so the Result cannot be an error.
-            let _ = writeln!(out, "{label}: {padding}{keys}");
-        }
-    }
-
-    let sections = build_sections(kb);
-
+    let (bold, reset) = if bold {
+        ("\x1b[1m", "\x1b[0m")
+    } else {
+        ("", "")
+    };
     let mut out = String::new();
-    for (index, (title, rows)) in sections.iter().enumerate() {
+    for (index, (title, rows)) in build_sections(kb).iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        append_section(&mut out, title, rows, label_width(rows), bold);
+        let width = label_width(rows);
+        // Writing to a String is infallible, so the Result cannot be an error.
+        let _ = writeln!(
+            out,
+            "{bold}{title}{}Keybindings{reset}",
+            header_padding(title, width)
+        );
+        for (label, keys) in rows {
+            let _ = writeln!(out, "{label}: {}{keys}", row_padding(label, width));
+        }
     }
     out
 }
 
-fn kb_entry(label: &str, keys: String) -> (String, String) {
-    (label.to_string(), keys)
-}
-
 /// The normal bindings as they act on a bookmark, which is a symlink: open
 /// follows it, and rename and delete act on the link, not the folder.
-fn build_bookmarks_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| annotate_uppercase(kb.display_for(a));
+fn build_bookmarks_keybindings(kb: &KeyBindings) -> Vec<Row> {
+    let k = |actions: &[Action]| keys(kb, actions, ", ");
     vec![
-        kb_entry("Go to the linked folder", d(Action::Open)),
-        kb_entry(
+        ("Go to the linked folder", k(&[Action::Open])),
+        (
             "Rename, delete the bookmark",
-            format!("{}, {}", d(Action::Rename), d(Action::Delete)),
+            k(&[Action::Rename, Action::Delete]),
         ),
-        kb_entry("Leave the bookmarks", d(Action::ResetView)),
+        ("Leave the bookmarks", k(&[Action::ResetView])),
     ]
 }
 
 /// The answers to a paste collision. They are fixed keys, read by the prompt
 /// itself rather than bound.
-fn build_conflict_keybindings() -> Vec<(String, String)> {
+fn build_conflict_keybindings() -> Vec<Row> {
     vec![
-        kb_entry("Skip this entry", "s".into()),
-        kb_entry(
+        ("Skip this entry", "s".into()),
+        (
             "Skip every collision, also in sources already running",
             "S (Uppercase)".into(),
         ),
-        kb_entry("Replace the existing entry", "o".into()),
-        kb_entry(
+        ("Replace the existing entry", "o".into()),
+        (
             "Replace every collision the paste meets",
             "O (Uppercase)".into(),
         ),
-        kb_entry("Abandon the rest of the paste", "Esc".into()),
+        ("Abandon the rest of the paste", "Esc".into()),
     ]
 }
 
 /// The "Open with" picker's keys: the normal bindings it reads, plus the row
 /// numbers it takes itself.
-fn build_open_with_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| annotate_uppercase(kb.display_for(a));
+fn build_open_with_keybindings(kb: &KeyBindings) -> Vec<Row> {
+    let k = |actions: &[Action]| keys(kb, actions, ", ");
     vec![
-        kb_entry(
+        (
             "Select next, previous application",
-            format!("{}, {}", d(Action::SelectNext), d(Action::SelectPrevious)),
+            k(&[Action::SelectNext, Action::SelectPrevious]),
         ),
-        kb_entry(
+        (
             "Select first, last application",
-            format!("{}, {}", d(Action::SelectFirst), d(Action::SelectLast)),
+            k(&[Action::SelectFirst, Action::SelectLast]),
         ),
-        kb_entry(
-            "Page down, up",
-            format!("{}, {}", d(Action::PageDown), d(Action::PageUp)),
+        ("Page down, up", k(&[Action::PageDown, Action::PageUp])),
+        ("Open with the selected application", k(&[Action::Open])),
+        ("Open with a numbered application", "1-9".into()),
+        ("Close the picker", k(&[Action::OpenWith])),
+        (
+            "Close the picker and reset the view",
+            k(&[Action::ResetView]),
         ),
-        kb_entry("Open with the selected application", d(Action::Open)),
-        kb_entry("Open with a numbered application", "1-9".into()),
-        kb_entry("Close the picker", d(Action::OpenWith)),
-        kb_entry("Close the picker and reset the view", d(Action::ResetView)),
     ]
 }
 
 /// Build normal mode keybinding display strings from KeyBindings.
-fn build_normal_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| annotate_uppercase(kb.display_for(a));
-    let s = |a| d(a);
-    let p = |a, b| format!("{}, {}", d(a), d(b));
-    let t = |a, b, c| format!("{}, {}, {}", d(a), d(b), d(c));
+fn build_normal_keybindings(kb: &KeyBindings) -> Vec<Row> {
+    let k = |actions: &[Action]| keys(kb, actions, ", ");
 
     vec![
         // Navigation
-        kb_entry(
+        (
             "Select next, previous row",
-            p(Action::SelectNext, Action::SelectPrevious),
+            k(&[Action::SelectNext, Action::SelectPrevious]),
         ),
-        kb_entry(
+        (
             "Select first, middle, last row",
-            t(
+            k(&[
                 Action::SelectFirst,
                 Action::SelectMiddle,
                 Action::SelectLast,
-            ),
+            ]),
         ),
-        kb_entry(
+        (
             "Select top, middle, bottom row",
-            t(
+            k(&[
                 Action::SelectFirstVisible,
                 Action::SelectMiddleVisible,
                 Action::SelectLastVisible,
-            ),
+            ]),
         ),
-        kb_entry("Page down, up", p(Action::PageDown, Action::PageUp)),
-        kb_entry("Go to parent dir", s(Action::GoToParentDirectory)),
-        kb_entry("Go to previous dir", s(Action::GoToPreviousDirectory)),
-        kb_entry("Go to home dir", s(Action::GoHome)),
-        kb_entry("Go to path", s(Action::Goto)),
+        ("Page down, up", k(&[Action::PageDown, Action::PageUp])),
+        ("Go to parent dir", k(&[Action::GoToParentDirectory])),
+        ("Go to previous dir", k(&[Action::GoToPreviousDirectory])),
+        ("Go to home dir", k(&[Action::GoHome])),
+        ("Go to path", k(&[Action::Goto])),
         // Opening
-        kb_entry("Open", s(Action::Open)),
-        kb_entry("Open current directory", s(Action::OpenCurrentDirectory)),
-        kb_entry("Open new window", s(Action::OpenNewWindow)),
-        kb_entry("Open with...", s(Action::OpenWith)),
-        kb_entry(
+        ("Open", k(&[Action::Open])),
+        ("Open current directory", k(&[Action::OpenCurrentDirectory])),
+        ("Open new window", k(&[Action::OpenNewWindow])),
+        ("Open with...", k(&[Action::OpenWith])),
+        (
             "Edit ($EDITOR), page ($PAGER)",
-            p(Action::Edit, Action::Page),
+            k(&[Action::Edit, Action::Page]),
         ),
         // Marking
-        kb_entry("Mark/unmark item, end range", s(Action::ToggleMark)),
-        kb_entry("Range mark", s(Action::RangeMark)),
-        kb_entry("Mark all shown items", s(Action::SelectAll)),
+        ("Mark/unmark item, end range", k(&[Action::ToggleMark])),
+        ("Range mark", k(&[Action::RangeMark])),
+        ("Mark all shown items", k(&[Action::SelectAll])),
         // File operations
-        kb_entry(
+        (
             "Copy, Cut, Paste",
-            t(Action::Copy, Action::Cut, Action::Paste),
+            k(&[Action::Copy, Action::Cut, Action::Paste]),
         ),
-        kb_entry("Rename", s(Action::Rename)),
-        kb_entry("Chmod (octal)", s(Action::Chmod)),
-        kb_entry("Create directory", s(Action::CreateDirectory)),
-        kb_entry("Delete", s(Action::Delete)),
+        ("Rename", k(&[Action::Rename])),
+        ("Chmod (octal)", k(&[Action::Chmod])),
+        ("Create directory", k(&[Action::CreateDirectory])),
+        ("Delete", k(&[Action::Delete])),
         // View
-        kb_entry("Filter", s(Action::Filter)),
-        kb_entry("Search", s(Action::Search)),
-        kb_entry("Add bookmark", s(Action::AddBookmark)),
-        kb_entry("Show bookmarks", s(Action::GetBookmarks)),
-        kb_entry("Refresh", s(Action::Refresh)),
-        kb_entry(
+        ("Filter", k(&[Action::Filter])),
+        ("Search", k(&[Action::Search])),
+        ("Add bookmark", k(&[Action::AddBookmark])),
+        ("Show bookmarks", k(&[Action::GetBookmarks])),
+        ("Refresh", k(&[Action::Refresh])),
+        (
             "Sort by name, modified, size",
-            t(
+            k(&[
                 Action::SortByName,
                 Action::SortByModified,
                 Action::SortBySize,
-            ),
+            ]),
         ),
-        kb_entry("Toggle show hidden files", s(Action::ToggleShowHidden)),
+        ("Toggle show hidden files", k(&[Action::ToggleShowHidden])),
         // Application
-        kb_entry("Cancel paste, delete or search", s(Action::CancelTask)),
-        kb_entry(
+        ("Cancel paste, delete or search", k(&[Action::CancelTask])),
+        (
             "Clear alerts, progress",
-            p(Action::ClearAlerts, Action::ClearProgress),
+            k(&[Action::ClearAlerts, Action::ClearProgress]),
         ),
-        kb_entry("Reset view, leave bookmarks", s(Action::ResetView)),
-        kb_entry("Toggle help", s(Action::ToggleHelp)),
-        kb_entry("Quit", s(Action::Quit)),
+        ("Reset view, leave bookmarks", k(&[Action::ResetView])),
+        ("Toggle help", k(&[Action::ToggleHelp])),
+        ("Quit", k(&[Action::Quit])),
     ]
 }
 
 /// Build prompt mode keybinding display strings from KeyBindings.
-fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<(String, String)> {
-    let d = |a: Action| annotate_uppercase(kb.display_for(a));
-    let s = |a| d(a);
-    let t = |a, b, c| format!("{}, {}, {}", d(a), d(b), d(c));
-    let pair = |a, b| format!("{}/{}", d(a), d(b));
+fn build_prompt_keybindings(kb: &KeyBindings) -> Vec<Row> {
+    let k = |actions: &[Action]| keys(kb, actions, ", ");
 
     vec![
-        kb_entry("Submit", s(Action::PromptSubmit)),
-        kb_entry("Cancel", s(Action::PromptCancel)),
-        kb_entry("Reset to initial value", s(Action::PromptReset)),
-        kb_entry("Select all", s(Action::PromptSelectAll)),
-        kb_entry(
+        ("Submit", k(&[Action::PromptSubmit])),
+        ("Cancel", k(&[Action::PromptCancel])),
+        ("Reset to initial value", k(&[Action::PromptReset])),
+        ("Select all", k(&[Action::PromptSelectAll])),
+        (
             "Copy, Cut, Paste text",
-            t(Action::PromptCopy, Action::PromptCut, Action::PromptPaste),
+            k(&[Action::PromptCopy, Action::PromptCut, Action::PromptPaste]),
         ),
-        kb_entry("Move cursor", "←/→".into()),
-        kb_entry("Move cursor by word", "Ctrl+←/→, Alt+b/f".into()),
-        kb_entry("Move cursor to start, end", "Home, Ctrl+e/End".into()),
-        kb_entry("Select text", "Shift+←/→".into()),
-        kb_entry("Select to line start, end", "Shift+Home, Shift+End".into()),
-        kb_entry("Select by word", "Ctrl+Shift+←/→".into()),
-        kb_entry("Delete before, after cursor", "Backspace, Delete".into()),
-        kb_entry(
+        ("Move cursor", "←/→".into()),
+        ("Move cursor by word", "Ctrl+←/→, Alt+b/f".into()),
+        ("Move cursor to start, end", "Home, Ctrl+e/End".into()),
+        ("Select text", "Shift+←/→".into()),
+        ("Select to line start, end", "Shift+Home, Shift+End".into()),
+        ("Select by word", "Ctrl+Shift+←/→".into()),
+        ("Delete before, after cursor", "Backspace, Delete".into()),
+        (
             "Delete word before, after cursor",
             "Ctrl+w/Alt+Backspace, Alt+d/Alt+Delete".into(),
         ),
-        kb_entry("Delete to start, end", "Ctrl+j, Ctrl+k".into()),
-        kb_entry("Accept path suggestion", s(Action::PromptAcceptSuggestion)),
-        kb_entry(
+        ("Delete to start, end", "Ctrl+j, Ctrl+k".into()),
+        (
+            "Accept path suggestion",
+            k(&[Action::PromptAcceptSuggestion]),
+        ),
+        (
             "Cycle path suggestions",
-            pair(
-                Action::PromptNextSuggestion,
-                Action::PromptPreviousSuggestion,
+            keys(
+                kb,
+                &[
+                    Action::PromptNextSuggestion,
+                    Action::PromptPreviousSuggestion,
+                ],
+                "/",
             ),
         ),
     ]

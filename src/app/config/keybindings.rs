@@ -94,7 +94,10 @@ impl KeyCombo {
 
 /// TOML keybinding value: either a single key string or an array of key strings.
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(
+    untagged,
+    expecting = "expected a key string or an array of key strings"
+)]
 pub enum KeySpec {
     Single(String),
     Multiple(Vec<String>),

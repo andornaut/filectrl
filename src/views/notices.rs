@@ -709,6 +709,33 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_list_gives_up_the_rows_it_last_drew() {
+        use ratatui::{
+            Terminal,
+            backend::TestBackend,
+            crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+        };
+
+        use crate::views::View;
+
+        let mut v = view();
+        v.area = Rect::new(0, 5, 40, 1);
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+
+        // Emptied since the last frame: its old rows now belong to the table.
+        terminal
+            .draw(|frame| v.render(Config::global().theme(), Rect::new(0, 6, 40, 0), frame))
+            .unwrap();
+
+        assert!(!v.should_handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+
+    #[test]
     fn updates_for_cleared_tasks_are_not_resurrected() {
         let mut v = view();
         let (tx, rx) = mpsc::channel();

@@ -14,7 +14,7 @@ use crate::{
     app::config::keybindings::{Action, KeyBindings},
     app::config::{Config, theme::Theme},
     command::{Command, handler::CommandHandler, result::CommandResult},
-    views::unicode::split_with_ellipsis,
+    views::unicode::{split_line_count, split_with_ellipsis},
 };
 
 const MAX_NUMBER_ALERTS: usize = 5;
@@ -131,25 +131,29 @@ impl AlertsView {
         }
         let border_size = if Self::has_border(area) { 2 } else { 0 };
         let inner_width = area.width.saturating_sub(border_size);
-        let items = self.alerts(inner_width);
-        as_dimension(items.len()).saturating_add(border_size)
+        let width = Self::message_width(inner_width);
+        let lines: usize = self
+            .alerts
+            .iter()
+            .map(|(_, message, _)| split_line_count(message, width).min(MAX_ALERT_LINES))
+            .sum();
+        as_dimension(lines).saturating_add(border_size)
+    }
+
+    /// The rendered prefix (" • " or "   ") occupies 3 columns.
+    fn message_width(inner_width: u16) -> usize {
+        inner_width.saturating_sub(3) as usize
     }
 
     fn alerts(&self, inner_width: u16) -> Vec<(AlertKind, Line<'_>)> {
-        // The rendered prefix (" • " or "   ") occupies 3 columns.
-        let width_without_prefix = inner_width.saturating_sub(3);
-
+        let width = Self::message_width(inner_width);
         self.alerts
             .iter()
             .flat_map(|(kind, message, _)| {
-                let mut lines = split_with_ellipsis(message, width_without_prefix as usize);
-                if lines.len() > MAX_ALERT_LINES {
-                    lines.truncate(MAX_ALERT_LINES);
-                    if let Some(last) = lines.last_mut() {
-                        last.pop();
-                        last.push('…');
-                    }
-                }
+                // Every line but the last ends in an ellipsis, so a message
+                // cut short already shows that it continues.
+                let mut lines = split_with_ellipsis(message, width);
+                lines.truncate(MAX_ALERT_LINES);
                 lines.into_iter().enumerate().map(|(i, line)| {
                     let prefix = if i == 0 { " •" } else { "  " };
                     (kind.clone(), Line::from(format!("{prefix} {line}")))

@@ -515,6 +515,11 @@ impl FileSystem {
                         cancelled += 1;
                     }
                 }
+                // The worker can mark the target uncancellable after the check
+                // above, leaving nothing cancelled.
+                if cancelled == 0 {
+                    return Command::AlertInfo(format!("Cannot cancel: {message}")).into();
+                }
                 let more = match cancelled - 1 {
                     0 => String::new(),
                     1 => " and 1 more task".to_string(),

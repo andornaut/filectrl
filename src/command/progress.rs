@@ -157,18 +157,6 @@ impl Progress {
     // copy.
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     #[allow(clippy::cast_sign_loss)]
-    pub fn percentage(&self) -> u32 {
-        if self.is_done() {
-            return 100;
-        }
-        if self.total == 0 {
-            return 0;
-        }
-        (((self.completed as f64 / self.total as f64) * 100.0).round() as u32).min(99)
-    }
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    #[allow(clippy::cast_sign_loss)]
     pub fn scaled(&self, factor: u16) -> u16 {
         if self.is_done() {
             return factor;
@@ -178,6 +166,10 @@ impl Progress {
         }
         ((self.completed as f64 / self.total as f64 * f64::from(factor)).round() as u16)
             .min(factor.saturating_sub(1))
+    }
+
+    pub fn percentage(&self) -> u32 {
+        u32::from(self.scaled(100))
     }
 
     fn done(&mut self) {
@@ -370,11 +362,8 @@ impl Task {
         &self.kind
     }
 
-    pub fn combine_progress(&self, progress: &Progress) -> Progress {
-        Progress {
-            completed: self.progress.completed + progress.completed,
-            total: self.progress.total + progress.total,
-        }
+    pub fn progress(&self) -> &Progress {
+        &self.progress
     }
 
     fn cancelled(&mut self) {
@@ -629,13 +618,6 @@ mod tests {
         assert_eq!(10, t.progress.scaled(10));
         t.done();
         assert!(t.is_terminal());
-    }
-
-    #[test]
-    fn task_combine_progress_sums_fields() {
-        let t = Task::new(TaskKind::Delete { path: "/x".into() }, 100);
-        let combined = t.combine_progress(&progress(10, 50));
-        assert_eq!(progress(10, 150), combined);
     }
 
     fn recv_task(rx: &std::sync::mpsc::Receiver<Command>) -> Task {

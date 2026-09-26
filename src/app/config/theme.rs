@@ -329,29 +329,15 @@ impl ScrollbarConfig {
     }
 }
 
-#[derive(Deserialize)]
-pub struct Table {
-    body: StyleConfig,
-    #[serde(default)]
-    bookmark: StyleConfig,
-    #[serde(default)]
-    delete: StyleConfig,
-    header: StyleConfig,
-    header_sorted: StyleConfig,
-    #[serde(default)]
-    marked: StyleConfig,
-    selected: StyleConfig,
-}
-
-impl Table {
-    style_getter!(body);
-    style_getter!(bookmark);
-    style_getter!(delete);
-    style_getter!(header);
-    style_getter!(header_sorted);
-    style_getter!(marked);
-    style_getter!(selected);
-}
+style_struct!(Table {
+    body,
+    bookmark,
+    delete,
+    header,
+    header_sorted,
+    marked,
+    selected,
+});
 
 style_struct!(Help {
     base,

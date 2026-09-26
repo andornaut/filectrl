@@ -1,4 +1,4 @@
-use super::{TableView, scroll};
+use super::{TableView, scroll, view::visible_window};
 use crate::views::ListingCount;
 use crate::{
     command::{Command, result::CommandResult},
@@ -43,12 +43,15 @@ impl TableView {
 
     /// The current selection and mark count as a single snapshot command.
     pub(super) fn selection_snapshot(&self) -> CommandResult {
+        self.selection_changed().into()
+    }
+
+    pub(super) fn selection_changed(&self) -> Command {
         Command::SelectionChanged {
             selected: self.selected_path().cloned(),
             mark_count: self.marks.len(),
             range: self.marks.in_range_mode(),
         }
-        .into()
     }
 
     pub(super) fn select_next(&mut self) -> CommandResult {
@@ -91,7 +94,25 @@ impl TableView {
         self.select(self.mapper.item(self.mapper.last_visible_line()))
     }
 
+    /// A page is measured from the cursor, so a window the wheel moved off it
+    /// is first put back around it, as the next render would.
+    fn window_around_cursor(&mut self) {
+        if !self.wheel_scrolled {
+            return;
+        }
+        let visible_lines_count = self.mapper.visible_lines_count();
+        let (start, _) = visible_window(
+            &self.cached_heights,
+            visible_lines_count,
+            self.table_state.selected().unwrap_or_default(),
+            self.first_visible_item,
+        );
+        self.first_visible_item = start;
+        self.mapper.set_window(start, visible_lines_count);
+    }
+
     pub(super) fn next_page(&mut self) -> CommandResult {
+        self.window_around_cursor();
         scroll::next_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),
@@ -101,6 +122,7 @@ impl TableView {
     }
 
     pub(super) fn previous_page(&mut self) -> CommandResult {
+        self.window_around_cursor();
         scroll::previous_page(
             &self.mapper,
             self.table_state.selected().unwrap_or_default(),

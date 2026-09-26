@@ -178,7 +178,7 @@ pub(super) fn batch_progress(tasks: &HashSet<Task>, finished: usize) -> Progress
     let running: u64 = tasks
         .iter()
         .map(|task| {
-            let own = task.combine_progress(&Progress::default());
+            let own = task.progress();
             if own.total == 0 {
                 return 0;
             }

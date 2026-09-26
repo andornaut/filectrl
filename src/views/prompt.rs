@@ -846,8 +846,10 @@ mod tests {
     fn a_path_that_fits_is_shown_whole() {
         let (dir, entry, dest) = foreign_paste(&["a"]);
         let mut view = prompt_with_action(PromptAction::ConfirmPaste { entry, dest });
+        // As wide as the line, so the test holds whatever the temp path's length.
+        let width = label_text(&view).cell_width();
 
-        let rows = rendered(&mut view, 200);
+        let rows = rendered(&mut view, width);
 
         assert_eq!(label_text(&view).trim_end(), rows[0].trim_end());
         drop(dir);

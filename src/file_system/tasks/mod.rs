@@ -488,10 +488,7 @@ mod tests {
         *,
     };
     use crate::{
-        command::{
-            ConflictChoice,
-            progress::{Progress, Transfer},
-        },
+        command::{ConflictChoice, progress::Transfer},
         file_system::entry_id::{EntryId, records_birth_time},
         test_support::TempDir,
     };
@@ -1325,7 +1322,7 @@ mod tests {
         assert!(!task.is_cancelled());
         // root, a.txt, sub, sub/b.txt: the unit is an entry removed, not the
         // single entry the task is seeded with.
-        assert_eq!(4, task.combine_progress(&Progress::default()).total);
+        assert_eq!(4, task.progress().total);
     }
 
     // ── finishing a cross-device move, which is the only path that deletes ───

@@ -1562,9 +1562,7 @@ fn copy_path_advances_progress_from_the_bytes_written() {
     let completed: Vec<u64> = rx
         .try_iter()
         .filter_map(|command| match command {
-            Command::Progress(task) if !task.is_terminal() => {
-                Some(task.combine_progress(&Progress::default()).completed)
-            }
+            Command::Progress(task) if !task.is_terminal() => Some(task.progress().completed),
             _ => None,
         })
         .collect();
@@ -1603,9 +1601,7 @@ fn a_tree_of_small_files_sends_progress_per_share_of_the_total_not_per_file() {
     let updates: Vec<Progress> = rx
         .try_iter()
         .filter_map(|command| match command {
-            Command::Progress(task) if !task.is_terminal() => {
-                Some(task.combine_progress(&Progress::default()))
-            }
+            Command::Progress(task) if !task.is_terminal() => Some(task.progress().clone()),
             _ => None,
         })
         .collect();
