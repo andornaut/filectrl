@@ -514,6 +514,32 @@ update-desktop-database ~/.local/share/applications/
 
 ## Details and limitations
 
+### Limitations
+
+Area | Limitation
+--- | ---
+Delete | There is no trash and no undo: a delete is permanent.
+Delete | A large delete shows 0% while it counts the entries to remove.
+Delete, copy | A tree that contains a bind mount of one of its own ancestors is walked until paths grow too long, and a delete through it removes files in that ancestor.
+All operations | Rename, chmod, delete, copy and cut act on whatever the path names when they run, not on the entry as it was listed.
+Chmod | Applies only to the selected entries, never recursively. A symlink is refused. Needs glibc 2.32 or newer, or `/proc` mounted.
+Paste | Directories are never merged, and a directory never replaces or is replaced by another entry.
+Paste | Overwrite replaces whatever holds the name when that entry is pasted, like `cp -f` and `mv -f`.
+Paste | A name taken after you answered the collision prompt fails that entry; it is not asked about again.
+Paste | Replacing an entry needs room for the old and new entries at once.
+Paste | A cancelled copy leaves a partial file under its final name, unless it was replacing an entry.
+Paste | A process killed while replacing an entry leaves a hidden `.filectrl-<pid>-<n>` file beside it.
+Paste | A later "all" answer at the collision prompt replaces an earlier one, and any key that is not a choice abandons the paste.
+Move across filesystems | Keeps mode and modification time only: not owner, group, access time, extended attributes or ACLs. Hard links become separate files.
+Move across filesystems | The original is removed once everything is copied, so anything written into it during the copy is lost. If any entry fails, the whole original is kept.
+Clipboard | Only absolute paths are pasted. Without a system clipboard (over SSH, on a console), copy and paste work within one window only.
+Open with | Cannot set a default application (use `xdg-mime default`). Applications installed while FileCTRL runs appear after a restart. It opens the entry under the cursor and ignores marks.
+Open with | On Linux, a file name that is not valid UTF-8 is matched against file-type patterns lossily, and the `Exec` guard refuses some safe desktop entries.
+Display | A shortened path is not fitted to the terminal width, so it can wrap on a narrow terminal.
+Signals | <kbd>Ctrl</kbd>+<kbd>z</kbd> is ignored except while an editor or pager runs. A program that stops only itself, rather than its process group, leaves FileCTRL waiting.
+Signals | Terminal settings an editor or pager leaves changed (such as echo off) stay changed after it exits.
+Signals | On macOS, a closed terminal is detected only through SIGHUP.
+
 ### Signals
 
 SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2 and SIGALRM restore the terminal and exit with status 128 plus the signal number (143 for SIGTERM), as a shell reports a process the signal killed. A terminal that closes is answered as SIGHUP (status 129) even when no SIGHUP arrives, which happens when the shell ignores it (`trap "" HUP`). On macOS, which cannot poll a terminal device, only the signal counts. SIGTSTP is ignored, since a stopped process would leave the terminal in raw mode. While the editor or pager runs, the terminal is back in the shell's modes, so <kbd>Ctrl</kbd>+<kbd>z</kbd> stops FileCTRL together with the program and `fg` resumes both, as does a program that suspends itself by signalling its process group (as `vim` does). SIGTERM and SIGHUP meanwhile are not passed to the program: FileCTRL exits when the program does. SIGINT and SIGQUIT are the program's alone, like `system(3)`: FileCTRL does not act on them, even when sent with `kill`, since they cannot be told apart from <kbd>Ctrl</kbd>+<kbd>c</kbd> and <kbd>Ctrl</kbd>+<kbd>&#92;</kbd>.
