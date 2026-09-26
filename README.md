@@ -586,14 +586,25 @@ Some cases need fixtures git cannot store; create them locally:
 
 - [cargo-husky](https://github.com/rhysd/cargo-husky)
 
-The pre-commit hook runs `cargo fmt --check`, `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`, then the same clippy for `aarch64-apple-darwin` when that target is installed (`rustup target add aarch64-apple-darwin`). It does not format for you: run `cargo fmt` and stage the result when the check fails.
+The pre-commit hook runs `cargo fmt --check`, the test suite in a container ([`scripts/test-in-container`](./scripts/test-in-container)) and `cargo clippy --locked --all-targets -- -D warnings`, then the same clippy for `aarch64-apple-darwin` when that target is installed (`rustup target add aarch64-apple-darwin`). It does not format for you: run `cargo fmt` and stage the result when the check fails.
+
+### Running the tests
+
+The tests create, copy and delete files, so run them in a container rather than directly on the host:
+
+```bash
+scripts/test-in-container            # the whole suite
+scripts/test-in-container copy       # arguments are passed to `cargo test`
+```
+
+It needs Docker. The checkout is mounted read-only, the tests run without network access, and the only writable mount is the `filectrl-test` Docker volume, which holds the cargo cache, the build output and `TMPDIR`. Remove it with `docker volume rm filectrl-test`.
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 
 1. Edit the hook script in [`.cargo-husky/hooks/`](./.cargo-husky/hooks/), or the `cargo-husky` entry under `[dev-dependencies]` in [Cargo.toml](./Cargo.toml)
 1. `rm .git/hooks/pre-commit` (or other hook file)
 1. `cargo clean`
-1. `cargo test`
+1. `cargo check --tests`, which builds `cargo-husky` and installs the hook
 1. Verify that the changes have been applied to `.git/hooks/pre-commit`
 
 ### Releasing

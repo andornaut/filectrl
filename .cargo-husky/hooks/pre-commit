@@ -9,8 +9,8 @@ set -e
 # stage its unstaged hunks too. Run `cargo fmt` and stage the result.
 echo '+cargo fmt --check'
 cargo fmt --check
-echo '+cargo test'
-cargo test --locked
+echo '+scripts/test-in-container'
+scripts/test-in-container
 echo '+cargo clippy'
 cargo clippy --locked --all-targets -- -D warnings
 

@@ -1,0 +1,49 @@
+#!/bin/sh
+#
+# Run the test suite inside a container. The tests create, copy and delete
+# files, so a regression in a path guard must not be able to reach the host:
+# the checkout is mounted read-only, and the only writable mount is a Docker
+# volume that holds the cargo cache, the build output and TMPDIR. The volume
+# lives under /var/lib/docker, so it has the host filesystem's semantics (birth
+# times included) even when the checkout is on an encrypted home directory.
+#
+# Usage: scripts/test-in-container [cargo test arguments...]
+# Environment: FILECTRL_TEST_VOLUME (default: filectrl-test)
+#              FILECTRL_TEST_IMAGE  (default: rust:1.98-slim)
+
+set -eu
+
+checkout=$(cd "$(dirname "$0")/.." && pwd)
+volume=${FILECTRL_TEST_VOLUME:-filectrl-test}
+image=${FILECTRL_TEST_IMAGE:-rust:1.98-slim}
+user="$(id -u):$(id -g)"
+
+# A new volume is owned by root; hand it to the invoking user.
+docker run --rm --network none --mount "type=volume,source=${volume},target=/scratch" \
+    "${image}" sh -c "mkdir -p /scratch/cargo /scratch/target /scratch/tmp && chown -R ${user} /scratch"
+
+run() {
+    network=$1
+    shift
+    docker run --rm \
+        --user "${user}" \
+        --network "${network}" \
+        --cap-drop ALL \
+        --security-opt no-new-privileges \
+        --shm-size 256m \
+        --mount "type=bind,source=${checkout},target=/src,readonly" \
+        --mount "type=volume,source=${volume},target=/scratch" \
+        --mount "type=bind,source=/etc/passwd,target=/etc/passwd,readonly" \
+        --mount "type=bind,source=/etc/group,target=/etc/group,readonly" \
+        --env CARGO_HOME=/scratch/cargo \
+        --env CARGO_TARGET_DIR=/scratch/target \
+        --env TMPDIR=/scratch/tmp \
+        --env HOME=/scratch \
+        --env CARGO_HUSKY_DONT_INSTALL_HOOKS=1 \
+        --workdir /src \
+        "${image}" "$@"
+}
+
+# Dependencies are fetched with network access; the tests run without it.
+run bridge cargo fetch --locked
+run none cargo test --locked --offline "$@"
