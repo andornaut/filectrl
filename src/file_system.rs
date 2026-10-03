@@ -1479,7 +1479,7 @@ mod tests {
 
         let bookmarks = read_bookmarks(&dir).expect("expected the bookmarks to be read");
         assert!(dir.is_dir());
-        assert!(bookmarks.is_empty());
+        assert_eq!(Vec::<PathInfo>::new(), bookmarks);
 
         fs::write(dir.join("one"), b"").unwrap();
         fs::write(dir.join("two"), b"").unwrap();
@@ -1596,7 +1596,7 @@ mod tests {
             panic!("expected the results read again");
         };
         assert_eq!(4, generation);
-        assert!(items.is_empty());
+        assert_eq!(Vec::<PathInfo>::new(), items);
     }
 
     #[test]

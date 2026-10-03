@@ -449,7 +449,7 @@ mod tests {
         drop(tx);
         let commands: Vec<Command> = rx.into_iter().collect();
 
-        assert!(matched_names(&commands).is_empty());
+        assert_eq!(Vec::<String>::new(), matched_names(&commands));
         // The exit still fires: it clears the consumers' search state.
         assert_eq!(1, exits(&commands));
     }

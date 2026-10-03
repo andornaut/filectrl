@@ -347,7 +347,7 @@ mod tests {
 
         let result = table.handle_command(&Command::ResetView);
 
-        assert!(table.content.filter().is_empty());
+        assert_eq!("", table.content.filter());
         assert_eq!(3, table.content.len());
         assert!(
             matches!(result, CommandResult::HandledWith(ref command)

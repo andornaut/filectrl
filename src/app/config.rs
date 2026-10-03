@@ -643,7 +643,7 @@ open_directory = "alacritty --working-directory %s"
             merged.openers.open_directory
         );
         assert_eq!(defaults.openers.open_file, merged.openers.open_file);
-        assert!(!merged.openers.open_file.is_empty());
+        assert_ne!("", merged.openers.open_file);
     }
 
     /// Parses a config expected to fail; `Config` is not `Debug`.

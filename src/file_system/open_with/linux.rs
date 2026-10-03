@@ -277,7 +277,7 @@ mod tests {
     #[test_case("No default applications for \"application/x-foo\"\n" ; "no applications")]
     #[test_case("" ; "no output")]
     fn parse_mime_apps_finds_nothing(text: &str) {
-        assert!(parse_mime_apps(text).is_empty());
+        assert_eq!(Vec::<String>::new(), parse_mime_apps(text));
     }
 
     #[test]

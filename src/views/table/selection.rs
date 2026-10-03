@@ -321,7 +321,10 @@ mod tests {
 
         table.select_next();
 
-        assert!(table.marked_paths().is_empty());
+        assert_eq!(
+            Vec::<crate::file_system::path_info::PathInfo>::new(),
+            table.marked_paths()
+        );
         assert_eq!(Some("b".to_string()), selected(&table));
     }
 

@@ -1207,7 +1207,7 @@ mod tests {
     fn nothing_is_suggested_before_a_name_is_typed() {
         let fixture = GotoFixture::new();
         let view = goto_prompt(fixture.dir.path());
-        assert!(view.suggestions.is_empty());
+        assert_eq!(Vec::<(String, bool)>::new(), view.suggestions);
         assert_eq!(None, view.current_suggestion());
     }
 
@@ -1223,7 +1223,7 @@ mod tests {
         view.handle_text_key(Some(action), KeyCode::Char('x'), KeyModifiers::ALT);
 
         assert_eq!("", view.text_area.lines()[0]);
-        assert!(view.suggestions.is_empty());
+        assert_eq!(Vec::<(String, bool)>::new(), view.suggestions);
     }
 
     #[test]
@@ -1231,7 +1231,7 @@ mod tests {
         let fixture = GotoFixture::new();
         let mut view = goto_prompt(fixture.dir.path());
         type_str(&mut view, "Ch");
-        assert!(view.suggestions.is_empty());
+        assert_eq!(Vec::<(String, bool)>::new(), view.suggestions);
 
         std::fs::write(fixture.dir.join("Cherry"), b"").unwrap();
         view.handle_command(&Command::OpenPrompt(PromptAction::Goto {
@@ -1496,7 +1496,7 @@ mod tests {
         view.handle_command(&Command::ClipboardText("XYZ".into()));
 
         assert_eq!(view.text_area.lines()[0], "ApXYZ");
-        assert!(view.suggestions.is_empty());
+        assert_eq!(Vec::<(String, bool)>::new(), view.suggestions);
         assert_eq!(view.current_suggestion(), None);
     }
 

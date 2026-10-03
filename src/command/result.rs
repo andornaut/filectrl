@@ -87,8 +87,14 @@ mod tests {
 
     #[test]
     fn into_commands_covers_every_variant() {
-        assert!(CommandResult::Handled.into_commands().is_empty());
-        assert!(CommandResult::NotHandled.into_commands().is_empty());
+        assert_eq!(
+            Vec::<Command>::new(),
+            CommandResult::Handled.into_commands()
+        );
+        assert_eq!(
+            Vec::<Command>::new(),
+            CommandResult::NotHandled.into_commands()
+        );
         assert_eq!(
             vec![Command::Quit],
             CommandResult::from(Command::Quit).into_commands()

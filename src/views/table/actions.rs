@@ -361,7 +361,7 @@ mod tests {
         assert!(!table.marks.in_range_mode());
 
         assert!(matches!(table.delete(), CommandResult::Handled));
-        assert!(table.pending_delete.paths.is_empty());
+        assert_eq!(Vec::<PathInfo>::new(), table.pending_delete.paths);
         assert!(matches!(
             Command::try_from(table.copy_to_clipboard()),
             Ok(Command::AlertWarn(_))

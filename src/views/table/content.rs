@@ -821,7 +821,7 @@ mod tests {
         assert_eq!(names(&content), vec!["hit"]);
 
         content.set_mode(ListingMode::Normal);
-        assert!(names(&content).is_empty());
+        assert_eq!(Vec::<String>::new(), names(&content));
     }
 
     #[test_case(ListingMode::Normal ; "for the plain listing")]
@@ -1163,7 +1163,7 @@ mod tests {
 
         content.set_filter("/".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);
-        assert!(names(&content).is_empty());
+        assert_eq!(Vec::<String>::new(), names(&content));
 
         content.set_filter("report".to_string());
         content.sort(SortColumn::Name, SortDirection::Ascending);

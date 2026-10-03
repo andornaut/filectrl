@@ -676,7 +676,7 @@ mod tests {
             directory: fx.directory(),
             generation: 1,
         });
-        assert!(visible_names(&table).is_empty());
+        assert_eq!(Vec::<String>::new(), visible_names(&table));
 
         table.handle_command(&Command::ListingBatch {
             items: vec![fx.file("a", 1)],
