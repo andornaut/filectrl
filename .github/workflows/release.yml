@@ -104,7 +104,7 @@ jobs:
       # Keyed by target, since the legs share a runner OS and would otherwise
       # restore each other's build directory.
       - name: Cache
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           key: ${{ matrix.target }}
 
