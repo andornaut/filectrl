@@ -61,7 +61,7 @@ jobs:
           components: clippy
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Run tests
         run: cargo test --locked
@@ -95,7 +95,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Run tests
         run: cargo test --locked
@@ -142,7 +142,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Check formatting
         run: cargo fmt --check
