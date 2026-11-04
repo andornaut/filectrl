@@ -610,7 +610,7 @@ scripts/test-in-container            # the whole suite
 scripts/test-in-container copy       # arguments are passed to `cargo test`
 ```
 
-It needs Docker. The checkout is mounted read-only, the tests run without network access, and the only writable mount is the `filectrl-test` Docker volume, which holds the cargo cache, the build output and `TMPDIR`. Remove it with `docker volume rm filectrl-test`.
+It needs Docker. The script builds a `filectrl-test` image that adds a uid 19001 account to `rust:1.98-slim`, and the tests run as that uid, which owns nothing on the host. The checkout is mounted read-only, the tests run without network access, and the only writable mount is the `filectrl-test` Docker volume, which holds the cargo cache, the build output and `TMPDIR`. Remove it with `docker volume rm filectrl-test`.
 
 ### Releasing
 
