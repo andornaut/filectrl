@@ -31,7 +31,7 @@ case "$command" in
         exec /bin/sh -ec "$COMMAND"
         ;;
     lint)
-        shellcheck -x -P SCRIPTDIR tests/container/run tests/container/check scripts/test-in-container .cargo-husky/hooks/pre-commit
+        shellcheck -x -P SCRIPTDIR tests/container/run tests/container/check tests/native/run tests/native/check scripts/test-in-container .cargo-husky/hooks/pre-commit
         cargo fmt --check
         cargo clippy --locked --offline --all-targets -- -D warnings
         cargo clippy --locked --offline --all-targets --target aarch64-apple-darwin -- -D warnings

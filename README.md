@@ -629,6 +629,10 @@ Only `make build` exports the Linux release binary. `make exec COMMAND='cargo up
 runs dependency commands in the same image with project files writable and Git
 metadata read-only.
 
+`make test-native` is reserved for macOS CI. It runs the native suite and Clippy
+inside a filesystem sandbox that permits writes only to the checkout and scratch.
+Positive and negative write probes verify enforcement before the suite starts.
+
 ### Releasing
 
 Set `version` in [Cargo.toml](./Cargo.toml), then push a matching `v`-prefixed semantic version tag from an up-to-date `main`; the release fails if the tag does not match. The [release workflow](.github/workflows/release.yml) builds the binaries and creates the GitHub Release.

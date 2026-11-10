@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+cargo fetch --locked
+cargo test --locked --offline
+cargo clippy --locked --offline --all-targets -- -D warnings
