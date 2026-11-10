@@ -798,9 +798,10 @@ mod tests {
         assert_eq!(vec!["", "a\\u{202e}b", "c\\u{200b}d"], breadcrumbs(path));
     }
 
-    #[test_case("/tmp/a.txt" => "\"/tmp/a.txt\"" ; "short absolute path is unchanged")]
-    #[test_case("/tmp/one/two/a.txt" => "\"/tmp/one/two/a.txt\"" ; "at the component limit is unchanged")]
-    #[test_case("/tmp/one/two/three/a.txt" => "\"/tmp/…/three/a.txt\"" ; "past the limit keeps the first and last two")]
+    // Non-home paths isolate elision and escaping from home abbreviation.
+    #[test_case("/fixture/a.txt" => "\"/fixture/a.txt\"" ; "short absolute path is unchanged")]
+    #[test_case("/fixture/one/two/a.txt" => "\"/fixture/one/two/a.txt\"" ; "at the component limit is unchanged")]
+    #[test_case("/fixture/one/two/three/a.txt" => "\"/fixture/…/three/a.txt\"" ; "past the limit keeps the first and last two")]
     #[test_case("/a/b/c/d/e/f/g/h.txt" => "\"/a/…/g/h.txt\"" ; "a deep path collapses to four parts")]
     #[test_case("relative/one/two/three/a.txt" => "\"relative/…/three/a.txt\"" ; "a relative path keeps no leading separator")]
     #[test_case("/" => "\"/\"" ; "the root is unchanged")]
@@ -815,17 +816,17 @@ mod tests {
     fn compact_spells_out_bytes_that_are_not_utf8() {
         use std::os::unix::ffi::OsStrExt;
 
-        let path = Path::new(OsStr::from_bytes(b"/tmp/one/two/three/caf\xe9"));
-        assert_eq!("\"/tmp/…/three/caf\\xe9\"", compact(path).to_string());
-        let literal = Path::new("/tmp/caf\\xe9");
-        assert_eq!("\"/tmp/caf\\\\xe9\"", compact(literal).to_string());
+        let path = Path::new(OsStr::from_bytes(b"/fixture/one/two/three/caf\xe9"));
+        assert_eq!("\"/fixture/…/three/caf\\xe9\"", compact(path).to_string());
+        let literal = Path::new("/fixture/caf\\xe9");
+        assert_eq!("\"/fixture/caf\\\\xe9\"", compact(literal).to_string());
     }
 
     #[test]
     fn quoted_keeps_the_middle_of_a_long_path() {
-        let path = Path::new("/tmp/one/two/three/a\u{202e}.txt");
+        let path = Path::new("/fixture/one/two/three/a\u{202e}.txt");
         assert_eq!(
-            "\"/tmp/one/two/three/a\\u{202e}.txt\"",
+            "\"/fixture/one/two/three/a\\u{202e}.txt\"",
             quoted(path).to_string()
         );
     }

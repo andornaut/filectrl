@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
 
-checkout=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+checkout=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$checkout"
 exec make test TEST_ARGS="$*"

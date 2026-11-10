@@ -388,7 +388,7 @@ mod tests {
     #[test_case("cp '/path wi" => "Cannot paste the clipboard entry: it is malformed" ; "a truncated quoted entry")]
     // Existing paths, so the refusal is not the lookup failing.
     #[test_case("cp /usr/../tmp" => "Cannot paste \"/usr/../tmp\": a clipboard path must not contain \".\" or \"..\"" ; "a parent component")]
-    #[test_case("mv /tmp /tmp/." => "Cannot paste \"/tmp/.\": a clipboard path must not contain \".\" or \"..\"" ; "a current directory component after a plain path")]
+    #[test_case("mv /usr /usr/." => "Cannot paste \"/usr/.\": a clipboard path must not contain \".\" or \"..\"" ; "a current directory component after a plain path")]
     fn a_malformed_entry_is_an_error(text: &str) -> String {
         parse_clipboard_text(text)
             .expect_err("an entry that cannot be pasted must be reported")

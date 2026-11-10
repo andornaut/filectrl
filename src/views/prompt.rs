@@ -1380,7 +1380,7 @@ mod tests {
     #[test]
     fn a_mode_that_is_not_octal_keeps_the_chmod_prompt_and_its_text() {
         let mut view = prompt_with_action(PromptAction::Chmod {
-            paths: vec![test_path()],
+            paths: vec![PathInfo::try_from("/usr").unwrap()],
             mode: String::new(),
         });
         type_str(&mut view, "79");
@@ -1391,7 +1391,7 @@ mod tests {
             panic!("expected Command::AlertError");
         };
         assert_eq!(
-            "Cannot chmod \"/tmp\": \"79\" is not an octal mode",
+            "Cannot chmod \"/usr\": \"79\" is not an octal mode",
             message
         );
         assert_eq!("79", view.text_area.lines().join(""));
