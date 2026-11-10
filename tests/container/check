@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+mkdir -p /scratch/cargo /scratch/target /scratch/home
+if [ ! -f /scratch/cargo-ready ]; then
+    cp -a /usr/local/cargo/registry /scratch/cargo/
+    if [ -d /usr/local/cargo/git ]; then
+        cp -a /usr/local/cargo/git /scratch/cargo/
+    fi
+    touch /scratch/cargo-ready
+fi
+export CARGO_HOME=/scratch/cargo CARGO_TARGET_DIR=/scratch/target
+export CARGO_HUSKY_DONT_INSTALL_HOOKS=1
+
+command=$1
+shift
+case "$command" in
+    check)
+        for task in $CHECK_TASKS; do
+            "$0" "$task"
+        done
+        ;;
+    exec)
+        if [ "$#" -gt 0 ]; then
+            exec "$@"
+        fi
+        if [ -z "${COMMAND:-}" ]; then
+            printf 'COMMAND is required for make exec.\n' >&2
+            exit 2
+        fi
+        exec /bin/sh -ec "$COMMAND"
+        ;;
+    lint)
+        cargo fmt --check
+        cargo clippy --locked --offline --all-targets -- -D warnings
+        cargo clippy --locked --offline --all-targets --target aarch64-apple-darwin -- -D warnings
+        cargo deny --all-features check
+        markdownlint-cli2
+        ;;
+    test)
+        cargo test --locked --offline "$@"
+        ;;
+    build)
+        cargo build --locked --offline --release
+        mkdir -p target/release
+        cp /scratch/target/release/filectrl target/release/filectrl
+        ;;
+    *)
+        printf 'Unknown check category: %s\n' "$command" >&2
+        exit 2
+        ;;
+esac

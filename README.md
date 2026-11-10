@@ -591,7 +591,10 @@ Some cases need fixtures git cannot store; create them locally:
 
 - [cargo-husky](https://github.com/rhysd/cargo-husky)
 
-The pre-commit hook runs `cargo fmt --check`, the test suite in a container ([`scripts/test-in-container`](./scripts/test-in-container)) and `cargo clippy --locked --all-targets -- -D warnings`, then the same clippy for `aarch64-apple-darwin` when that target is installed (`rustup target add aarch64-apple-darwin`). It does not format for you: run `cargo fmt` and stage the result when the check fails.
+The pre-commit hook runs `make check`, which performs formatting, Linux and macOS
+target Clippy checks, dependency and Markdown checks, offline unit tests, and a
+release build in containers. It does not format for you: run `make fmt` and stage
+the result when formatting fails.
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 
@@ -603,14 +606,28 @@ The pre-commit hook runs `cargo fmt --check`, the test suite in a container ([`s
 
 ### Running the tests
 
-The tests create, copy and delete files, so run them in a container rather than directly on the host:
+The Make targets use the project-owned
+[`tests/container/Dockerfile`](./tests/container/Dockerfile) and dispatch checks
+inside containers:
 
 ```bash
-scripts/test-in-container            # the whole suite
-scripts/test-in-container copy       # arguments are passed to `cargo test`
+make check                    # the complete verification gate
+make check-info               # machine-readable declarations of available checks
+make test                     # the offline unit suite
+make test TEST_ARGS=copy       # focused arguments passed to cargo test
+make lint                     # formatting, Clippy, dependencies, and Markdown
+make build                    # export target/release/filectrl
 ```
 
-It needs Docker. The script builds a `filectrl-test` image that adds a uid 19001 account to `rust:1.98-slim`, and the tests run as that uid, which owns nothing on the host. The checkout is mounted read-only, the tests run without network access, and the only writable mount is the `filectrl-test` Docker volume, which holds the cargo cache, the build output and `TMPDIR`. Remove it with `docker volume rm filectrl-test`.
+The tests create, copy and delete files. Verification therefore runs as uid 19001
+against a frozen source snapshot, with writable container scratch and no host
+home, credentials, or Docker socket. Tests have no network access. Lint retains
+network access for the advisory database; dependencies and toolchains are baked
+into the image. `scripts/test-in-container` remains an alias for `make test`.
+
+Only `make build` exports the Linux release binary. `make exec COMMAND='cargo update'`
+runs dependency commands in the same image with project files writable and Git
+metadata read-only.
 
 ### Releasing
 

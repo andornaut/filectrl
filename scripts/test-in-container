@@ -1,58 +1,6 @@
 #!/bin/sh
-#
-# Run the test suite inside a container. The tests create, copy and delete
-# files, so a regression in a path guard must not be able to reach the host:
-# the checkout is mounted read-only, the only writable mount is a Docker
-# volume that holds the cargo cache, the build output and TMPDIR, and the
-# tests run as uid 19001, which owns nothing on the host.
-#
-# Usage: scripts/test-in-container [cargo test arguments...]
-# Environment: FILECTRL_TEST_VOLUME (default: filectrl-test)
-#              FILECTRL_TEST_IMAGE  (base image, default: rust:1.98-slim)
-
 set -eu
 
-checkout=$(cd "$(dirname "$0")/.." && pwd)
-volume=${FILECTRL_TEST_VOLUME:-filectrl-test}
-base=${FILECTRL_TEST_IMAGE:-rust:1.98-slim}
-image=filectrl-test
-
-# The base image plus a uid 19001 account that owns /scratch. Docker copies
-# /scratch, with its ownership, into a volume the first time one is mounted.
-docker build --quiet --tag "${image}" --build-arg "BASE=${base}" - >/dev/null <<'EOF'
-ARG BASE
-FROM ${BASE}
-RUN useradd --uid 19001 --user-group --no-create-home --home-dir /scratch test \
-    && install -d -o test -g test /scratch /scratch/cargo /scratch/target /scratch/tmp
-EOF
-
-run() {
-    network=$1
-    shift
-    docker run --rm \
-        --user 19001:19001 \
-        --group-add "$(stat -c %g "${checkout}")" \
-        --network "${network}" \
-        --cap-drop ALL \
-        --security-opt no-new-privileges \
-        --shm-size 256m \
-        --mount "type=bind,source=${checkout},target=/src,readonly" \
-        --mount "type=volume,source=${volume},target=/scratch" \
-        --env CARGO_HOME=/scratch/cargo \
-        --env CARGO_TARGET_DIR=/scratch/target \
-        --env TMPDIR=/scratch/tmp \
-        --env HOME=/scratch \
-        --env CARGO_HUSKY_DONT_INSTALL_HOOKS=1 \
-        --workdir /src \
-        "${image}" "$@"
-}
-
-# A volume first populated by another image keeps that image's ownership.
-if ! run none sh -c 'test -w /scratch/cargo && test -w /scratch/target && test -w /scratch/tmp'; then
-    echo "Volume ${volume} is not writable by uid 19001; remove it with: docker volume rm ${volume}" >&2
-    exit 1
-fi
-
-# Dependencies are fetched with network access; the tests run without it.
-run bridge cargo fetch --locked
-run none cargo test --locked --offline "$@"
+checkout=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$checkout"
+exec make test TEST_ARGS="$*"
