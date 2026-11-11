@@ -57,6 +57,41 @@ if [ -e "$control/denied/forbidden" ]; then
     exit 1
 fi
 printf 'macOS sandbox positive and negative write probes passed.\n'
+# CLEANUP (added 2026-11-11): Remove this probe after the platform's setid mode loss is resolved.
+probe_permissions() {
+    /usr/bin/sandbox-exec -D "CHECKOUT=$checkout" -D "SCRATCH=$2" \
+        -f "$checkout/tests/native/profile.sb" \
+        /usr/bin/env -i PATH="$PATH" python3 -I - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+label, root = sys.argv[1:]
+directory = Path(root) / "mode-probe"
+directory.mkdir(mode=0o700)
+path = directory / "plain"
+try:
+    path.write_bytes(b"x")
+    print(f"mode probe {label}: statvfs_flags={os.statvfs(directory).f_flag}", flush=True)
+    for requested in (0o4755, 0o2755):
+        try:
+            os.chmod(path, requested)
+        except OSError as error:
+            print(f"mode probe {label}: requested={requested:#o} chmod_errno={error.errno}", flush=True)
+        else:
+            observed = stat.S_IMODE(path.stat().st_mode)
+            print(f"mode probe {label}: requested={requested:#o} observed={observed:#o}", flush=True)
+finally:
+    path.unlink(missing_ok=True)
+    directory.rmdir()
+PY
+}
+probe_permissions configured "$scratch"
+os_probe=$(mktemp -d "${TMPDIR:-/tmp}/filectrl-mode.XXXXXXXX")
+os_probe=$(CDPATH='' cd -- "$os_probe" && pwd -P)
+probe_permissions os-tmp "$os_probe"
+rmdir "$os_probe"
 result=0
 sandbox /usr/bin/env -i PATH="$PATH" HOME="$scratch/home" TMPDIR="$scratch/tmp" \
     CHECKOUT="$checkout" CHECK_SCRATCH="$scratch" \
