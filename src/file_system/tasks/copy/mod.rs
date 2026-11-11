@@ -299,12 +299,6 @@ fn finish_directory(context: &CopyContext<'_>, metadata: &Metadata, new: &Path) 
 /// `cp -R`.
 fn finish(context: &CopyContext<'_>, metadata: &Metadata, new: &Path, file: &File) {
     let shown = compact(context.shown(new));
-    // Restore the mode last: changing timestamps can clear special permission bits.
-    if context.is_move
-        && let Err(error) = metadata.modified().and_then(|time| file.set_modified(time))
-    {
-        warn!("Failed to set the modification time of {shown}: {error}");
-    }
     let source = metadata.mode();
     let mode = if context.is_move {
         Some(source & 0o7777)
@@ -319,5 +313,10 @@ fn finish(context: &CopyContext<'_>, metadata: &Metadata, new: &Path, file: &Fil
         && let Err(error) = file.set_permissions(fs::Permissions::from_mode(mode))
     {
         warn!("Failed to set the mode of {shown}: {error}");
+    }
+    if context.is_move
+        && let Err(error) = metadata.modified().and_then(|time| file.set_modified(time))
+    {
+        warn!("Failed to set the modification time of {shown}: {error}");
     }
 }

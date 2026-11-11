@@ -13,3 +13,6 @@
     (subpath "/dev/fd")
     (regex #"^/dev/pty[a-z]+$")
     (regex #"^/dev/ttys[0-9]+$"))
+(allow file-write-setugid file-write-mode
+    (subpath (param "CHECKOUT"))
+    (subpath (param "SCRATCH")))
