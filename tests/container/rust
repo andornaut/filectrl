@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+export CARGO_HOME=/scratch/cargo CARGO_TARGET_DIR=/scratch/target
+export CARGO_HUSKY_DONT_INSTALL_HOOKS=1
+action=${1:-check}
+shift
+cargo fetch --locked
+case "$action" in
+    lint|check)
+        cp -R /usr/local/rustup /scratch/rustup
+        export RUSTUP_HOME=/scratch/rustup
+        rustup component add clippy rustfmt
+        rustup target add aarch64-apple-darwin
+        cargo fmt --check
+        cargo clippy --locked --offline --all-targets -- -D warnings
+        cargo clippy --locked --offline --all-targets --target aarch64-apple-darwin -- -D warnings
+        mkdir -p /scratch/cargo-deny
+        curl -fsSL https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz --strip-components=1 -C /scratch/cargo-deny
+        /scratch/cargo-deny/cargo-deny --all-features check
+        ;;
+esac
+case "$action" in test|check) cargo test --locked --offline "$@" ;; esac
+case "$action" in build|check) cargo build --locked --offline --release ;; esac

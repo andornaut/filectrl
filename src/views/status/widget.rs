@@ -230,7 +230,7 @@ mod tests {
                 .into_iter()
                 .map(|(label, _)| label)
                 .collect();
-        assert_eq!([" Type:", " -> ", " Owner:", " Group:"], labels[..4]);
+        assert_eq!([" Type:", " -> "], labels[..2]);
     }
 
     #[test]

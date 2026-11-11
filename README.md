@@ -591,10 +591,9 @@ Some cases need fixtures git cannot store; create them locally:
 
 - [cargo-husky](https://github.com/rhysd/cargo-husky)
 
-The pre-commit hook runs `make check`, which performs formatting, Linux and macOS
-target Clippy checks, dependency and Markdown checks, offline unit tests, and a
-release build in containers. It does not format for you: run `make fmt` and stage
-the result when formatting fails.
+The pre-commit hook runs native `cargo fmt --check` and Clippy checks, plus the
+isolated suite through `scripts/test-in-container`. It checks the macOS target
+when installed. Run `cargo fmt` and stage the result when formatting fails.
 
 [Changing cargo-husky configuration](https://github.com/rhysd/cargo-husky/issues/30):
 
@@ -606,30 +605,24 @@ the result when formatting fails.
 
 ### Running the tests
 
-The Make targets use the project-owned
-[`tests/container/Dockerfile`](./tests/container/Dockerfile) and dispatch checks
-inside containers:
+`scripts/test-in-container` runs the suite in a stock Rust container. Native
+`cargo fmt` and `cargo clippy` commands remain available. `make check` runs
+formatting, Linux and macOS target Clippy checks, dependency and Markdown checks,
+offline tests, and a release build:
 
 ```bash
-make check                    # the complete verification gate
-make check-info               # machine-readable declarations of available checks
-make test                     # the offline unit suite
-make test TEST_ARGS=copy       # focused arguments passed to cargo test
-make lint                     # formatting, Clippy, dependencies, and Markdown
-make build                    # export target/release/filectrl
+make check                          # complete container verification gate
+scripts/test-in-container           # isolated unit suite
+scripts/test-in-container copy      # focused tests in the project container
+cargo build --release               # native release build
 ```
 
-The tests create, copy and delete files. Verification therefore runs as uid 19001
-against a frozen source snapshot, with writable container scratch and no host
-home, credentials, or Docker socket. Tests have no network access. Lint retains
-network access for the advisory database; dependencies and toolchains are baked
-into the image. `scripts/test-in-container` remains an alias for `make test`.
+The automation gate runs as uid 19001 with a read-only source view and container
+scratch, without host home, credentials, or a Docker socket. Dependencies and
+verification tools are installed in container scratch. Cargo tests use the frozen
+lockfile in offline mode. `make check` exports no artifacts.
 
-Only `make build` exports the Linux release binary. `make exec COMMAND='cargo update'`
-runs dependency commands in the same image with project files writable and Git
-metadata read-only.
-
-`make test-native` is reserved for macOS CI. It runs the native suite and Clippy
+`tests/native/run` is reserved for macOS CI. It runs the native suite and Clippy
 inside a filesystem sandbox that permits writes only to the checkout and scratch.
 Positive and negative write probes verify enforcement before the suite starts.
 

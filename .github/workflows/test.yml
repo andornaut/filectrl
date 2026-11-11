@@ -67,20 +67,20 @@ jobs:
         with:
           version: v29.9.3
 
-      - name: Set up Buildx
-        if: runner.os == 'Linux'
-        uses: docker/setup-buildx-action@v4.4.1
-        with:
-          version: v0.38.2
-          driver: docker
-
       - name: Run tests
         if: runner.os == 'Linux'
-        run: make test
+        env:
+          CHECK_SCRATCH_SIZE: 4g
+        shell: bash
+        run: |
+          source tests/container/stock
+          stock_begin "$PWD"
+          STOCK_NETWORK=bridge stock_run rust:1.98 -- sh tests/container/rust test
+          stock_finish
 
       - name: Lint and test native macOS code
         if: runner.os == 'macOS'
-        run: make test-native
+        run: ./tests/native/run
 
   # Cargo.toml declares rust-version = "1.97", and `@stable` stops testing it the
   # day 1.98 ships: the claim would go on being made with nothing checking it.
@@ -104,14 +104,15 @@ jobs:
         with:
           version: v29.9.3
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4.4.1
-        with:
-          version: v0.38.2
-          driver: docker
-
       - name: Run tests
-        run: make test FILECTRL_TEST_IMAGE=rust:1.97-slim
+        env:
+          CHECK_SCRATCH_SIZE: 4g
+        shell: bash
+        run: |
+          source tests/container/stock
+          stock_begin "$PWD"
+          STOCK_NETWORK=bridge stock_run rust:1.97 -- sh tests/container/rust test
+          stock_finish
 
   # A matrix leg reports as `Test (ubuntu-latest)`, a name that changes whenever
   # the matrix does, and a required check that stops reporting blocks every pull
@@ -154,11 +155,14 @@ jobs:
         with:
           version: v29.9.3
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4.4.1
-        with:
-          version: v0.38.2
-          driver: docker
-
       - name: Run lint gate
-        run: make lint
+        env:
+          CHECK_SCRATCH_SIZE: 4g
+        shell: bash
+        run: |
+          source tests/container/stock
+          stock_begin "$PWD"
+          STOCK_NETWORK=bridge stock_run rust:1.98 -- sh tests/container/rust lint
+          STOCK_NETWORK=bridge stock_run node:24.22.2 -- sh tests/container/markdown
+          stock_readonly koalaman/shellcheck:v0.11.0 /bin/shellcheck -x -P SCRIPTDIR tests/container/stock tests/container/check-stock tests/container/rust tests/container/markdown tests/native/run tests/native/check scripts/test-in-container .cargo-husky/hooks/pre-commit
+          stock_finish

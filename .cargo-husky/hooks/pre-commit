@@ -1,4 +1,23 @@
 #!/bin/sh
-set -eu
+#
+# cargo-husky user hook: verify before committing.
+#
 
-make check
+set -e
+
+# Check formatting rather than apply it: re-staging a formatted file would
+# stage its unstaged hunks too. Run `cargo fmt` and stage the result.
+echo '+cargo fmt --check'
+cargo fmt --check
+echo '+scripts/test-in-container'
+scripts/test-in-container
+echo '+cargo clippy'
+cargo clippy --locked --all-targets -- -D warnings
+
+# The macOS-only modules are compiled only for a macOS target.
+if rustup target list --installed 2>/dev/null | grep -qx aarch64-apple-darwin; then
+    echo '+cargo clippy --target aarch64-apple-darwin'
+    cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
+else
+    echo 'Skipping the macOS lint: run rustup target add aarch64-apple-darwin to enable it'
+fi

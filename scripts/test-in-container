@@ -1,6 +1,5 @@
 #!/bin/sh
 set -eu
-
 checkout=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-cd "$checkout"
-exec make test TEST_ARGS="$*"
+export CHECK_SCRATCH_SIZE="${CHECK_SCRATCH_SIZE:-4g}"
+exec "${checkout}/tests/container/check-stock" test "$@"
