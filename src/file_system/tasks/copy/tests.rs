@@ -504,6 +504,11 @@ fn a_copied_file_keeps_the_special_bits_and_ignores_the_umask_only_when_moved(
     let src = fx.join("src");
     fs::write(&src, b"x").unwrap();
     fs::set_permissions(&src, fs::Permissions::from_mode(mode)).unwrap();
+    assert_eq!(
+        mode,
+        mode_of(&src) & 0o7777,
+        "the source has the requested mode"
+    );
 
     let errors = copy_one(is_move, &src, &fx.join("dst"));
 
