@@ -91,7 +91,7 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        uses: taiki-e/install-action@v2.87.32
+        uses: taiki-e/install-action@v2.90.0
         with:
           # Pinned: the container image, and so the glibc the binaries need,
           # comes with the cross version.
