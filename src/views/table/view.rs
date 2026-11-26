@@ -1,4 +1,3 @@
-use chrono::Local;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -12,7 +11,7 @@ use super::{
     widget::{item_height, row_widget_and_height, table_widget},
 };
 use crate::app::config::theme::Theme;
-use crate::file_system::path_info::PathInfo;
+use crate::file_system::path_info::{PathInfo, now_local};
 use crate::views::View;
 
 const MIN_HEIGHT: u16 = 3; // header + 1 data row + scrollbar
@@ -74,7 +73,7 @@ impl TableView {
         self.table_area = area;
 
         let column_constraints = self.columns.constraints(self.table_area.width);
-        let relative_to_datetime = Local::now();
+        let relative_to_datetime = now_local();
         let search_root = self.content.search_root();
         let is_bookmarks = self.content.is_showing_bookmarks();
         let name_width = self.columns.name_width();

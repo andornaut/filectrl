@@ -37,7 +37,6 @@ disallowed_methods = "allow"
 anyhow = "1.0.104"
 arboard = {version = "3", default-features = false, features = ["wayland-data-control"]}
 argh = "0.1.19"
-chrono = {version = "0.4.45", default-features = false, features = ["clock"]}
 env_logger = {version = "0.11.11", default-features = false}
 directories = "6.0.0"
 log = {version = "0.4.34", default-features = false, features = ["serde"]}
@@ -47,6 +46,7 @@ ratatui-textarea = {version = "0.9.3", features = ["crossterm"]}
 ratatui = {version = "0.30.2", features = ["serde"]}
 rustix = {version = "1.1", features = ["fs"]}
 serde = {version = "1.0.229", features = ["derive"]}
+time = {version = "0.3.55", features = ["formatting", "large-dates", "local-offset", "macros"]}
 toml = "1.1.7"
 unicode-segmentation = "1.13.3"
 unix_mode = "0.1.4"

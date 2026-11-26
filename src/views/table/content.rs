@@ -544,10 +544,10 @@ mod tests {
     fn sort_by_modified_orders_by_age() {
         Config::init_test();
         let fx = TempDir::new("content");
-        let now = chrono::Local::now();
+        let now = crate::file_system::path_info::now_local();
         let aged = |name: &str, hours: i64| {
             let mut entry = fx.file(name, 1);
-            entry.modified = Some(now - chrono::Duration::hours(hours));
+            entry.modified = Some(now - time::SignedDuration::hours(hours));
             entry
         };
         let items = vec![aged("hour", 1), aged("day", 24), aged("now", 0)];

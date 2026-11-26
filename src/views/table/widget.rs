@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use chrono::{DateTime, Local};
 use ratatui::{
     prelude::{Constraint, Stylize},
     text::{Line, Span},
     widgets::{Cell, Row, Table},
 };
+use time::OffsetDateTime;
 
 use super::{
     columns::{SortColumn, SortDirection},
@@ -120,7 +120,7 @@ pub(super) fn row_widget_and_height<'a>(
     clipboard: Option<&ClipboardHighlight>,
     name_column_width: u16,
     max_lines: usize,
-    relative_to_datetime: DateTime<Local>,
+    relative_to_datetime: OffsetDateTime,
     item: &'a PathInfo,
     is_marked: bool,
     is_pending_delete: bool,
@@ -200,10 +200,10 @@ pub(super) fn item_height(
 mod tests {
     use std::path::Path;
 
-    use chrono::Local;
     use test_case::test_case;
 
     use super::{header_label, header_labels, item_height, row_widget_and_height};
+    use crate::file_system::path_info::now_local;
     use crate::{app::config::Config, file_system::path_info::PathInfo};
 
     #[test_case("n" => "[N]ame" ; "the initial")]
@@ -246,7 +246,7 @@ mod tests {
             None,
             width,
             max_lines,
-            Local::now(),
+            now_local(),
             &item,
             false,
             false,

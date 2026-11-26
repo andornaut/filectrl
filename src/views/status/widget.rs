@@ -1,13 +1,13 @@
-use chrono::{DateTime, Local};
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
+use time::OffsetDateTime;
 
 use crate::{
     app::config::theme::Theme,
-    file_system::path_info::{PathInfo, visible_path},
+    file_system::path_info::{PathInfo, now_local, visible_path},
 };
 
 pub(super) fn default_widget<'a>(
@@ -44,7 +44,7 @@ fn add_directory(spans: &mut Vec<Span>, theme: &Theme, mode: String, count: &str
 }
 
 fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
-    let now = Local::now();
+    let now = now_local();
     spans.push(Span::styled(" Selected ", theme.status.label()));
     let fields = selected_fields(selected, now);
     let default_style = theme.status.detail();
@@ -53,7 +53,7 @@ fn add_selected(spans: &mut Vec<Span>, theme: &Theme, selected: &PathInfo) {
 }
 
 /// Type and symlink target come first, so an 80-column terminal still shows them.
-fn selected_fields(selected: &PathInfo, now: DateTime<Local>) -> Vec<(&'static str, String)> {
+fn selected_fields(selected: &PathInfo, now: OffsetDateTime) -> Vec<(&'static str, String)> {
     let mut fields = vec![(" Type:", kind_field(selected))];
     fields.extend(target_field(selected));
     fields.extend(account_fields(selected.owner(), selected.group()));
@@ -154,7 +154,7 @@ mod tests {
     use test_case::test_case;
 
     use super::{account_fields, item_count, kind_field, selected_fields, target_field};
-    use crate::file_system::path_info::PathInfo;
+    use crate::file_system::path_info::{PathInfo, now_local};
 
     #[test_case(120, Some(3) => "3 of 120" ; "fewer shown than read")]
     #[test_case(120, Some(120) => "120" ; "every entry shown")]
@@ -225,11 +225,10 @@ mod tests {
         let link = fx.join("link");
         symlink("target", &link).unwrap();
 
-        let labels: Vec<_> =
-            selected_fields(&PathInfo::try_from(&link).unwrap(), chrono::Local::now())
-                .into_iter()
-                .map(|(label, _)| label)
-                .collect();
+        let labels: Vec<_> = selected_fields(&PathInfo::try_from(&link).unwrap(), now_local())
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
         assert_eq!([" Type:", " -> "], labels[..2]);
     }
 

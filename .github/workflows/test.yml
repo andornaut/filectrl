@@ -32,10 +32,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # macOS as well as Linux, because the release builds an aarch64-apple-darwin
-  # binary and the crate carries `cfg(target_os = "macos")` branches in several
-  # modules. Compiling that target at release time says the branches build;
-  # only running the suite here says they work.
+  # Exercise each released platform on a native runner. The release's
+  # cross-builds verify compilation, while these jobs run the suite.
   test-platform:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -45,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
 
     steps:
       - name: Checkout code

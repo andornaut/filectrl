@@ -12,8 +12,8 @@ use std::{
 };
 
 use anyhow::{Error, Result};
-use chrono::{DateTime, Datelike, Local};
 use nix::unistd::{Gid, Group, Uid, User};
+use time::{OffsetDateTime, UtcOffset, macros::format_description};
 
 const FACTOR: u64 = 1024;
 const UNITS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
@@ -152,7 +152,7 @@ fn cached_name<E>(
 pub struct PathInfo {
     pub path: PathBuf,
     pub display_name: String,
-    pub modified: Option<DateTime<Local>>,
+    pub modified: Option<OffsetDateTime>,
     pub size: u64,
 
     gid: u32,
@@ -164,8 +164,8 @@ pub struct PathInfo {
     symlink_broken: bool,
     /// What a symlink names, read with the entry so a redraw never reads the link.
     symlink_target: Option<PathBuf>,
-    accessed: Option<DateTime<Local>>,
-    created: Option<DateTime<Local>>,
+    accessed: Option<OffsetDateTime>,
+    created: Option<OffsetDateTime>,
 }
 
 impl PathInfo {
@@ -191,12 +191,12 @@ impl PathInfo {
         &self.path
     }
 
-    pub fn accessed(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(self.accessed.as_ref(), relative_to)
+    pub fn accessed(&self, relative_to: OffsetDateTime) -> Option<String> {
+        maybe_time_to_string(relative_to, self.accessed)
     }
 
-    pub fn created(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(self.created.as_ref(), relative_to)
+    pub fn created(&self, relative_to: OffsetDateTime) -> Option<String> {
+        maybe_time_to_string(relative_to, self.created)
     }
 
     pub fn mode(&self) -> u32 {
@@ -207,12 +207,12 @@ impl PathInfo {
         unix_mode::to_string(self.mode)
     }
 
-    pub fn modified(&self, relative_to: DateTime<Local>) -> Option<String> {
-        maybe_time_to_string(self.modified.as_ref(), relative_to)
+    pub fn modified(&self, relative_to: OffsetDateTime) -> Option<String> {
+        maybe_time_to_string(relative_to, self.modified)
     }
 
     pub fn modified_comparator(&self) -> i64 {
-        self.modified.map_or(0, |dt| dt.timestamp())
+        self.modified.map_or(0, OffsetDateTime::unix_timestamp)
     }
 
     pub fn name(&self) -> Cow<'_, str> {
@@ -565,75 +565,77 @@ fn digit_run(bytes: &[u8], start: usize) -> (&[u8], usize) {
     (&digits[significant..], end)
 }
 
-pub fn datetime_age(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> DateTimeAge {
-    let duration = relative_to.signed_duration_since(datetime);
+pub fn datetime_age(relative_to: OffsetDateTime, datetime: OffsetDateTime) -> DateTimeAge {
+    let duration = relative_to - datetime;
 
     match duration {
-        d if d.num_minutes() == 0 => DateTimeAge::LessThanMinute,
-        d if d.num_hours() == 0 => DateTimeAge::LessThanHour,
-        d if d.num_days() == 0 => DateTimeAge::LessThanDay,
-        d if d.num_days() < 30 => DateTimeAge::LessThanMonth,
-        d if d.num_days() < 365 => DateTimeAge::LessThanYear,
+        d if d.whole_minutes() == 0 => DateTimeAge::LessThanMinute,
+        d if d.whole_hours() == 0 => DateTimeAge::LessThanHour,
+        d if d.whole_days() == 0 => DateTimeAge::LessThanDay,
+        d if d.whole_days() < 30 => DateTimeAge::LessThanMonth,
+        d if d.whole_days() < 365 => DateTimeAge::LessThanYear,
         _ => DateTimeAge::GreaterThanYear,
     }
 }
 
-fn humanize_datetime(datetime: DateTime<Local>, relative_to: DateTime<Local>) -> String {
-    let age = datetime_age(datetime, relative_to);
-    let format = match age {
-        DateTimeAge::LessThanMinute => "%I:%M:%S%P",
-        DateTimeAge::LessThanHour | DateTimeAge::LessThanDay => "%I:%M%P",
-        DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear => {
-            // Show year if dates are from different calendar years
-            if datetime.year() == relative_to.year() {
-                "%b %-d"
-            } else {
-                "%b %-d, %Y"
-            }
+fn humanize_datetime(relative_to: OffsetDateTime, datetime: OffsetDateTime) -> String {
+    let format = match datetime_age(relative_to, datetime) {
+        DateTimeAge::LessThanMinute => {
+            format_description!("[hour repr:12 padding:none]:[minute]:[second][period case:lower]")
         }
-        DateTimeAge::GreaterThanYear => "%b %-d, %Y",
+        DateTimeAge::LessThanHour | DateTimeAge::LessThanDay => {
+            format_description!("[hour repr:12 padding:none]:[minute][period case:lower]")
+        }
+        DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear
+            if datetime.year() == relative_to.year() =>
+        {
+            format_description!("[month repr:short] [day padding:none]")
+        }
+        DateTimeAge::LessThanMonth | DateTimeAge::LessThanYear | DateTimeAge::GreaterThanYear => {
+            format_description!("[month repr:short] [day padding:none], [year]")
+        }
     };
-    // Return eg. "6:00:00am" instead of "06:00:00am"
-    let mut datetime = format!("{}", datetime.format(format));
-    if datetime.starts_with('0') {
-        datetime.remove(0);
-    }
     datetime
+        .format(format)
+        .expect("a valid date and time format")
 }
 
-/// `None` for a time chrono cannot represent, where `DateTime::from(SystemTime)`
-/// would panic. A file's owner sets its times, so any listing can hold one.
-fn maybe_time(result: io::Result<SystemTime>) -> Option<DateTime<Local>> {
-    let (seconds, nanoseconds) = match result.ok()?.duration_since(UNIX_EPOCH) {
-        Ok(after) => (i64::try_from(after.as_secs()).ok()?, after.subsec_nanos()),
-        // Before the epoch: whole seconds round down, so a positive nanosecond
-        // part is counted up from the second before.
-        Err(before) => {
-            let before = before.duration();
-            let seconds = i64::try_from(before.as_secs()).ok()?.checked_neg()?;
-            match before.subsec_nanos() {
-                0 => (seconds, 0),
-                nanoseconds => (seconds.checked_sub(1)?, 1_000_000_000 - nanoseconds),
-            }
-        }
+pub(crate) fn now_local() -> OffsetDateTime {
+    in_local_offset(OffsetDateTime::now_utc())
+}
+
+fn in_local_offset(utc: OffsetDateTime) -> OffsetDateTime {
+    UtcOffset::local_offset_at(utc)
+        .ok()
+        .and_then(|offset| utc.checked_to_offset(offset))
+        .unwrap_or(utc)
+}
+
+/// A file owner can set an out-of-range time. Keep the supported UTC year
+/// range for file dates and display unknown times as blank.
+fn maybe_time(result: io::Result<SystemTime>) -> Option<OffsetDateTime> {
+    let nanoseconds = match result.ok()?.duration_since(UNIX_EPOCH) {
+        Ok(after) => i128::try_from(after.as_nanos()).ok()?,
+        Err(before) => -i128::try_from(before.duration().as_nanos()).ok()?,
     };
-    Some(DateTime::from_timestamp(seconds, nanoseconds)?.with_timezone(&Local))
+    let utc = OffsetDateTime::from_unix_timestamp_nanos(nanoseconds).ok()?;
+    (-262_143..=262_142)
+        .contains(&utc.year())
+        .then(|| in_local_offset(utc))
 }
 
 fn maybe_time_to_string(
-    time: Option<&DateTime<Local>>,
-    relative_to: DateTime<Local>,
+    relative_to: OffsetDateTime,
+    time: Option<OffsetDateTime>,
 ) -> Option<String> {
-    time.map(|time| humanize_datetime(*time, relative_to))
+    time.map(|time| humanize_datetime(relative_to, time))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, NaiveDateTime, TimeZone};
     use test_case::test_case;
-
-    const DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+    use time::{SignedDuration, macros::datetime};
 
     #[test_case("0",  0u64 ; "zero bytes")]
     #[test_case("499",  499u64 ; "between 1 and 999 bytes")]
@@ -661,61 +663,65 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    #[test_case("6:00:00am", "2023-07-12 6:00:00", "2023-07-12 6:00:00"; "same time, strip leading 0")]
-    #[test_case("12:30:10pm", "2023-07-12 12:30:10", "2023-07-12 12:30:20"; "different second")]
-    #[test_case("12:30pm", "2023-07-12 12:30:10", "2023-07-12 12:31:10"; "different minute")]
-    #[test_case("12:30pm", "2023-07-12 12:30:10", "2023-07-12 11:30:10"; "different hour")]
-    #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-07-13 12:30:10"; "different day")]
-    #[test_case("Jul 12", "2023-07-12 12:30:10", "2023-08-13 12:30:10"; "different month")]
-    #[test_case("Jul 12, 2023", "2023-07-12 12:30:10", "2022-07-13 12:30:10"; "different year")]
-    #[test_case("Jul 9", "2023-07-09 12:30:10", "2023-07-13 12:30:10"; "single digit day has no leading zero")]
+    #[test_case("6:00:00am", datetime!(2023-07-12 06:00:00 UTC), datetime!(2023-07-12 06:00:00 UTC); "same time, strip leading 0")]
+    #[test_case("12:30:10pm", datetime!(2023-07-12 12:30:10 UTC), datetime!(2023-07-12 12:30:20 UTC); "different second")]
+    #[test_case("12:30pm", datetime!(2023-07-12 12:30:10 UTC), datetime!(2023-07-12 12:31:10 UTC); "different minute")]
+    #[test_case("12:30pm", datetime!(2023-07-12 12:30:10 UTC), datetime!(2023-07-12 11:30:10 UTC); "different hour")]
+    #[test_case("Jul 12", datetime!(2023-07-12 12:30:10 UTC), datetime!(2023-07-13 12:30:10 UTC); "different day")]
+    #[test_case("Jul 12", datetime!(2023-07-12 12:30:10 UTC), datetime!(2023-08-13 12:30:10 UTC); "different month")]
+    #[test_case("Jul 12, 2023", datetime!(2023-07-12 12:30:10 UTC), datetime!(2022-07-13 12:30:10 UTC); "different year")]
+    #[test_case("Jul 9", datetime!(2023-07-09 12:30:10 UTC), datetime!(2023-07-13 12:30:10 UTC); "single digit day has no leading zero")]
     fn humanize_datetime_shows_more_of_the_date_as_it_ages(
         expected: &str,
-        datetime: &str,
-        relative_to: &str,
+        datetime: OffsetDateTime,
+        relative_to: OffsetDateTime,
     ) {
-        let result = humanize_datetime(to_local_datetime(datetime), to_local_datetime(relative_to));
+        let result = humanize_datetime(relative_to, datetime);
 
         assert_eq!(expected, result);
     }
 
-    fn to_local_datetime(datetime: &str) -> DateTime<Local> {
-        let datetime = NaiveDateTime::parse_from_str(datetime, DATETIME_FORMAT).unwrap();
-        Local.from_local_datetime(&datetime).unwrap()
+    #[test]
+    fn humanize_datetime_uses_the_local_year_and_elapsed_time() {
+        let modified = datetime!(2023-12-31 23:59:45 -05:00);
+        let now = datetime!(2024-01-01 00:00:15 -05:00);
+        assert_eq!("11:59:45pm", humanize_datetime(now, modified));
+
+        let now = datetime!(2024-01-02 00:00:15 -05:00);
+        assert_eq!("Dec 31, 2023", humanize_datetime(now, modified));
+
+        let modified = datetime!(2024-03-10 01:59:45 -05:00);
+        let now = datetime!(2024-03-10 03:00:15 -04:00);
+        assert_eq!("1:59:45am", humanize_datetime(now, modified));
     }
 
     #[test_case(UNIX_EPOCH + std::time::Duration::from_secs(1 << 62) ; "far in the future")]
     #[test_case(UNIX_EPOCH - std::time::Duration::from_secs(1 << 62) ; "far in the past")]
-    fn a_time_chrono_cannot_represent_is_unknown(time: SystemTime) {
+    #[test_case(SystemTime::from(datetime!(+262143-01-01 00:00 UTC)) ; "past the newest supported year")]
+    #[test_case(SystemTime::from(datetime!(-262144-12-31 23:59:59 UTC)) ; "before the oldest supported year")]
+    fn a_time_outside_the_supported_range_is_unknown(time: SystemTime) {
         assert_eq!(None, maybe_time(Ok(time)));
     }
 
-    #[test_case(UNIX_EPOCH + std::time::Duration::from_millis(1_500) => "1970-01-01T00:00:01.500" ; "after the epoch")]
-    #[test_case(UNIX_EPOCH - std::time::Duration::from_millis(1_500) => "1969-12-31T23:59:58.500" ; "before the epoch with a fraction")]
-    #[test_case(UNIX_EPOCH - std::time::Duration::from_secs(2) => "1969-12-31T23:59:58.000" ; "before the epoch on a whole second")]
-    fn a_representable_time_converts_exactly(time: SystemTime) -> String {
-        maybe_time(Ok(time))
-            .unwrap()
-            .naive_utc()
-            .format("%Y-%m-%dT%H:%M:%S%.3f")
-            .to_string()
+    #[test_case(UNIX_EPOCH + std::time::Duration::from_millis(1_500) => (1, 1_500_000_000) ; "after the epoch")]
+    #[test_case(UNIX_EPOCH - std::time::Duration::from_millis(1_500) => (-2, -1_500_000_000) ; "before the epoch with a fraction")]
+    #[test_case(UNIX_EPOCH - std::time::Duration::from_secs(2) => (-2, -2_000_000_000) ; "before the epoch on a whole second")]
+    fn a_representable_time_converts_exactly(time: SystemTime) -> (i64, i128) {
+        let datetime = maybe_time(Ok(time)).unwrap();
+        (datetime.unix_timestamp(), datetime.unix_timestamp_nanos())
     }
 
-    #[test]
-    fn the_extremes_chrono_can_represent_render() {
-        let now = Local::now();
-        for extreme in [
-            DateTime::<chrono::Utc>::MAX_UTC,
-            DateTime::<chrono::Utc>::MIN_UTC,
-        ] {
-            let time = extreme.with_timezone(&Local);
-            assert!(maybe_time_to_string(Some(&time), now).is_some());
-        }
+    #[test_case(datetime!(-262143-01-01 12:00 UTC) => "Jan 1, -262143" ; "oldest supported year")]
+    #[test_case(datetime!(+262142-12-31 12:00 UTC) => "Dec 31, +262142" ; "newest supported year")]
+    fn the_extremes_of_the_supported_range_render(datetime: OffsetDateTime) -> String {
+        let local = maybe_time(Ok(datetime.into())).unwrap();
+        assert_eq!(datetime, local);
+        humanize_datetime(datetime!(2024-06-15 12:00 UTC), datetime)
     }
 
     fn age(seconds_ago: i64) -> DateTimeAge {
-        let now = to_local_datetime("2024-06-15 12:00:00");
-        datetime_age(now - Duration::seconds(seconds_ago), now)
+        let now = datetime!(2024-06-15 12:00 UTC);
+        datetime_age(now, now - SignedDuration::seconds(seconds_ago))
     }
 
     #[test_case(0,                        DateTimeAge::LessThanMinute  ; "0 seconds")]

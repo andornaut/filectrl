@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Local};
 use ratatui::style::Style;
+use time::OffsetDateTime;
 
 use super::columns::SortColumn;
 use crate::{
@@ -129,10 +129,10 @@ pub(super) fn name_style(theme: &FileType, path: &PathInfo) -> Style {
 pub(super) fn modified_date_style(
     file_modified_date: &FileModifiedDate,
     item: &PathInfo,
-    relative_to: DateTime<Local>,
+    relative_to: OffsetDateTime,
 ) -> Style {
     let modified = item.modified.unwrap_or(relative_to);
-    let age = datetime_age(modified, relative_to);
+    let age = datetime_age(relative_to, modified);
 
     match age {
         DateTimeAge::LessThanMinute => file_modified_date.less_than_minute(),
@@ -329,9 +329,9 @@ mod tests {
     ) {
         Config::init_test();
         let theme = &Config::global().theme().file_modified_date;
-        let now = Local::now();
+        let now = crate::file_system::path_info::now_local();
         let mut item = PathInfo::with_mode(REGULAR);
-        item.modified = Some(now - chrono::Duration::seconds(seconds_ago));
+        item.modified = Some(now - time::SignedDuration::seconds(seconds_ago));
 
         assert_eq!(expected(theme), modified_date_style(theme, &item, now));
     }
